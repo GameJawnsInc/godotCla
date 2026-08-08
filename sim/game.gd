@@ -249,6 +249,9 @@ func _compute_intents() -> void:
 		if bool(edef["slow"]) and turn % 2 == 1:
 			e["intent"] = {"type": "idle"}
 			continue
+		if edef["traits"].has("boss"):
+			_compute_boss_intent(e, edef)
+			continue
 		if edef["traits"].has("summons"):
 			e["intent"] = {"type": "summon", "in": e.get("timer", int(edef["summon_cycle"]))}
 			continue
@@ -270,8 +273,32 @@ func _compute_intents() -> void:
 
 
 func _apply_status(e: Dictionary, status: String, turns: int) -> void:
+	if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
+		_emit({"t": "immune", "id": e["id"]})
+		return
 	e["status"][status] = maxi(int(e["status"].get(status, 0)), turns)
 	_emit({"t": "status", "id": e["id"], "status": status, "turns": turns})
+
+
+func _compute_boss_intent(e: Dictionary, edef: Dictionary) -> void:
+	var c: int = e.get("cycle", 0)
+	var phase2: bool = e["hp"] <= 12
+	match c % 3:
+		0:
+			var row: int = clampi(player["pos"].y + rng.randi_range(-1, 1), 1, int(map["h"]) - 2)
+			e["intent"] = {"type": "flood", "row": row}
+		1:
+			if _manhattan(e["pos"], player["pos"]) <= int(edef["slam_range"]):
+				e["intent"] = {"type": "slam", "tile": player["pos"], "dmg": edef["dmg"]}
+			else:
+				e["intent"] = {"type": "gather"}
+		2:
+			if phase2:
+				e["intent"] = {"type": "ignite_all"}
+			elif _manhattan(e["pos"], player["pos"]) <= int(edef["slam_range"]):
+				e["intent"] = {"type": "slam", "tile": player["pos"], "dmg": edef["dmg"]}
+			else:
+				e["intent"] = {"type": "gather"}
 
 
 func _execute_intent(e: Dictionary) -> void:
@@ -288,6 +315,26 @@ func _execute_intent(e: Dictionary) -> void:
 		"attack":
 			if player["pos"] == it["tile"]:
 				_damage_player(int(it["dmg"]), e["kind"])
+		"flood":
+			e["cycle"] = int(e.get("cycle", 0)) + 1
+			var row: int = it["row"]
+			for x in range(1, int(map["w"]) - 1):
+				var p := Vector2i(x, row)
+				if _tile(p) == MapGen.T_FLOOR and not terrain.has(p) and _enemy_at(p) == null and p != player["pos"]:
+					terrain[p] = {"kind": "oil"}
+			_emit({"t": "flood", "row": row})
+		"slam":
+			e["cycle"] = int(e.get("cycle", 0)) + 1
+			if player["pos"] == it["tile"]:
+				_damage_player(int(it["dmg"]), e["kind"])
+		"ignite_all":
+			e["cycle"] = int(e.get("cycle", 0)) + 1
+			for t in terrain.keys().duplicate():
+				if terrain[t]["kind"] == "oil":
+					terrain[t] = {"kind": "fire", "ttl": 2}
+			_emit({"t": "ignite_all"})
+		"gather":
+			e["cycle"] = int(e.get("cycle", 0)) + 1
 		"summon":
 			var edef: Dictionary = Content.ENEMIES[e["kind"]]
 			var timer: int = e.get("timer", int(edef["summon_cycle"])) - 1
@@ -441,6 +488,8 @@ func _act_descend() -> void:
 		_emit({"t": "win"})
 		return
 	player["bank"] = mini(player["charge"], _bank_cap())
+	player["max_hp"] += Content.DESCEND_MAX_HP_BONUS
+	player["hp"] = mini(player["hp"] + Content.DESCEND_HEAL, player["max_hp"])
 	_emit({"t": "descend", "to_floor": floor_num + 1})
 	_pending_floor = floor_num + 1
 	draft_offers = _draw_draft_offers(3)
@@ -642,7 +691,7 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 			_emit({"t": "growth", "tile": target})
 		"pull":
 			var e = _enemy_at(target)
-			if e == null:
+			if e == null or Content.ENEMIES[e["kind"]]["traits"].has("massive"):
 				return
 			var delta: Vector2i = player["pos"] - e["pos"]
 			var dir := Vector2i(signi(delta.x), signi(delta.y))
@@ -671,7 +720,7 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 					_emit({"t": "wash", "tile": t})
 				if pushed == null:
 					var e = _enemy_at(t)
-					if e != null:
+					if e != null and not Content.ENEMIES[e["kind"]]["traits"].has("massive"):
 						pushed = e
 			if pushed != null:
 				for i in range(int(eff["push"])):
@@ -742,11 +791,20 @@ func _spawn(kind: String, pos: Vector2i) -> Dictionary:
 func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 	if not enemies.has(e):
 		return
+	var edef: Dictionary = Content.ENEMIES[e["kind"]]
+	if edef["traits"].has("boss") and e["hp"] <= 6 and not _growth_adjacent(e["pos"]):
+		_emit({"t": "core_shielded", "id": e["id"]})
+		return
 	e["hp"] -= amt
 	_emit({"t": "damage", "who": e["kind"], "id": e["id"], "amt": amt, "src": src})
 	if e["hp"] <= 0:
 		enemies.erase(e)
 		_emit({"t": "death", "who": e["kind"], "id": e["id"]})
+		if edef["traits"].has("boss"):
+			won = true
+			over = true
+			_emit({"t": "win"})
+			return
 		if Content.ENEMIES[e["kind"]]["traits"].has("smoke_burst"):
 			var tiles_: Array = [e["pos"]]
 			for d in DIRS:
@@ -755,6 +813,19 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 				if _tile(t) == MapGen.T_FLOOR and not terrain.has(t):
 					terrain[t] = {"kind": "smoke", "ttl": 3}
 			_emit({"t": "smoke_burst", "tile": e["pos"]})
+	elif edef["traits"].has("boss"):
+		if e["hp"] <= 12 and not e.get("phase2_done", false):
+			e["phase2_done"] = true
+			_emit({"t": "boss_phase", "phase": 2})
+			for v in map["vents"]:
+				if _open(v):
+					var g := _spawn("coal_golem", v)
+					g["intent"] = {"type": "idle"}
+					_emit({"t": "reinforcement", "tile": v})
+					break
+		if e["hp"] <= 6 and not e.get("phase3_done", false):
+			e["phase3_done"] = true
+			_emit({"t": "boss_phase", "phase": 3})
 	elif Content.ENEMIES[e["kind"]]["traits"].has("splits") and not e["split_used"]:
 		e["split_used"] = true
 		for d in DIRS:
@@ -779,6 +850,13 @@ func _damage_player(amt: int, src: String) -> void:
 		over = true
 		death_cause = src
 		_emit({"t": "player_death", "cause": src})
+
+
+func _growth_adjacent(p: Vector2i) -> bool:
+	for d in DIRS:
+		if _terrain_kind(p + d) == "growth":
+			return true
+	return false
 
 
 func _enemy_enter_tile(e: Dictionary) -> void:

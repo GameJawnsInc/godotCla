@@ -14,8 +14,17 @@ const DEFAULT_INVARIANTS := [
 	"shrine_reachable",
 ]
 
+## Boss arenas have no stairs or shrine; the exam is reaching and killing the boss.
+const BOSS_INVARIANTS := [
+	"boss_reachable",
+	"entities_on_floor",
+	"terrain_on_floor",
+]
+
 
 static func generate(rng: RandomNumberGenerator, fdef: Dictionary) -> Dictionary:
+	if fdef.get("boss", false):
+		return _generate_boss_arena(rng, fdef)
 	var w: int = fdef["w"]
 	var h: int = fdef["h"]
 	var tiles: Array = []
@@ -90,6 +99,54 @@ static func generate(rng: RandomNumberGenerator, fdef: Dictionary) -> Dictionary
 	}
 
 
+static func _generate_boss_arena(rng: RandomNumberGenerator, fdef: Dictionary) -> Dictionary:
+	var w: int = fdef["w"]
+	var h: int = fdef["h"]
+	var tiles: Array = []
+	tiles.resize(w * h)
+	tiles.fill(T_WALL)
+	for y in range(1, h - 1):
+		for x in range(1, w - 1):
+			tiles[y * w + x] = T_FLOOR
+
+	var start := Vector2i(2, h / 2)
+	var boss_pos := Vector2i(w - 3, h / 2)
+
+	# scattered pillars for cover, kept away from the combatants
+	var pillars := 0
+	var attempts := 0
+	while pillars < 5 and attempts < 60:
+		attempts += 1
+		var p := Vector2i(rng.randi_range(3, w - 4), rng.randi_range(2, h - 3))
+		if absi(p.x - start.x) + absi(p.y - start.y) < 3:
+			continue
+		if absi(p.x - boss_pos.x) + absi(p.y - boss_pos.y) < 3:
+			continue
+		if tiles[p.y * w + p.x] == T_FLOOR:
+			tiles[p.y * w + p.x] = T_WALL
+			pillars += 1
+
+	var taken: Array = [start, boss_pos]
+	var vents: Array = []
+	for i in range(int(fdef["vents"])):
+		var v := _pick_floor(rng, tiles, w, h, taken, start, 4)
+		if v != Vector2i(-1, -1):
+			vents.append(v)
+			taken.append(v)
+	var terrain := {}
+	for i in range(int(fdef["oil"])):
+		var p := _pick_floor(rng, tiles, w, h, taken, start, 2)
+		if p != Vector2i(-1, -1):
+			terrain[p] = {"kind": "oil"}
+			taken.append(p)
+
+	return {
+		"w": w, "h": h, "tiles": tiles,
+		"start": start, "stairs": Vector2i(-1, -1), "vents": vents, "shrine": Vector2i(-1, -1),
+		"enemies": [{"kind": "furnace_core", "pos": boss_pos}], "terrain": terrain,
+	}
+
+
 static func _carve_corridor(tiles: Array, w: int, a: Vector2i, b: Vector2i, rng: RandomNumberGenerator) -> void:
 	var p := a
 	if rng.randi_range(0, 1) == 0:
@@ -156,6 +213,20 @@ static func validate(gen: Dictionary, invariants: Array = DEFAULT_INVARIANTS) ->
 					fails.append("no shrine placed")
 				elif not _reachable(gen, gen["start"], gen["shrine"]):
 					fails.append("shrine not reachable from start")
+			"boss_reachable":
+				var found := false
+				for e in gen["enemies"]:
+					if e["kind"] == "furnace_core":
+						found = true
+						var adjacent_ok := false
+						for d in DIRS:
+							var p: Vector2i = e["pos"] + d
+							if _tile_at(gen, p) == T_FLOOR and _reachable(gen, gen["start"], p):
+								adjacent_ok = true
+						if not adjacent_ok:
+							fails.append("boss not reachable from start")
+				if not found:
+					fails.append("no boss on boss floor")
 	return fails
 
 

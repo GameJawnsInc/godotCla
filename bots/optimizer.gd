@@ -32,6 +32,22 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 
 	var threat := _threat_tiles(snap)
 
+	var boss = null
+	for e in snap["enemies"]:
+		if e["traits"].has("boss"):
+			boss = e
+	if boss != null and boss["hp"] <= 6 and not _growth_adj_to(snap, boss["pos"]) and by.has("ability"):
+		var best_bomb = null
+		var best_d := 999
+		for a in by["ability"]:
+			if snap["player"]["kit"][a["slot"]] == "seed_bomb":
+				var d: int = absi(a["target"].x - boss["pos"].x) + absi(a["target"].y - boss["pos"].y)
+				if d <= 2 and d < best_d:
+					best_d = d
+					best_bomb = a
+		if best_bomb != null:
+			return best_bomb
+
 	# 3 damage for 1 charge beats everything else on the menu
 	if by.has("ability"):
 		for a in by["ability"]:
@@ -139,14 +155,15 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 		return legal[legal.size() - 1]
 	if candidates.size() == 1:
 		return candidates[0]
-	# kit is full: drop the least-used ability, never the mobility slot
+	# kit is full: drop the least-used ability. Never drop mobility, and never
+	# drop the growth engine - the Furnace core is only vulnerable near growth.
 	var uses: Dictionary = snap["player"]["uses"]
 	var kit: Array = snap["player"]["kit"]
 	var best_a: Dictionary = candidates[0]
 	var best_u := 999999
 	for a in candidates:
 		var slot: int = a["drop"]
-		if kit[slot] == "mycelium_dash":
+		if kit[slot] == "mycelium_dash" or kit[slot] == "seed_bomb":
 			continue
 		var u: int = uses.get(kit[slot], 0)
 		if u < best_u:
@@ -166,13 +183,25 @@ func _enemies_within(snap: Dictionary, radius: int) -> int:
 
 func _threat_tiles(snap: Dictionary) -> Dictionary:
 	var t := {}
+	var ignite_coming := false
 	for e in snap["enemies"]:
-		if String(e["intent"].get("type", "")) == "attack":
+		var it: String = String(e["intent"].get("type", ""))
+		if it == "attack" or it == "slam":
 			t[e["intent"]["tile"]] = true
+		elif it == "ignite_all":
+			ignite_coming = true
 	for tile in snap["terrain"].keys():
-		if snap["terrain"][tile]["kind"] == "fire":
+		var k: String = snap["terrain"][tile]["kind"]
+		if k == "fire" or (ignite_coming and k == "oil"):
 			t[tile] = true
 	return t
+
+
+func _growth_adj_to(snap: Dictionary, pos: Vector2i) -> bool:
+	for d in DIRS:
+		if snap["terrain"].get(pos + d, {}).get("kind", "") == "growth":
+			return true
+	return false
 
 
 func _enemy_at(snap: Dictionary, pos: Vector2i):

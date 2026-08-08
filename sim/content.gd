@@ -83,6 +83,8 @@ const GRAFTS := {
 
 const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 5}
 const SHOP_HEAL_AMOUNT := 4
+const DESCEND_MAX_HP_BONUS := 1
+const DESCEND_HEAL := 4
 
 const ENEMIES := {
 	"drill_bot": {"name": "Drill Bot", "hp": 3, "dmg": 2, "slow": false, "traits": []},
@@ -92,25 +94,49 @@ const ENEMIES := {
 	"tar_spitter": {"name": "Tar Spitter", "hp": 2, "dmg": 0, "slow": false, "traits": ["gums"], "gum_range": 3, "gum_turns": 2},
 	"coal_golem": {"name": "Coal Golem", "hp": 4, "dmg": 2, "slow": true, "traits": ["smoke_burst"]},
 	"extractor_engine": {"name": "Extractor Engine", "hp": 5, "dmg": 0, "slow": false, "traits": ["summons"], "summon_cycle": 3},
+	"furnace_core": {"name": "Furnace Core", "hp": 18, "dmg": 3, "slow": false, "traits": ["boss", "massive"], "slam_range": 3},
 }
 
 const FLOORS := [
 	{
-		"name": "Strip Mine I", "w": 22, "h": 14, "rooms": 4,
+		"name": "Strip Mine I", "biome": "strip_mine", "w": 22, "h": 14, "rooms": 4,
 		"enemies": {"drill_bot": 2},
 		"oil": 4, "goo": 2, "vents": 1,
 		"smog_spawn": [10, 20], "smog_spawn_every": 12, "smog_dim": [14, 22], "smog_choke": 38,
 	},
 	{
-		"name": "Strip Mine II", "w": 24, "h": 15, "rooms": 5,
+		"name": "Strip Mine II", "biome": "strip_mine", "w": 24, "h": 15, "rooms": 5,
 		"enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1},
 		"oil": 6, "goo": 3, "vents": 2,
 		"smog_spawn": [9, 17], "smog_spawn_every": 10, "smog_dim": [12, 20], "smog_choke": 36,
 	},
 	{
-		"name": "Refinery Gate", "w": 26, "h": 16, "rooms": 5,
-		"enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1, "coal_golem": 1, "extractor_engine": 1},
+		"name": "Refinery Gate", "biome": "refinery", "w": 26, "h": 16, "rooms": 5,
+		"enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1, "coal_golem": 1},
 		"oil": 8, "goo": 4, "vents": 2,
-		"smog_spawn": [8, 16], "smog_spawn_every": 10, "smog_dim": [12, 20], "smog_choke": 34,
+		"smog_spawn": [10, 18], "smog_spawn_every": 11, "smog_dim": [14, 22], "smog_choke": 36,
+	},
+	{
+		"name": "Cracking Yard", "biome": "refinery", "w": 26, "h": 16, "rooms": 6,
+		"enemies": {"drill_bot": 1, "oil_sludge": 1, "tar_spitter": 1, "extractor_engine": 1},
+		"oil": 9, "goo": 4, "vents": 2,
+		"smog_spawn": [12, 22], "smog_spawn_every": 12, "smog_dim": [14, 22], "smog_choke": 34,
+	},
+	{
+		"name": "Pipeworks", "biome": "refinery", "w": 28, "h": 16, "rooms": 6,
+		"enemies": {"drill_bot": 2, "oil_sludge": 1, "coal_golem": 1, "extractor_engine": 1},
+		"oil": 10, "goo": 5, "vents": 3,
+		"smog_spawn": [12, 20], "smog_spawn_every": 12, "smog_dim": [13, 21], "smog_choke": 32,
+	},
+	{
+		"name": "Furnace Approach", "biome": "furnace", "w": 28, "h": 17, "rooms": 6,
+		"enemies": {"drill_bot": 2, "coal_golem": 2, "tar_spitter": 1, "extractor_engine": 1},
+		"oil": 12, "goo": 5, "vents": 3,
+		"smog_spawn": [10, 18], "smog_spawn_every": 11, "smog_dim": [12, 20], "smog_choke": 30,
+	},
+	{
+		"name": "The Furnace", "biome": "furnace", "boss": true, "w": 20, "h": 12,
+		"enemies": {}, "oil": 6, "goo": 0, "vents": 2, "rooms": 0,
+		"smog_spawn": [12, 24], "smog_spawn_every": 12, "smog_dim": [16, 26], "smog_choke": 44,
 	},
 ]

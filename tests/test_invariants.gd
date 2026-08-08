@@ -15,9 +15,11 @@ func _init() -> void:
 		for fi in range(Content.FLOORS.size()):
 			var rng := RandomNumberGenerator.new()
 			rng.seed = s * 1000 + fi
-			var gen := MapGen.generate(rng, Content.FLOORS[fi])
+			var fdef: Dictionary = Content.FLOORS[fi]
+			var gen := MapGen.generate(rng, fdef)
 			gens += 1
-			var fails: Array = MapGen.validate(gen)
+			var invs: Array = MapGen.BOSS_INVARIANTS if fdef.get("boss", false) else MapGen.DEFAULT_INVARIANTS
+			var fails: Array = MapGen.validate(gen, invs)
 			if not fails.is_empty():
 				bad += 1
 				print("FAIL seed %d floor %d: %s" % [s, fi + 1, str(fails)])

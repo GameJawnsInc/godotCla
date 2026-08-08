@@ -5,7 +5,7 @@ extends RefCounted
 const MapGen := preload("res://sim/mapgen.gd")
 
 const TERRAIN_CH := {"oil": "~", "goo": ";", "growth": "\"", "fire": "*", "smoke": "%", "roots": "8"}
-const ENEMY_CH := {"drill_bot": "d", "oil_sludge": "S", "sludgeling": "s", "leech_drone": "L", "tar_spitter": "t", "coal_golem": "G", "extractor_engine": "E"}
+const ENEMY_CH := {"drill_bot": "d", "oil_sludge": "S", "sludgeling": "s", "leech_drone": "L", "tar_spitter": "t", "coal_golem": "G", "extractor_engine": "E", "furnace_core": "F"}
 
 
 static func render(snap: Dictionary) -> String:
@@ -18,7 +18,8 @@ static func render(snap: Dictionary) -> String:
 			row.append("#" if m["tiles"][y * w + x] == MapGen.T_WALL else ".")
 		grid.append(row)
 	var stairs: Vector2i = m["stairs"]
-	grid[stairs.y][stairs.x] = ">"
+	if stairs != Vector2i(-1, -1):
+		grid[stairs.y][stairs.x] = ">"
 	var shrine: Vector2i = m["shrine"]
 	if shrine != Vector2i(-1, -1):
 		grid[shrine.y][shrine.x] = "+"
@@ -69,6 +70,14 @@ static func _intent_str(e: Dictionary) -> String:
 			return "move"
 		"gum":
 			return "GUM slot %d" % it["slot"]
+		"flood":
+			return "FLOOD row %d with oil" % it["row"]
+		"slam":
+			return "SLAM (%d,%d) for %d" % [it["tile"].x, it["tile"].y, it["dmg"]]
+		"ignite_all":
+			return "IGNITE all oil"
+		"gather":
+			return "gathers heat"
 		"summon":
 			return "summon in %d" % it["in"]
 		_:
