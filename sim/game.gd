@@ -63,7 +63,7 @@ func _init(seed_v: int, config: Dictionary = {}) -> void:
 		"charge": 0, "bank": 0, "shield": 0,
 		"kit": config.get("kit", Content.STARTING_KIT).duplicate(),
 		"uses": {}, "grafts": [], "gummed": {},
-		"thorns_dmg": 0, "thorns_turns": 0,
+		"thorns_dmg": 0, "thorns_turns": 0, "anchor_turns": 0,
 	}
 	if mutators.has("brittle"):
 		player["max_hp"] -= 3
@@ -233,6 +233,7 @@ func snapshot() -> Dictionary:
 			"kit": player["kit"].duplicate(), "uses": player["uses"].duplicate(),
 			"grafts": player["grafts"].duplicate(), "gummed": player["gummed"].duplicate(),
 			"thorns_dmg": player["thorns_dmg"], "thorns_turns": player["thorns_turns"],
+			"anchor_turns": player["anchor_turns"],
 		},
 		"enemies": ens,
 		"map": {
@@ -335,6 +336,8 @@ func _begin_player_turn() -> void:
 		player["thorns_turns"] -= 1
 		if player["thorns_turns"] == 0:
 			player["thorns_dmg"] = 0
+	if player["anchor_turns"] > 0:
+		player["anchor_turns"] -= 1
 
 
 func _resolve_turn() -> void:
@@ -549,6 +552,9 @@ func _execute_intent(e: Dictionary) -> void:
 			e["cycle"] = int(e.get("cycle", 0)) + 1
 			var cdef: Dictionary = Content.ENEMIES[e["kind"]]
 			for i in int(it.get("times", 1)):
+				if player["anchor_turns"] > 0:
+					_emit({"t": "anchored", "id": e["id"]})
+					break
 				var cd := _manhattan(e["pos"], player["pos"])
 				if cd <= 1 or cd > int(cdef["drag_range"]):
 					break
@@ -1034,6 +1040,15 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 			player["thorns_dmg"] = int(eff["dmg"])
 			player["thorns_turns"] = maxi(player["thorns_turns"], int(eff["turns"]))
 			_emit({"t": "thorns", "dmg": eff["dmg"], "turns": player["thorns_turns"]})
+		"anchor":
+			player["anchor_turns"] = maxi(player["anchor_turns"], int(eff["turns"]))
+			_emit({"t": "anchor", "turns": player["anchor_turns"]})
+		"undim":
+			# relieves the dim penalty only - raw smog is untouched, so choke
+			# still scales and the clock still wins; no scrub-camping loops
+			if dim > 0:
+				dim = maxi(0, dim - int(eff["amount"]))
+				_emit({"t": "undim", "dim": dim})
 		"aoe_status":
 			for e in enemies.duplicate():
 				if _manhattan(e["pos"], player["pos"]) <= int(eff["radius"]):

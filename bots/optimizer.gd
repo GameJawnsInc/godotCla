@@ -127,6 +127,16 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		for a in by["ability"]:
 			if _kit_id(snap, a["slot"]) == "solar_lance" and _lance_hits(snap, a["target"]):
 				return a
+		# regen relief pays for itself in one turn once the skies have dimmed
+		if int(snap["dim"]) >= 1:
+			for a in by["ability"]:
+				if _kit_id(snap, a["slot"]) == "moss_filter":
+					return a
+		# anchor against a dragger in range before it starts reeling us in
+		if int(snap["player"].get("anchor_turns", 0)) == 0:
+			for a in by["ability"]:
+				if _kit_id(snap, a["slot"]) == "anchor_roots" and _dragger_near(snap):
+					return a
 		if snap["player"]["shield"] == 0 and near >= 1 and snap["player"]["charge"] >= 2:
 			for a in by["ability"]:
 				if _kit_id(snap, a["slot"]) == "thorn_shield":
@@ -175,9 +185,9 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 	var pref := [
 		"sun_flare", "grow_spike", "geyser", "thorn_shield", "water_jet",
-		"tide", "sap_snare", "spore_cloud", "gust", "vine_whip",
+		"tide", "sap_snare", "moss_filter", "spore_cloud", "gust", "vine_whip",
 		"pollen_burst", "solar_lance", "seed_bomb", "updraft", "overgrowth",
-		"burrow", "fungal_ring", "clear_air", "steam_vent", "root_wall",
+		"anchor_roots", "burrow", "fungal_ring", "clear_air", "steam_vent", "root_wall",
 	]
 	var offers: Array = snap["draft_offers"]
 	var best_pick := -1
@@ -349,6 +359,16 @@ func _threat_tiles(snap: Dictionary) -> Dictionary:
 		if k == "fire" or (ignite_coming and k == "oil"):
 			t[tile] = true
 	return t
+
+
+func _dragger_near(snap: Dictionary) -> bool:
+	var ppos: Vector2i = snap["player"]["pos"]
+	for e in snap["enemies"]:
+		if not e["traits"].has("drags") and not e["traits"].has("dredges"):
+			continue
+		if absi(e["pos"].x - ppos.x) + absi(e["pos"].y - ppos.y) <= 5:
+			return true
+	return false
 
 
 func _growth_adj_to(snap: Dictionary, pos: Vector2i) -> bool:

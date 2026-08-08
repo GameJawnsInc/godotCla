@@ -189,6 +189,24 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   Deeproot unchanged at 23/30. Skill ladder stays strictly ordered:
   0 / 0 / 2 / 9 / 17 / 23 across the six personas.
 
+### 2026-08-08 Anchor Roots + Moss Filter (pool answers to the new threats)
+
+- Anchor Roots (cost 1, self): drag immunity 4 turns - the counter to
+  Magnet Crane and The Dredge's pull. Moss Filter (cost 2, self): dim -1.
+  Moss Filter deliberately does NOT touch raw smog: a smog scrubber at
+  these costs would hold the clock below choke forever and resurrect the
+  camping hole the escalating choke closed. Dim relief is one-shot and
+  choke keeps scaling, so the clock still wins.
+- First version of Anchor Roots carried a +1 shield rider and collapsed
+  deeproot to 14/30 (baseline 26/30): its 1-ply eval scores shield at a
+  flat +12/point vs -2/charge, so a cheap shield rider is a strictly
+  positive cast every time shield gets chipped - ~20 extra turns/run of
+  re-anchoring tempo bleed, then dying to escalated choke in boss fights.
+  Shipped as pure anchor: solo check 23/30, playtest deeproot 22/30 -
+  collapse reversed.
+- Moss Filter solo 23/30... 24/30; optimizer 100-seed 45 vs 48 baseline -
+  pool dilution within noise. Suite green, zero timeouts.
+
 ### 2026-08-08 thorns reflect close-range slams (measured neutral)
 
 - Slams from a slammer within 2 tiles now trigger thorns, joining melee
@@ -310,6 +328,13 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from
   there still means the clock has weakened.
+- Deeproot eval bias: flat +12/shield point with no tempo cost makes cheap
+  shield riders strictly-positive spam (see Anchor Roots collapse). Any
+  future ability with a small self-buff rider needs a deeproot solo check
+  before shipping; thorn_shield's persistent mild underperformance in pair
+  tables is probably the same bleed.
+- Magpie 0/30 in the post-pool-addition playtest (band 5-15%, was 1-4).
+  Thin at 30 seeds; re-check at 100 if it repeats.
 - Boss deaths are rare once seed_bomb is protected; arrivals are the real
   filter. If arrival rates rise, re-check Furnace difficulty.
 - Elites are tanky bounty-carriers (+2 hp, +0 dmg, +4 bloom). The +1 dmg

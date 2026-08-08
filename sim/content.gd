@@ -103,6 +103,14 @@ const ABILITIES := {
 		"name": "Bramble Coat", "cost": 1, "target": "self", "range": 0,
 		"effects": [{"op": "thorns", "dmg": 2, "turns": 4}],
 	},
+	"anchor_roots": {
+		"name": "Anchor Roots", "cost": 1, "target": "self", "range": 0,
+		"effects": [{"op": "anchor", "turns": 4}],
+	},
+	"moss_filter": {
+		"name": "Moss Filter", "cost": 2, "target": "self", "range": 0,
+		"effects": [{"op": "undim", "amount": 1}],
+	},
 	# Upgraded variants: offered in drafts when the base is owned; replace in place.
 	"solar_lance+": {
 		"name": "Solar Lance+", "cost": 2, "target": "dir", "range": 4,
@@ -156,13 +164,21 @@ const ABILITIES := {
 		"name": "Bramble Coat+", "cost": 1, "target": "self", "range": 0,
 		"effects": [{"op": "thorns", "dmg": 3, "turns": 5}],
 	},
+	"anchor_roots+": {
+		"name": "Anchor Roots+", "cost": 1, "target": "self", "range": 0,
+		"effects": [{"op": "anchor", "turns": 7}],
+	},
+	"moss_filter+": {
+		"name": "Moss Filter+", "cost": 1, "target": "self", "range": 0,
+		"effects": [{"op": "undim", "amount": 1}],
+	},
 }
 
 ## Abilities that can appear in descent drafts. Mobility stays fixed for now.
 const DRAFT_POOL := [
 	"solar_lance", "seed_bomb", "vine_whip", "water_jet", "root_wall",
 	"pollen_burst", "sun_flare", "thorn_shield", "overgrowth", "sap_snare",
-	"grow_spike", "bramble_coat",
+	"grow_spike", "bramble_coat", "anchor_roots", "moss_filter",
 ]
 
 ## Grafts: passive run-long modifiers (the relic analog). Pure data; the sim
