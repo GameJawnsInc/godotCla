@@ -94,6 +94,15 @@ func floor_def(n: int) -> Dictionary:
 			fdef["enemies"][kind] = int(fdef["enemies"].get(kind, 0)) + 1
 	if mutators.has("double_oil"):
 		fdef["oil"] = int(fdef["oil"]) * 2
+	if mutators.has("overtime") and not fdef.get("boss", false):
+		var common := ""
+		var common_n := 0
+		for kind in fdef["enemies"]:
+			if int(fdef["enemies"][kind]) > common_n:
+				common_n = int(fdef["enemies"][kind])
+				common = kind
+		if common != "":
+			fdef["enemies"][common] = common_n + 1
 	var extra_elites := _tier_mod("extra_elites")
 	if extra_elites > 0 and not fdef.get("boss", false):
 		fdef["elites"] = int(fdef.get("elites", 0)) + extra_elites
@@ -287,7 +296,7 @@ func _enter_floor(n: int) -> void:
 		if spec.get("elite", false):
 			e["elite"] = true
 			e["hp"] += Content.ELITE_HP_BONUS
-	shop = _stock_shop()
+	shop = {} if mutators.has("boarded") else _stock_shop()
 	if _has_graft("carapace"):
 		player["shield"] = mini(maxi(player["shield"], 2), _shield_cap())
 	_emit({"t": "floor", "floor": n, "name": fdef["name"]})

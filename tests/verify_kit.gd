@@ -16,6 +16,8 @@ func _init() -> void:
 	var cfg := {}
 	if OS.get_environment("VERIFY_TIER") != "":
 		cfg["tier"] = int(OS.get_environment("VERIFY_TIER"))
+	if OS.get_environment("VERIFY_MUTATORS") != "":
+		cfg["mutators"] = Array(OS.get_environment("VERIFY_MUTATORS").split(","))
 	var extras := OS.get_environment("VERIFY_EXTRAS")
 	if extras != "":
 		var kit: Array = Content.STARTING_KIT.duplicate()
@@ -25,5 +27,7 @@ func _init() -> void:
 	var label := extras if extras != "" else "baseline"
 	if cfg.has("tier"):
 		label += " (tier %d)" % cfg["tier"]
+	if cfg.has("mutators"):
+		label += " [%s]" % ",".join(cfg["mutators"])
 	print("%s: %d/%d wins, avg floor %.1f" % [label, m["wins"], m["n"], m["avg_floor"]])
 	quit(0)

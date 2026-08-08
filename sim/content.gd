@@ -184,6 +184,8 @@ const MUTATORS := {
 	"double_oil": {"name": "Slick Combine", "desc": "twice the oil everywhere"},
 	"brittle": {"name": "Brittle Tender", "desc": "-3 max HP"},
 	"parched": {"name": "Parched Cells", "desc": "charge cannot be banked"},
+	"overtime": {"name": "Overtime Shift", "desc": "+1 of each floor's most common enemy"},
+	"boarded": {"name": "Boarded Shrines", "desc": "shrines sell nothing"},
 }
 
 ## Post-win difficulty tiers. Tier N applies the first N modifiers, stacking.
@@ -218,6 +220,8 @@ const MILESTONES := [
 	{"id": "double_oil", "kind": "mutator", "requires": {"wins": 1}, "desc": "Shut down the Furnace"},
 	{"id": "brittle", "kind": "mutator", "requires": {"tier_wins": 1}, "desc": "Win at tier 1 or higher"},
 	{"id": "parched", "kind": "mutator", "requires": {"tier_wins": 1}, "desc": "Win at tier 1 or higher"},
+	{"id": "overtime", "kind": "mutator", "requires": {"wins": 2}, "desc": "Shut down the Furnace twice"},
+	{"id": "boarded", "kind": "mutator", "requires": {"wins": 2}, "desc": "Shut down the Furnace twice"},
 ]
 
 ## Terrain vaults: hand-authored set-pieces stamped into a room. Terrain-only
