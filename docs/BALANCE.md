@@ -189,6 +189,25 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   Deeproot unchanged at 23/30. Skill ladder stays strictly ordered:
   0 / 0 / 2 / 9 / 17 / 23 across the six personas.
 
+### 2026-08-08 ceiling combo re-sweep (post new enemies + bot fixes)
+
+- Deeproot pair table rerun (45 pairs x 10 seeds, baseline 8/10). The
+  table compressed: no pair beats baseline now (old table had three
+  10/10s) - locked 5-ability kits lost ground as the game hardened.
+- Thorns reversal: bramble_coat sat in the old table's three best pairs
+  and now sits in five of nine flagged worst. 30-seed verification:
+  bramble_coat alone 23/30 vs baseline 26/30 - a real but mild decline.
+  Mechanism: Smokestack, Magnet Crane, and The Dredge attack without
+  melee contact, so thorns have fewer hits to reflect. Recorded as
+  design texture (ability value shifts with the enemy mix), not a bug.
+  Candidate future buff if thorns keep sliding: reflect slams from
+  slammers within 2 tiles.
+- water_jet + overgrowth confirmed weakest pair at 16/30 (-34) - the
+  established pure-support-pair pattern (no finisher). No data change,
+  consistent with the thorn_shield + overgrowth verdict.
+- thorn_shield + bramble_coat 21/30: mild redundant-reflection
+  anti-synergy, under threshold.
+
 ### 2026-08-08 The Dredge (third floor-7 boss)
 
 - Anti-growth mobile boss: drag-pull (range 4; x2 in phase 2), cross slam
