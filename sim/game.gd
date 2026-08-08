@@ -94,7 +94,17 @@ func floor_def(n: int) -> Dictionary:
 			fdef["enemies"][kind] = int(fdef["enemies"].get(kind, 0)) + 1
 	if mutators.has("double_oil"):
 		fdef["oil"] = int(fdef["oil"]) * 2
+	var extra_elites := _tier_mod("extra_elites")
+	if extra_elites > 0 and not fdef.get("boss", false):
+		fdef["elites"] = int(fdef.get("elites", 0)) + extra_elites
 	return fdef
+
+
+func _tier_mod(key: String) -> int:
+	var v := 0
+	for i in range(mini(tier, Content.TIERS.size())):
+		v += int(Content.TIERS[i].get(key, 0))
+	return v
 
 
 func shop_cost(item: String) -> int:
@@ -363,7 +373,7 @@ func _compute_intents() -> void:
 			else:
 				e["intent"] = {"type": "move"}
 		elif _manhattan(e["pos"], player["pos"]) == 1:
-			var dmg: int = int(edef["dmg"]) + (Content.ELITE_DMG_BONUS if e.get("elite", false) else 0)
+			var dmg: int = int(edef["dmg"]) + (Content.ELITE_DMG_BONUS if e.get("elite", false) else 0) + _tier_mod("enemy_dmg_delta")
 			e["intent"] = {"type": "attack", "tile": player["pos"], "dmg": dmg}
 		else:
 			e["intent"] = {"type": "move"}
@@ -386,14 +396,14 @@ func _compute_boss_intent(e: Dictionary, edef: Dictionary) -> void:
 				e["intent"] = {"type": "advance", "steps": 3 if p2 else 2}
 			1:
 				if _manhattan(e["pos"], player["pos"]) <= int(edef["slam_range"]):
-					e["intent"] = {"type": "slam", "tile": player["pos"], "dmg": edef["dmg"]}
+					e["intent"] = {"type": "slam", "tile": player["pos"], "dmg": int(edef["dmg"]) + _tier_mod("enemy_dmg_delta")}
 				else:
 					e["intent"] = {"type": "advance", "steps": 2}
 			2:
 				if p2 and _manhattan(e["pos"], player["pos"]) <= 2:
-					e["intent"] = {"type": "quake", "dmg": 2}
+					e["intent"] = {"type": "quake", "dmg": 2 + _tier_mod("enemy_dmg_delta")}
 				elif _manhattan(e["pos"], player["pos"]) <= int(edef["slam_range"]):
-					e["intent"] = {"type": "slam", "tile": player["pos"], "dmg": edef["dmg"]}
+					e["intent"] = {"type": "slam", "tile": player["pos"], "dmg": int(edef["dmg"]) + _tier_mod("enemy_dmg_delta")}
 				else:
 					e["intent"] = {"type": "advance", "steps": 2}
 		return
@@ -404,14 +414,14 @@ func _compute_boss_intent(e: Dictionary, edef: Dictionary) -> void:
 			e["intent"] = {"type": "flood", "row": row}
 		1:
 			if _manhattan(e["pos"], player["pos"]) <= int(edef["slam_range"]):
-				e["intent"] = {"type": "slam", "tile": player["pos"], "dmg": edef["dmg"]}
+				e["intent"] = {"type": "slam", "tile": player["pos"], "dmg": int(edef["dmg"]) + _tier_mod("enemy_dmg_delta")}
 			else:
 				e["intent"] = {"type": "gather"}
 		2:
 			if phase2:
 				e["intent"] = {"type": "ignite_all"}
 			elif _manhattan(e["pos"], player["pos"]) <= int(edef["slam_range"]):
-				e["intent"] = {"type": "slam", "tile": player["pos"], "dmg": edef["dmg"]}
+				e["intent"] = {"type": "slam", "tile": player["pos"], "dmg": int(edef["dmg"]) + _tier_mod("enemy_dmg_delta")}
 			else:
 				e["intent"] = {"type": "gather"}
 
@@ -970,7 +980,10 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 
 func _spawn(kind: String, pos: Vector2i) -> Dictionary:
 	var edef: Dictionary = Content.ENEMIES[kind]
-	var e := {"id": _next_id, "kind": kind, "hp": edef["hp"], "pos": pos, "intent": {"type": "idle"}, "split_used": false, "status": {}}
+	var hp: int = int(edef["hp"]) + _tier_mod("enemy_hp_delta")
+	if edef["traits"].has("boss"):
+		hp += _tier_mod("boss_hp_delta")
+	var e := {"id": _next_id, "kind": kind, "hp": hp, "pos": pos, "intent": {"type": "idle"}, "split_used": false, "status": {}}
 	_next_id += 1
 	enemies.append(e)
 	return e

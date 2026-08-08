@@ -6,6 +6,11 @@ const Optimizer := preload("res://bots/optimizer.gd")
 const Deeproot := preload("res://bots/deeproot.gd")
 
 
+## Bot selected by the SWEEP_BOT env var ("deeproot" for ceiling sweeps).
+static func pick_bot() -> GDScript:
+	return Deeproot if OS.get_environment("SWEEP_BOT") == "deeproot" else null
+
+
 static func run_one(seed_v: int, config: Dictionary = {}, bot_script: GDScript = null) -> Dictionary:
 	var game = Game.new(seed_v, config)
 	var bot = (bot_script if bot_script != null else Optimizer).new()

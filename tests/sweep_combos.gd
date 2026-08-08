@@ -11,7 +11,8 @@ const FLAG_MARGIN := 30  # percentage points from baseline
 
 
 func _init() -> void:
-	var base := Sweep.measure(SEEDS)
+	var bot := Sweep.pick_bot()
+	var base := Sweep.measure(SEEDS, {}, bot)
 	var base_pct: float = 100.0 * base["wins"] / base["n"]
 	print("baseline (standard kit): %d/%d (%.0f%%), avg floor %.1f" % [base["wins"], base["n"], base_pct, base["avg_floor"]])
 
@@ -26,7 +27,7 @@ func _init() -> void:
 			var kit: Array = Content.STARTING_KIT.duplicate()
 			kit.append(extras[i])
 			kit.append(extras[j])
-			var m := Sweep.measure(SEEDS, {"kit": kit})
+			var m := Sweep.measure(SEEDS, {"kit": kit}, bot)
 			rows.append({"pair": "%s + %s" % [extras[i], extras[j]], "wins": m["wins"], "avg_floor": m["avg_floor"]})
 
 	rows.sort_custom(func(a, b): return a["wins"] > b["wins"])

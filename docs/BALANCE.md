@@ -83,6 +83,19 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   routes around. Future tiers that should bind the ceiling need modifiers
   that bind optimal play too: enemy stats, elite density, boss buffs.
 
+### 2026-08-08 ceiling tiers 6-8
+
+- Three stat-based tiers appended (Hardened Plating: enemy hp +1; Sharpened
+  Drills: enemy dmg +1; Overcharged Core: boss hp +6, +1 elite/floor).
+- Optimizer ladder (20 seeds): 5/4/4/9/8/6 across tiers 0-5 (noise band),
+  then 2/3/2 at tiers 6-8 - brutal for heuristic play but winnable.
+- Deeproot ladder (20 seeds): 14/12/12/13/14/14 flat through tier 5, then
+  **9/7/8 at tiers 6-8** with avg depth 6.7 -> 5.7. The stat tiers are the
+  first content that binds near-optimal play - the ladder now has a top.
+- Sweeps accept SWEEP_BOT=deeproot for ceiling-accurate runs; sweep_tiers
+  fails on zero-win tiers <= 5 with the optimizer, and on any zero-win tier
+  when judged by the ceiling bot.
+
 ## Watch list
 
 - `parched` mutator barely affects the optimizer (banking may be undervalued).

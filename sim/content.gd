@@ -193,6 +193,10 @@ const TIERS := [
 	{"name": "Rich Veins", "extra_enemy": "drill_bot"},
 	{"name": "Dim Skies", "dim_delta": -2},
 	{"name": "Gouging Prices", "shop_markup": 1},
+	# Ceiling tiers: stat modifiers that bind even near-optimal play.
+	{"name": "Hardened Plating", "enemy_hp_delta": 1},
+	{"name": "Sharpened Drills", "enemy_dmg_delta": 1},
+	{"name": "Overcharged Core", "boss_hp_delta": 6, "extra_elites": 1},
 ]
 const SHOP_HEAL_AMOUNT := 4
 const DESCEND_MAX_HP_BONUS := 1

@@ -10,14 +10,15 @@ const SEEDS := 20
 
 
 func _init() -> void:
-	var base := Sweep.measure(SEEDS)
+	var bot := Sweep.pick_bot()
+	var base := Sweep.measure(SEEDS, {}, bot)
 	print("baseline pool: %d/%d wins, avg floor %.1f" % [base["wins"], base["n"], base["avg_floor"]])
 	var configs := {}
 	for pkg in Content.PACKAGES:
 		configs[pkg] = {"packages": [pkg]}
 	configs["all three"] = {"packages": Content.PACKAGES.keys()}
 	for label in configs:
-		var m := Sweep.measure(SEEDS, configs[label])
+		var m := Sweep.measure(SEEDS, configs[label], bot)
 		var drafted := {}
 		for kit in m["win_kits"]:
 			for aid in kit:
