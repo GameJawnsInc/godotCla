@@ -596,8 +596,11 @@ func _tick_smog() -> void:
 		_emit({"t": "smog_dim", "dim": dim})
 	var choke: int = fdef.get("smog_choke", 0)
 	if choke > 0 and smog >= choke and (smog - choke) % 3 == 0:
+		# escalates as the smog deepens so no amount of healing sustains
+		# camping forever - the clock must always win eventually, or streams
+		# of summons plus growth regen produce unwinnable-but-unlosable runs
 		_emit({"t": "choke"})
-		_damage_player(1, "smog")
+		_damage_player(1 + (smog - choke) / 60, "smog")
 		if over:
 			return
 	var spawn: bool = fdef["smog_spawn"].has(smog)

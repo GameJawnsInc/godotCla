@@ -19,7 +19,7 @@ Reference numbers for TENDER's difficulty, and the discipline for changing them.
 |-----------|-------------------------|-----|
 | deeproot  | 70–90% wins             | the search ceiling: near-perfect play should nearly always win |
 | optimizer | 45–65% wins             | skilled play should win often but never be safe (raised from 30–50 after the tempo fix — the old band measured a bot flaw) |
-| fanatic   | 15–30% overall; every build > 0 | committing to a niche build must stay viable |
+| fanatic   | 30–50% overall; every build > 0 | committing to a niche build must stay viable (raised from 15–30 after the tempo/loop fixes) |
 | magpie    | 5–15%, top bloom        | full greed should usually lose to the clock, richly |
 | sprout    | avg depth 3.5–5, wins rare | noobs feel progress; full clears are earned |
 | wanderer  | dies floor 1–2, 0 wins  | the world must punish random play |
@@ -189,11 +189,60 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   Deeproot unchanged at 23/30. Skill ladder stays strictly ordered:
   0 / 0 / 2 / 9 / 17 / 23 across the six personas.
 
+### 2026-08-08 escalating choke: the clock always wins now
+
+- The last three turtle timeouts were not a bot flaw. Autopsy: cornered in
+  a one-entrance niche by an extractor's spawn stream that refills the
+  corridor every enemy phase, healing on growth faster than the flat choke
+  (1 dmg / 3 turns vs 1 heal / turn). Unwinnable-but-unlosable - a real
+  design hole that a defensive human player could hit too, violating both
+  the zero-softlock target and "the game counters passivity."
+- Sim fix: choke damage now escalates - 1 + (smog - choke) / 60 per tick.
+  Invisible within 60 smog of the threshold (no normal run changes),
+  out-heals growth past ~120, guarantees every run terminates.
+- Fanatic 100-seed table after (tests/measure_fanatic.gd, now a permanent
+  harness script): pyro 14/25, shover 14/25, gardener 9/25, turtle 5/25,
+  total 42/100, **timeouts: zero**. Every build wins. Band raised to
+  30-50%. Turtle canary re-baselined at 5/25: its rise came from the
+  survival gate / retreat / cooldown fixes (bot skill), not clock decay -
+  the escalating choke strengthens the clock.
+- Full suite green with all six personas at zero timeouts for the first
+  time: 0/0/3/12/21/23 wins, determinism 39, invariants 1400/0, meta OK.
+
+### 2026-08-08 no greedy cleansing + the timeout hunt
+
+- Rich Veins scoring above base in the post-tempo-fix tier ladder pointed
+  at the last dawdling habit: extra enemies were suppressing the greedy
+  cleanse. Measured at 100 seeds: removing greedy cleansing entirely is
+  +11 wins (59 -> 70 solo; 63/100 with all of this round's fixes in).
+  The optimizer now cleanses only where it pays - boss gates and tiles it
+  passes anyway. Tier ladder is monotonic again:
+  15/14/14/11/11/10/9/7/3 - Rich Veins anomaly gone.
+- Timeout hunt (target: zero). All six 30-seed timeouts autopsied; every
+  one was the same disease - a locally-reasonable action with no progress
+  requirement:
+  1. Strike-lowest-HP executed an extractor's endless hp-1 spawn stream
+     forever. Summoners now outrank spawns, and blocked routes advance on
+     the summoner first.
+  2. Fanatic's overgrowth trigger re-cast every turn; growth healing kept
+     pace with choke damage - immortal at turn 400. Now on a 6-turn
+     cooldown, and build casts defer to the survival gate under lethal
+     telegraphed damage. vine_whip gated to enemies within 2.
+  3. Magpie dash-dodged between the same two growth tiles forever while
+     cornered. Dashes now require strict BFS progress toward the stairs
+     (boss floors exempt - any safe dash counts there).
+- Playtest after: timeouts 6 -> 1 (one fanatic straggler, watch-listed);
+  magpie 3/30 in band with avg turns down 125 -> 97; fanatic 12/30 with
+  gardener 5/7 (was the worst build, now the best - the overgrowth
+  cooldown freed its charge for seed bombs); optimizer 21/30; deeproot
+  23/30 unchanged. Ladder: 0 / 0 / 3 / 12 / 21 / 23.
+- Optimizer seed 2 - the death that started the whole tempo
+  investigation - now wins.
+
 ## Watch list
 
-- Magpie and fanatic each logged 3/30 timeouts in the tempo-fix playtest
-  (magpie harvest loops, fanatic build stubbornness) - above the zero
-  target. Autopsy a couple if they persist next round.
+- Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from
+  there still means the clock has weakened.
 - Boss deaths are rare once seed_bomb is protected; arrivals are the real
   filter. If arrival rates rise, re-check Furnace difficulty.
 - Elites are tanky bounty-carriers (+2 hp, +0 dmg, +4 bloom). The +1 dmg

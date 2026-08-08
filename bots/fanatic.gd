@@ -12,6 +12,8 @@ const BUILDS := {
 }
 
 var build := "pyro"
+var _last_overgrowth := -99
+var _last_def_cast := -99
 
 
 func get_bot_name() -> String:
@@ -26,6 +28,8 @@ func reset(seed_v: int) -> void:
 	super.reset(seed_v)
 	var names: Array = BUILDS.keys()
 	build = names[seed_v % names.size()]
+	_last_overgrowth = -99
+	_last_def_cast = -99
 
 
 func _wants(aid: String) -> bool:
@@ -53,6 +57,13 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		for a in by["buy"]:
 			if a["item"] == "ability" and _wants(String(snap["shop"].get("ability", ""))):
 				return a
+
+	# fanatic about the build, not suicidal: standing in lethal telegraphed
+	# damage routes to the parent's survival gate before any build cast
+	var threat := _threat_tiles(snap)
+	var ppos: Vector2i = snap["player"]["pos"]
+	if threat.has(ppos) and snap["player"]["hp"] + snap["player"]["shield"] <= _incoming_dmg(snap) * 2:
+		return super.choose_action(snap, legal)
 
 	# a shielded boss core can't be fought through the build - defer to the
 	# parent ladder, which clears the clogged vents first
@@ -87,19 +98,31 @@ func _build_cast(snap: Dictionary, by: Dictionary) -> Variant:
 			"sun_flare", "pollen_burst":
 				if near2 >= 1:
 					return a
-			"grow_spike", "vine_whip":
+			"grow_spike":
 				return a
+			"vine_whip":
+				if near2 >= 1:
+					return a
 			"seed_bomb":
 				if near3 >= 1 and not _growth_adj_to(snap, ppos):
 					return a
 			"overgrowth":
-				if near3 >= 1:
+				# cooldown breaks the homeostasis loop: growth healing kept
+				# pace with choke damage and runs sat immortal at turn 400
+				if near3 >= 1 and int(snap["turn"]) - _last_overgrowth >= 6:
+					_last_overgrowth = int(snap["turn"])
 					return a
 			"thorn_shield":
-				if snap["player"]["shield"] == 0 and near3 >= 1:
+				# cooldown between defensive recasts, or the turtle stands in
+				# a corner re-shielding forever while growth heals the choke -
+				# the last immortal-stall loop. Off-cooldown turns fall through
+				# to the parent's pathing, so the turtle actually walks.
+				if snap["player"]["shield"] == 0 and near3 >= 1 and int(snap["turn"]) - _last_def_cast >= 3:
+					_last_def_cast = int(snap["turn"])
 					return a
 			"bramble_coat":
-				if int(snap["player"].get("thorns_turns", 0)) == 0 and near2 >= 1:
+				if int(snap["player"].get("thorns_turns", 0)) == 0 and near2 >= 1 and int(snap["turn"]) - _last_def_cast >= 3:
+					_last_def_cast = int(snap["turn"])
 					return a
 			"root_wall", "sap_snare":
 				if near3 >= 1 and near2 == 0:

@@ -59,6 +59,29 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 			if _kit_id(snap, a["slot"]) == "grow_spike":
 				return a
 
+	# Desperation: 120+ turns on one floor means some stable loop has eaten
+	# the run (spawn streams, corner shield-cycling, dodge orbits). Stop
+	# optimizing - walk to the stairs, strike only what plugs the path, and
+	# take the hits on the way out.
+	var stairs_d: Vector2i = snap["map"]["stairs"]
+	if int(snap["turn"]) > 120 and stairs_d != Vector2i(-1, -1):
+		if by.has("move"):
+			var dstep := _bfs_step(snap, false, threat, stairs_d)
+			if dstep != Vector2i.ZERO:
+				for a in by["move"]:
+					if a["dir"] == dstep:
+						return a
+		if by.has("strike"):
+			var ba = null
+			var bd := 999999
+			for a in by["strike"]:
+				var d := _bfs_dist(snap, ppos + a["dir"], stairs_d)
+				if d < bd:
+					bd = d
+					ba = a
+			if ba != null:
+				return ba
+
 	# Survival gate: standing in telegraphed damage without the HP to trade.
 	# A strike only helps here if it kills the attacker before the hit lands;
 	# otherwise step out first and fight from a safe tile.
@@ -73,12 +96,18 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 			return out
 
 	if by.has("strike"):
+		# lowest HP first, but summoners outrank their spawns - executing the
+		# endless hp-1 stream while the engine keeps summoning is how magpie
+		# runs used to time out at turn 400
 		var best = null
-		var best_hp := 999
+		var best_key := 999999
 		for a in by["strike"]:
 			var e = _enemy_at(snap, ppos + a["dir"])
-			if e != null and e["hp"] < best_hp:
-				best_hp = e["hp"]
+			if e == null:
+				continue
+			var key: int = e["hp"] - (1000 if e["traits"].has("summons") else 0)
+			if key < best_key:
+				best_key = key
 				best = a
 		if best != null:
 			return best
@@ -123,10 +152,10 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 				if _kit_id(snap, a["slot"]) == "seed_bomb" and a["target"] == ppos:
 					return a
 
-	# greedy cleansing only while the skies are still clear - the bloom is not
-	# worth the turns once the smog clock starts dimming regen
-	if by.has("cleanse") and _nearest_enemy_dist(snap) > 3 and int(snap["dim"]) == 0:
-		return by["cleanse"][0]
+	# No greedy cleansing: measured at 100 seeds, cleansing off the stairs path
+	# costs 11 wins (59 -> 70 without it). The bloom never repays the turns.
+	# Cleansing still happens where it pays: boss-gate clearing above, and
+	# whatever a shrine purchase passes by.
 
 	if by.has("move"):
 		var step := _path_step(snap, threat)
@@ -209,9 +238,23 @@ func _dodge(snap: Dictionary, by: Dictionary, threat: Dictionary) -> Dictionary:
 		for a in by["ability"]:
 			if _kit_id(snap, a["slot"]) == "water_jet" and _enemy_at(snap, ppos + a["target"]) != null:
 				return a
+		# dash out only if it makes progress toward the stairs - dashing
+		# between the same two growth tiles while healing off the choke
+		# was the magpie immortality loop. Boss floors have no stairs, so
+		# any safe dash is progress there.
+		var dash_goal: Vector2i = snap["map"]["stairs"]
+		var best_dash: Dictionary = {}
+		var best_dd := _bfs_dist(snap, ppos, dash_goal)
 		for a in by["ability"]:
 			if _kit_id(snap, a["slot"]) == "mycelium_dash" and not threat.has(a["target"]):
-				return a
+				if dash_goal == Vector2i(-1, -1):
+					return a
+				var dd := _bfs_dist(snap, a["target"], dash_goal)
+				if dd < best_dd:
+					best_dd = dd
+					best_dash = a
+		if not best_dash.is_empty():
+			return best_dash
 		for a in by["ability"]:
 			if _kit_id(snap, a["slot"]) == "sap_snare":
 				return a
@@ -377,11 +420,29 @@ func _path_step(snap: Dictionary, threat: Dictionary) -> Vector2i:
 	step = _bfs_step(snap, false, threat, stairs)
 	if step != Vector2i.ZERO:
 		return step
-	# Route to the stairs is blocked by enemies: advance on the nearest one.
-	var target := _nearest_enemy_pos(snap)
+	# Route to the stairs is blocked by enemies: advance on a summoner first -
+	# its spawn stream is usually what is clogging the corridor, and killing
+	# spawns adjacent to us forever is a timeout, not progress.
+	var target := _nearest_summoner_pos(snap)
+	if target == Vector2i(-1, -1):
+		target = _nearest_enemy_pos(snap)
 	if target != Vector2i(-1, -1):
 		return _bfs_step(snap, false, threat, target)
 	return Vector2i.ZERO
+
+
+func _nearest_summoner_pos(snap: Dictionary) -> Vector2i:
+	var ppos: Vector2i = snap["player"]["pos"]
+	var best := Vector2i(-1, -1)
+	var best_d := 9999
+	for e in snap["enemies"]:
+		if not e["traits"].has("summons"):
+			continue
+		var d: int = absi(e["pos"].x - ppos.x) + absi(e["pos"].y - ppos.y)
+		if d < best_d:
+			best_d = d
+			best = e["pos"]
+	return best
 
 
 func _nearest_enemy_pos(snap: Dictionary) -> Vector2i:
