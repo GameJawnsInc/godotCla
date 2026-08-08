@@ -63,6 +63,42 @@ const ABILITIES := {
 		"name": "Grow Spike", "cost": 1, "target": "enemy_near_growth", "range": 3,
 		"effects": [{"op": "damage", "dmg": 3}],
 	},
+	"spore_cloud": {
+		"name": "Spore Cloud", "cost": 2, "target": "self", "range": 2,
+		"effects": [{"op": "aoe_status", "status": "spore", "turns": 3, "radius": 2}],
+	},
+	"fungal_ring": {
+		"name": "Fungal Ring", "cost": 1, "target": "self", "range": 1,
+		"effects": [{"op": "grow_radius", "radius": 1}],
+	},
+	"burrow": {
+		"name": "Burrow", "cost": 2, "target": "tile", "range": 3,
+		"effects": [{"op": "teleport"}],
+	},
+	"tide": {
+		"name": "Tide", "cost": 2, "target": "self", "range": 2,
+		"effects": [{"op": "wash_all", "push": 2, "collision_dmg": 1}],
+	},
+	"steam_vent": {
+		"name": "Steam Vent", "cost": 1, "target": "tile_any", "range": 3,
+		"effects": [{"op": "create_terrain", "kind": "smoke", "ttl": 3}],
+	},
+	"geyser": {
+		"name": "Geyser", "cost": 2, "target": "self", "range": 1,
+		"effects": [{"op": "aoe_damage", "dmg": 1, "radius": 1}, {"op": "push_all", "dist": 2}],
+	},
+	"gust": {
+		"name": "Gust", "cost": 1, "target": "dir", "range": 3,
+		"effects": [{"op": "push_line", "dist": 3, "clear_smoke": true}],
+	},
+	"updraft": {
+		"name": "Updraft", "cost": 1, "target": "dir", "range": 3,
+		"effects": [{"op": "dash_dir"}],
+	},
+	"clear_air": {
+		"name": "Clear Air", "cost": 2, "target": "self", "range": 3,
+		"effects": [{"op": "clear_smoke", "radius": 3}, {"op": "push_all", "dist": 1}],
+	},
 }
 
 ## Abilities that can appear in descent drafts. Mobility stays fixed for now.
@@ -82,9 +118,25 @@ const GRAFTS := {
 }
 
 const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 5}
+
+## Post-win difficulty tiers. Tier N applies the first N modifiers, stacking.
+const TIERS := [
+	{"name": "Thicker Smog", "choke_delta": -4},
+	{"name": "Busy Vents", "spawn_every_delta": -2},
+	{"name": "Rich Veins", "extra_enemy": "drill_bot"},
+	{"name": "Dim Skies", "dim_delta": -2},
+	{"name": "Gouging Prices", "shop_markup": 1},
+]
 const SHOP_HEAL_AMOUNT := 4
 const DESCEND_MAX_HP_BONUS := 1
 const DESCEND_HEAL := 4
+
+## Meta-unlock tech packages: milestones add these to the draft pool.
+const PACKAGES := {
+	"mycology": ["spore_cloud", "fungal_ring", "burrow"],
+	"hydraulics": ["tide", "steam_vent", "geyser"],
+	"aeolian": ["gust", "updraft", "clear_air"],
+}
 
 const ENEMIES := {
 	"drill_bot": {"name": "Drill Bot", "hp": 3, "dmg": 2, "slow": false, "traits": []},

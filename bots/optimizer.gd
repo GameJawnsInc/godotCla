@@ -73,6 +73,10 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 				return a
 			if aid == "pollen_burst" and _enemies_within(snap, 1) >= 2:
 				return a
+			if aid == "geyser" and _enemies_within(snap, 1) >= 2:
+				return a
+			if aid == "spore_cloud" and near >= 2:
+				return a
 		for a in by["ability"]:
 			if snap["player"]["kit"][a["slot"]] == "solar_lance" and _lance_hits(snap, a["target"]):
 				return a
@@ -97,6 +101,9 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 					return a
 			for a in by["ability"]:
 				if snap["player"]["kit"][a["slot"]] == "sap_snare":
+					return a
+			for a in by["ability"]:
+				if snap["player"]["kit"][a["slot"]] == "gust" and _enemy_at(snap, ppos + a["target"]) != null:
 					return a
 
 	# rest up on growth when the coast is clear
@@ -133,9 +140,10 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 
 func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 	var pref := [
-		"sun_flare", "grow_spike", "thorn_shield", "water_jet", "sap_snare",
-		"vine_whip", "pollen_burst", "solar_lance", "seed_bomb", "overgrowth",
-		"root_wall",
+		"sun_flare", "grow_spike", "geyser", "thorn_shield", "water_jet",
+		"tide", "sap_snare", "spore_cloud", "gust", "vine_whip",
+		"pollen_burst", "solar_lance", "seed_bomb", "updraft", "overgrowth",
+		"burrow", "fungal_ring", "clear_air", "steam_vent", "root_wall",
 	]
 	var offers: Array = snap["draft_offers"]
 	var best_pick := -1

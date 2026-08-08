@@ -36,22 +36,58 @@ var recent_events: Array = []
 var phase := "play"
 var draft_offers: Array = []
 var shop := {}
+var tier := 0
+var draft_pool: Array = []
 
 var _next_id := 1
 var _step_events: Array = []
 var _pending_floor := 0
 
 
-func _init(seed_v: int) -> void:
+func _init(seed_v: int, config: Dictionary = {}) -> void:
 	seed_value = seed_v
 	rng.seed = seed_v
+	tier = int(config.get("tier", 0))
+	draft_pool = config.get("pool", Content.DRAFT_POOL).duplicate()
+	for pkg in config.get("packages", []):
+		for aid in Content.PACKAGES[pkg]:
+			if not draft_pool.has(aid):
+				draft_pool.append(aid)
 	player = {
 		"pos": Vector2i.ZERO, "hp": Content.PLAYER_HP, "max_hp": Content.PLAYER_HP,
-		"charge": 0, "bank": 0, "shield": 0, "kit": Content.STARTING_KIT.duplicate(),
+		"charge": 0, "bank": 0, "shield": 0,
+		"kit": config.get("kit", Content.STARTING_KIT).duplicate(),
 		"uses": {}, "grafts": [], "gummed": {},
 	}
 	_enter_floor(1)
 	_begin_player_turn()
+
+
+## Floor definition with this run's difficulty-tier modifiers applied.
+func floor_def(n: int) -> Dictionary:
+	var fdef: Dictionary = Content.FLOORS[n - 1].duplicate(true)
+	for i in range(mini(tier, Content.TIERS.size())):
+		var mod: Dictionary = Content.TIERS[i]
+		if mod.has("choke_delta") and fdef.get("smog_choke", 0) > 0:
+			fdef["smog_choke"] = maxi(10, fdef["smog_choke"] + int(mod["choke_delta"]))
+		if mod.has("spawn_every_delta") and fdef.get("smog_spawn_every", 0) > 0:
+			fdef["smog_spawn_every"] = maxi(4, fdef["smog_spawn_every"] + int(mod["spawn_every_delta"]))
+		if mod.has("dim_delta"):
+			var dims: Array = []
+			for v in fdef["smog_dim"]:
+				dims.append(maxi(4, int(v) + int(mod["dim_delta"])))
+			fdef["smog_dim"] = dims
+		if mod.has("extra_enemy") and not fdef.get("boss", false):
+			var kind := String(mod["extra_enemy"])
+			fdef["enemies"][kind] = int(fdef["enemies"].get(kind, 0)) + 1
+	return fdef
+
+
+func shop_cost(item: String) -> int:
+	var cost: int = Content.SHOP_COSTS.get(item, 9999)
+	for i in range(mini(tier, Content.TIERS.size())):
+		cost += int(Content.TIERS[i].get("shop_markup", 0))
+	return cost
 
 
 # --- public API ---------------------------------------------------------------
@@ -123,11 +159,11 @@ func legal_actions() -> Array:
 	if player["pos"] == map["stairs"]:
 		acts.append({"type": "descend"})
 	if player["pos"] == map["shrine"]:
-		if shop.get("heal", false) and bloom >= Content.SHOP_COSTS["heal"] and player["hp"] < player["max_hp"]:
+		if shop.get("heal", false) and bloom >= shop_cost("heal") and player["hp"] < player["max_hp"]:
 			acts.append({"type": "buy", "item": "heal"})
-		if shop.has("ability") and bloom >= Content.SHOP_COSTS["ability"] and player["kit"].size() < Content.KIT_MAX:
+		if shop.has("ability") and bloom >= shop_cost("ability") and player["kit"].size() < Content.KIT_MAX:
 			acts.append({"type": "buy", "item": "ability"})
-		if shop.has("graft") and bloom >= Content.SHOP_COSTS["graft"]:
+		if shop.has("graft") and bloom >= shop_cost("graft"):
 			acts.append({"type": "buy", "item": "graft"})
 	acts.append({"type": "end_turn"})
 	return acts
@@ -148,7 +184,7 @@ func snapshot() -> Dictionary:
 	for t in terrain.keys():
 		terr[t] = terrain[t].duplicate()
 	return {
-		"floor": floor_num, "floor_name": Content.FLOORS[floor_num - 1]["name"],
+		"floor": floor_num, "floor_name": Content.FLOORS[floor_num - 1]["name"], "tier": tier,
 		"turn": turn, "total_turns": total_turns,
 		"smog": smog, "dim": dim, "bloom": bloom,
 		"over": over, "won": won, "death_cause": death_cause,
@@ -182,7 +218,7 @@ func _enter_floor(n: int) -> void:
 	turn = 0
 	smog = 0
 	dim = 0
-	var fdef: Dictionary = Content.FLOORS[n - 1]
+	var fdef := floor_def(n)
 	var gen := MapGen.generate(rng, fdef)
 	map = gen
 	terrain = gen["terrain"]
@@ -198,7 +234,7 @@ func _enter_floor(n: int) -> void:
 func _stock_shop() -> Dictionary:
 	var stock := {"heal": true}
 	var aids: Array = []
-	for aid in Content.DRAFT_POOL:
+	for aid in draft_pool:
 		if not player["kit"].has(aid):
 			aids.append(aid)
 	if not aids.is_empty():
@@ -404,6 +440,10 @@ func _environment_phase() -> void:
 	for p in spreads:
 		terrain[p] = {"kind": "fire", "ttl": 2}
 		_emit({"t": "ignite", "tile": p})
+	for e in enemies.duplicate():
+		if int(e["status"].get("spore", 0)) > 0:
+			e["status"]["spore"] -= 1
+			_damage_enemy(e, 1, "spore")
 	if _terrain_kind(player["pos"]) == "growth" and player["hp"] < player["max_hp"]:
 		var heal_amt: int = 1 + (1 if _has_graft("verdant_pulse") else 0)
 		player["hp"] = mini(player["hp"] + heal_amt, player["max_hp"])
@@ -412,7 +452,7 @@ func _environment_phase() -> void:
 
 func _tick_smog() -> void:
 	smog += 1
-	var fdef: Dictionary = Content.FLOORS[floor_num - 1]
+	var fdef := floor_def(floor_num)
 	if fdef["smog_dim"].has(smog) and dim < 2:
 		dim += 1
 		_emit({"t": "smog_dim", "dim": dim})
@@ -447,11 +487,7 @@ func _act_move(action: Dictionary) -> void:
 	player["charge"] -= cost
 	player["pos"] = dest
 	_emit({"t": "move", "who": "player", "to": dest})
-	var k := _terrain_kind(dest)
-	if k == "fire":
-		_damage_player(1, "fire")
-	elif k == "goo":
-		_damage_player(1, "goo")
+	_player_enter_tile()
 
 
 func _act_strike(action: Dictionary) -> void:
@@ -503,7 +539,7 @@ func _act_descend() -> void:
 
 func _draw_draft_offers(count: int) -> Array:
 	var candidates: Array = []
-	for aid in Content.DRAFT_POOL:
+	for aid in draft_pool:
 		if not player["kit"].has(aid):
 			candidates.append(aid)
 	var offers: Array = []
@@ -541,7 +577,7 @@ func _act_draft(action: Dictionary) -> void:
 
 func _act_buy(action: Dictionary) -> void:
 	var item := String(action.get("item", ""))
-	var cost: int = Content.SHOP_COSTS.get(item, 9999)
+	var cost: int = shop_cost(item)
 	var on_shrine: bool = player["pos"] == map["shrine"]
 	if not on_shrine or bloom < cost:
 		_emit({"t": "illegal", "action": "buy"})
@@ -705,33 +741,47 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 					return
 			_damage_enemy(e, int(eff["dmg"]), "vine_whip")
 		"wash_push":
-			var line: Array = []
+			_wash_dir(target, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]))
+		"wash_all":
+			for d in DIRS:
+				_wash_dir(d, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]))
+		"push_line":
 			var p: Vector2i = player["pos"]
 			for i in range(int(adef["range"])):
 				p += target
 				if _tile(p) == MapGen.T_WALL:
 					break
-				line.append(p)
-			var pushed = null
-			for t in line:
-				var k := _terrain_kind(t)
-				if k == "oil" or k == "fire":
+				if bool(eff.get("clear_smoke", false)) and _terrain_kind(p) == "smoke":
+					terrain.erase(p)
+					_emit({"t": "smoke_cleared", "tile": p})
+				var e = _enemy_at(p)
+				if e != null:
+					_push_enemy(e, target, int(eff["dist"]), 1)
+					break
+		"push_all":
+			for d in DIRS:
+				var e = _enemy_at(player["pos"] + d)
+				if e != null:
+					_push_enemy(e, d, int(eff["dist"]), 1)
+		"dash_dir":
+			for i in range(int(adef["range"])):
+				var nxt: Vector2i = player["pos"] + target
+				if not _open(nxt):
+					break
+				player["pos"] = nxt
+				_player_enter_tile()
+				if over:
+					return
+			_emit({"t": "dash", "to": player["pos"]})
+		"create_terrain":
+			if _tile(target) == MapGen.T_FLOOR and not terrain.has(target):
+				terrain[target] = {"kind": String(eff["kind"]), "ttl": int(eff["ttl"])}
+				_emit({"t": "terrain", "kind": eff["kind"], "tile": target})
+		"clear_smoke":
+			for t in terrain.keys().duplicate():
+				if terrain[t]["kind"] == "smoke" and _manhattan(t, player["pos"]) <= int(eff["radius"]):
 					terrain.erase(t)
-					_emit({"t": "wash", "tile": t})
-				if pushed == null:
-					var e = _enemy_at(t)
-					if e != null and not Content.ENEMIES[e["kind"]]["traits"].has("massive"):
-						pushed = e
-			if pushed != null:
-				for i in range(int(eff["push"])):
-					var nxt: Vector2i = pushed["pos"] + target
-					if not _open(nxt):
-						_damage_enemy(pushed, int(eff["collision_dmg"]), "collision")
-						break
-					pushed["pos"] = nxt
-					_enemy_enter_tile(pushed)
-					if not enemies.has(pushed):
-						break
+					_emit({"t": "smoke_cleared", "tile": t})
 		"teleport":
 			player["pos"] = target
 			_emit({"t": "teleport", "to": target})
@@ -850,6 +900,51 @@ func _damage_player(amt: int, src: String) -> void:
 		over = true
 		death_cause = src
 		_emit({"t": "player_death", "cause": src})
+
+
+func _push_enemy(e: Dictionary, dir: Vector2i, dist: int, collision_dmg: int) -> void:
+	if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
+		return
+	for i in range(dist):
+		var nxt: Vector2i = e["pos"] + dir
+		if not _open(nxt):
+			if collision_dmg > 0:
+				_damage_enemy(e, collision_dmg, "collision")
+			return
+		e["pos"] = nxt
+		_enemy_enter_tile(e)
+		if not enemies.has(e):
+			return
+
+
+func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int) -> void:
+	var line: Array = []
+	var p: Vector2i = player["pos"]
+	for i in range(rng_):
+		p += dir
+		if _tile(p) == MapGen.T_WALL:
+			break
+		line.append(p)
+	var pushed = null
+	for t in line:
+		var k := _terrain_kind(t)
+		if k == "oil" or k == "fire":
+			terrain.erase(t)
+			_emit({"t": "wash", "tile": t})
+		if pushed == null:
+			var e = _enemy_at(t)
+			if e != null and not Content.ENEMIES[e["kind"]]["traits"].has("massive"):
+				pushed = e
+	if pushed != null:
+		_push_enemy(pushed, dir, push, collision_dmg)
+
+
+func _player_enter_tile() -> void:
+	var k := _terrain_kind(player["pos"])
+	if k == "fire":
+		_damage_player(1, "fire")
+	elif k == "goo":
+		_damage_player(1, "goo")
 
 
 func _growth_adjacent(p: Vector2i) -> bool:
