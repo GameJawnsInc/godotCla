@@ -40,6 +40,7 @@ func _run(bot_name: String, seed_v: int) -> Dictionary:
 	return {
 		"won": game.won, "timeout": not game.over, "floor": game.floor_num,
 		"turns": game.total_turns, "bloom": game.bloom, "cause": game.death_cause,
+		"kit": game.player["kit"].duplicate(),
 	}
 
 
@@ -80,3 +81,15 @@ func _report(bot_name: String, runs: Array) -> void:
 	print("%-10s wins %d/%d  deaths %d  timeouts %d  avg floor %.1f  avg turns %.1f  avg bloom %.1f" % [
 		bot_name, wins, n, deaths, timeouts, float(floors) / n, float(turns) / n, float(bloom) / n])
 	print("           deaths by floor %s  causes %s" % [str(by_floor), str(by_cause)])
+	# draft-to-win correlation: for each ability in a final kit, runs and wins
+	var kit_runs := {}
+	var kit_wins := {}
+	for r in runs:
+		for aid in r["kit"]:
+			kit_runs[aid] = kit_runs.get(aid, 0) + 1
+			if r["won"]:
+				kit_wins[aid] = kit_wins.get(aid, 0) + 1
+	var parts: Array = []
+	for aid in kit_runs:
+		parts.append("%s %d/%d" % [aid, kit_wins.get(aid, 0), kit_runs[aid]])
+	print("           kit wins: %s" % ", ".join(parts))

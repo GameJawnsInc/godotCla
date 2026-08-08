@@ -9,6 +9,7 @@ extends RefCounted
 ##   {"type": "ability", "slot": int, "target": Vector2i}  (dir-targeted abilities pass a unit Vector2i)
 ##   {"type": "descend"}
 ##   {"type": "end_turn"}
+##   {"type": "draft", "pick": int, "drop": int}  (draft phase only; pick -1 skips, drop when kit is full)
 
 const Content := preload("res://sim/content.gd")
 const MapGen := preload("res://sim/mapgen.gd")
@@ -32,9 +33,12 @@ var enemies: Array = []
 var map := {}
 var terrain := {}
 var recent_events: Array = []
+var phase := "play"
+var draft_offers: Array = []
 
 var _next_id := 1
 var _step_events: Array = []
+var _pending_floor := 0
 
 
 func _init(seed_v: int) -> void:
@@ -42,7 +46,8 @@ func _init(seed_v: int) -> void:
 	rng.seed = seed_v
 	player = {
 		"pos": Vector2i.ZERO, "hp": Content.PLAYER_HP, "max_hp": Content.PLAYER_HP,
-		"charge": 0, "bank": 0, "kit": Content.STARTING_KIT.duplicate(),
+		"charge": 0, "bank": 0, "shield": 0, "kit": Content.STARTING_KIT.duplicate(),
+		"uses": {},
 	}
 	_enter_floor(1)
 	_begin_player_turn()
@@ -54,6 +59,12 @@ func step(action: Dictionary) -> Array:
 	_step_events = []
 	if over:
 		_emit({"t": "error", "msg": "game is over"})
+		return _step_events
+	if phase == "draft":
+		if String(action.get("type", "")) == "draft":
+			_act_draft(action)
+		else:
+			_emit({"t": "illegal", "action": "draft phase"})
 		return _step_events
 	match String(action.get("type", "")):
 		"move":
@@ -76,6 +87,15 @@ func step(action: Dictionary) -> Array:
 func legal_actions() -> Array:
 	var acts: Array = []
 	if over:
+		return acts
+	if phase == "draft":
+		for i in draft_offers.size():
+			if player["kit"].size() < Content.KIT_MAX:
+				acts.append({"type": "draft", "pick": i})
+			else:
+				for j in player["kit"].size():
+					acts.append({"type": "draft", "pick": i, "drop": j})
+		acts.append({"type": "draft", "pick": -1})
 		return acts
 	if player["charge"] >= Content.MOVE_COST:
 		for d in DIRS:
@@ -110,6 +130,7 @@ func snapshot() -> Dictionary:
 			"intent": e["intent"].duplicate(true),
 			"traits": edef["traits"].duplicate(),
 			"will_split": edef["traits"].has("splits") and not e["split_used"],
+			"status": e["status"].duplicate(),
 		})
 	var terr := {}
 	for t in terrain.keys():
@@ -119,9 +140,11 @@ func snapshot() -> Dictionary:
 		"turn": turn, "total_turns": total_turns,
 		"smog": smog, "dim": dim, "bloom": bloom,
 		"over": over, "won": won, "death_cause": death_cause,
+		"phase": phase, "draft_offers": draft_offers.duplicate(),
 		"player": {
 			"pos": player["pos"], "hp": player["hp"], "max_hp": player["max_hp"],
-			"charge": player["charge"], "bank": player["bank"], "kit": player["kit"].duplicate(),
+			"charge": player["charge"], "bank": player["bank"], "shield": player["shield"],
+			"kit": player["kit"].duplicate(), "uses": player["uses"].duplicate(),
 		},
 		"enemies": ens,
 		"map": {
@@ -200,8 +223,21 @@ func _compute_intents() -> void:
 			e["intent"] = {"type": "move"}
 
 
+func _apply_status(e: Dictionary, status: String, turns: int) -> void:
+	e["status"][status] = maxi(int(e["status"].get(status, 0)), turns)
+	_emit({"t": "status", "id": e["id"], "status": status, "turns": turns})
+
+
 func _execute_intent(e: Dictionary) -> void:
+	if int(e["status"].get("stun", 0)) > 0:
+		e["status"]["stun"] -= 1
+		_emit({"t": "stunned", "id": e["id"]})
+		return
 	var it: Dictionary = e["intent"]
+	if String(it.get("type", "")) == "move" and int(e["status"].get("root", 0)) > 0:
+		e["status"]["root"] -= 1
+		_emit({"t": "rooted", "id": e["id"]})
+		return
 	match String(it.get("type", "idle")):
 		"attack":
 			if player["pos"] == it["tile"]:
@@ -245,6 +281,11 @@ func _environment_phase() -> void:
 				spreads.append(p)
 	for t in fires:
 		if terrain.has(t):
+			terrain[t]["ttl"] -= 1
+			if terrain[t]["ttl"] <= 0:
+				terrain.erase(t)
+	for t in terrain.keys().duplicate():
+		if terrain[t]["kind"] == "roots":
 			terrain[t]["ttl"] -= 1
 			if terrain[t]["ttl"] <= 0:
 				terrain.erase(t)
@@ -334,7 +375,51 @@ func _act_descend() -> void:
 		return
 	player["bank"] = mini(player["charge"], Content.BANK_CAP)
 	_emit({"t": "descend", "to_floor": floor_num + 1})
-	_enter_floor(floor_num + 1)
+	_pending_floor = floor_num + 1
+	draft_offers = _draw_draft_offers(3)
+	if draft_offers.is_empty():
+		_enter_floor(_pending_floor)
+		_begin_player_turn()
+	else:
+		phase = "draft"
+		_emit({"t": "draft_offer", "offers": draft_offers.duplicate()})
+
+
+func _draw_draft_offers(count: int) -> Array:
+	var candidates: Array = []
+	for aid in Content.DRAFT_POOL:
+		if not player["kit"].has(aid):
+			candidates.append(aid)
+	var offers: Array = []
+	while offers.size() < count and not candidates.is_empty():
+		var i := rng.randi_range(0, candidates.size() - 1)
+		offers.append(candidates[i])
+		candidates.remove_at(i)
+	return offers
+
+
+func _act_draft(action: Dictionary) -> void:
+	var pick: int = action.get("pick", -1)
+	if pick >= draft_offers.size():
+		_emit({"t": "illegal", "action": "draft"})
+		return
+	if pick >= 0:
+		var aid: String = draft_offers[pick]
+		if player["kit"].size() >= Content.KIT_MAX:
+			var drop: int = action.get("drop", -1)
+			if drop < 0 or drop >= player["kit"].size():
+				_emit({"t": "illegal", "action": "draft drop"})
+				return
+			_emit({"t": "draft_drop", "id": player["kit"][drop]})
+			player["kit"][drop] = aid
+		else:
+			player["kit"].append(aid)
+		_emit({"t": "draft_pick", "id": aid})
+	else:
+		_emit({"t": "draft_skip"})
+	draft_offers = []
+	phase = "play"
+	_enter_floor(_pending_floor)
 	_begin_player_turn()
 
 
@@ -350,6 +435,7 @@ func _act_ability(action: Dictionary) -> void:
 		_emit({"t": "illegal", "action": "ability", "id": aid})
 		return
 	player["charge"] -= int(adef["cost"])
+	player["uses"][aid] = int(player["uses"].get(aid, 0)) + 1
 	_emit({"t": "ability", "id": aid, "target": target})
 	for eff in adef["effects"]:
 		_apply_effect(eff, adef, target)
@@ -386,6 +472,30 @@ func _ability_targets(aid: String) -> Array:
 			for t in terrain.keys():
 				if terrain[t]["kind"] == "growth" and _manhattan(t, player["pos"]) <= rng_ and _open(t):
 					out.append(t)
+		"self":
+			out.append(player["pos"])
+		"tile_any":
+			for dy in range(-rng_, rng_ + 1):
+				for dx in range(-rng_, rng_ + 1):
+					if absi(dx) + absi(dy) > rng_:
+						continue
+					var p: Vector2i = player["pos"] + Vector2i(dx, dy)
+					if _tile(p) == MapGen.T_FLOOR:
+						out.append(p)
+		"enemy":
+			for e in enemies:
+				if _manhattan(e["pos"], player["pos"]) <= rng_:
+					out.append(e["pos"])
+		"enemy_near_growth":
+			for e in enemies:
+				if _manhattan(e["pos"], player["pos"]) > rng_:
+					continue
+				var near := _terrain_kind(e["pos"]) == "growth"
+				for d in DIRS:
+					if _terrain_kind(e["pos"] + d) == "growth":
+						near = true
+				if near:
+					out.append(e["pos"])
 	return out
 
 
@@ -459,13 +569,54 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 		"teleport":
 			player["pos"] = target
 			_emit({"t": "teleport", "to": target})
+		"grow_wall":
+			var walled: Array = [target]
+			for d in DIRS:
+				walled.append(target + d)
+			for t in walled:
+				if _tile(t) == MapGen.T_FLOOR and not terrain.has(t) and _open(t) and t != map["stairs"]:
+					terrain[t] = {"kind": "roots", "ttl": int(eff["ttl"])}
+			_emit({"t": "roots", "tile": target})
+		"shield":
+			player["shield"] = mini(player["shield"] + int(eff["amount"]), Content.SHIELD_CAP)
+			_emit({"t": "shield", "total": player["shield"]})
+		"aoe_status":
+			for e in enemies.duplicate():
+				if _manhattan(e["pos"], player["pos"]) <= int(eff["radius"]):
+					_apply_status(e, String(eff["status"]), int(eff["turns"]))
+		"aoe_damage":
+			for t in terrain.keys().duplicate():
+				if bool(eff.get("ignite", false)) and terrain[t]["kind"] == "oil" and _manhattan(t, player["pos"]) <= int(eff["radius"]):
+					terrain[t] = {"kind": "fire", "ttl": 2}
+					_emit({"t": "ignite", "tile": t})
+			for e in enemies.duplicate():
+				if _manhattan(e["pos"], player["pos"]) <= int(eff["radius"]):
+					_damage_enemy(e, int(eff["dmg"]), "sun_flare")
+		"convert_radius":
+			for dy in range(-int(eff["radius"]), int(eff["radius"]) + 1):
+				for dx in range(-int(eff["radius"]), int(eff["radius"]) + 1):
+					if absi(dx) + absi(dy) > int(eff["radius"]):
+						continue
+					var t: Vector2i = target + Vector2i(dx, dy)
+					var k := _terrain_kind(t)
+					if k == "oil" or k == "goo":
+						terrain[t] = {"kind": "growth"}
+						_emit({"t": "convert", "tile": t})
+		"apply_status":
+			var e = _enemy_at(target)
+			if e != null:
+				_apply_status(e, String(eff["status"]), int(eff["turns"]))
+		"damage":
+			var e = _enemy_at(target)
+			if e != null:
+				_damage_enemy(e, int(eff["dmg"]), "grow_spike")
 
 
 # --- entities and damage ------------------------------------------------------
 
 func _spawn(kind: String, pos: Vector2i) -> Dictionary:
 	var edef: Dictionary = Content.ENEMIES[kind]
-	var e := {"id": _next_id, "kind": kind, "hp": edef["hp"], "pos": pos, "intent": {"type": "idle"}, "split_used": false}
+	var e := {"id": _next_id, "kind": kind, "hp": edef["hp"], "pos": pos, "intent": {"type": "idle"}, "split_used": false, "status": {}}
 	_next_id += 1
 	enemies.append(e)
 	return e
@@ -490,6 +641,13 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 
 
 func _damage_player(amt: int, src: String) -> void:
+	if player["shield"] > 0:
+		var absorbed: int = mini(player["shield"], amt)
+		player["shield"] -= absorbed
+		amt -= absorbed
+		_emit({"t": "shield_absorb", "amt": absorbed})
+		if amt <= 0:
+			return
 	player["hp"] -= amt
 	_emit({"t": "damage", "who": "player", "amt": amt, "src": src})
 	if player["hp"] <= 0:
@@ -550,7 +708,7 @@ func _enemy_at(p: Vector2i):
 
 
 func _open(p: Vector2i) -> bool:
-	return _tile(p) == MapGen.T_FLOOR and _enemy_at(p) == null and p != player["pos"]
+	return _tile(p) == MapGen.T_FLOOR and _enemy_at(p) == null and p != player["pos"] and _terrain_kind(p) != "roots"
 
 
 func _line_clear(a: Vector2i, b: Vector2i) -> bool:

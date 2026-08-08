@@ -4,13 +4,16 @@ extends RefCounted
 const PLAYER_HP := 10
 const BASE_REGEN := 3
 const BANK_CAP := 6
+const SHIELD_CAP := 3
 const MOVE_COST := 1
 const STRIKE_COST := 1
 const STRIKE_DMG := 1
 const CLEANSE_COST := 1
+const KIT_MAX := 5
 
-const STARTING_KIT := ["solar_lance", "seed_bomb", "vine_whip", "water_jet", "mycelium_dash"]
+const STARTING_KIT := ["solar_lance", "seed_bomb", "mycelium_dash"]
 
+## Abilities are data recipes over effect ops (design doc: composable primitives).
 const ABILITIES := {
 	"solar_lance": {
 		"name": "Solar Lance", "cost": 2, "target": "dir", "range": 3,
@@ -32,7 +35,42 @@ const ABILITIES := {
 		"name": "Mycelium Dash", "cost": 1, "target": "growth", "range": 4,
 		"effects": [{"op": "teleport"}],
 	},
+	"root_wall": {
+		"name": "Root Wall", "cost": 2, "target": "tile", "range": 2,
+		"effects": [{"op": "grow_wall", "ttl": 4}],
+	},
+	"pollen_burst": {
+		"name": "Pollen Burst", "cost": 2, "target": "self", "range": 2,
+		"effects": [{"op": "aoe_status", "status": "stun", "turns": 1, "radius": 2}],
+	},
+	"sun_flare": {
+		"name": "Sun Flare", "cost": 2, "target": "self", "range": 2,
+		"effects": [{"op": "aoe_damage", "dmg": 1, "radius": 2, "ignite": true}],
+	},
+	"thorn_shield": {
+		"name": "Thorn Shield", "cost": 1, "target": "self", "range": 0,
+		"effects": [{"op": "shield", "amount": 2}],
+	},
+	"overgrowth": {
+		"name": "Overgrowth", "cost": 1, "target": "tile_any", "range": 2,
+		"effects": [{"op": "convert_radius", "radius": 1}],
+	},
+	"sap_snare": {
+		"name": "Sap Snare", "cost": 1, "target": "enemy", "range": 3,
+		"effects": [{"op": "apply_status", "status": "root", "turns": 2}],
+	},
+	"grow_spike": {
+		"name": "Grow Spike", "cost": 1, "target": "enemy_near_growth", "range": 3,
+		"effects": [{"op": "damage", "dmg": 3}],
+	},
 }
+
+## Abilities that can appear in descent drafts. Mobility stays fixed for now.
+const DRAFT_POOL := [
+	"solar_lance", "seed_bomb", "vine_whip", "water_jet", "root_wall",
+	"pollen_burst", "sun_flare", "thorn_shield", "overgrowth", "sap_snare",
+	"grow_spike",
+]
 
 const ENEMIES := {
 	"drill_bot": {"name": "Drill Bot", "hp": 3, "dmg": 2, "slow": false, "traits": []},

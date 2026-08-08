@@ -11,6 +11,8 @@ func get_bot_name() -> String:
 
 
 func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
+	if snap["phase"] == "draft":
+		return _draft_choice(snap, legal)
 	var ppos: Vector2i = snap["player"]["pos"]
 	var by := {}
 	for a in legal:
@@ -65,6 +67,34 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		return by["move"][rng.randi_range(0, by["move"].size() - 1)]
 
 	return legal[legal.size() - 1]
+
+
+func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
+	# noobs pick what looks flashy, and sometimes at random
+	if rng.randf() < 0.25:
+		return legal[rng.randi_range(0, legal.size() - 1)]
+	var pref := [
+		"sun_flare", "solar_lance", "grow_spike", "vine_whip", "water_jet",
+		"thorn_shield", "pollen_burst", "sap_snare", "seed_bomb", "root_wall",
+		"overgrowth",
+	]
+	var offers: Array = snap["draft_offers"]
+	var best_pick := -1
+	var best_rank := 999
+	for i in offers.size():
+		var r: int = pref.find(offers[i])
+		if r == -1:
+			r = 500
+		if r < best_rank:
+			best_rank = r
+			best_pick = i
+	var candidates: Array = []
+	for a in legal:
+		if int(a.get("pick", -2)) == best_pick:
+			candidates.append(a)
+	if candidates.is_empty():
+		return legal[legal.size() - 1]
+	return candidates[rng.randi_range(0, candidates.size() - 1)]
 
 
 func _enemy_adjacent(snap: Dictionary) -> bool:

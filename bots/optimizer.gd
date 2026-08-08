@@ -11,6 +11,8 @@ func get_bot_name() -> String:
 
 
 func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
+	if snap["phase"] == "draft":
+		return _draft_choice(snap, legal)
 	var ppos: Vector2i = snap["player"]["pos"]
 	var by := {}
 	for a in legal:
@@ -24,6 +26,12 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 
 	var threat := _threat_tiles(snap)
 
+	# 3 damage for 1 charge beats everything else on the menu
+	if by.has("ability"):
+		for a in by["ability"]:
+			if snap["player"]["kit"][a["slot"]] == "grow_spike":
+				return a
+
 	if by.has("strike"):
 		var best = null
 		var best_hp := 999
@@ -36,9 +44,20 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 			return best
 
 	if by.has("ability"):
+		var near := _enemies_within(snap, 2)
+		for a in by["ability"]:
+			var aid: String = snap["player"]["kit"][a["slot"]]
+			if aid == "sun_flare" and near >= 2:
+				return a
+			if aid == "pollen_burst" and _enemies_within(snap, 1) >= 2:
+				return a
 		for a in by["ability"]:
 			if snap["player"]["kit"][a["slot"]] == "solar_lance" and _lance_hits(snap, a["target"]):
 				return a
+		if snap["player"]["shield"] == 0 and near >= 1 and snap["player"]["charge"] >= 2:
+			for a in by["ability"]:
+				if snap["player"]["kit"][a["slot"]] == "thorn_shield":
+					return a
 
 	if threat.has(ppos):
 		if by.has("move"):
@@ -46,13 +65,16 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 				var dest: Vector2i = ppos + a["dir"]
 				if not threat.has(dest) and not _hazard(snap, dest):
 					return a
-		# cornered: shove an adjacent attacker away, or dash out through the network
+		# cornered: shove an adjacent attacker away, dash out, or root the attacker in place
 		if by.has("ability"):
 			for a in by["ability"]:
 				if snap["player"]["kit"][a["slot"]] == "water_jet" and _enemy_at(snap, ppos + a["target"]) != null:
 					return a
 			for a in by["ability"]:
 				if snap["player"]["kit"][a["slot"]] == "mycelium_dash" and not threat.has(a["target"]):
+					return a
+			for a in by["ability"]:
+				if snap["player"]["kit"][a["slot"]] == "sap_snare":
 					return a
 
 	# rest up on growth when the coast is clear
@@ -85,6 +107,55 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 				return a
 
 	return legal[legal.size() - 1]
+
+
+func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
+	var pref := [
+		"sun_flare", "grow_spike", "thorn_shield", "water_jet", "sap_snare",
+		"vine_whip", "pollen_burst", "solar_lance", "seed_bomb", "overgrowth",
+		"root_wall",
+	]
+	var offers: Array = snap["draft_offers"]
+	var best_pick := -1
+	var best_rank := 999
+	for i in offers.size():
+		var r: int = pref.find(offers[i])
+		if r == -1:
+			r = 500
+		if r < best_rank:
+			best_rank = r
+			best_pick = i
+	var candidates: Array = []
+	for a in legal:
+		if int(a.get("pick", -2)) == best_pick:
+			candidates.append(a)
+	if candidates.is_empty():
+		return legal[legal.size() - 1]
+	if candidates.size() == 1:
+		return candidates[0]
+	# kit is full: drop the least-used ability, never the mobility slot
+	var uses: Dictionary = snap["player"]["uses"]
+	var kit: Array = snap["player"]["kit"]
+	var best_a: Dictionary = candidates[0]
+	var best_u := 999999
+	for a in candidates:
+		var slot: int = a["drop"]
+		if kit[slot] == "mycelium_dash":
+			continue
+		var u: int = uses.get(kit[slot], 0)
+		if u < best_u:
+			best_u = u
+			best_a = a
+	return best_a
+
+
+func _enemies_within(snap: Dictionary, radius: int) -> int:
+	var ppos: Vector2i = snap["player"]["pos"]
+	var n := 0
+	for e in snap["enemies"]:
+		if absi(e["pos"].x - ppos.x) + absi(e["pos"].y - ppos.y) <= radius:
+			n += 1
+	return n
 
 
 func _threat_tiles(snap: Dictionary) -> Dictionary:

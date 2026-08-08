@@ -4,7 +4,7 @@ extends RefCounted
 
 const MapGen := preload("res://sim/mapgen.gd")
 
-const TERRAIN_CH := {"oil": "~", "goo": ";", "growth": "\"", "fire": "*", "smoke": "%"}
+const TERRAIN_CH := {"oil": "~", "goo": ";", "growth": "\"", "fire": "*", "smoke": "%", "roots": "8"}
 const ENEMY_CH := {"drill_bot": "d", "oil_sludge": "S", "sludgeling": "s", "leech_drone": "L"}
 
 
@@ -32,11 +32,18 @@ static func render(snap: Dictionary) -> String:
 	for row in grid:
 		lines.append("".join(row))
 	var pl: Dictionary = snap["player"]
-	lines.append("%s  floor %d  turn %d  smog %d (dim %d)  HP %d/%d  charge %d  bank %d  bloom %d" % [
+	lines.append("%s  floor %d  turn %d  smog %d (dim %d)  HP %d/%d  shield %d  charge %d  bank %d  bloom %d" % [
 		snap["floor_name"], snap["floor"], snap["turn"], snap["smog"], snap["dim"],
-		pl["hp"], pl["max_hp"], pl["charge"], pl["bank"], snap["bloom"]])
+		pl["hp"], pl["max_hp"], pl["shield"], pl["charge"], pl["bank"], snap["bloom"]])
+	lines.append("  kit: %s" % ", ".join(pl["kit"]))
+	if snap["phase"] == "draft":
+		lines.append("  DRAFT: %s" % ", ".join(snap["draft_offers"]))
 	for e in snap["enemies"]:
-		lines.append("  %s#%d hp%d (%d,%d) -> %s" % [e["kind"], e["id"], e["hp"], e["pos"].x, e["pos"].y, _intent_str(e)])
+		var status := ""
+		for s in e["status"]:
+			if int(e["status"][s]) > 0:
+				status += " [%s %d]" % [s, e["status"][s]]
+		lines.append("  %s#%d hp%d (%d,%d) -> %s%s" % [e["kind"], e["id"], e["hp"], e["pos"].x, e["pos"].y, _intent_str(e), status])
 	for ev in snap["events"]:
 		lines.append("  . %s" % str(ev))
 	if snap["over"]:
