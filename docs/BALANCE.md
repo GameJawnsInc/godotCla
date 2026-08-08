@@ -20,7 +20,7 @@ Reference numbers for TENDER's difficulty, and the discipline for changing them.
 | deeproot  | 70–90% wins             | the search ceiling: near-perfect play should nearly always win |
 | optimizer | 45–65% wins             | skilled play should win often but never be safe (raised from 30–50 after the tempo fix — the old band measured a bot flaw) |
 | fanatic   | every build > 0 at 100 seeds (hard); 20–40% total (soft) | committing to a niche build must stay viable; the total tracks content difficulty and moves when content does |
-| magpie    | 5–15%, top bloom        | full greed should usually lose to the clock, richly |
+| magpie    | 0–5% canary, top bloom  | full greed loses to the current game almost always; a RISE above 5% means greed got cheap (canary, like turtle) |
 | sprout    | avg depth 3.5–5, wins rare | noobs feel progress; full clears are earned |
 | wanderer  | dies floor 1–2, 0 wins  | the world must punish random play |
 | all       | zero timeouts/softlocks | every run ends in win or death |
@@ -189,6 +189,23 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   Deeproot unchanged at 23/30. Skill ladder stays strictly ordered:
   0 / 0 / 2 / 9 / 17 / 23 across the six personas.
 
+### 2026-08-08 magpie: greed is now lethal - reclassified as a canary
+
+- 100-seed rechecks after the 0/30 playtest flag: original magpie 2/100
+  (avg floor 4.0); with its greedy shopping detours restored (they had
+  been silently deleted by inheriting the optimizer's on-the-way-only
+  rule) 1/100; with harvest/cleanse tightened to stop at first dim,
+  still 1/100. The greed dial is insensitive - every setting dies.
+- Autopsy: the run is decided in the first ~20 turns. Any persona that
+  spends the first two dim stages on economy cannot escape the spawn
+  pressure that follows, no matter when it stops harvesting.
+- Verdict: the hardened game (escalating choke, new enemies, The Dredge)
+  punishes greed as catastrophically as passivity or randomness. This is
+  coherent design, not a bug. Magpie's band moves from 5-15% to 0-5%
+  and it becomes a canary like turtle: a RISE means greed got cheap.
+  The shopping-detour restoration is kept (persona fidelity); the dim
+  calibration tweak was reverted as it changed nothing.
+
 ### 2026-08-08 Anchor Roots + Moss Filter (pool answers to the new threats)
 
 - Anchor Roots (cost 1, self): drag immunity 4 turns - the counter to
@@ -333,8 +350,8 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   future ability with a small self-buff rider needs a deeproot solo check
   before shipping; thorn_shield's persistent mild underperformance in pair
   tables is probably the same bleed.
-- Magpie 0/30 in the post-pool-addition playtest (band 5-15%, was 1-4).
-  Thin at 30 seeds; re-check at 100 if it repeats.
+- Magpie is now a greed canary at 0-5% (see 2026-08-08 magpie entry);
+  watch for rises, not falls.
 - Boss deaths are rare once seed_bomb is protected; arrivals are the real
   filter. If arrival rates rise, re-check Furnace difficulty.
 - Elites are tanky bounty-carriers (+2 hp, +0 dmg, +4 bloom). The +1 dmg
