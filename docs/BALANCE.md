@@ -189,6 +189,17 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   Deeproot unchanged at 23/30. Skill ladder stays strictly ordered:
   0 / 0 / 2 / 9 / 17 / 23 across the six personas.
 
+### 2026-08-08 deeproot formal baseline
+
+- First 100-seed deeproot measurement: **73/100 wins, avg floor 6.8** -
+  squarely in the 70-90 ceiling band, and consistent with every 30-seed
+  estimate used this session (22-26/30). The official ceiling reference
+  for future content rounds: skilled play wins about three runs in four
+  on the current game at tier 0.
+- Skill curve at 100 seeds, current game: wanderer 0 · sprout 0 ·
+  magpie 1-2 · fanatic 25 · optimizer 45-48 · deeproot 73. Monotonic,
+  well-separated, zero timeouts.
+
 ### 2026-08-08 magpie: greed is now lethal - reclassified as a canary
 
 - 100-seed rechecks after the 0/30 playtest flag: original magpie 2/100
