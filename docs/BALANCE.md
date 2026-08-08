@@ -96,6 +96,24 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   fails on zero-win tiers <= 5 with the optimizer, and on any zero-win tier
   when judged by the ceiling bot.
 
+### 2026-08-08 ceiling combo sweep
+
+- First full pairwise sweep judged by Deeproot (SWEEP_BOT=deeproot, 45 pairs
+  x 10 seeds; baseline 8/10, avg floor 6.7).
+- Pool is balanced at the ceiling: 40/45 pairs within 20 points of baseline;
+  no pair warps the draft.
+- All three 10/10 pairs include bramble_coat (root_wall, water_jet,
+  pollen_burst) - thorns pays off at the ceiling, where positioning makes
+  enemies impale themselves. Within noise of an 80% baseline; noted, not
+  flagged.
+- Two pairs flagged at 5/10; 30-seed re-verification (tests/verify_kit.gd,
+  baseline 23/30 = 77%): vine_whip + root_wall 21/30 - noise, cleared.
+  thorn_shield + overgrowth 17/30 (57%) - a real but mild anti-synergy: two
+  charge-hungry setup abilities and no finisher between them. Under the
+  30-point action threshold and both abilities score fine in every other
+  pairing, so recorded as a design note - support tools are supposed to need
+  a damage plan next to them. No data change.
+
 ## Watch list
 
 - `parched` mutator barely affects the optimizer (banking may be undervalued).
