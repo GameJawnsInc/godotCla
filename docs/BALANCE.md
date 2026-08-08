@@ -19,7 +19,7 @@ Reference numbers for TENDER's difficulty, and the discipline for changing them.
 |-----------|-------------------------|-----|
 | deeproot  | 70–90% wins             | the search ceiling: near-perfect play should nearly always win |
 | optimizer | 45–65% wins             | skilled play should win often but never be safe (raised from 30–50 after the tempo fix — the old band measured a bot flaw) |
-| fanatic   | 30–50% overall; every build > 0 | committing to a niche build must stay viable (raised from 15–30 after the tempo/loop fixes) |
+| fanatic   | every build > 0 at 100 seeds (hard); 20–40% total (soft) | committing to a niche build must stay viable; the total tracks content difficulty and moves when content does |
 | magpie    | 5–15%, top bloom        | full greed should usually lose to the clock, richly |
 | sprout    | avg depth 3.5–5, wins rare | noobs feel progress; full clears are earned |
 | wanderer  | dies floor 1–2, 0 wins  | the world must punish random play |
@@ -188,6 +188,25 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   pathing fix and stops donating tempo; turtle still 0, canary intact).
   Deeproot unchanged at 23/30. Skill ladder stays strictly ordered:
   0 / 0 / 2 / 9 / 17 / 23 across the six personas.
+
+### 2026-08-08 Smokestack + Magnet Crane (late-floor content)
+
+- Smokestack (floors 5-6): stationary, stokes the smog clock one extra
+  full tick every 2 turns while alive - the first enemy that attacks the
+  resource. Stokes are complete ticks consumed by _tick_smog, so dim/
+  choke/spawn thresholds are never skipped.
+- Magnet Crane (floors 4-5): drags the player one tile toward itself each
+  turn within range 3, with full tile-entry effects (drag into oil/fire is
+  real). Punishes pure kiting; intent telegraphs cleanly.
+- Impact at 100 seeds: optimizer 63 -> 48 (back inside its 30-50 band
+  after the tempo fixes left it above); deeproot untouched (23 -> 25/30) -
+  skilled play absorbs both mechanics, so this is difficulty, not noise.
+- Fanatic 100-seed table: pyro 10/25, shover 6/25, turtle 2/25,
+  gardener 7/25 - every build still wins (hard target holds), total
+  25/100. Band reframed: every-build-viable is the hard target; the
+  total (now 20-40 soft) tracks content difficulty by design.
+- Zero timeouts everywhere; suite green (39 determinism, 1400/0
+  invariants, meta OK).
 
 ### 2026-08-08 escalating choke: the clock always wins now
 

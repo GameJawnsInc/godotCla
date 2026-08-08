@@ -39,6 +39,7 @@ var shop := {}
 var tier := 0
 var mutators: Array = []
 var draft_pool: Array = []
+var stoked := 0  # pending extra smog ticks from live smokestacks
 
 var _next_id := 1
 var _step_events: Array = []
@@ -221,6 +222,7 @@ func snapshot() -> Dictionary:
 	return {
 		"floor": floor_num, "floor_name": Content.FLOORS[floor_num - 1]["name"], "tier": tier,
 		"mutators": mutators.duplicate(),
+		"stoked": stoked,
 		"turn": turn, "total_turns": total_turns,
 		"smog": smog, "dim": dim, "bloom": bloom,
 		"over": over, "won": won, "death_cause": death_cause,
@@ -255,6 +257,7 @@ func clone():
 	g.rng.state = rng.state
 	g.tier = tier
 	g.mutators = mutators.duplicate()
+	g.stoked = stoked
 	g.draft_pool = draft_pool.duplicate()
 	g.floor_num = floor_num
 	g.turn = turn
@@ -369,6 +372,16 @@ func _compute_intents() -> void:
 			continue
 		if edef["traits"].has("oozes"):
 			e["intent"] = {"type": "ooze", "in": e.get("timer", int(edef["ooze_cycle"]))}
+			continue
+		if edef["traits"].has("stokes"):
+			e["intent"] = {"type": "stoke", "in": e.get("timer", int(edef["stoke_cycle"]))}
+			continue
+		if edef["traits"].has("drags"):
+			var dd := _manhattan(e["pos"], player["pos"])
+			if dd > 1 and dd <= int(edef["drag_range"]):
+				e["intent"] = {"type": "drag"}
+			else:
+				e["intent"] = {"type": "move"}
 			continue
 		if edef["traits"].has("gums"):
 			if _manhattan(e["pos"], player["pos"]) <= int(edef["gum_range"]) and not player["kit"].is_empty():
@@ -504,6 +517,28 @@ func _execute_intent(e: Dictionary) -> void:
 						break
 				otimer = int(odef["ooze_cycle"])
 			e["timer"] = otimer
+		"stoke":
+			var kdef: Dictionary = Content.ENEMIES[e["kind"]]
+			var ktimer: int = e.get("timer", int(kdef["stoke_cycle"])) - 1
+			if ktimer <= 0:
+				stoked += 1
+				_emit({"t": "stoke", "id": e["id"]})
+				ktimer = int(kdef["stoke_cycle"])
+			e["timer"] = ktimer
+		"drag":
+			var cdef: Dictionary = Content.ENEMIES[e["kind"]]
+			if _manhattan(e["pos"], player["pos"]) <= int(cdef["drag_range"]):
+				var delta: Vector2i = e["pos"] - player["pos"]
+				var step := Vector2i.ZERO
+				if delta.x != 0 and absi(delta.x) >= absi(delta.y):
+					step = Vector2i(signi(delta.x), 0)
+				elif delta.y != 0:
+					step = Vector2i(0, signi(delta.y))
+				var dest: Vector2i = player["pos"] + step
+				if step != Vector2i.ZERO and _tile(dest) == MapGen.T_FLOOR and _enemy_at(dest) == null:
+					player["pos"] = dest
+					_emit({"t": "drag", "id": e["id"], "to": dest})
+					_player_enter_tile()
 		"summon":
 			var edef: Dictionary = Content.ENEMIES[e["kind"]]
 			var timer: int = e.get("timer", int(edef["summon_cycle"])) - 1
@@ -589,31 +624,36 @@ func _environment_phase() -> void:
 
 
 func _tick_smog() -> void:
-	smog += 1
-	var fdef := floor_def(floor_num)
-	if fdef["smog_dim"].has(smog) and dim < 2:
-		dim += 1
-		_emit({"t": "smog_dim", "dim": dim})
-	var choke: int = fdef.get("smog_choke", 0)
-	if choke > 0 and smog >= choke and (smog - choke) % 3 == 0:
-		# escalates as the smog deepens so no amount of healing sustains
-		# camping forever - the clock must always win eventually, or streams
-		# of summons plus growth regen produce unwinnable-but-unlosable runs
-		_emit({"t": "choke"})
-		_damage_player(1 + (smog - choke) / 60, "smog")
-		if over:
-			return
-	var spawn: bool = fdef["smog_spawn"].has(smog)
-	if not spawn:
-		var last: int = fdef["smog_spawn"].back()
-		var every: int = fdef.get("smog_spawn_every", 0)
-		spawn = every > 0 and smog > last and (smog - last) % every == 0
-	if spawn:
-		for v in map["vents"]:
-			if _open(v):
-				var e := _spawn("drill_bot", v)
-				e["intent"] = {"type": "idle"}
-				_emit({"t": "reinforcement", "tile": v})
+	# smokestack stokes are extra FULL ticks, so dim/choke/spawn thresholds
+	# are crossed one value at a time and never skipped
+	var ticks := 1 + stoked
+	stoked = 0
+	for i in ticks:
+		smog += 1
+		var fdef := floor_def(floor_num)
+		if fdef["smog_dim"].has(smog) and dim < 2:
+			dim += 1
+			_emit({"t": "smog_dim", "dim": dim})
+		var choke: int = fdef.get("smog_choke", 0)
+		if choke > 0 and smog >= choke and (smog - choke) % 3 == 0:
+			# escalates as the smog deepens so no amount of healing sustains
+			# camping forever - the clock must always win eventually, or streams
+			# of summons plus growth regen produce unwinnable-but-unlosable runs
+			_emit({"t": "choke"})
+			_damage_player(1 + (smog - choke) / 60, "smog")
+			if over:
+				return
+		var spawn: bool = fdef["smog_spawn"].has(smog)
+		if not spawn:
+			var last: int = fdef["smog_spawn"].back()
+			var every: int = fdef.get("smog_spawn_every", 0)
+			spawn = every > 0 and smog > last and (smog - last) % every == 0
+		if spawn:
+			for v in map["vents"]:
+				if _open(v):
+					var e := _spawn("drill_bot", v)
+					e["intent"] = {"type": "idle"}
+					_emit({"t": "reinforcement", "tile": v})
 
 
 # --- player actions -----------------------------------------------------------

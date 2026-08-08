@@ -5,7 +5,7 @@ extends RefCounted
 const MapGen := preload("res://sim/mapgen.gd")
 
 const TERRAIN_CH := {"oil": "~", "goo": ";", "growth": "\"", "fire": "*", "smoke": "%", "roots": "8", "rich_goo": "&"}
-const ENEMY_CH := {"drill_bot": "d", "oil_sludge": "S", "sludgeling": "s", "leech_drone": "L", "tar_spitter": "t", "coal_golem": "G", "extractor_engine": "E", "furnace_core": "F", "rust_hound": "r", "cinder_mite": "c", "pump_jack": "P", "overseer": "O"}
+const ENEMY_CH := {"drill_bot": "d", "oil_sludge": "S", "sludgeling": "s", "leech_drone": "L", "tar_spitter": "t", "coal_golem": "G", "extractor_engine": "E", "furnace_core": "F", "rust_hound": "r", "cinder_mite": "c", "pump_jack": "P", "overseer": "O", "smokestack": "k", "magnet_crane": "C"}
 
 
 static func render(snap: Dictionary) -> String:
@@ -89,5 +89,9 @@ static func _intent_str(e: Dictionary) -> String:
 			return "gathers heat"
 		"summon":
 			return "summon in %d" % it["in"]
+		"stoke":
+			return "STOKE smog in %d" % it["in"]
+		"drag":
+			return "DRAG player 1 tile closer"
 		_:
 			return "idle"
