@@ -259,6 +259,10 @@ const ENEMIES := {
 	"magnet_crane": {"name": "Magnet Crane", "hp": 3, "dmg": 0, "slow": false, "traits": ["drags"], "drag_range": 3},
 	"furnace_core": {"name": "Furnace Core", "hp": 18, "dmg": 3, "slow": false, "traits": ["boss", "massive"], "slam_range": 3, "gate_hp": 6},
 	"overseer": {"name": "The Overseer", "hp": 16, "dmg": 3, "slow": false, "traits": ["boss", "massive", "mobile_boss"], "slam_range": 3, "gate_hp": 5},
+	# Anti-growth boss: drags the player in, slams, and dredges nearby growth
+	# back into goo (healing per tile). Counterplay: fight it away from your
+	# garden, or accept feeding it.
+	"the_dredge": {"name": "The Dredge", "hp": 16, "dmg": 2, "slow": false, "traits": ["boss", "massive", "mobile_boss", "dredges"], "slam_range": 2, "drag_range": 4, "gate_hp": 5},
 }
 
 const FLOORS := [
@@ -300,7 +304,7 @@ const FLOORS := [
 	},
 	{
 		"name": "The Furnace", "biome": "furnace", "boss": true, "w": 20, "h": 12,
-		"bosses": ["furnace_core", "overseer"],
+		"bosses": ["furnace_core", "overseer", "the_dredge"],
 		"enemies": {}, "oil": 6, "goo": 0, "vents": 2, "rooms": 0,
 		"smog_spawn": [12, 24], "smog_spawn_every": 12, "smog_dim": [16, 26], "smog_choke": 44,
 	},

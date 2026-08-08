@@ -189,6 +189,22 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   Deeproot unchanged at 23/30. Skill ladder stays strictly ordered:
   0 / 0 / 2 / 9 / 17 / 23 across the six personas.
 
+### 2026-08-08 The Dredge (third floor-7 boss)
+
+- Anti-growth mobile boss: drag-pull (range 4; x2 in phase 2), cross slam
+  (range 2), and dredge - all growth within radius 2 (3 in phase 2) turns
+  back to goo, healing it 1/tile. Its food is your cleansed garden; the
+  counterplay is fighting it away from growth. Standard gate + phase-3
+  vent clog apply, so cleansing remains the universal counter even though
+  dredging undoes it locally.
+- First tier-0 boss with teeth: optimizer converts 5/9 arrivals (vs 9/9
+  furnace_core, 6/6 overseer); deeproot converts 14/15 - a skill check,
+  not a stat wall, per the boss design precedent.
+- tests/measure_bosses.gd added as a permanent harness (per-boss
+  arrivals/conversions; BOSS_BOT/BOSS_SEEDS).
+- Post-boss playtest healthy: 0/1/1/7/16/26 wins, zero timeouts, suite
+  green. Sprout logged its first-ever win (1/30) - noted, in band.
+
 ### 2026-08-08 Smokestack + Magnet Crane (late-floor content)
 
 - Smokestack (floors 5-6): stationary, stokes the smog clock one extra

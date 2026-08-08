@@ -5,7 +5,7 @@ extends RefCounted
 const MapGen := preload("res://sim/mapgen.gd")
 
 const TERRAIN_CH := {"oil": "~", "goo": ";", "growth": "\"", "fire": "*", "smoke": "%", "roots": "8", "rich_goo": "&"}
-const ENEMY_CH := {"drill_bot": "d", "oil_sludge": "S", "sludgeling": "s", "leech_drone": "L", "tar_spitter": "t", "coal_golem": "G", "extractor_engine": "E", "furnace_core": "F", "rust_hound": "r", "cinder_mite": "c", "pump_jack": "P", "overseer": "O", "smokestack": "k", "magnet_crane": "C"}
+const ENEMY_CH := {"drill_bot": "d", "oil_sludge": "S", "sludgeling": "s", "leech_drone": "L", "tar_spitter": "t", "coal_golem": "G", "extractor_engine": "E", "furnace_core": "F", "rust_hound": "r", "cinder_mite": "c", "pump_jack": "P", "overseer": "O", "smokestack": "k", "magnet_crane": "C", "the_dredge": "D"}
 
 
 static func render(snap: Dictionary) -> String:
@@ -92,6 +92,8 @@ static func _intent_str(e: Dictionary) -> String:
 		"stoke":
 			return "STOKE smog in %d" % it["in"]
 		"drag":
-			return "DRAG player 1 tile closer"
+			return "DRAG player %d closer" % it.get("times", 1)
+		"dredge":
+			return "DREDGE growth to goo r%d" % it.get("radius", 2)
 		_:
 			return "idle"

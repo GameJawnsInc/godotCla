@@ -411,6 +411,22 @@ func _apply_status(e: Dictionary, status: String, turns: int) -> void:
 
 func _compute_boss_intent(e: Dictionary, edef: Dictionary) -> void:
 	var c: int = e.get("cycle", 0)
+	if edef["traits"].has("dredges"):
+		var pd: bool = e["hp"] <= 10
+		match c % 3:
+			0:
+				if _manhattan(e["pos"], player["pos"]) <= int(edef["drag_range"]):
+					e["intent"] = {"type": "drag", "times": 2 if pd else 1}
+				else:
+					e["intent"] = {"type": "advance", "steps": 2}
+			1:
+				if _manhattan(e["pos"], player["pos"]) <= int(edef["slam_range"]):
+					e["intent"] = {"type": "slam", "tile": player["pos"], "dmg": int(edef["dmg"]) + _tier_mod("enemy_dmg_delta")}
+				else:
+					e["intent"] = {"type": "advance", "steps": 2}
+			2:
+				e["intent"] = {"type": "dredge", "radius": 3 if pd else 2}
+		return
 	if edef["traits"].has("mobile_boss"):
 		var p2: bool = e["hp"] <= 10
 		match c % 3:
@@ -526,8 +542,12 @@ func _execute_intent(e: Dictionary) -> void:
 				ktimer = int(kdef["stoke_cycle"])
 			e["timer"] = ktimer
 		"drag":
+			e["cycle"] = int(e.get("cycle", 0)) + 1
 			var cdef: Dictionary = Content.ENEMIES[e["kind"]]
-			if _manhattan(e["pos"], player["pos"]) <= int(cdef["drag_range"]):
+			for i in int(it.get("times", 1)):
+				var cd := _manhattan(e["pos"], player["pos"])
+				if cd <= 1 or cd > int(cdef["drag_range"]):
+					break
 				var delta: Vector2i = e["pos"] - player["pos"]
 				var step := Vector2i.ZERO
 				if delta.x != 0 and absi(delta.x) >= absi(delta.y):
@@ -535,10 +555,24 @@ func _execute_intent(e: Dictionary) -> void:
 				elif delta.y != 0:
 					step = Vector2i(0, signi(delta.y))
 				var dest: Vector2i = player["pos"] + step
-				if step != Vector2i.ZERO and _tile(dest) == MapGen.T_FLOOR and _enemy_at(dest) == null:
-					player["pos"] = dest
-					_emit({"t": "drag", "id": e["id"], "to": dest})
-					_player_enter_tile()
+				if step == Vector2i.ZERO or _tile(dest) != MapGen.T_FLOOR or _enemy_at(dest) != null:
+					break
+				player["pos"] = dest
+				_emit({"t": "drag", "id": e["id"], "to": dest})
+				_player_enter_tile()
+				if over:
+					return
+		"dredge":
+			e["cycle"] = int(e.get("cycle", 0)) + 1
+			var dredged := 0
+			for t in terrain.keys().duplicate():
+				if terrain[t]["kind"] == "growth" and _manhattan(t, e["pos"]) <= int(it.get("radius", 2)):
+					terrain[t] = {"kind": "goo"}
+					dredged += 1
+			if dredged > 0:
+				var cap: int = int(Content.ENEMIES[e["kind"]]["hp"]) + _tier_mod("boss_hp_delta")
+				e["hp"] = mini(e["hp"] + dredged, cap)
+				_emit({"t": "dredge", "id": e["id"], "tiles": dredged})
 		"summon":
 			var edef: Dictionary = Content.ENEMIES[e["kind"]]
 			var timer: int = e.get("timer", int(edef["summon_cycle"])) - 1
