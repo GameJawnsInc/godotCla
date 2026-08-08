@@ -37,6 +37,7 @@ var phase := "play"
 var draft_offers: Array = []
 var shop := {}
 var tier := 0
+var mutators: Array = []
 var draft_pool: Array = []
 
 var _next_id := 1
@@ -48,6 +49,7 @@ func _init(seed_v: int, config: Dictionary = {}) -> void:
 	seed_value = seed_v
 	rng.seed = seed_v
 	tier = int(config.get("tier", 0))
+	mutators = config.get("mutators", []).duplicate()
 	draft_pool = config.get("pool", Content.DRAFT_POOL).duplicate()
 	for pkg in config.get("packages", []):
 		for aid in Content.PACKAGES[pkg]:
@@ -59,8 +61,15 @@ func _init(seed_v: int, config: Dictionary = {}) -> void:
 		"kit": config.get("kit", Content.STARTING_KIT).duplicate(),
 		"uses": {}, "grafts": [], "gummed": {},
 	}
+	if mutators.has("brittle"):
+		player["max_hp"] -= 3
+		player["hp"] = player["max_hp"]
 	_enter_floor(1)
 	_begin_player_turn()
+
+
+func _kit_max() -> int:
+	return 3 if mutators.has("kit_of_3") else Content.KIT_MAX
 
 
 ## Floor definition with this run's difficulty-tier modifiers applied.
@@ -80,6 +89,8 @@ func floor_def(n: int) -> Dictionary:
 		if mod.has("extra_enemy") and not fdef.get("boss", false):
 			var kind := String(mod["extra_enemy"])
 			fdef["enemies"][kind] = int(fdef["enemies"].get(kind, 0)) + 1
+	if mutators.has("double_oil"):
+		fdef["oil"] = int(fdef["oil"]) * 2
 	return fdef
 
 
@@ -129,7 +140,7 @@ func legal_actions() -> Array:
 		return acts
 	if phase == "draft":
 		for i in draft_offers.size():
-			if player["kit"].size() < Content.KIT_MAX:
+			if player["kit"].size() < _kit_max():
 				acts.append({"type": "draft", "pick": i})
 			else:
 				for j in player["kit"].size():
@@ -161,7 +172,7 @@ func legal_actions() -> Array:
 	if player["pos"] == map["shrine"]:
 		if shop.get("heal", false) and bloom >= shop_cost("heal") and player["hp"] < player["max_hp"]:
 			acts.append({"type": "buy", "item": "heal"})
-		if shop.has("ability") and bloom >= shop_cost("ability") and player["kit"].size() < Content.KIT_MAX:
+		if shop.has("ability") and bloom >= shop_cost("ability") and player["kit"].size() < _kit_max():
 			acts.append({"type": "buy", "item": "ability"})
 		if shop.has("graft") and bloom >= shop_cost("graft"):
 			acts.append({"type": "buy", "item": "graft"})
@@ -185,6 +196,7 @@ func snapshot() -> Dictionary:
 		terr[t] = terrain[t].duplicate()
 	return {
 		"floor": floor_num, "floor_name": Content.FLOORS[floor_num - 1]["name"], "tier": tier,
+		"mutators": mutators.duplicate(),
 		"turn": turn, "total_turns": total_turns,
 		"smog": smog, "dim": dim, "bloom": bloom,
 		"over": over, "won": won, "death_cause": death_cause,
@@ -457,7 +469,7 @@ func _tick_smog() -> void:
 		dim += 1
 		_emit({"t": "smog_dim", "dim": dim})
 	var choke: int = fdef.get("smog_choke", 0)
-	if choke > 0 and smog >= choke and (smog - choke) % 2 == 0:
+	if choke > 0 and smog >= choke and (smog - choke) % 3 == 0:
 		_emit({"t": "choke"})
 		_damage_player(1, "smog")
 		if over:
@@ -557,7 +569,7 @@ func _act_draft(action: Dictionary) -> void:
 		return
 	if pick >= 0:
 		var aid: String = draft_offers[pick]
-		if player["kit"].size() >= Content.KIT_MAX:
+		if player["kit"].size() >= _kit_max():
 			var drop: int = action.get("drop", -1)
 			if drop < 0 or drop >= player["kit"].size():
 				_emit({"t": "illegal", "action": "draft drop"})
@@ -592,7 +604,7 @@ func _act_buy(action: Dictionary) -> void:
 			player["hp"] = mini(player["hp"] + Content.SHOP_HEAL_AMOUNT, player["max_hp"])
 			_emit({"t": "buy", "item": "heal", "hp": player["hp"]})
 		"ability":
-			if not shop.has("ability") or player["kit"].size() >= Content.KIT_MAX:
+			if not shop.has("ability") or player["kit"].size() >= _kit_max():
 				_emit({"t": "illegal", "action": "buy"})
 				return
 			bloom -= cost
@@ -618,6 +630,8 @@ func _has_graft(gid: String) -> bool:
 
 
 func _bank_cap() -> int:
+	if mutators.has("parched"):
+		return 0
 	return Content.BANK_CAP + (2 if _has_graft("deep_cells") else 0)
 
 

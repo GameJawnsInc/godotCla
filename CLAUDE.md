@@ -88,12 +88,15 @@ architecture below is designed to bend rather than block.
   - `godot --headless --path . --script tests/test_invariants.gd` — procgen sweep
   - `godot --headless --path . --script tests/test_determinism.gd` — rerun + replay hashes
   - `godot --headless --path . --script tests/playtest.gd` — bot personas, balance metrics
+  - `godot --headless --path . --script tests/test_meta.gd` — career unlocks, profile io, mutators
 - Balance sweeps (on demand; run before shipping new content, and verify any
   outlier at 30+ seeds before patching — 10-seed spreads are noisy):
   - `tests/sweep_combos.gd` — pairwise ability win rates vs baseline
   - `tests/sweep_packages.gd` — each tech package added to the pool
   - `tests/sweep_tiers.gd` — every difficulty tier must stay bot-winnable
-- Sim run config: `Game.new(seed, {kit, pool, packages, tier})` for sweeps,
-  meta-unlocks, and post-win difficulty tiers.
+- Sim run config: `Game.new(seed, {kit, pool, packages, tier, mutators})` for
+  sweeps, meta-unlocks, and post-win difficulty tiers.
+- Meta layer: `meta/profile.gd` records runs against `Content.MILESTONES` and
+  hands back the next run's config; the sim itself stays career-agnostic.
 - Workflow: no PRs; commit on `claude/godot-setup-q6hk6p` and merge/push
   straight to `main`.

@@ -119,6 +119,14 @@ const GRAFTS := {
 
 const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 5}
 
+## Optional run mutators: free-form spice chosen at run start (unlock-gated).
+const MUTATORS := {
+	"kit_of_3": {"name": "Kit of Three", "desc": "ability kit capped at 3"},
+	"double_oil": {"name": "Slick Combine", "desc": "twice the oil everywhere"},
+	"brittle": {"name": "Brittle Tender", "desc": "-3 max HP"},
+	"parched": {"name": "Parched Cells", "desc": "charge cannot be banked"},
+}
+
 ## Post-win difficulty tiers. Tier N applies the first N modifiers, stacking.
 const TIERS := [
 	{"name": "Thicker Smog", "choke_delta": -4},
@@ -137,6 +145,17 @@ const PACKAGES := {
 	"hydraulics": ["tide", "steam_vent", "geyser"],
 	"aeolian": ["gust", "updraft", "clear_air"],
 }
+
+## Career milestones. requires keys: best_floor, wins, tier_wins (wins at tier >= 1).
+const MILESTONES := [
+	{"id": "mycology", "kind": "package", "requires": {"best_floor": 5}, "desc": "Reach the Pipeworks"},
+	{"id": "hydraulics", "kind": "package", "requires": {"wins": 1}, "desc": "Shut down the Furnace"},
+	{"id": "aeolian", "kind": "package", "requires": {"tier_wins": 1}, "desc": "Win at tier 1 or higher"},
+	{"id": "kit_of_3", "kind": "mutator", "requires": {"wins": 1}, "desc": "Shut down the Furnace"},
+	{"id": "double_oil", "kind": "mutator", "requires": {"wins": 1}, "desc": "Shut down the Furnace"},
+	{"id": "brittle", "kind": "mutator", "requires": {"tier_wins": 1}, "desc": "Win at tier 1 or higher"},
+	{"id": "parched", "kind": "mutator", "requires": {"tier_wins": 1}, "desc": "Win at tier 1 or higher"},
+]
 
 const ENEMIES := {
 	"drill_bot": {"name": "Drill Bot", "hp": 3, "dmg": 2, "slow": false, "traits": []},
