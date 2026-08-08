@@ -105,5 +105,10 @@ architecture below is designed to bend rather than block.
   hands back the next run's config; the sim itself stays career-agnostic.
 - Balance targets and the measurement discipline live in `docs/BALANCE.md`;
   `tests/daily_run.gd` generates the date-seeded daily challenge.
+- Death autopsy (`tests/autopsy.gd`): `AUTOPSY_BOT=<persona> AUTOPSY_SEED=<n>`
+  reruns a game and prints the last `AUTOPSY_LAST` ASCII frames — use it to
+  "watch" any death a sweep or playtest flags. `AUTOPSY_TIER`/`AUTOPSY_MUTATORS`/
+  `AUTOPSY_KIT` set the config; `AUTOPSY_JSON=<path>` dumps the run as a
+  (seed, config, actions) regression pair and `AUTOPSY_REPLAY=<path>` replays one.
 - Workflow: no PRs; commit on `claude/godot-setup-q6hk6p` and merge/push
   straight to `main`.
