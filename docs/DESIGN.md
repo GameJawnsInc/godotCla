@@ -46,6 +46,9 @@ The theme should do mechanical work, not just paint.
 - Player turn grants base 3 Charge (subject to Smog dimming, below).
 - Move = 1 Charge per tile; abilities cost their printed Charge.
 - Any number of actions per turn while Charge remains; then intents resolve.
+- Unspent Charge **banks** across turns, capped at 6 (2× base regen). Smog
+  dimming reduces regen, never the bank. Banking rewards setup turns without
+  the pressure of use-it-or-lose-it conversion.
 - Step model per style guide §3: `step()` = "advance until the player must
   decide again." Reaction-style passives and multi-action turns are in scope.
 
@@ -102,6 +105,31 @@ The theme should do mechanical work, not just paint.
 - Floors are compact tactical spaces: connected rooms, choke points, hazard
   tiles, destructibles. Procgen invariants are pluggable per biome.
 
+### The Furnace (final boss)
+
+Multi-phase intents and arena terrain are the two balance angles; each phase
+tests a different build muscle so no single draft strategy trivializes it.
+
+- **Phase 1 — Intake.** Drill limbs telegraph line/row slams; floor vents flood
+  rows with oil on a visible cycle. Tests mobility and positioning.
+- **Phase 2 — Combustion.** The Furnace ignites standing oil and spawns coal
+  golems at marked ports; smog vents accelerate. Tests terrain control — wash,
+  block, or pre-burn the oil before it becomes a firestorm.
+- **Phase 3 — Meltdown.** The core is exposed but only damageable while its
+  cooling vents are overgrown/cleansed. Tests the cleansing toolkit and burst
+  under a hard clock.
+- All phase transitions and cycles are telegraphed like any other intent.
+
+### Shops and Grafts
+
+- Shrines/shops are Slay-the-Spire-style stores spending Bloom: 2–3 abilities,
+  1–2 upgrades for the current kit, a heal, a draft reroll, and one **Graft**.
+- **Grafts** are the relic analog: passive run-long modifiers, data-driven like
+  everything else (e.g. "+2 bank cap", "growth tiles heal +1", "first ability
+  each turn that targets oil is free"). Kit stays 4+1; Grafts are where
+  long-tail build identity accumulates.
+- Grafts enter the combo-sweep harness the same as abilities.
+
 ### Meta-progression
 
 - Permadeath; no permanent power. Milestones unlock **tech packages** of
@@ -110,6 +138,17 @@ The theme should do mechanical work, not just paint.
   - **Hydraulics** — water, steam, washing/pushing.
   - **Aeolian** — wind, repositioning, smoke-clearing.
 - Every pool addition must pass a harness combo-sweep before shipping.
+
+### Post-win
+
+Both replay hooks, both implemented as data over the same sim:
+
+- **Difficulty tiers** (Ascension-style): numbered, each adding a stacking
+  deterministic tweak (thicker smog curve, richer elites, pricier shops).
+  Every tier must stay bot-winnable — the harness validates each one.
+- **Run modifiers** (mutators): optional, chosen at run start, unlock-gated
+  (e.g. "no growth terrain", "double oil", "kit of 3"). Free-form spice on
+  top of the tier ladder.
 
 ## Playtest personas (style guide §5)
 
@@ -123,7 +162,8 @@ The theme should do mechanical work, not just paint.
 
 ## Open questions
 
-- Boss design for the Furnace (multi-phase intents? arena terrain?).
-- Whether unspent Charge banks, converts, or is lost (tuning lever).
-- Shop/shrine variety and Bloom sink depth.
-- Win-streak or challenge modifiers after first clear.
+- Furnace numeric tuning (phase HP, cycle lengths) — expect the harness to
+  drive this once the sim exists.
+- Graft pool size at launch vs. unlock-gated.
+- Whether smoke should be pushable by Aeolian abilities from day one or arrive
+  with the package.
