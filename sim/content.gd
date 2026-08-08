@@ -164,6 +164,8 @@ const GRAFTS := {
 	"verdant_pulse": {"name": "Verdant Pulse", "desc": "growth heals +1"},
 	"thick_bark": {"name": "Thick Bark", "desc": "+2 shield cap"},
 	"bloom_surge": {"name": "Bloom Surge", "desc": "cleansing yields +1 bloom"},
+	"solar_core": {"name": "Solar Core", "desc": "+1 charge regen"},
+	"carapace": {"name": "Carapace", "desc": "start each floor with 2 shield"},
 }
 
 const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 5}
@@ -213,6 +215,8 @@ const VAULTS := {
 	"tar_hoard": [";;;", ";&;", ";;;"],
 	"oil_spill": ["~~~~", "~&&~", "~~~~"],
 	"old_garden": ["\"\"\"", "\"&\"", "\"\"\""],
+	"fuel_depot": ["~~~~~", "~&~&~", "~~~~~"],
+	"sacred_grove": ["\"\"\"\"", "\"&&\"", "\"\"\"\""],
 }
 
 const RICH_GOO_BLOOM := 3
@@ -228,7 +232,11 @@ const ENEMIES := {
 	"tar_spitter": {"name": "Tar Spitter", "hp": 2, "dmg": 0, "slow": false, "traits": ["gums"], "gum_range": 3, "gum_turns": 2},
 	"coal_golem": {"name": "Coal Golem", "hp": 4, "dmg": 2, "slow": true, "traits": ["smoke_burst"]},
 	"extractor_engine": {"name": "Extractor Engine", "hp": 5, "dmg": 0, "slow": false, "traits": ["summons"], "summon_cycle": 3},
-	"furnace_core": {"name": "Furnace Core", "hp": 18, "dmg": 3, "slow": false, "traits": ["boss", "massive"], "slam_range": 3},
+	"rust_hound": {"name": "Rust Hound", "hp": 2, "dmg": 1, "slow": false, "traits": ["fast"]},
+	"cinder_mite": {"name": "Cinder Mite", "hp": 1, "dmg": 1, "slow": false, "traits": ["igniter"]},
+	"pump_jack": {"name": "Pump Jack", "hp": 4, "dmg": 0, "slow": false, "traits": ["oozes"], "ooze_cycle": 2},
+	"furnace_core": {"name": "Furnace Core", "hp": 18, "dmg": 3, "slow": false, "traits": ["boss", "massive"], "slam_range": 3, "gate_hp": 6},
+	"overseer": {"name": "The Overseer", "hp": 16, "dmg": 3, "slow": false, "traits": ["boss", "massive", "mobile_boss"], "slam_range": 3, "gate_hp": 5},
 }
 
 const FLOORS := [
@@ -252,24 +260,25 @@ const FLOORS := [
 	},
 	{
 		"name": "Cracking Yard", "biome": "refinery", "w": 26, "h": 16, "rooms": 6,
-		"enemies": {"drill_bot": 1, "oil_sludge": 1, "tar_spitter": 1, "extractor_engine": 1},
+		"enemies": {"drill_bot": 1, "oil_sludge": 1, "tar_spitter": 1, "extractor_engine": 1, "rust_hound": 1},
 		"oil": 9, "goo": 4, "vents": 2, "vaults": ["oil_spill", "tar_hoard"], "pipes": 1,
 		"smog_spawn": [12, 22], "smog_spawn_every": 12, "smog_dim": [14, 22], "smog_choke": 34,
 	},
 	{
 		"name": "Pipeworks", "biome": "refinery", "w": 28, "h": 16, "rooms": 6,
-		"enemies": {"drill_bot": 2, "oil_sludge": 1, "coal_golem": 1, "extractor_engine": 1},
-		"oil": 10, "goo": 5, "vents": 3, "elites": 1, "vaults": ["oil_spill", "tar_hoard"], "pipes": 2,
+		"enemies": {"drill_bot": 1, "oil_sludge": 1, "coal_golem": 1, "extractor_engine": 1, "pump_jack": 1, "rust_hound": 1},
+		"oil": 10, "goo": 5, "vents": 3, "elites": 1, "vaults": ["oil_spill", "tar_hoard", "fuel_depot"], "pipes": 2,
 		"smog_spawn": [12, 20], "smog_spawn_every": 12, "smog_dim": [13, 21], "smog_choke": 32,
 	},
 	{
 		"name": "Furnace Approach", "biome": "furnace", "w": 28, "h": 17, "rooms": 6,
-		"enemies": {"drill_bot": 2, "coal_golem": 2, "tar_spitter": 1, "extractor_engine": 1},
-		"oil": 12, "goo": 5, "vents": 3, "elites": 1, "vaults": ["oil_spill", "tar_hoard", "old_garden"], "pipes": 2,
+		"enemies": {"drill_bot": 1, "coal_golem": 2, "tar_spitter": 1, "extractor_engine": 1, "cinder_mite": 2},
+		"oil": 12, "goo": 5, "vents": 3, "elites": 1, "vaults": ["fuel_depot", "tar_hoard", "sacred_grove"], "pipes": 2,
 		"smog_spawn": [10, 18], "smog_spawn_every": 11, "smog_dim": [12, 20], "smog_choke": 30,
 	},
 	{
 		"name": "The Furnace", "biome": "furnace", "boss": true, "w": 20, "h": 12,
+		"bosses": ["furnace_core", "overseer"],
 		"enemies": {}, "oil": 6, "goo": 0, "vents": 2, "rooms": 0,
 		"smog_spawn": [12, 24], "smog_spawn_every": 12, "smog_dim": [16, 26], "smog_choke": 44,
 	},

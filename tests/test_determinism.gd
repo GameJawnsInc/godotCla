@@ -29,9 +29,36 @@ func _init() -> void:
 			if a["hash"] != c:
 				failures += 1
 				print("FAIL replay mismatch: %s seed %d" % [bot_name, s])
+	# clone determinism: fork mid-run, drive both with identical bots
+	for s in SEEDS:
+		checks += 1
+		if not _clone_check(s):
+			failures += 1
+			print("FAIL clone divergence: seed %d" % s)
 	if failures == 0:
 		print("determinism: OK (%d checks)" % checks)
 	quit(1 if failures > 0 else 0)
+
+
+func _clone_check(seed_v: int) -> bool:
+	var game = Game.new(seed_v)
+	var bot = BOTS["optimizer"].new()
+	bot.reset(seed_v * 7919 + 17)
+	var actions := 0
+	while not game.over and actions < 60:
+		game.step(bot.choose_action(game.snapshot(), game.legal_actions()))
+		actions += 1
+	var fork = game.clone()
+	var bot2 = BOTS["optimizer"].new()
+	bot2.rng.state = bot.rng.state
+	while not game.over and actions < 4000 and game.total_turns < 400:
+		game.step(bot.choose_action(game.snapshot(), game.legal_actions()))
+		actions += 1
+	var actions2 := 60
+	while not fork.over and actions2 < 4000 and fork.total_turns < 400:
+		fork.step(bot2.choose_action(fork.snapshot(), fork.legal_actions()))
+		actions2 += 1
+	return game.state_hash() == fork.state_hash()
 
 
 func _run(bot_name: String, seed_v: int) -> Dictionary:

@@ -195,8 +195,15 @@ func _threat_tiles(snap: Dictionary) -> Dictionary:
 	var ignite_coming := false
 	for e in snap["enemies"]:
 		var it: String = String(e["intent"].get("type", ""))
-		if it == "attack" or it == "slam":
+		if it == "attack":
 			t[e["intent"]["tile"]] = true
+		elif it == "slam":
+			t[e["intent"]["tile"]] = true
+			for d in DIRS:
+				t[e["intent"]["tile"] + d] = true
+		elif it == "quake":
+			for d in DIRS:
+				t[e["pos"] + d] = true
 		elif it == "ignite_all":
 			ignite_coming = true
 	for tile in snap["terrain"].keys():

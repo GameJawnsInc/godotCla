@@ -186,10 +186,12 @@ static func _generate_boss_arena(rng: RandomNumberGenerator, fdef: Dictionary) -
 			terrain[p] = {"kind": "oil"}
 			taken.append(p)
 
+	var pool: Array = fdef.get("bosses", ["furnace_core"])
+	var boss_kind: String = pool[rng.randi_range(0, pool.size() - 1)]
 	return {
 		"w": w, "h": h, "tiles": tiles,
 		"start": start, "stairs": Vector2i(-1, -1), "vents": vents, "shrine": Vector2i(-1, -1),
-		"enemies": [{"kind": "furnace_core", "pos": boss_pos}], "terrain": terrain,
+		"enemies": [{"kind": boss_kind, "pos": boss_pos}], "terrain": terrain,
 	}
 
 
@@ -283,7 +285,7 @@ static func validate(gen: Dictionary, invariants: Array = DEFAULT_INVARIANTS) ->
 			"boss_reachable":
 				var found := false
 				for e in gen["enemies"]:
-					if e["kind"] == "furnace_core":
+					if Content.ENEMIES[e["kind"]]["traits"].has("boss"):
 						found = true
 						var adjacent_ok := false
 						for d in DIRS:

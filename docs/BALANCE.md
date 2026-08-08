@@ -37,6 +37,18 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
 - Packages (20 seeds): baseline 8, +mycology 7, +hydraulics 6, +aeolian 7 —
   mild pool dilution, no dominant ability.
 
+### 2026-08-08 later (content breadth + Overseer + clone in)
+
+- optimizer, 100 seeds: **42 wins**, avg floor 5.25. Both bosses drawn
+  (furnace_core 17 arrivals, overseer 25); every floor-7 arrival converted.
+- Slams widened to a cross (tile + neighbors) after the arrival-conversion
+  finding; optimizer still dodges perfectly, sprout does not (~5/30 floor-7
+  deaths). Decision: tier-0 bosses are a skill check that perfect play
+  passes; the tier ladder supplies post-win boss pressure.
+- 30-seed personas: optimizer 11/30, sprout avg floor 4.5 (smog 24/30),
+  wanderer floor 1. Win rate drifting toward the top of the 30-50% band as
+  player-power content accumulates - re-measure after each content round.
+
 ## Watch list
 
 - `parched` mutator barely affects the optimizer (banking may be undervalued).

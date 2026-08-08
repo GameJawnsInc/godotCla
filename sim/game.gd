@@ -48,6 +48,8 @@ var _pending_floor := 0
 func _init(seed_v: int, config: Dictionary = {}) -> void:
 	seed_value = seed_v
 	rng.seed = seed_v
+	if config.get("_blank", false):
+		return
 	tier = int(config.get("tier", 0))
 	mutators = config.get("mutators", []).duplicate()
 	draft_pool = config.get("pool", Content.DRAFT_POOL).duplicate()
@@ -225,6 +227,36 @@ func state_hash() -> String:
 	return str(snapshot()).sha256_text()
 
 
+## Deep copy of the whole game, including RNG state. Enables search bots,
+## forked what-if analysis, and save/load.
+func clone():
+	var g = get_script().new(seed_value, {"_blank": true})
+	g.rng.state = rng.state
+	g.tier = tier
+	g.mutators = mutators.duplicate()
+	g.draft_pool = draft_pool.duplicate()
+	g.floor_num = floor_num
+	g.turn = turn
+	g.total_turns = total_turns
+	g.smog = smog
+	g.dim = dim
+	g.bloom = bloom
+	g.over = over
+	g.won = won
+	g.death_cause = death_cause
+	g.player = player.duplicate(true)
+	g.enemies = enemies.duplicate(true)
+	g.map = map.duplicate(true)
+	g.terrain = terrain.duplicate(true)
+	g.recent_events = recent_events.duplicate(true)
+	g.phase = phase
+	g.draft_offers = draft_offers.duplicate()
+	g.shop = shop.duplicate(true)
+	g._next_id = _next_id
+	g._pending_floor = _pending_floor
+	return g
+
+
 # --- floor / turn flow --------------------------------------------------------
 
 func _enter_floor(n: int) -> void:
@@ -244,6 +276,8 @@ func _enter_floor(n: int) -> void:
 			e["elite"] = true
 			e["hp"] += Content.ELITE_HP_BONUS
 	shop = _stock_shop()
+	if _has_graft("carapace"):
+		player["shield"] = mini(maxi(player["shield"], 2), _shield_cap())
 	_emit({"t": "floor", "floor": n, "name": fdef["name"]})
 	_compute_intents()
 
@@ -266,7 +300,7 @@ func _stock_shop() -> Dictionary:
 
 
 func _begin_player_turn() -> void:
-	var regen: int = maxi(1, Content.BASE_REGEN - dim)
+	var regen: int = maxi(1, Content.BASE_REGEN - dim) + (1 if _has_graft("solar_core") else 0)
 	player["charge"] = player["bank"] + regen
 	player["bank"] = 0
 	for slot in player["gummed"].keys().duplicate():
@@ -308,6 +342,9 @@ func _compute_intents() -> void:
 		if edef["traits"].has("summons"):
 			e["intent"] = {"type": "summon", "in": e.get("timer", int(edef["summon_cycle"]))}
 			continue
+		if edef["traits"].has("oozes"):
+			e["intent"] = {"type": "ooze", "in": e.get("timer", int(edef["ooze_cycle"]))}
+			continue
 		if edef["traits"].has("gums"):
 			if _manhattan(e["pos"], player["pos"]) <= int(edef["gum_range"]) and not player["kit"].is_empty():
 				e["intent"] = {"type": "gum", "slot": rng.randi_range(0, player["kit"].size() - 1)}
@@ -336,6 +373,24 @@ func _apply_status(e: Dictionary, status: String, turns: int) -> void:
 
 func _compute_boss_intent(e: Dictionary, edef: Dictionary) -> void:
 	var c: int = e.get("cycle", 0)
+	if edef["traits"].has("mobile_boss"):
+		var p2: bool = e["hp"] <= 10
+		match c % 3:
+			0:
+				e["intent"] = {"type": "advance", "steps": 3 if p2 else 2}
+			1:
+				if _manhattan(e["pos"], player["pos"]) <= int(edef["slam_range"]):
+					e["intent"] = {"type": "slam", "tile": player["pos"], "dmg": edef["dmg"]}
+				else:
+					e["intent"] = {"type": "advance", "steps": 2}
+			2:
+				if p2 and _manhattan(e["pos"], player["pos"]) <= 2:
+					e["intent"] = {"type": "quake", "dmg": 2}
+				elif _manhattan(e["pos"], player["pos"]) <= int(edef["slam_range"]):
+					e["intent"] = {"type": "slam", "tile": player["pos"], "dmg": edef["dmg"]}
+				else:
+					e["intent"] = {"type": "advance", "steps": 2}
+		return
 	var phase2: bool = e["hp"] <= 12
 	match c % 3:
 		0:
@@ -379,7 +434,10 @@ func _execute_intent(e: Dictionary) -> void:
 			_emit({"t": "flood", "row": row})
 		"slam":
 			e["cycle"] = int(e.get("cycle", 0)) + 1
-			if player["pos"] == it["tile"]:
+			var area: Array = [it["tile"]]
+			for d in DIRS:
+				area.append(it["tile"] + d)
+			if area.has(player["pos"]):
 				_damage_player(int(it["dmg"]), e["kind"])
 		"ignite_all":
 			e["cycle"] = int(e.get("cycle", 0)) + 1
@@ -389,6 +447,34 @@ func _execute_intent(e: Dictionary) -> void:
 			_emit({"t": "ignite_all"})
 		"gather":
 			e["cycle"] = int(e.get("cycle", 0)) + 1
+		"advance":
+			e["cycle"] = int(e.get("cycle", 0)) + 1
+			for i in range(int(it["steps"])):
+				if _manhattan(e["pos"], player["pos"]) == 1:
+					break
+				var dest := _chase_step(e)
+				if dest == e["pos"]:
+					break
+				e["pos"] = dest
+				_enemy_enter_tile(e)
+				if not enemies.has(e):
+					break
+		"quake":
+			e["cycle"] = int(e.get("cycle", 0)) + 1
+			if _manhattan(e["pos"], player["pos"]) == 1:
+				_damage_player(int(it["dmg"]), e["kind"])
+		"ooze":
+			var odef: Dictionary = Content.ENEMIES[e["kind"]]
+			var otimer: int = e.get("timer", int(odef["ooze_cycle"])) - 1
+			if otimer <= 0:
+				for d in DIRS:
+					var p: Vector2i = e["pos"] + d
+					if _tile(p) == MapGen.T_FLOOR and not terrain.has(p) and _enemy_at(p) == null and p != player["pos"]:
+						terrain[p] = {"kind": "oil"}
+						_emit({"t": "ooze", "id": e["id"], "tile": p})
+						break
+				otimer = int(odef["ooze_cycle"])
+			e["timer"] = otimer
 		"summon":
 			var edef: Dictionary = Content.ENEMIES[e["kind"]]
 			var timer: int = e.get("timer", int(edef["summon_cycle"])) - 1
@@ -414,8 +500,13 @@ func _execute_intent(e: Dictionary) -> void:
 				player["bank"] -= drained
 				_emit({"t": "drain", "id": e["id"], "amt": drained})
 		"move":
-			var dest := _chase_step(e)
-			if dest != e["pos"]:
+			var steps: int = 2 if Content.ENEMIES[e["kind"]]["traits"].has("fast") else 1
+			for i in range(steps):
+				if not enemies.has(e) or _manhattan(e["pos"], player["pos"]) == 1:
+					break
+				var dest := _chase_step(e)
+				if dest == e["pos"]:
+					break
 				if Content.ENEMIES[e["kind"]]["traits"].has("oil_trail"):
 					var old: Vector2i = e["pos"]
 					if not terrain.has(old) and old != map["stairs"]:
@@ -875,7 +966,7 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 	if not enemies.has(e):
 		return
 	var edef: Dictionary = Content.ENEMIES[e["kind"]]
-	if edef["traits"].has("boss") and e["hp"] <= 6 and not _growth_adjacent(e["pos"]):
+	if edef["traits"].has("boss") and e["hp"] <= int(edef.get("gate_hp", 6)) and not _growth_adjacent(e["pos"]):
 		_emit({"t": "core_shielded", "id": e["id"]})
 		return
 	e["hp"] -= amt
@@ -900,6 +991,14 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 					terrain[t] = {"kind": "smoke", "ttl": 3}
 			_emit({"t": "smoke_burst", "tile": e["pos"]})
 	elif edef["traits"].has("boss"):
+		if edef["traits"].has("mobile_boss"):
+			if e["hp"] <= 10 and not e.get("phase2_done", false):
+				e["phase2_done"] = true
+				_emit({"t": "boss_phase", "phase": 2})
+			if e["hp"] <= int(edef.get("gate_hp", 6)) and not e.get("phase3_done", false):
+				e["phase3_done"] = true
+				_emit({"t": "boss_phase", "phase": 3})
+			return
 		if e["hp"] <= 12 and not e.get("phase2_done", false):
 			e["phase2_done"] = true
 			_emit({"t": "boss_phase", "phase": 2})
@@ -991,6 +1090,9 @@ func _growth_adjacent(p: Vector2i) -> bool:
 
 
 func _enemy_enter_tile(e: Dictionary) -> void:
+	if Content.ENEMIES[e["kind"]]["traits"].has("igniter") and _terrain_kind(e["pos"]) == "oil":
+		terrain[e["pos"]] = {"kind": "fire", "ttl": 2}
+		_emit({"t": "ignite", "tile": e["pos"]})
 	if _terrain_kind(e["pos"]) == "fire":
 		_damage_enemy(e, 1, "fire")
 
