@@ -89,6 +89,9 @@ const ENEMIES := {
 	"oil_sludge": {"name": "Oil Sludge", "hp": 4, "dmg": 1, "slow": true, "traits": ["splits", "oil_trail"]},
 	"sludgeling": {"name": "Sludgeling", "hp": 1, "dmg": 1, "slow": false, "traits": []},
 	"leech_drone": {"name": "Leech Drone", "hp": 2, "dmg": 0, "slow": false, "traits": ["drains"], "drain": 2, "drain_range": 2},
+	"tar_spitter": {"name": "Tar Spitter", "hp": 2, "dmg": 0, "slow": false, "traits": ["gums"], "gum_range": 3, "gum_turns": 2},
+	"coal_golem": {"name": "Coal Golem", "hp": 4, "dmg": 2, "slow": true, "traits": ["smoke_burst"]},
+	"extractor_engine": {"name": "Extractor Engine", "hp": 5, "dmg": 0, "slow": false, "traits": ["summons"], "summon_cycle": 3},
 }
 
 const FLOORS := [
@@ -100,13 +103,13 @@ const FLOORS := [
 	},
 	{
 		"name": "Strip Mine II", "w": 24, "h": 15, "rooms": 5,
-		"enemies": {"drill_bot": 2, "oil_sludge": 1, "leech_drone": 1},
+		"enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1},
 		"oil": 6, "goo": 3, "vents": 2,
 		"smog_spawn": [9, 17], "smog_spawn_every": 10, "smog_dim": [12, 20], "smog_choke": 36,
 	},
 	{
 		"name": "Refinery Gate", "w": 26, "h": 16, "rooms": 5,
-		"enemies": {"drill_bot": 2, "oil_sludge": 2, "leech_drone": 1},
+		"enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1, "coal_golem": 1, "extractor_engine": 1},
 		"oil": 8, "goo": 4, "vents": 2,
 		"smog_spawn": [8, 16], "smog_spawn_every": 10, "smog_dim": [12, 20], "smog_choke": 34,
 	},

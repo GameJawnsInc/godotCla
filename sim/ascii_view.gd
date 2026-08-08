@@ -5,7 +5,7 @@ extends RefCounted
 const MapGen := preload("res://sim/mapgen.gd")
 
 const TERRAIN_CH := {"oil": "~", "goo": ";", "growth": "\"", "fire": "*", "smoke": "%", "roots": "8"}
-const ENEMY_CH := {"drill_bot": "d", "oil_sludge": "S", "sludgeling": "s", "leech_drone": "L"}
+const ENEMY_CH := {"drill_bot": "d", "oil_sludge": "S", "sludgeling": "s", "leech_drone": "L", "tar_spitter": "t", "coal_golem": "G", "extractor_engine": "E"}
 
 
 static func render(snap: Dictionary) -> String:
@@ -41,6 +41,8 @@ static func render(snap: Dictionary) -> String:
 	lines.append("  kit: %s" % ", ".join(pl["kit"]))
 	if not pl["grafts"].is_empty():
 		lines.append("  grafts: %s" % ", ".join(pl["grafts"]))
+	for slot in pl["gummed"]:
+		lines.append("  GUMMED: slot %d (%s) for %d turns" % [slot, pl["kit"][slot], pl["gummed"][slot]])
 	if snap["phase"] == "draft":
 		lines.append("  DRAFT: %s" % ", ".join(snap["draft_offers"]))
 	for e in snap["enemies"]:
@@ -65,5 +67,9 @@ static func _intent_str(e: Dictionary) -> String:
 			return "DRAIN %d charge" % it["amount"]
 		"move":
 			return "move"
+		"gum":
+			return "GUM slot %d" % it["slot"]
+		"summon":
+			return "summon in %d" % it["in"]
 		_:
 			return "idle"

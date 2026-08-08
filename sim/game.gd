@@ -48,7 +48,7 @@ func _init(seed_v: int) -> void:
 	player = {
 		"pos": Vector2i.ZERO, "hp": Content.PLAYER_HP, "max_hp": Content.PLAYER_HP,
 		"charge": 0, "bank": 0, "shield": 0, "kit": Content.STARTING_KIT.duplicate(),
-		"uses": {}, "grafts": [],
+		"uses": {}, "grafts": [], "gummed": {},
 	}
 	_enter_floor(1)
 	_begin_player_turn()
@@ -100,7 +100,7 @@ func legal_actions() -> Array:
 					acts.append({"type": "draft", "pick": i, "drop": j})
 		acts.append({"type": "draft", "pick": -1})
 		return acts
-	if player["charge"] >= Content.MOVE_COST:
+	if player["charge"] >= _move_cost():
 		for d in DIRS:
 			if _open(player["pos"] + d):
 				acts.append({"type": "move", "dir": d})
@@ -114,6 +114,8 @@ func legal_actions() -> Array:
 			if k == "oil" or k == "goo":
 				acts.append({"type": "cleanse", "target": player["pos"] + d})
 	for slot in player["kit"].size():
+		if player["gummed"].has(slot):
+			continue
 		var aid: String = player["kit"][slot]
 		if player["charge"] >= int(Content.ABILITIES[aid]["cost"]):
 			for tgt in _ability_targets(aid):
@@ -155,7 +157,7 @@ func snapshot() -> Dictionary:
 			"pos": player["pos"], "hp": player["hp"], "max_hp": player["max_hp"],
 			"charge": player["charge"], "bank": player["bank"], "shield": player["shield"],
 			"kit": player["kit"].duplicate(), "uses": player["uses"].duplicate(),
-			"grafts": player["grafts"].duplicate(),
+			"grafts": player["grafts"].duplicate(), "gummed": player["gummed"].duplicate(),
 		},
 		"enemies": ens,
 		"map": {
@@ -214,6 +216,10 @@ func _begin_player_turn() -> void:
 	var regen: int = maxi(1, Content.BASE_REGEN - dim)
 	player["charge"] = player["bank"] + regen
 	player["bank"] = 0
+	for slot in player["gummed"].keys().duplicate():
+		player["gummed"][slot] -= 1
+		if player["gummed"][slot] <= 0:
+			player["gummed"].erase(slot)
 
 
 func _resolve_turn() -> void:
@@ -242,6 +248,15 @@ func _compute_intents() -> void:
 		var edef: Dictionary = Content.ENEMIES[e["kind"]]
 		if bool(edef["slow"]) and turn % 2 == 1:
 			e["intent"] = {"type": "idle"}
+			continue
+		if edef["traits"].has("summons"):
+			e["intent"] = {"type": "summon", "in": e.get("timer", int(edef["summon_cycle"]))}
+			continue
+		if edef["traits"].has("gums"):
+			if _manhattan(e["pos"], player["pos"]) <= int(edef["gum_range"]) and not player["kit"].is_empty():
+				e["intent"] = {"type": "gum", "slot": rng.randi_range(0, player["kit"].size() - 1)}
+			else:
+				e["intent"] = {"type": "move"}
 			continue
 		if edef["traits"].has("drains"):
 			if _manhattan(e["pos"], player["pos"]) <= int(edef["drain_range"]):
@@ -273,6 +288,25 @@ func _execute_intent(e: Dictionary) -> void:
 		"attack":
 			if player["pos"] == it["tile"]:
 				_damage_player(int(it["dmg"]), e["kind"])
+		"summon":
+			var edef: Dictionary = Content.ENEMIES[e["kind"]]
+			var timer: int = e.get("timer", int(edef["summon_cycle"])) - 1
+			if timer <= 0:
+				for d in DIRS:
+					if _open(e["pos"] + d):
+						var s := _spawn("sludgeling", e["pos"] + d)
+						s["intent"] = {"type": "idle"}
+						_emit({"t": "summon", "id": e["id"], "child": s["id"]})
+						break
+				timer = int(edef["summon_cycle"])
+			e["timer"] = timer
+		"gum":
+			var gdef: Dictionary = Content.ENEMIES[e["kind"]]
+			if _manhattan(e["pos"], player["pos"]) <= int(gdef["gum_range"]):
+				var slot: int = it["slot"]
+				if slot < player["kit"].size():
+					player["gummed"][slot] = maxi(int(player["gummed"].get(slot, 0)), int(gdef["gum_turns"]))
+					_emit({"t": "gummed", "slot": slot, "id": player["kit"][slot]})
 		"drain":
 			if _manhattan(e["pos"], player["pos"]) <= int(Content.ENEMIES[e["kind"]]["drain_range"]):
 				var drained: int = mini(player["bank"], int(it["amount"]))
@@ -316,7 +350,7 @@ func _environment_phase() -> void:
 			if terrain[t]["ttl"] <= 0:
 				terrain.erase(t)
 	for t in terrain.keys().duplicate():
-		if terrain[t]["kind"] == "roots":
+		if terrain[t]["kind"] == "roots" or terrain[t]["kind"] == "smoke":
 			terrain[t]["ttl"] -= 1
 			if terrain[t]["ttl"] <= 0:
 				terrain.erase(t)
@@ -359,10 +393,11 @@ func _tick_smog() -> void:
 func _act_move(action: Dictionary) -> void:
 	var dir: Vector2i = action.get("dir", Vector2i.ZERO)
 	var dest: Vector2i = player["pos"] + dir
-	if not DIRS.has(dir) or player["charge"] < Content.MOVE_COST or not _open(dest):
+	var cost := _move_cost()
+	if not DIRS.has(dir) or player["charge"] < cost or not _open(dest):
 		_emit({"t": "illegal", "action": "move"})
 		return
-	player["charge"] -= Content.MOVE_COST
+	player["charge"] -= cost
 	player["pos"] = dest
 	_emit({"t": "move", "who": "player", "to": dest})
 	var k := _terrain_kind(dest)
@@ -507,7 +542,7 @@ func _shield_cap() -> int:
 
 func _act_ability(action: Dictionary) -> void:
 	var slot: int = action.get("slot", -1)
-	if slot < 0 or slot >= player["kit"].size():
+	if slot < 0 or slot >= player["kit"].size() or player["gummed"].has(slot):
 		_emit({"t": "illegal", "action": "ability"})
 		return
 	var aid: String = player["kit"][slot]
@@ -712,6 +747,14 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 	if e["hp"] <= 0:
 		enemies.erase(e)
 		_emit({"t": "death", "who": e["kind"], "id": e["id"]})
+		if Content.ENEMIES[e["kind"]]["traits"].has("smoke_burst"):
+			var tiles_: Array = [e["pos"]]
+			for d in DIRS:
+				tiles_.append(e["pos"] + d)
+			for t in tiles_:
+				if _tile(t) == MapGen.T_FLOOR and not terrain.has(t):
+					terrain[t] = {"kind": "smoke", "ttl": 3}
+			_emit({"t": "smoke_burst", "tile": e["pos"]})
 	elif Content.ENEMIES[e["kind"]]["traits"].has("splits") and not e["split_used"]:
 		e["split_used"] = true
 		for d in DIRS:
@@ -774,6 +817,11 @@ func _tile(p: Vector2i) -> int:
 	if p.x < 0 or p.y < 0 or p.x >= int(map["w"]) or p.y >= int(map["h"]):
 		return MapGen.T_WALL
 	return map["tiles"][p.y * int(map["w"]) + p.x]
+
+
+func _move_cost() -> int:
+	# oil is sticky: stepping off it costs an extra charge
+	return Content.MOVE_COST + (1 if _terrain_kind(player["pos"]) == "oil" else 0)
 
 
 func _terrain_kind(p: Vector2i) -> String:

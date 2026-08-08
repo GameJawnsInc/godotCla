@@ -285,7 +285,7 @@ func _bfs_step(snap: Dictionary, strict: bool, threat: Dictionary, goal: Vector2
 				if threat.has(nxt):
 					continue
 				var k: String = snap["terrain"].get(nxt, {}).get("kind", "")
-				if k == "fire" or k == "goo":
+				if k == "fire" or k == "goo" or k == "oil":
 					continue
 			prev[nxt] = cur
 			queue.append(nxt)
