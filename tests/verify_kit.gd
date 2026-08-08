@@ -7,6 +7,14 @@ extends SceneTree
 
 const Content := preload("res://sim/content.gd")
 const Sweep := preload("res://tests/sweep_lib.gd")
+const BOTS := {
+	"wanderer": preload("res://bots/wanderer.gd"),
+	"sprout": preload("res://bots/sprout.gd"),
+	"magpie": preload("res://bots/magpie.gd"),
+	"fanatic": preload("res://bots/fanatic.gd"),
+	"optimizer": preload("res://bots/optimizer.gd"),
+	"deeproot": preload("res://bots/deeproot.gd"),
+}
 
 
 func _init() -> void:
@@ -23,8 +31,13 @@ func _init() -> void:
 		var kit: Array = Content.STARTING_KIT.duplicate()
 		kit.append_array(extras.split(","))
 		cfg["kit"] = kit
-	var m := Sweep.measure(seeds, cfg, Sweep.pick_bot())
-	var label := extras if extras != "" else "baseline"
+	var bot: GDScript = Sweep.pick_bot()
+	var bot_label := ""
+	if OS.get_environment("VERIFY_BOT") != "":
+		bot = BOTS[OS.get_environment("VERIFY_BOT")]
+		bot_label = " (%s)" % OS.get_environment("VERIFY_BOT")
+	var m := Sweep.measure(seeds, cfg, bot)
+	var label := (extras if extras != "" else "baseline") + bot_label
 	if cfg.has("tier"):
 		label += " (tier %d)" % cfg["tier"]
 	if cfg.has("mutators"):
