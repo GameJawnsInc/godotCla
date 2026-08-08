@@ -45,7 +45,26 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 					if a["dir"] == step:
 						return a
 
-	# otherwise: the optimizer's full ladder (fight, dodge, heal, shop, stairs)
+	# greedy shopping: the optimizer only shops on the way to the stairs, but
+	# a magpie with bloom in its pouch always detours for shiny things
+	if by.has("move") and snap["dim"] < 2:
+		var shrine: Vector2i = snap["map"]["shrine"]
+		if shrine != Vector2i(-1, -1) and ppos != shrine:
+			var worth: bool = snap["shop"].has("graft") and snap["bloom"] >= 5
+			if snap["shop"].has("ability") and snap["bloom"] >= 4:
+				worth = true
+			if snap["shop"].get("heal", false) and snap["bloom"] >= 3 and snap["player"]["hp"] < snap["player"]["max_hp"]:
+				worth = true
+			if worth:
+				var sstep := _bfs_step(snap, true, threat, shrine)
+				if sstep == Vector2i.ZERO:
+					sstep = _bfs_step(snap, false, threat, shrine)
+				if sstep != Vector2i.ZERO:
+					for a in by["move"]:
+						if a["dir"] == sstep:
+							return a
+
+	# otherwise: the optimizer's full ladder (fight, dodge, heal, stairs)
 	return super.choose_action(snap, legal)
 
 
