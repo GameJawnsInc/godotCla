@@ -262,6 +262,12 @@ func _tick_smog() -> void:
 	if fdef["smog_dim"].has(smog) and dim < 2:
 		dim += 1
 		_emit({"t": "smog_dim", "dim": dim})
+	var choke: int = fdef.get("smog_choke", 0)
+	if choke > 0 and smog >= choke and (smog - choke) % 2 == 0:
+		_emit({"t": "choke"})
+		_damage_player(1, "smog")
+		if over:
+			return
 	var spawn: bool = fdef["smog_spawn"].has(smog)
 	if not spawn:
 		var last: int = fdef["smog_spawn"].back()
@@ -273,7 +279,6 @@ func _tick_smog() -> void:
 				var e := _spawn("drill_bot", v)
 				e["intent"] = {"type": "idle"}
 				_emit({"t": "reinforcement", "tile": v})
-				break
 
 
 # --- player actions -----------------------------------------------------------

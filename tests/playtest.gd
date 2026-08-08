@@ -7,6 +7,7 @@ const Game := preload("res://sim/game.gd")
 const AsciiView := preload("res://sim/ascii_view.gd")
 const BOTS := {
 	"wanderer": preload("res://bots/wanderer.gd"),
+	"sprout": preload("res://bots/sprout.gd"),
 	"optimizer": preload("res://bots/optimizer.gd"),
 }
 

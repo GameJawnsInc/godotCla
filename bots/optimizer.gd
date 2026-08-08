@@ -40,11 +40,34 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 			if snap["player"]["kit"][a["slot"]] == "solar_lance" and _lance_hits(snap, a["target"]):
 				return a
 
-	if threat.has(ppos) and by.has("move"):
-		for a in by["move"]:
-			var dest: Vector2i = ppos + a["dir"]
-			if not threat.has(dest) and not _hazard(snap, dest):
-				return a
+	if threat.has(ppos):
+		if by.has("move"):
+			for a in by["move"]:
+				var dest: Vector2i = ppos + a["dir"]
+				if not threat.has(dest) and not _hazard(snap, dest):
+					return a
+		# cornered: shove an adjacent attacker away, or dash out through the network
+		if by.has("ability"):
+			for a in by["ability"]:
+				if snap["player"]["kit"][a["slot"]] == "water_jet" and _enemy_at(snap, ppos + a["target"]) != null:
+					return a
+			for a in by["ability"]:
+				if snap["player"]["kit"][a["slot"]] == "mycelium_dash" and not threat.has(a["target"]):
+					return a
+
+	# rest up on growth when the coast is clear
+	if snap["player"]["hp"] <= snap["player"]["max_hp"] - 3 and _nearest_enemy_dist(snap) > 4:
+		var on_growth: bool = snap["terrain"].get(ppos, {}).get("kind", "") == "growth"
+		if on_growth:
+			return legal[legal.size() - 1]
+		if by.has("move"):
+			for a in by["move"]:
+				if snap["terrain"].get(ppos + a["dir"], {}).get("kind", "") == "growth":
+					return a
+		if by.has("ability"):
+			for a in by["ability"]:
+				if snap["player"]["kit"][a["slot"]] == "seed_bomb" and a["target"] == ppos:
+					return a
 
 	if by.has("cleanse") and _nearest_enemy_dist(snap) > 3:
 		return by["cleanse"][0]

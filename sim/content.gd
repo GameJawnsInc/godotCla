@@ -46,18 +46,18 @@ const FLOORS := [
 		"name": "Strip Mine I", "w": 22, "h": 14, "rooms": 4,
 		"enemies": {"drill_bot": 2},
 		"oil": 4, "goo": 2, "vents": 1,
-		"smog_spawn": [10, 20], "smog_spawn_every": 12, "smog_dim": [14, 22],
+		"smog_spawn": [10, 20], "smog_spawn_every": 12, "smog_dim": [14, 22], "smog_choke": 38,
 	},
 	{
 		"name": "Strip Mine II", "w": 24, "h": 15, "rooms": 5,
 		"enemies": {"drill_bot": 2, "oil_sludge": 1, "leech_drone": 1},
 		"oil": 6, "goo": 3, "vents": 2,
-		"smog_spawn": [9, 17], "smog_spawn_every": 10, "smog_dim": [12, 20],
+		"smog_spawn": [9, 17], "smog_spawn_every": 10, "smog_dim": [12, 20], "smog_choke": 36,
 	},
 	{
 		"name": "Refinery Gate", "w": 26, "h": 16, "rooms": 5,
-		"enemies": {"drill_bot": 3, "oil_sludge": 2, "leech_drone": 1},
+		"enemies": {"drill_bot": 2, "oil_sludge": 2, "leech_drone": 1},
 		"oil": 8, "goo": 4, "vents": 2,
-		"smog_spawn": [8, 14, 20], "smog_spawn_every": 8, "smog_dim": [10, 18],
+		"smog_spawn": [8, 16], "smog_spawn_every": 10, "smog_dim": [12, 20], "smog_choke": 34,
 	},
 ]
