@@ -4,7 +4,7 @@ extends RefCounted
 
 const MapGen := preload("res://sim/mapgen.gd")
 
-const TERRAIN_CH := {"oil": "~", "goo": ";", "growth": "\"", "fire": "*", "smoke": "%", "roots": "8"}
+const TERRAIN_CH := {"oil": "~", "goo": ";", "growth": "\"", "fire": "*", "smoke": "%", "roots": "8", "rich_goo": "&"}
 const ENEMY_CH := {"drill_bot": "d", "oil_sludge": "S", "sludgeling": "s", "leech_drone": "L", "tar_spitter": "t", "coal_golem": "G", "extractor_engine": "E", "furnace_core": "F"}
 
 

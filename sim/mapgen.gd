@@ -1,6 +1,8 @@
 extends RefCounted
 ## Floor generator with pluggable invariant checks (style guide §7).
 
+const Content := preload("res://sim/content.gd")
+
 const T_WALL := 0
 const T_FLOOR := 1
 
@@ -55,42 +57,81 @@ static func generate(rng: RandomNumberGenerator, fdef: Dictionary) -> Dictionary
 	for i in range(rooms.size() - 1):
 		_carve_corridor(tiles, w, rooms[i].get_center(), rooms[i + 1].get_center(), rng)
 
+	# pipes: straight full-span corridors that add route loops (refinery flavor)
+	for i in range(int(fdef.get("pipes", 0))):
+		if rng.randi_range(0, 1) == 0:
+			var py := rng.randi_range(2, h - 3)
+			for px in range(1, w - 1):
+				tiles[py * w + px] = T_FLOOR
+		else:
+			var px := rng.randi_range(2, w - 3)
+			for py in range(1, h - 1):
+				tiles[py * w + px] = T_FLOOR
+
 	var start: Vector2i = rooms[0].get_center()
 	var stairs: Vector2i = rooms[rooms.size() - 1].get_center()
 	var taken: Array = [start, stairs]
+	var reach := _flood(tiles, w, h, start)
 
 	var vents: Array = []
 	for i in range(int(fdef["vents"])):
-		var v := _pick_floor(rng, tiles, w, h, taken, start, 0)
+		var v := _pick_floor(rng, tiles, w, h, taken, start, 0, reach)
 		if v != Vector2i(-1, -1):
 			vents.append(v)
 			taken.append(v)
 
-	var shrine := _pick_floor(rng, tiles, w, h, taken, start, 3)
+	var shrine := _pick_floor(rng, tiles, w, h, taken, start, 3, reach)
 	if shrine != Vector2i(-1, -1):
 		taken.append(shrine)
 
 	var enemies: Array = []
 	for kind in fdef["enemies"]:
 		for i in range(int(fdef["enemies"][kind])):
-			var p := _pick_floor(rng, tiles, w, h, taken, start, 5)
+			var p := _pick_floor(rng, tiles, w, h, taken, start, 5, reach)
 			if p == Vector2i(-1, -1):
-				p = _pick_floor(rng, tiles, w, h, taken, start, 2)
+				p = _pick_floor(rng, tiles, w, h, taken, start, 2, reach)
 			if p != Vector2i(-1, -1):
 				enemies.append({"kind": kind, "pos": p})
 				taken.append(p)
 
 	var terrain := {}
 	for i in range(int(fdef["oil"])):
-		var p := _pick_floor(rng, tiles, w, h, taken, start, 2)
+		var p := _pick_floor(rng, tiles, w, h, taken, start, 2, reach)
 		if p != Vector2i(-1, -1):
 			terrain[p] = {"kind": "oil"}
 			taken.append(p)
 	for i in range(int(fdef["goo"])):
-		var p := _pick_floor(rng, tiles, w, h, taken, start, 2)
+		var p := _pick_floor(rng, tiles, w, h, taken, start, 2, reach)
 		if p != Vector2i(-1, -1):
 			terrain[p] = {"kind": "goo"}
 			taken.append(p)
+
+	# stamp one terrain vault into a middle room (terrain-only, never walls)
+	var vault_names: Array = fdef.get("vaults", [])
+	if not vault_names.is_empty() and rooms.size() > 2:
+		var vname: String = vault_names[rng.randi_range(0, vault_names.size() - 1)]
+		var rows: Array = Content.VAULTS[vname]
+		var room: Rect2i = rooms[rng.randi_range(1, rooms.size() - 2)]
+		var vw: int = rows[0].length()
+		var vh: int = rows.size()
+		if room.size.x >= vw and room.size.y >= vh:
+			var off: Vector2i = room.position + (room.size - Vector2i(vw, vh)) / 2
+			for dy in vh:
+				for dx in vw:
+					var ch: String = rows[dy].substr(dx, 1)
+					var p: Vector2i = off + Vector2i(dx, dy)
+					if ch == "." or taken.has(p) or tiles[p.y * w + p.x] != T_FLOOR:
+						continue
+					match ch:
+						"~":
+							terrain[p] = {"kind": "oil"}
+						";":
+							terrain[p] = {"kind": "goo"}
+						"&":
+							terrain[p] = {"kind": "rich_goo"}
+						"\"":
+							terrain[p] = {"kind": "growth"}
+					taken.append(p)
 
 	return {
 		"w": w, "h": h, "tiles": tiles,
@@ -127,15 +168,16 @@ static func _generate_boss_arena(rng: RandomNumberGenerator, fdef: Dictionary) -
 			pillars += 1
 
 	var taken: Array = [start, boss_pos]
+	var reach := _flood(tiles, w, h, start)
 	var vents: Array = []
 	for i in range(int(fdef["vents"])):
-		var v := _pick_floor(rng, tiles, w, h, taken, start, 4)
+		var v := _pick_floor(rng, tiles, w, h, taken, start, 4, reach)
 		if v != Vector2i(-1, -1):
 			vents.append(v)
 			taken.append(v)
 	var terrain := {}
 	for i in range(int(fdef["oil"])):
-		var p := _pick_floor(rng, tiles, w, h, taken, start, 2)
+		var p := _pick_floor(rng, tiles, w, h, taken, start, 2, reach)
 		if p != Vector2i(-1, -1):
 			terrain[p] = {"kind": "oil"}
 			taken.append(p)
@@ -165,12 +207,14 @@ static func _carve_corridor(tiles: Array, w: int, a: Vector2i, b: Vector2i, rng:
 			tiles[p.y * w + p.x] = T_FLOOR
 
 
-static func _pick_floor(rng: RandomNumberGenerator, tiles: Array, w: int, h: int, taken: Array, origin: Vector2i, min_dist: int) -> Vector2i:
+static func _pick_floor(rng: RandomNumberGenerator, tiles: Array, w: int, h: int, taken: Array, origin: Vector2i, min_dist: int, reach: Dictionary = {}) -> Vector2i:
 	var candidates: Array = []
 	for y in h:
 		for x in w:
 			var p := Vector2i(x, y)
 			if tiles[y * w + x] != T_FLOOR:
+				continue
+			if not reach.is_empty() and not reach.has(p):
 				continue
 			if taken.has(p):
 				continue
@@ -180,6 +224,25 @@ static func _pick_floor(rng: RandomNumberGenerator, tiles: Array, w: int, h: int
 	if candidates.is_empty():
 		return Vector2i(-1, -1)
 	return candidates[rng.randi_range(0, candidates.size() - 1)]
+
+
+static func _flood(tiles: Array, w: int, h: int, from: Vector2i) -> Dictionary:
+	var seen := {}
+	seen[from] = true
+	var queue: Array = [from]
+	var qi := 0
+	while qi < queue.size():
+		var cur: Vector2i = queue[qi]
+		qi += 1
+		for d in DIRS:
+			var nxt: Vector2i = cur + d
+			if nxt.x < 0 or nxt.y < 0 or nxt.x >= w or nxt.y >= h:
+				continue
+			if seen.has(nxt) or tiles[nxt.y * w + nxt.x] != T_FLOOR:
+				continue
+			seen[nxt] = true
+			queue.append(nxt)
+	return seen
 
 
 static func validate(gen: Dictionary, invariants: Array = DEFAULT_INVARIANTS) -> Array:

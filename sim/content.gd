@@ -157,6 +157,17 @@ const MILESTONES := [
 	{"id": "parched", "kind": "mutator", "requires": {"tier_wins": 1}, "desc": "Win at tier 1 or higher"},
 ]
 
+## Terrain vaults: hand-authored set-pieces stamped into a room. Terrain-only
+## (never walls), so they can't sever connectivity. Legend: ~ oil, ; goo,
+## & rich goo (cleanse for +3 bloom), " growth, . leave as-is.
+const VAULTS := {
+	"tar_hoard": [";;;", ";&;", ";;;"],
+	"oil_spill": ["~~~~", "~&&~", "~~~~"],
+	"old_garden": ["\"\"\"", "\"&\"", "\"\"\""],
+}
+
+const RICH_GOO_BLOOM := 3
+
 const ENEMIES := {
 	"drill_bot": {"name": "Drill Bot", "hp": 3, "dmg": 2, "slow": false, "traits": []},
 	"oil_sludge": {"name": "Oil Sludge", "hp": 4, "dmg": 1, "slow": true, "traits": ["splits", "oil_trail"]},
@@ -178,31 +189,31 @@ const FLOORS := [
 	{
 		"name": "Strip Mine II", "biome": "strip_mine", "w": 24, "h": 15, "rooms": 5,
 		"enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1},
-		"oil": 6, "goo": 3, "vents": 2,
+		"oil": 6, "goo": 3, "vents": 2, "vaults": ["old_garden"],
 		"smog_spawn": [9, 17], "smog_spawn_every": 10, "smog_dim": [12, 20], "smog_choke": 36,
 	},
 	{
 		"name": "Refinery Gate", "biome": "refinery", "w": 26, "h": 16, "rooms": 5,
 		"enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1, "coal_golem": 1},
-		"oil": 8, "goo": 4, "vents": 2,
+		"oil": 8, "goo": 4, "vents": 2, "vaults": ["tar_hoard", "old_garden"], "pipes": 1,
 		"smog_spawn": [10, 18], "smog_spawn_every": 11, "smog_dim": [14, 22], "smog_choke": 36,
 	},
 	{
 		"name": "Cracking Yard", "biome": "refinery", "w": 26, "h": 16, "rooms": 6,
 		"enemies": {"drill_bot": 1, "oil_sludge": 1, "tar_spitter": 1, "extractor_engine": 1},
-		"oil": 9, "goo": 4, "vents": 2,
+		"oil": 9, "goo": 4, "vents": 2, "vaults": ["oil_spill", "tar_hoard"], "pipes": 1,
 		"smog_spawn": [12, 22], "smog_spawn_every": 12, "smog_dim": [14, 22], "smog_choke": 34,
 	},
 	{
 		"name": "Pipeworks", "biome": "refinery", "w": 28, "h": 16, "rooms": 6,
 		"enemies": {"drill_bot": 2, "oil_sludge": 1, "coal_golem": 1, "extractor_engine": 1},
-		"oil": 10, "goo": 5, "vents": 3,
+		"oil": 10, "goo": 5, "vents": 3, "vaults": ["oil_spill", "tar_hoard"], "pipes": 2,
 		"smog_spawn": [12, 20], "smog_spawn_every": 12, "smog_dim": [13, 21], "smog_choke": 32,
 	},
 	{
 		"name": "Furnace Approach", "biome": "furnace", "w": 28, "h": 17, "rooms": 6,
 		"enemies": {"drill_bot": 2, "coal_golem": 2, "tar_spitter": 1, "extractor_engine": 1},
-		"oil": 12, "goo": 5, "vents": 3,
+		"oil": 12, "goo": 5, "vents": 3, "vaults": ["oil_spill", "tar_hoard", "old_garden"], "pipes": 2,
 		"smog_spawn": [10, 18], "smog_spawn_every": 11, "smog_dim": [12, 20], "smog_choke": 30,
 	},
 	{

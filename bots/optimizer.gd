@@ -231,7 +231,7 @@ func _nearest_enemy_dist(snap: Dictionary) -> int:
 
 func _hazard(snap: Dictionary, pos: Vector2i) -> bool:
 	var k: String = snap["terrain"].get(pos, {}).get("kind", "")
-	return k == "fire" or k == "goo"
+	return k == "fire" or k == "goo" or k == "rich_goo"
 
 
 func _lance_hits(snap: Dictionary, dir: Vector2i) -> bool:
@@ -322,7 +322,7 @@ func _bfs_step(snap: Dictionary, strict: bool, threat: Dictionary, goal: Vector2
 				if threat.has(nxt):
 					continue
 				var k: String = snap["terrain"].get(nxt, {}).get("kind", "")
-				if k == "fire" or k == "goo" or k == "oil":
+				if k == "fire" or k == "goo" or k == "rich_goo" or k == "oil":
 					continue
 			prev[nxt] = cur
 			queue.append(nxt)

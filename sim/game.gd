@@ -158,7 +158,7 @@ func legal_actions() -> Array:
 	if player["charge"] >= Content.CLEANSE_COST:
 		for d in DIRS:
 			var k := _terrain_kind(player["pos"] + d)
-			if k == "oil" or k == "goo":
+			if k == "oil" or k == "goo" or k == "rich_goo":
 				acts.append({"type": "cleanse", "target": player["pos"] + d})
 	for slot in player["kit"].size():
 		if player["gummed"].has(slot):
@@ -516,13 +516,14 @@ func _act_strike(action: Dictionary) -> void:
 func _act_cleanse(action: Dictionary) -> void:
 	var target: Vector2i = action.get("target", Vector2i(-1, -1))
 	var k := _terrain_kind(target)
-	var legal := _manhattan(target, player["pos"]) == 1 and (k == "oil" or k == "goo")
+	var legal := _manhattan(target, player["pos"]) == 1 and (k == "oil" or k == "goo" or k == "rich_goo")
 	if not legal or player["charge"] < Content.CLEANSE_COST:
 		_emit({"t": "illegal", "action": "cleanse"})
 		return
 	player["charge"] -= Content.CLEANSE_COST
 	terrain.erase(target)
-	bloom += 1 + (1 if _has_graft("bloom_surge") else 0)
+	var yield_: int = Content.RICH_GOO_BLOOM if k == "rich_goo" else 1
+	bloom += yield_ + (1 if _has_graft("bloom_surge") else 0)
 	_emit({"t": "cleanse", "tile": target, "bloom": bloom})
 
 
@@ -957,7 +958,7 @@ func _player_enter_tile() -> void:
 	var k := _terrain_kind(player["pos"])
 	if k == "fire":
 		_damage_player(1, "fire")
-	elif k == "goo":
+	elif k == "goo" or k == "rich_goo":
 		_damage_player(1, "goo")
 
 
