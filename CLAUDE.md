@@ -84,5 +84,9 @@ architecture below is designed to bend rather than block.
 - Run headless: `godot --headless --path . --script <script.gd>`.
 - No display in this environment: never rely on rendering, input events, or
   visual inspection to verify behavior — assert on sim state instead.
+- Verification suite (run all three before committing sim changes):
+  - `godot --headless --path . --script tests/test_invariants.gd` — procgen sweep
+  - `godot --headless --path . --script tests/test_determinism.gd` — rerun + replay hashes
+  - `godot --headless --path . --script tests/playtest.gd` — bot personas, balance metrics
 - Workflow: no PRs; commit on `claude/godot-setup-q6hk6p` and merge/push
   straight to `main`.
