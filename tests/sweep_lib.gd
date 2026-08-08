@@ -3,11 +3,12 @@ extends RefCounted
 
 const Game := preload("res://sim/game.gd")
 const Optimizer := preload("res://bots/optimizer.gd")
+const Deeproot := preload("res://bots/deeproot.gd")
 
 
-static func run_one(seed_v: int, config: Dictionary = {}) -> Dictionary:
+static func run_one(seed_v: int, config: Dictionary = {}, bot_script: GDScript = null) -> Dictionary:
 	var game = Game.new(seed_v, config)
-	var bot = Optimizer.new()
+	var bot = (bot_script if bot_script != null else Optimizer).new()
 	bot.reset(seed_v * 7919 + 17)
 	if bot.has_method("set_sim"):
 		bot.set_sim(game)
@@ -21,12 +22,12 @@ static func run_one(seed_v: int, config: Dictionary = {}) -> Dictionary:
 	}
 
 
-static func measure(seeds: int, config: Dictionary = {}) -> Dictionary:
+static func measure(seeds: int, config: Dictionary = {}, bot_script: GDScript = null) -> Dictionary:
 	var wins := 0
 	var floors := 0
 	var win_kits: Array = []
 	for s in range(1, seeds + 1):
-		var r := run_one(s, config)
+		var r := run_one(s, config, bot_script)
 		if r["won"]:
 			wins += 1
 			win_kits.append(r["kit"])

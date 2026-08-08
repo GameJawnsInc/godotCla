@@ -7,7 +7,7 @@ extends "res://bots/optimizer.gd"
 const BUILDS := {
 	"pyro": ["solar_lance", "sun_flare"],
 	"gardener": ["seed_bomb", "overgrowth", "grow_spike"],
-	"turtle": ["thorn_shield", "root_wall", "sap_snare", "grow_spike"],
+	"turtle": ["thorn_shield", "bramble_coat", "seed_bomb", "sap_snare", "root_wall"],
 	"shover": ["water_jet", "vine_whip", "pollen_burst", "solar_lance"],
 }
 
@@ -97,6 +97,9 @@ func _build_cast(snap: Dictionary, by: Dictionary) -> Variant:
 					return a
 			"thorn_shield":
 				if snap["player"]["shield"] == 0 and near3 >= 1:
+					return a
+			"bramble_coat":
+				if int(snap["player"].get("thorns_turns", 0)) == 0 and near2 >= 1:
 					return a
 			"root_wall", "sap_snare":
 				if near3 >= 1 and near2 == 0:

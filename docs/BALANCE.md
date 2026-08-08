@@ -66,6 +66,23 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   shover 1/8, turtle 0/7. Turtle is a real gap: pure-defense builds lack a
   win condition (see watch list).
 
+### 2026-08-08 thorns + ceiling sweeps
+
+- Bramble Coat (thorns) added to the base pool: melee attackers and quakers
+  take reflected damage. Modest by design.
+- Fanatic build table, 100 seeds (~25 runs/build): pyro 8/25, shover 6/25,
+  gardener 3/25, turtle 1/25.
+- **Turtle verdict:** even with thorns, a growth engine, and a longer
+  duration, pure-defense play loses to the clock - upkeep consumes the whole
+  charge budget once smog dims regen. Recorded as an identity statement, not
+  a bug: this game counters passivity the way it counters greed. The fanatic
+  keeps the turtle archetype as a canary - if turtle win rates ever rise
+  sharply, the clock has broken.
+- Deeproot tier ladder (10 seeds/tier): 8/7/7/7/8/8 - flat. Current tier
+  modifiers punish inefficiency (smog, prices), which near-optimal play
+  routes around. Future tiers that should bind the ceiling need modifiers
+  that bind optimal play too: enemy stats, elite density, boss buffs.
+
 ## Watch list
 
 - `parched` mutator barely affects the optimizer (banking may be undervalued).
@@ -73,8 +90,8 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   filter. If arrival rates rise, re-check Furnace difficulty.
 - Elites are tanky bounty-carriers (+2 hp, +0 dmg, +4 bloom). The +1 dmg
   variant measurably overshot (optimizer ~17% at 30 seeds).
-- Turtle-style pure-defense builds can't win (fanatic: 0/7). Candidate fix:
-  a defensive damage ability (e.g. thorns reflect) in a future package.
+- Turtle is a designed anti-pattern (see 2026-08-08 thorns entry); fanatic
+  tracks it as a canary metric.
 - Deeproot logs occasional timeouts (2/30): the searcher can still judge
   stalling safest. Revisit if it grows.
 - Magpie deaths cluster on floor 2 (harvest greed vs first real roster) -

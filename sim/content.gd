@@ -99,6 +99,10 @@ const ABILITIES := {
 		"name": "Clear Air", "cost": 2, "target": "self", "range": 3,
 		"effects": [{"op": "clear_smoke", "radius": 3}, {"op": "push_all", "dist": 1}],
 	},
+	"bramble_coat": {
+		"name": "Bramble Coat", "cost": 1, "target": "self", "range": 0,
+		"effects": [{"op": "thorns", "dmg": 2, "turns": 4}],
+	},
 	# Upgraded variants: offered in drafts when the base is owned; replace in place.
 	"solar_lance+": {
 		"name": "Solar Lance+", "cost": 2, "target": "dir", "range": 4,
@@ -148,13 +152,17 @@ const ABILITIES := {
 		"name": "Grow Spike+", "cost": 1, "target": "enemy_near_growth", "range": 4,
 		"effects": [{"op": "damage", "dmg": 4}],
 	},
+	"bramble_coat+": {
+		"name": "Bramble Coat+", "cost": 1, "target": "self", "range": 0,
+		"effects": [{"op": "thorns", "dmg": 3, "turns": 5}],
+	},
 }
 
 ## Abilities that can appear in descent drafts. Mobility stays fixed for now.
 const DRAFT_POOL := [
 	"solar_lance", "seed_bomb", "vine_whip", "water_jet", "root_wall",
 	"pollen_burst", "sun_flare", "thorn_shield", "overgrowth", "sap_snare",
-	"grow_spike",
+	"grow_spike", "bramble_coat",
 ]
 
 ## Grafts: passive run-long modifiers (the relic analog). Pure data; the sim

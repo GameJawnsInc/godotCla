@@ -62,6 +62,7 @@ func _init(seed_v: int, config: Dictionary = {}) -> void:
 		"charge": 0, "bank": 0, "shield": 0,
 		"kit": config.get("kit", Content.STARTING_KIT).duplicate(),
 		"uses": {}, "grafts": [], "gummed": {},
+		"thorns_dmg": 0, "thorns_turns": 0,
 	}
 	if mutators.has("brittle"):
 		player["max_hp"] -= 3
@@ -210,6 +211,7 @@ func snapshot() -> Dictionary:
 			"charge": player["charge"], "bank": player["bank"], "shield": player["shield"],
 			"kit": player["kit"].duplicate(), "uses": player["uses"].duplicate(),
 			"grafts": player["grafts"].duplicate(), "gummed": player["gummed"].duplicate(),
+			"thorns_dmg": player["thorns_dmg"], "thorns_turns": player["thorns_turns"],
 		},
 		"enemies": ens,
 		"map": {
@@ -307,6 +309,10 @@ func _begin_player_turn() -> void:
 		player["gummed"][slot] -= 1
 		if player["gummed"][slot] <= 0:
 			player["gummed"].erase(slot)
+	if player["thorns_turns"] > 0:
+		player["thorns_turns"] -= 1
+		if player["thorns_turns"] == 0:
+			player["thorns_dmg"] = 0
 
 
 func _resolve_turn() -> void:
@@ -424,6 +430,8 @@ func _execute_intent(e: Dictionary) -> void:
 		"attack":
 			if player["pos"] == it["tile"]:
 				_damage_player(int(it["dmg"]), e["kind"])
+				if player["thorns_turns"] > 0 and _manhattan(e["pos"], player["pos"]) == 1:
+					_damage_enemy(e, player["thorns_dmg"], "thorns")
 		"flood":
 			e["cycle"] = int(e.get("cycle", 0)) + 1
 			var row: int = it["row"]
@@ -463,6 +471,8 @@ func _execute_intent(e: Dictionary) -> void:
 			e["cycle"] = int(e.get("cycle", 0)) + 1
 			if _manhattan(e["pos"], player["pos"]) == 1:
 				_damage_player(int(it["dmg"]), e["kind"])
+				if player["thorns_turns"] > 0:
+					_damage_enemy(e, player["thorns_dmg"], "thorns")
 		"ooze":
 			var odef: Dictionary = Content.ENEMIES[e["kind"]]
 			var otimer: int = e.get("timer", int(odef["ooze_cycle"])) - 1
@@ -920,6 +930,10 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 		"shield":
 			player["shield"] = mini(player["shield"] + int(eff["amount"]), _shield_cap())
 			_emit({"t": "shield", "total": player["shield"]})
+		"thorns":
+			player["thorns_dmg"] = int(eff["dmg"])
+			player["thorns_turns"] = maxi(player["thorns_turns"], int(eff["turns"]))
+			_emit({"t": "thorns", "dmg": eff["dmg"], "turns": player["thorns_turns"]})
 		"aoe_status":
 			for e in enemies.duplicate():
 				if _manhattan(e["pos"], player["pos"]) <= int(eff["radius"]):

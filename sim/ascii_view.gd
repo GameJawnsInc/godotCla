@@ -42,6 +42,8 @@ static func render(snap: Dictionary) -> String:
 	lines.append("  kit: %s" % ", ".join(pl["kit"]))
 	if not pl["grafts"].is_empty():
 		lines.append("  grafts: %s" % ", ".join(pl["grafts"]))
+	if int(pl.get("thorns_turns", 0)) > 0:
+		lines.append("  thorns: %d dmg, %d turns" % [pl["thorns_dmg"], pl["thorns_turns"]])
 	for slot in pl["gummed"]:
 		lines.append("  GUMMED: slot %d (%s) for %d turns" % [slot, pl["kit"][slot], pl["gummed"][slot]])
 	if snap["phase"] == "draft":
