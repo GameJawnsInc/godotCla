@@ -144,9 +144,35 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   sprout 0 (depth 4.5), magpie 4, fanatic 2, optimizer 8, deeproot 23
   (avg floor 6.8, zero timeouts).
 
+### 2026-08-08 mutator round (all six, both bots, 30 seeds)
+
+- New mutators: Overtime Shift (+1 of each non-boss floor's most common
+  enemy) and Boarded Shrines (shops sell nothing). Both in the daily
+  rotation; both unlock at 2 career wins.
+- Full table (optimizer / deeproot): baseline 8/23; kit_of_3 14/18;
+  double_oil 14/20; brittle 8/23; parched 12/20; overtime 14/23;
+  boarded 17/23.
+- **Parched verdict (closes watch-list item):** binds the ceiling (-3) and
+  not the optimizer, because banked burst only matters to skilled play.
+  Working as designed; keep.
+- **The systemic finding: five of six "handicaps" help the optimizer.**
+  Boarded Shrines is +9 wins (30 points). Its deaths are smog-dominated,
+  and every mutator that removes an option (shopping detours, cleanse
+  windows, kit breadth) forces the tempo-optimal play it won't choose
+  itself. Deeproot is flat on the same mutators - so the mutators are
+  ceiling-neutral spice as intended, and the paradox is a bot flaw:
+  the optimizer over-values economy and under-values descent speed.
+  Its 42/100 baseline partly measures that error, not game difficulty.
+- kit_of_3 is the strongest ceiling bind (-5): kit breadth genuinely
+  matters at the top. brittle is flat for both - neither bot dies to
+  raw damage at 30-seed resolution.
+
 ## Watch list
 
-- `parched` mutator barely affects the optimizer (banking may be undervalued).
+- Optimizer tempo flaw (see mutator round): shopping detours and greedy
+  cleansing cost it ~6-9 wins/30; option-removing mutators beat its own
+  baseline. Fix its clock discipline, then re-baseline at 100 seeds -
+  target band may need updating afterward.
 - Boss deaths are rare once seed_bomb is protected; arrivals are the real
   filter. If arrival rates rise, re-check Furnace difficulty.
 - Elites are tanky bounty-carriers (+2 hp, +0 dmg, +4 bloom). The +1 dmg
