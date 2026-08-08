@@ -114,6 +114,19 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   pairing, so recorded as a design note - support tools are supposed to need
   a damage plan next to them. No data change.
 
+### 2026-08-08 ceiling package sweep
+
+- Deeproot, 20 seeds per config: baseline pool 14/20; + mycology 16/20;
+  + hydraulics 15/20; + aeolian 17/20; all three 13/20. Everything within
+  noise of baseline - no package is a trap pick or a power spike at the
+  ceiling.
+- Package abilities are genuinely drafted in winning kits (gust and updraft
+  4 wins each under aeolian; spore_cloud and fungal_ring under mycology;
+  geyser and tide under hydraulics) - the unlocks add variety, not filler.
+- "All three" dipping slightly below baseline echoes the optimizer-side
+  pool-dilution note from the package round: more choices, same power.
+  Within noise; no action.
+
 ### 2026-08-08 optimizer survival gate
 
 - Autopsy (seed 2) caught the optimizer at 4 HP trading 1-dmg strikes with
