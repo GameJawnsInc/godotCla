@@ -40,7 +40,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		var best_bomb = null
 		var best_d := 999
 		for a in by["ability"]:
-			if snap["player"]["kit"][a["slot"]] == "seed_bomb":
+			if _kit_id(snap, a["slot"]) == "seed_bomb":
 				var d: int = absi(a["target"].x - boss["pos"].x) + absi(a["target"].y - boss["pos"].y)
 				if d <= 2 and d < best_d:
 					best_d = d
@@ -51,7 +51,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 	# 3 damage for 1 charge beats everything else on the menu
 	if by.has("ability"):
 		for a in by["ability"]:
-			if snap["player"]["kit"][a["slot"]] == "grow_spike":
+			if _kit_id(snap, a["slot"]) == "grow_spike":
 				return a
 
 	if by.has("strike"):
@@ -68,7 +68,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 	if by.has("ability"):
 		var near := _enemies_within(snap, 2)
 		for a in by["ability"]:
-			var aid: String = snap["player"]["kit"][a["slot"]]
+			var aid: String = _kit_id(snap, a["slot"])
 			if aid == "sun_flare" and near >= 2:
 				return a
 			if aid == "pollen_burst" and _enemies_within(snap, 1) >= 2:
@@ -78,11 +78,11 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 			if aid == "spore_cloud" and near >= 2:
 				return a
 		for a in by["ability"]:
-			if snap["player"]["kit"][a["slot"]] == "solar_lance" and _lance_hits(snap, a["target"]):
+			if _kit_id(snap, a["slot"]) == "solar_lance" and _lance_hits(snap, a["target"]):
 				return a
 		if snap["player"]["shield"] == 0 and near >= 1 and snap["player"]["charge"] >= 2:
 			for a in by["ability"]:
-				if snap["player"]["kit"][a["slot"]] == "thorn_shield":
+				if _kit_id(snap, a["slot"]) == "thorn_shield":
 					return a
 
 	if threat.has(ppos):
@@ -94,16 +94,16 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		# cornered: shove an adjacent attacker away, dash out, or root the attacker in place
 		if by.has("ability"):
 			for a in by["ability"]:
-				if snap["player"]["kit"][a["slot"]] == "water_jet" and _enemy_at(snap, ppos + a["target"]) != null:
+				if _kit_id(snap, a["slot"]) == "water_jet" and _enemy_at(snap, ppos + a["target"]) != null:
 					return a
 			for a in by["ability"]:
-				if snap["player"]["kit"][a["slot"]] == "mycelium_dash" and not threat.has(a["target"]):
+				if _kit_id(snap, a["slot"]) == "mycelium_dash" and not threat.has(a["target"]):
 					return a
 			for a in by["ability"]:
-				if snap["player"]["kit"][a["slot"]] == "sap_snare":
+				if _kit_id(snap, a["slot"]) == "sap_snare":
 					return a
 			for a in by["ability"]:
-				if snap["player"]["kit"][a["slot"]] == "gust" and _enemy_at(snap, ppos + a["target"]) != null:
+				if _kit_id(snap, a["slot"]) == "gust" and _enemy_at(snap, ppos + a["target"]) != null:
 					return a
 
 	# rest up on growth when the coast is clear
@@ -117,7 +117,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 					return a
 		if by.has("ability"):
 			for a in by["ability"]:
-				if snap["player"]["kit"][a["slot"]] == "seed_bomb" and a["target"] == ppos:
+				if _kit_id(snap, a["slot"]) == "seed_bomb" and a["target"] == ppos:
 					return a
 
 	if by.has("cleanse") and _nearest_enemy_dist(snap) > 3:
@@ -132,7 +132,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 
 	if by.has("ability"):
 		for a in by["ability"]:
-			if snap["player"]["kit"][a["slot"]] == "vine_whip":
+			if _kit_id(snap, a["slot"]) == "vine_whip":
 				return a
 
 	return legal[legal.size() - 1]
@@ -149,9 +149,10 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 	var best_pick := -1
 	var best_rank := 999
 	for i in offers.size():
-		var r: int = pref.find(offers[i])
+		var r: int = pref.find(String(offers[i]).trim_suffix("+"))
 		if r == -1:
 			r = 500
+		r = r * 2 - (1 if String(offers[i]).ends_with("+") else 0)
 		if r < best_rank:
 			best_rank = r
 			best_pick = i
@@ -171,7 +172,7 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 	var best_u := 999999
 	for a in candidates:
 		var slot: int = a["drop"]
-		if kit[slot] == "mycelium_dash" or kit[slot] == "seed_bomb":
+		if String(kit[slot]).trim_suffix("+") == "mycelium_dash" or String(kit[slot]).trim_suffix("+") == "seed_bomb":
 			continue
 		var u: int = uses.get(kit[slot], 0)
 		if u < best_u:

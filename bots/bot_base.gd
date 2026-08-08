@@ -15,3 +15,8 @@ func get_bot_name() -> String:
 
 func choose_action(_snap: Dictionary, legal: Array) -> Dictionary:
 	return legal[legal.size() - 1]
+
+
+## Kit slot id with any upgrade suffix stripped, for base-name matching.
+func _kit_id(snap: Dictionary, slot: int) -> String:
+	return String(snap["player"]["kit"][slot]).trim_suffix("+")

@@ -94,6 +94,10 @@ static func generate(rng: RandomNumberGenerator, fdef: Dictionary) -> Dictionary
 				enemies.append({"kind": kind, "pos": p})
 				taken.append(p)
 
+	for i in range(int(fdef.get("elites", 0))):
+		if not enemies.is_empty():
+			enemies[rng.randi_range(0, enemies.size() - 1)]["elite"] = true
+
 	var terrain := {}
 	for i in range(int(fdef["oil"])):
 		var p := _pick_floor(rng, tiles, w, h, taken, start, 2, reach)

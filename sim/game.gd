@@ -140,7 +140,8 @@ func legal_actions() -> Array:
 		return acts
 	if phase == "draft":
 		for i in draft_offers.size():
-			if player["kit"].size() < _kit_max():
+			var is_upgrade: bool = String(draft_offers[i]).ends_with("+")
+			if is_upgrade or player["kit"].size() < _kit_max():
 				acts.append({"type": "draft", "pick": i})
 			else:
 				for j in player["kit"].size():
@@ -190,6 +191,7 @@ func snapshot() -> Dictionary:
 			"traits": edef["traits"].duplicate(),
 			"will_split": edef["traits"].has("splits") and not e["split_used"],
 			"status": e["status"].duplicate(),
+			"elite": e.get("elite", false),
 		})
 	var terr := {}
 	for t in terrain.keys():
@@ -237,7 +239,10 @@ func _enter_floor(n: int) -> void:
 	player["pos"] = gen["start"]
 	enemies.clear()
 	for spec in gen["enemies"]:
-		_spawn(spec["kind"], spec["pos"])
+		var e := _spawn(spec["kind"], spec["pos"])
+		if spec.get("elite", false):
+			e["elite"] = true
+			e["hp"] += Content.ELITE_HP_BONUS
 	shop = _stock_shop()
 	_emit({"t": "floor", "floor": n, "name": fdef["name"]})
 	_compute_intents()
@@ -315,7 +320,8 @@ func _compute_intents() -> void:
 			else:
 				e["intent"] = {"type": "move"}
 		elif _manhattan(e["pos"], player["pos"]) == 1:
-			e["intent"] = {"type": "attack", "tile": player["pos"], "dmg": edef["dmg"]}
+			var dmg: int = int(edef["dmg"]) + (Content.ELITE_DMG_BONUS if e.get("elite", false) else 0)
+			e["intent"] = {"type": "attack", "tile": player["pos"], "dmg": dmg}
 		else:
 			e["intent"] = {"type": "move"}
 
@@ -553,8 +559,12 @@ func _act_descend() -> void:
 func _draw_draft_offers(count: int) -> Array:
 	var candidates: Array = []
 	for aid in draft_pool:
-		if not player["kit"].has(aid):
+		if not player["kit"].has(aid) and not player["kit"].has(aid + "+"):
 			candidates.append(aid)
+	for aid in player["kit"]:
+		var up: String = aid + "+"
+		if Content.ABILITIES.has(up):
+			candidates.append(up)
 	var offers: Array = []
 	while offers.size() < count and not candidates.is_empty():
 		var i := rng.randi_range(0, candidates.size() - 1)
@@ -570,7 +580,15 @@ func _act_draft(action: Dictionary) -> void:
 		return
 	if pick >= 0:
 		var aid: String = draft_offers[pick]
-		if player["kit"].size() >= _kit_max():
+		if aid.ends_with("+"):
+			var slot: int = player["kit"].find(aid.trim_suffix("+"))
+			if slot == -1:
+				_emit({"t": "illegal", "action": "draft"})
+				return
+			player["kit"][slot] = aid
+			player["uses"][aid] = int(player["uses"].get(aid.trim_suffix("+"), 0))
+			_emit({"t": "draft_upgrade", "id": aid})
+		elif player["kit"].size() >= _kit_max():
 			var drop: int = action.get("drop", -1)
 			if drop < 0 or drop >= player["kit"].size():
 				_emit({"t": "illegal", "action": "draft drop"})
@@ -865,6 +883,9 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 	if e["hp"] <= 0:
 		enemies.erase(e)
 		_emit({"t": "death", "who": e["kind"], "id": e["id"]})
+		if e.get("elite", false):
+			bloom += Content.ELITE_BOUNTY
+			_emit({"t": "bounty", "bloom": bloom})
 		if edef["traits"].has("boss"):
 			won = true
 			over = true

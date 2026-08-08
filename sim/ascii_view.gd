@@ -51,7 +51,8 @@ static func render(snap: Dictionary) -> String:
 		for s in e["status"]:
 			if int(e["status"][s]) > 0:
 				status += " [%s %d]" % [s, e["status"][s]]
-		lines.append("  %s#%d hp%d (%d,%d) -> %s%s" % [e["kind"], e["id"], e["hp"], e["pos"].x, e["pos"].y, _intent_str(e), status])
+		var elite_tag: String = " [ELITE]" if e.get("elite", false) else ""
+		lines.append("  %s#%d hp%d (%d,%d) -> %s%s%s" % [e["kind"], e["id"], e["hp"], e["pos"].x, e["pos"].y, _intent_str(e), status, elite_tag])
 	for ev in snap["events"]:
 		lines.append("  . %s" % str(ev))
 	if snap["over"]:

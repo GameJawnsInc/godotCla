@@ -99,6 +99,55 @@ const ABILITIES := {
 		"name": "Clear Air", "cost": 2, "target": "self", "range": 3,
 		"effects": [{"op": "clear_smoke", "radius": 3}, {"op": "push_all", "dist": 1}],
 	},
+	# Upgraded variants: offered in drafts when the base is owned; replace in place.
+	"solar_lance+": {
+		"name": "Solar Lance+", "cost": 2, "target": "dir", "range": 4,
+		"effects": [{"op": "lance", "dmg": 3, "clear_smog_bonus": 1, "ignite": true}],
+	},
+	"seed_bomb+": {
+		"name": "Seed Bomb+", "cost": 1, "target": "tile", "range": 3,
+		"effects": [{"op": "grow_radius", "radius": 1}],
+	},
+	"vine_whip+": {
+		"name": "Vine Whip+", "cost": 1, "target": "enemy_line", "range": 4,
+		"effects": [{"op": "pull", "dist": 3, "dmg": 2}],
+	},
+	"water_jet+": {
+		"name": "Water Jet+", "cost": 1, "target": "dir", "range": 3,
+		"effects": [{"op": "wash_push", "push": 3, "collision_dmg": 2}],
+	},
+	"mycelium_dash+": {
+		"name": "Mycelium Dash+", "cost": 1, "target": "growth", "range": 7,
+		"effects": [{"op": "teleport"}],
+	},
+	"root_wall+": {
+		"name": "Root Wall+", "cost": 1, "target": "tile", "range": 2,
+		"effects": [{"op": "grow_wall", "ttl": 6}],
+	},
+	"pollen_burst+": {
+		"name": "Pollen Burst+", "cost": 2, "target": "self", "range": 2,
+		"effects": [{"op": "aoe_status", "status": "stun", "turns": 2, "radius": 2}],
+	},
+	"sun_flare+": {
+		"name": "Sun Flare+", "cost": 2, "target": "self", "range": 2,
+		"effects": [{"op": "aoe_damage", "dmg": 2, "radius": 2, "ignite": true}],
+	},
+	"thorn_shield+": {
+		"name": "Thorn Shield+", "cost": 1, "target": "self", "range": 0,
+		"effects": [{"op": "shield", "amount": 3}],
+	},
+	"overgrowth+": {
+		"name": "Overgrowth+", "cost": 1, "target": "tile_any", "range": 3,
+		"effects": [{"op": "convert_radius", "radius": 2}],
+	},
+	"sap_snare+": {
+		"name": "Sap Snare+", "cost": 1, "target": "enemy", "range": 4,
+		"effects": [{"op": "apply_status", "status": "root", "turns": 3}],
+	},
+	"grow_spike+": {
+		"name": "Grow Spike+", "cost": 1, "target": "enemy_near_growth", "range": 4,
+		"effects": [{"op": "damage", "dmg": 4}],
+	},
 }
 
 ## Abilities that can appear in descent drafts. Mobility stays fixed for now.
@@ -167,6 +216,9 @@ const VAULTS := {
 }
 
 const RICH_GOO_BLOOM := 3
+const ELITE_HP_BONUS := 2
+const ELITE_DMG_BONUS := 0
+const ELITE_BOUNTY := 4
 
 const ENEMIES := {
 	"drill_bot": {"name": "Drill Bot", "hp": 3, "dmg": 2, "slow": false, "traits": []},
@@ -195,7 +247,7 @@ const FLOORS := [
 	{
 		"name": "Refinery Gate", "biome": "refinery", "w": 26, "h": 16, "rooms": 5,
 		"enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1, "coal_golem": 1},
-		"oil": 8, "goo": 4, "vents": 2, "vaults": ["tar_hoard", "old_garden"], "pipes": 1,
+		"oil": 8, "goo": 4, "vents": 2, "elites": 1, "vaults": ["tar_hoard", "old_garden"], "pipes": 1,
 		"smog_spawn": [10, 18], "smog_spawn_every": 11, "smog_dim": [14, 22], "smog_choke": 36,
 	},
 	{
@@ -207,13 +259,13 @@ const FLOORS := [
 	{
 		"name": "Pipeworks", "biome": "refinery", "w": 28, "h": 16, "rooms": 6,
 		"enemies": {"drill_bot": 2, "oil_sludge": 1, "coal_golem": 1, "extractor_engine": 1},
-		"oil": 10, "goo": 5, "vents": 3, "vaults": ["oil_spill", "tar_hoard"], "pipes": 2,
+		"oil": 10, "goo": 5, "vents": 3, "elites": 1, "vaults": ["oil_spill", "tar_hoard"], "pipes": 2,
 		"smog_spawn": [12, 20], "smog_spawn_every": 12, "smog_dim": [13, 21], "smog_choke": 32,
 	},
 	{
 		"name": "Furnace Approach", "biome": "furnace", "w": 28, "h": 17, "rooms": 6,
 		"enemies": {"drill_bot": 2, "coal_golem": 2, "tar_spitter": 1, "extractor_engine": 1},
-		"oil": 12, "goo": 5, "vents": 3, "vaults": ["oil_spill", "tar_hoard", "old_garden"], "pipes": 2,
+		"oil": 12, "goo": 5, "vents": 3, "elites": 1, "vaults": ["oil_spill", "tar_hoard", "old_garden"], "pipes": 2,
 		"smog_spawn": [10, 18], "smog_spawn_every": 11, "smog_dim": [12, 20], "smog_choke": 30,
 	},
 	{

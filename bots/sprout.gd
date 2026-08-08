@@ -55,7 +55,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 	# loves the laser
 	if by.has("ability"):
 		for a in by["ability"]:
-			if snap["player"]["kit"][a["slot"]] == "solar_lance" and _lance_hits(snap, a["target"]):
+			if _kit_id(snap, a["slot"]) == "solar_lance" and _lance_hits(snap, a["target"]):
 				return a
 
 	# noob inefficiency: sometimes just stops with charge left over
@@ -89,9 +89,10 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 	var best_pick := -1
 	var best_rank := 999
 	for i in offers.size():
-		var r: int = pref.find(offers[i])
+		var r: int = pref.find(String(offers[i]).trim_suffix("+"))
 		if r == -1:
 			r = 500
+		r = r * 2 - (1 if String(offers[i]).ends_with("+") else 0)
 		if r < best_rank:
 			best_rank = r
 			best_pick = i

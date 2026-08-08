@@ -98,5 +98,7 @@ architecture below is designed to bend rather than block.
   sweeps, meta-unlocks, and post-win difficulty tiers.
 - Meta layer: `meta/profile.gd` records runs against `Content.MILESTONES` and
   hands back the next run's config; the sim itself stays career-agnostic.
+- Balance targets and the measurement discipline live in `docs/BALANCE.md`;
+  `tests/daily_run.gd` generates the date-seeded daily challenge.
 - Workflow: no PRs; commit on `claude/godot-setup-q6hk6p` and merge/push
   straight to `main`.
