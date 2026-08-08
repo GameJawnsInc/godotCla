@@ -14,6 +14,8 @@ func _init() -> void:
 	if OS.get_environment("VERIFY_SEEDS") != "":
 		seeds = int(OS.get_environment("VERIFY_SEEDS"))
 	var cfg := {}
+	if OS.get_environment("VERIFY_TIER") != "":
+		cfg["tier"] = int(OS.get_environment("VERIFY_TIER"))
 	var extras := OS.get_environment("VERIFY_EXTRAS")
 	if extras != "":
 		var kit: Array = Content.STARTING_KIT.duplicate()
@@ -21,5 +23,7 @@ func _init() -> void:
 		cfg["kit"] = kit
 	var m := Sweep.measure(seeds, cfg, Sweep.pick_bot())
 	var label := extras if extras != "" else "baseline"
+	if cfg.has("tier"):
+		label += " (tier %d)" % cfg["tier"]
 	print("%s: %d/%d wins, avg floor %.1f" % [label, m["wins"], m["n"], m["avg_floor"]])
 	quit(0)

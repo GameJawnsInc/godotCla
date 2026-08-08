@@ -114,6 +114,23 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   pairing, so recorded as a design note - support tools are supposed to need
   a damage plan next to them. No data change.
 
+### 2026-08-08 optimizer survival gate
+
+- Autopsy (seed 2) caught the optimizer at 4 HP trading 1-dmg strikes with
+  a telegraphed 2-dmg attacker - its strike rung outranked dodging. Added a
+  survival gate: when its tile is threatened and hp + shield <= 2x incoming
+  telegraphed damage, strike only for the kill, otherwise dodge.
+- Effect is aggregate-neutral: 42/100 before, 42/100 after (avg floor
+  5.25 -> 5.1); tier 7 3/30 vs 3/20 before. The trade-deaths were mostly
+  symptoms of runs already behind tempo - those runs now die to smog
+  instead. Kept regardless: combat deaths dropped (30-seed causes:
+  4 drill_bot vs 17 smog), so autopsy output now shows real causes of loss
+  rather than bot error, and the reference heuristic no longer models play
+  no human would choose.
+- Post-gate persona snapshot (30 seeds) all in band: wanderer 0 (floor 1),
+  sprout 0 (depth 4.5), magpie 4, fanatic 2, optimizer 8, deeproot 23
+  (avg floor 6.8, zero timeouts).
+
 ## Watch list
 
 - `parched` mutator barely affects the optimizer (banking may be undervalued).
