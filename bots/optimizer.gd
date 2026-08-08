@@ -108,8 +108,9 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		if not out.is_empty():
 			return out
 
-	# rest up on growth when the coast is clear
-	if snap["player"]["hp"] <= snap["player"]["max_hp"] - 3 and _nearest_enemy_dist(snap) > 4:
+	# rest up on growth when the coast is clear - but not once the skies are
+	# nearly dark; late-floor turns are worth more than hit points then
+	if snap["player"]["hp"] <= snap["player"]["max_hp"] - 3 and _nearest_enemy_dist(snap) > 4 and int(snap["dim"]) <= 1:
 		var on_growth: bool = snap["terrain"].get(ppos, {}).get("kind", "") == "growth"
 		if on_growth:
 			return legal[legal.size() - 1]
@@ -122,7 +123,9 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 				if _kit_id(snap, a["slot"]) == "seed_bomb" and a["target"] == ppos:
 					return a
 
-	if by.has("cleanse") and _nearest_enemy_dist(snap) > 3:
+	# greedy cleansing only while the skies are still clear - the bloom is not
+	# worth the turns once the smog clock starts dimming regen
+	if by.has("cleanse") and _nearest_enemy_dist(snap) > 3 and int(snap["dim"]) == 0:
 		return by["cleanse"][0]
 
 	if by.has("move"):
@@ -188,10 +191,20 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 func _dodge(snap: Dictionary, by: Dictionary, threat: Dictionary) -> Dictionary:
 	var ppos: Vector2i = snap["player"]["pos"]
 	if by.has("move"):
+		# among safe tiles, retreat toward the stairs - a dodge that makes no
+		# progress oscillates forever while the smog clock runs out
+		var stairs: Vector2i = snap["map"]["stairs"]
+		var best: Dictionary = {}
+		var best_d := 999999
 		for a in by["move"]:
 			var dest: Vector2i = ppos + a["dir"]
 			if not threat.has(dest) and not _hazard(snap, dest):
-				return a
+				var d := _bfs_dist(snap, dest, stairs)
+				if d < best_d:
+					best_d = d
+					best = a
+		if not best.is_empty():
+			return best
 	if by.has("ability"):
 		for a in by["ability"]:
 			if _kit_id(snap, a["slot"]) == "water_jet" and _enemy_at(snap, ppos + a["target"]) != null:
@@ -206,6 +219,41 @@ func _dodge(snap: Dictionary, by: Dictionary, threat: Dictionary) -> Dictionary:
 			if _kit_id(snap, a["slot"]) == "gust" and _enemy_at(snap, ppos + a["target"]) != null:
 				return a
 	return {}
+
+
+## Walkable BFS distance between two tiles (enemies block, goal exempt);
+## 999999 when unreachable or the goal is off-map.
+func _bfs_dist(snap: Dictionary, from: Vector2i, to: Vector2i) -> int:
+	if to == Vector2i(-1, -1):
+		return 999999
+	if from == to:
+		return 0
+	var m: Dictionary = snap["map"]
+	var w: int = m["w"]
+	var h: int = m["h"]
+	var occupied := {}
+	for e in snap["enemies"]:
+		occupied[e["pos"]] = true
+	var dist := {}
+	dist[from] = 0
+	var queue: Array = [from]
+	var qi := 0
+	while qi < queue.size():
+		var cur: Vector2i = queue[qi]
+		qi += 1
+		for d in DIRS:
+			var nxt: Vector2i = cur + d
+			if nxt == to:
+				return int(dist[cur]) + 1
+			if nxt.x < 0 or nxt.y < 0 or nxt.x >= w or nxt.y >= h:
+				continue
+			if m["tiles"][nxt.y * w + nxt.x] != 1:
+				continue
+			if dist.has(nxt) or occupied.has(nxt):
+				continue
+			dist[nxt] = int(dist[cur]) + 1
+			queue.append(nxt)
+	return 999999
 
 
 ## Total telegraphed damage that will land on the player's current tile.
@@ -307,16 +355,22 @@ func _lance_hits(snap: Dictionary, dir: Vector2i) -> bool:
 
 func _path_step(snap: Dictionary, threat: Dictionary) -> Vector2i:
 	var stairs: Vector2i = snap["map"]["stairs"]
-	# detour to the shrine when there is something worth buying
+	# shop only when the shrine is nearly on the way to the stairs - measured:
+	# unconditional detours cost this bot ~9 wins/30 to the smog clock, more
+	# than any purchase returns (the Boarded Shrines mutator proved it by
+	# accidentally beating the un-mutated baseline)
 	var shrine: Vector2i = snap["map"]["shrine"]
-	if shrine != Vector2i(-1, -1) and snap["player"]["pos"] != shrine:
+	if shrine != Vector2i(-1, -1) and snap["player"]["pos"] != shrine and int(snap["dim"]) == 0:
 		var worth: bool = snap["shop"].has("graft") and snap["bloom"] >= 5
 		if snap["shop"].get("heal", false) and snap["bloom"] >= 3 and snap["player"]["hp"] <= snap["player"]["max_hp"] - 4:
 			worth = true
 		if worth:
-			var to_shrine := _bfs_step(snap, true, threat, shrine)
-			if to_shrine != Vector2i.ZERO:
-				return to_shrine
+			var ppos2: Vector2i = snap["player"]["pos"]
+			var extra := _bfs_dist(snap, ppos2, shrine) + _bfs_dist(snap, shrine, stairs) - _bfs_dist(snap, ppos2, stairs)
+			if extra <= 4:
+				var to_shrine := _bfs_step(snap, true, threat, shrine)
+				if to_shrine != Vector2i.ZERO:
+					return to_shrine
 	var step := _bfs_step(snap, true, threat, stairs)
 	if step != Vector2i.ZERO:
 		return step

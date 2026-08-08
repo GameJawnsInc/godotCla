@@ -18,7 +18,7 @@ Reference numbers for TENDER's difficulty, and the discipline for changing them.
 | persona   | target                  | why |
 |-----------|-------------------------|-----|
 | deeproot  | 70–90% wins             | the search ceiling: near-perfect play should nearly always win |
-| optimizer | 30–50% wins             | skilled play should win often but never be safe |
+| optimizer | 45–65% wins             | skilled play should win often but never be safe (raised from 30–50 after the tempo fix — the old band measured a bot flaw) |
 | fanatic   | 15–30% overall; every build > 0 | committing to a niche build must stay viable |
 | magpie    | 5–15%, top bloom        | full greed should usually lose to the clock, richly |
 | sprout    | avg depth 3.5–5, wins rare | noobs feel progress; full clears are earned |
@@ -167,12 +167,33 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   matters at the top. brittle is flat for both - neither bot dies to
   raw damage at 30-seed resolution.
 
+### 2026-08-08 optimizer clock discipline (the tempo fix)
+
+- Chased the mutator-paradox finding to ground. Three fixes, only the last
+  one mattered:
+  1. Dim-gated cleansing/resting/detours: 8/30 -> 9/30. Nearly worthless.
+  2. Autopsy caught an infinite dodge oscillation (two tiles, 25 turns,
+     choke death). Dodges now tie-break toward the stairs - a fighting
+     retreat instead of a standstill. Broke the loop, aggregate flat.
+  3. The experiment: disabling shrine detours alone -> 17/30, exactly the
+     Boarded Shrines number. **Cross-floor shopping trips were the entire
+     paradox.** Detours now require the shrine to be <= 4 extra tiles off
+     the direct stairs path (BFS-measured) and clear skies (dim 0).
+- Re-baseline, 100 seeds: **59/100** (was 42), avg floor 6.1. Target band
+  raised to 45-65%. Boarded Shrines re-check: 19/30 vs 17/30 baseline -
+  paradox neutralized (shops are now roughly free, as they should be).
+- Death-cause shape finally matches design intent: optimizer deaths are now
+  combat-dominated (8 drill_bot / 3 smog, floors 5-6), not clock-dominated.
+- Ripple: fanatic 2/30 -> 9/30 (pyro 4/8, shover 4/8 - it inherits the
+  pathing fix and stops donating tempo; turtle still 0, canary intact).
+  Deeproot unchanged at 23/30. Skill ladder stays strictly ordered:
+  0 / 0 / 2 / 9 / 17 / 23 across the six personas.
+
 ## Watch list
 
-- Optimizer tempo flaw (see mutator round): shopping detours and greedy
-  cleansing cost it ~6-9 wins/30; option-removing mutators beat its own
-  baseline. Fix its clock discipline, then re-baseline at 100 seeds -
-  target band may need updating afterward.
+- Magpie and fanatic each logged 3/30 timeouts in the tempo-fix playtest
+  (magpie harvest loops, fanatic build stubbornness) - above the zero
+  target. Autopsy a couple if they persist next round.
 - Boss deaths are rare once seed_bomb is protected; arrivals are the real
   filter. If arrival rates rise, re-check Furnace difficulty.
 - Elites are tanky bounty-carriers (+2 hp, +0 dmg, +4 bloom). The +1 dmg
