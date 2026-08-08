@@ -21,6 +21,13 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 			by[k] = []
 		by[k].append(a)
 
+	# impulse shopping: heal first, then whatever is shiny
+	if by.has("buy") and rng.randf() < 0.5:
+		for item in ["heal", "ability", "graft"]:
+			for a in by["buy"]:
+				if a["item"] == item:
+					return a
+
 	# usually takes the stairs, sometimes lingers
 	if by.has("descend") and rng.randf() < 0.9:
 		return by["descend"][0]

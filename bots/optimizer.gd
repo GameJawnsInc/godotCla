@@ -21,6 +21,12 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 			by[k] = []
 		by[k].append(a)
 
+	if by.has("buy"):
+		for item in ["graft", "heal", "ability"]:
+			for a in by["buy"]:
+				if a["item"] == item:
+					return a
+
 	if by.has("descend"):
 		return by["descend"][0]
 
@@ -209,6 +215,16 @@ func _lance_hits(snap: Dictionary, dir: Vector2i) -> bool:
 
 func _path_step(snap: Dictionary, threat: Dictionary) -> Vector2i:
 	var stairs: Vector2i = snap["map"]["stairs"]
+	# detour to the shrine when there is something worth buying
+	var shrine: Vector2i = snap["map"]["shrine"]
+	if shrine != Vector2i(-1, -1) and snap["player"]["pos"] != shrine:
+		var worth: bool = snap["shop"].has("graft") and snap["bloom"] >= 5
+		if snap["shop"].get("heal", false) and snap["bloom"] >= 3 and snap["player"]["hp"] <= snap["player"]["max_hp"] - 4:
+			worth = true
+		if worth:
+			var to_shrine := _bfs_step(snap, true, threat, shrine)
+			if to_shrine != Vector2i.ZERO:
+				return to_shrine
 	var step := _bfs_step(snap, true, threat, stairs)
 	if step != Vector2i.ZERO:
 		return step

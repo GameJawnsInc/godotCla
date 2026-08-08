@@ -11,6 +11,7 @@ const DEFAULT_INVARIANTS := [
 	"entities_on_floor",
 	"terrain_on_floor",
 	"clear_start_and_stairs",
+	"shrine_reachable",
 ]
 
 
@@ -56,6 +57,10 @@ static func generate(rng: RandomNumberGenerator, fdef: Dictionary) -> Dictionary
 			vents.append(v)
 			taken.append(v)
 
+	var shrine := _pick_floor(rng, tiles, w, h, taken, start, 3)
+	if shrine != Vector2i(-1, -1):
+		taken.append(shrine)
+
 	var enemies: Array = []
 	for kind in fdef["enemies"]:
 		for i in range(int(fdef["enemies"][kind])):
@@ -80,7 +85,7 @@ static func generate(rng: RandomNumberGenerator, fdef: Dictionary) -> Dictionary
 
 	return {
 		"w": w, "h": h, "tiles": tiles,
-		"start": start, "stairs": stairs, "vents": vents,
+		"start": start, "stairs": stairs, "vents": vents, "shrine": shrine,
 		"enemies": enemies, "terrain": terrain,
 	}
 
@@ -146,6 +151,11 @@ static func validate(gen: Dictionary, invariants: Array = DEFAULT_INVARIANTS) ->
 				for e in gen["enemies"]:
 					if e["pos"] == gen["stairs"]:
 						fails.append("enemy on stairs")
+			"shrine_reachable":
+				if gen["shrine"] == Vector2i(-1, -1):
+					fails.append("no shrine placed")
+				elif not _reachable(gen, gen["start"], gen["shrine"]):
+					fails.append("shrine not reachable from start")
 	return fails
 
 

@@ -19,6 +19,9 @@ static func render(snap: Dictionary) -> String:
 		grid.append(row)
 	var stairs: Vector2i = m["stairs"]
 	grid[stairs.y][stairs.x] = ">"
+	var shrine: Vector2i = m["shrine"]
+	if shrine != Vector2i(-1, -1):
+		grid[shrine.y][shrine.x] = "+"
 	for v in m["vents"]:
 		grid[v.y][v.x] = "^"
 	for t in snap["terrain"].keys():
@@ -36,6 +39,8 @@ static func render(snap: Dictionary) -> String:
 		snap["floor_name"], snap["floor"], snap["turn"], snap["smog"], snap["dim"],
 		pl["hp"], pl["max_hp"], pl["shield"], pl["charge"], pl["bank"], snap["bloom"]])
 	lines.append("  kit: %s" % ", ".join(pl["kit"]))
+	if not pl["grafts"].is_empty():
+		lines.append("  grafts: %s" % ", ".join(pl["grafts"]))
 	if snap["phase"] == "draft":
 		lines.append("  DRAFT: %s" % ", ".join(snap["draft_offers"]))
 	for e in snap["enemies"]:

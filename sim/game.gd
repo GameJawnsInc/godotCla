@@ -35,6 +35,7 @@ var terrain := {}
 var recent_events: Array = []
 var phase := "play"
 var draft_offers: Array = []
+var shop := {}
 
 var _next_id := 1
 var _step_events: Array = []
@@ -47,7 +48,7 @@ func _init(seed_v: int) -> void:
 	player = {
 		"pos": Vector2i.ZERO, "hp": Content.PLAYER_HP, "max_hp": Content.PLAYER_HP,
 		"charge": 0, "bank": 0, "shield": 0, "kit": Content.STARTING_KIT.duplicate(),
-		"uses": {},
+		"uses": {}, "grafts": [],
 	}
 	_enter_floor(1)
 	_begin_player_turn()
@@ -77,6 +78,8 @@ func step(action: Dictionary) -> Array:
 			_act_ability(action)
 		"descend":
 			_act_descend()
+		"buy":
+			_act_buy(action)
 		"end_turn":
 			_resolve_turn()
 		_:
@@ -117,6 +120,13 @@ func legal_actions() -> Array:
 				acts.append({"type": "ability", "slot": slot, "target": tgt})
 	if player["pos"] == map["stairs"]:
 		acts.append({"type": "descend"})
+	if player["pos"] == map["shrine"]:
+		if shop.get("heal", false) and bloom >= Content.SHOP_COSTS["heal"] and player["hp"] < player["max_hp"]:
+			acts.append({"type": "buy", "item": "heal"})
+		if shop.has("ability") and bloom >= Content.SHOP_COSTS["ability"] and player["kit"].size() < Content.KIT_MAX:
+			acts.append({"type": "buy", "item": "ability"})
+		if shop.has("graft") and bloom >= Content.SHOP_COSTS["graft"]:
+			acts.append({"type": "buy", "item": "graft"})
 	acts.append({"type": "end_turn"})
 	return acts
 
@@ -145,12 +155,15 @@ func snapshot() -> Dictionary:
 			"pos": player["pos"], "hp": player["hp"], "max_hp": player["max_hp"],
 			"charge": player["charge"], "bank": player["bank"], "shield": player["shield"],
 			"kit": player["kit"].duplicate(), "uses": player["uses"].duplicate(),
+			"grafts": player["grafts"].duplicate(),
 		},
 		"enemies": ens,
 		"map": {
 			"w": map["w"], "h": map["h"], "tiles": map["tiles"].duplicate(),
 			"start": map["start"], "stairs": map["stairs"], "vents": map["vents"].duplicate(),
+			"shrine": map["shrine"],
 		},
+		"shop": shop.duplicate(),
 		"terrain": terr,
 		"events": recent_events.duplicate(true),
 	}
@@ -175,8 +188,26 @@ func _enter_floor(n: int) -> void:
 	enemies.clear()
 	for spec in gen["enemies"]:
 		_spawn(spec["kind"], spec["pos"])
+	shop = _stock_shop()
 	_emit({"t": "floor", "floor": n, "name": fdef["name"]})
 	_compute_intents()
+
+
+func _stock_shop() -> Dictionary:
+	var stock := {"heal": true}
+	var aids: Array = []
+	for aid in Content.DRAFT_POOL:
+		if not player["kit"].has(aid):
+			aids.append(aid)
+	if not aids.is_empty():
+		stock["ability"] = aids[rng.randi_range(0, aids.size() - 1)]
+	var gids: Array = []
+	for gid in Content.GRAFTS:
+		if not player["grafts"].has(gid):
+			gids.append(gid)
+	if not gids.is_empty():
+		stock["graft"] = gids[rng.randi_range(0, gids.size() - 1)]
+	return stock
 
 
 func _begin_player_turn() -> void:
@@ -186,7 +217,7 @@ func _begin_player_turn() -> void:
 
 
 func _resolve_turn() -> void:
-	player["bank"] = mini(player["charge"], Content.BANK_CAP)
+	player["bank"] = mini(player["charge"], _bank_cap())
 	player["charge"] = 0
 	for e in enemies.duplicate():
 		if over:
@@ -293,8 +324,9 @@ func _environment_phase() -> void:
 		terrain[p] = {"kind": "fire", "ttl": 2}
 		_emit({"t": "ignite", "tile": p})
 	if _terrain_kind(player["pos"]) == "growth" and player["hp"] < player["max_hp"]:
-		player["hp"] += 1
-		_emit({"t": "heal", "amt": 1})
+		var heal_amt: int = 1 + (1 if _has_graft("verdant_pulse") else 0)
+		player["hp"] = mini(player["hp"] + heal_amt, player["max_hp"])
+		_emit({"t": "heal", "amt": heal_amt})
 
 
 func _tick_smog() -> void:
@@ -360,7 +392,7 @@ func _act_cleanse(action: Dictionary) -> void:
 		return
 	player["charge"] -= Content.CLEANSE_COST
 	terrain.erase(target)
-	bloom += 1
+	bloom += 1 + (1 if _has_graft("bloom_surge") else 0)
 	_emit({"t": "cleanse", "tile": target, "bloom": bloom})
 
 
@@ -373,7 +405,7 @@ func _act_descend() -> void:
 		over = true
 		_emit({"t": "win"})
 		return
-	player["bank"] = mini(player["charge"], Content.BANK_CAP)
+	player["bank"] = mini(player["charge"], _bank_cap())
 	_emit({"t": "descend", "to_floor": floor_num + 1})
 	_pending_floor = floor_num + 1
 	draft_offers = _draw_draft_offers(3)
@@ -421,6 +453,56 @@ func _act_draft(action: Dictionary) -> void:
 	phase = "play"
 	_enter_floor(_pending_floor)
 	_begin_player_turn()
+
+
+func _act_buy(action: Dictionary) -> void:
+	var item := String(action.get("item", ""))
+	var cost: int = Content.SHOP_COSTS.get(item, 9999)
+	var on_shrine: bool = player["pos"] == map["shrine"]
+	if not on_shrine or bloom < cost:
+		_emit({"t": "illegal", "action": "buy"})
+		return
+	match item:
+		"heal":
+			if not shop.get("heal", false) or player["hp"] >= player["max_hp"]:
+				_emit({"t": "illegal", "action": "buy"})
+				return
+			shop.erase("heal")
+			bloom -= cost
+			player["hp"] = mini(player["hp"] + Content.SHOP_HEAL_AMOUNT, player["max_hp"])
+			_emit({"t": "buy", "item": "heal", "hp": player["hp"]})
+		"ability":
+			if not shop.has("ability") or player["kit"].size() >= Content.KIT_MAX:
+				_emit({"t": "illegal", "action": "buy"})
+				return
+			bloom -= cost
+			var aid: String = shop["ability"]
+			shop.erase("ability")
+			player["kit"].append(aid)
+			_emit({"t": "buy", "item": "ability", "id": aid})
+		"graft":
+			if not shop.has("graft"):
+				_emit({"t": "illegal", "action": "buy"})
+				return
+			bloom -= cost
+			var gid: String = shop["graft"]
+			shop.erase("graft")
+			player["grafts"].append(gid)
+			_emit({"t": "buy", "item": "graft", "id": gid})
+		_:
+			_emit({"t": "illegal", "action": "buy"})
+
+
+func _has_graft(gid: String) -> bool:
+	return player["grafts"].has(gid)
+
+
+func _bank_cap() -> int:
+	return Content.BANK_CAP + (2 if _has_graft("deep_cells") else 0)
+
+
+func _shield_cap() -> int:
+	return Content.SHIELD_CAP + (2 if _has_graft("thick_bark") else 0)
 
 
 func _act_ability(action: Dictionary) -> void:
@@ -578,7 +660,7 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 					terrain[t] = {"kind": "roots", "ttl": int(eff["ttl"])}
 			_emit({"t": "roots", "tile": target})
 		"shield":
-			player["shield"] = mini(player["shield"] + int(eff["amount"]), Content.SHIELD_CAP)
+			player["shield"] = mini(player["shield"] + int(eff["amount"]), _shield_cap())
 			_emit({"t": "shield", "total": player["shield"]})
 		"aoe_status":
 			for e in enemies.duplicate():

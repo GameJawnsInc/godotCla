@@ -72,6 +72,18 @@ const DRAFT_POOL := [
 	"grow_spike",
 ]
 
+## Grafts: passive run-long modifiers (the relic analog). Pure data; the sim
+## consults owned grafts at the relevant decision points.
+const GRAFTS := {
+	"deep_cells": {"name": "Deep Cells", "desc": "+2 bank cap"},
+	"verdant_pulse": {"name": "Verdant Pulse", "desc": "growth heals +1"},
+	"thick_bark": {"name": "Thick Bark", "desc": "+2 shield cap"},
+	"bloom_surge": {"name": "Bloom Surge", "desc": "cleansing yields +1 bloom"},
+}
+
+const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 5}
+const SHOP_HEAL_AMOUNT := 4
+
 const ENEMIES := {
 	"drill_bot": {"name": "Drill Bot", "hp": 3, "dmg": 2, "slow": false, "traits": []},
 	"oil_sludge": {"name": "Oil Sludge", "hp": 4, "dmg": 1, "slow": true, "traits": ["splits", "oil_trail"]},
