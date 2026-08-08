@@ -189,6 +189,19 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   Deeproot unchanged at 23/30. Skill ladder stays strictly ordered:
   0 / 0 / 2 / 9 / 17 / 23 across the six personas.
 
+### 2026-08-08 thorns reflect close-range slams (measured neutral)
+
+- Slams from a slammer within 2 tiles now trigger thorns, joining melee
+  and quakes - "physical contact gets spiked," no arbitrary exception.
+- Measured a complete no-op at every level: turtle 1/25 (noise from
+  2/25), bramble_coat 23/30 deeproot (identical), boss conversions
+  9/9 / 6/6 / 5/9 (identical). Cause: slams are telegraphed and every
+  measured player dodges them; reflection only fires on hits that land.
+- Kept as a consistency rule: zero measured cost, and human players -
+  who tank telegraphed slams far more than bots - are the audience it
+  actually serves. Turtle's ceiling remains the clock, per the standing
+  identity statement.
+
 ### 2026-08-08 ceiling combo re-sweep (post new enemies + bot fixes)
 
 - Deeproot pair table rerun (45 pairs x 10 seeds, baseline 8/10). The

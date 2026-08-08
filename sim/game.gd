@@ -495,6 +495,10 @@ func _execute_intent(e: Dictionary) -> void:
 				area.append(it["tile"] + d)
 			if area.has(player["pos"]):
 				_damage_player(int(it["dmg"]), e["kind"])
+				# spiky bark punishes physical contact: a slammer close enough
+				# to touch (within 2) eats the reflection like melee and quakes
+				if player["thorns_turns"] > 0 and _manhattan(e["pos"], player["pos"]) <= 2:
+					_damage_enemy(e, player["thorns_dmg"], "thorns")
 		"ignite_all":
 			e["cycle"] = int(e.get("cycle", 0)) + 1
 			for t in terrain.keys().duplicate():
