@@ -966,7 +966,7 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 	if not enemies.has(e):
 		return
 	var edef: Dictionary = Content.ENEMIES[e["kind"]]
-	if edef["traits"].has("boss") and e["hp"] <= int(edef.get("gate_hp", 6)) and not _growth_adjacent(e["pos"]):
+	if edef["traits"].has("boss") and e["hp"] <= int(edef.get("gate_hp", 6)) 			and not _growth_adjacent(e["pos"]) and _corruption_adjacent(e["pos"]):
 		_emit({"t": "core_shielded", "id": e["id"]})
 		return
 	e["hp"] -= amt
@@ -997,6 +997,7 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 				_emit({"t": "boss_phase", "phase": 2})
 			if e["hp"] <= int(edef.get("gate_hp", 6)) and not e.get("phase3_done", false):
 				e["phase3_done"] = true
+				_clog_vents(e["pos"])
 				_emit({"t": "boss_phase", "phase": 3})
 			return
 		if e["hp"] <= 12 and not e.get("phase2_done", false):
@@ -1010,6 +1011,7 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 					break
 		if e["hp"] <= 6 and not e.get("phase3_done", false):
 			e["phase3_done"] = true
+			_clog_vents(e["pos"])
 			_emit({"t": "boss_phase", "phase": 3})
 	elif Content.ENEMIES[e["kind"]]["traits"].has("splits") and not e["split_used"]:
 		e["split_used"] = true
@@ -1080,6 +1082,22 @@ func _player_enter_tile() -> void:
 		_damage_player(1, "fire")
 	elif k == "goo" or k == "rich_goo":
 		_damage_player(1, "goo")
+
+
+func _corruption_adjacent(p: Vector2i) -> bool:
+	for d in DIRS:
+		var k := _terrain_kind(p + d)
+		if k == "oil" or k == "goo" or k == "rich_goo":
+			return true
+	return false
+
+
+func _clog_vents(p: Vector2i) -> void:
+	for d in DIRS:
+		var t: Vector2i = p + d
+		if _tile(t) == MapGen.T_FLOOR and not terrain.has(t) and _enemy_at(t) == null and t != player["pos"]:
+			terrain[t] = {"kind": "goo"}
+	_emit({"t": "vents_clogged", "tile": p})
 
 
 func _growth_adjacent(p: Vector2i) -> bool:

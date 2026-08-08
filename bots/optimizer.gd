@@ -36,6 +36,11 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 	for e in snap["enemies"]:
 		if e["traits"].has("boss"):
 			boss = e
+	if boss != null and boss["hp"] <= 6 and not _growth_adj_to(snap, boss["pos"]) and by.has("cleanse"):
+		for a in by["cleanse"]:
+			var t: Vector2i = a["target"]
+			if absi(t.x - boss["pos"].x) + absi(t.y - boss["pos"].y) == 1:
+				return a
 	if boss != null and boss["hp"] <= 6 and not _growth_adj_to(snap, boss["pos"]) and by.has("ability"):
 		var best_bomb = null
 		var best_d := 999
@@ -220,7 +225,7 @@ func _growth_adj_to(snap: Dictionary, pos: Vector2i) -> bool:
 	return false
 
 
-func _enemy_at(snap: Dictionary, pos: Vector2i):
+func _enemy_at(snap: Dictionary, pos: Vector2i) -> Variant:
 	for e in snap["enemies"]:
 		if e["pos"] == pos:
 			return e

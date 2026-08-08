@@ -17,7 +17,10 @@ Reference numbers for TENDER's difficulty, and the discipline for changing them.
 
 | persona   | target                  | why |
 |-----------|-------------------------|-----|
+| deeproot  | 70–90% wins             | the search ceiling: near-perfect play should nearly always win |
 | optimizer | 30–50% wins             | skilled play should win often but never be safe |
+| fanatic   | 15–30% overall; every build > 0 | committing to a niche build must stay viable |
+| magpie    | 5–15%, top bloom        | full greed should usually lose to the clock, richly |
 | sprout    | avg depth 3.5–5, wins rare | noobs feel progress; full clears are earned |
 | wanderer  | dies floor 1–2, 0 wins  | the world must punish random play |
 | all       | zero timeouts/softlocks | every run ends in win or death |
@@ -49,6 +52,20 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   wanderer floor 1. Win rate drifting toward the top of the 30-50% band as
   player-power content accumulates - re-measure after each content round.
 
+### 2026-08-08 latest (six-persona roster + vent-clog boss gate)
+
+- Ladder (30 seeds): wanderer 0/30 · sprout 0/30 (depth 4.5) · magpie 2/30
+  (bloom 38, the economy king) · fanatic 7/30 · optimizer 9/30 · deeproot
+  24/30 (depth 6.8). Deeproot's 80% establishes the true skill ceiling ~2.5x
+  heuristic play.
+- The fanatic exposed a design flaw: the phase-3 growth gate made every
+  non-gardener build unwinnable (pyro/shover/turtle 0 wins, deaths at the
+  boss). Fix: phase 3 clogs the boss's vents with goo; cleansing (universal)
+  or growth (the gardener shortcut) exposes the core. Pyro went 0/8 -> 4/8.
+- Per-build wins after damage-anchor redefinition: pyro 4/8, gardener 2/7,
+  shover 1/8, turtle 0/7. Turtle is a real gap: pure-defense builds lack a
+  win condition (see watch list).
+
 ## Watch list
 
 - `parched` mutator barely affects the optimizer (banking may be undervalued).
@@ -56,3 +73,9 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
   filter. If arrival rates rise, re-check Furnace difficulty.
 - Elites are tanky bounty-carriers (+2 hp, +0 dmg, +4 bloom). The +1 dmg
   variant measurably overshot (optimizer ~17% at 30 seeds).
+- Turtle-style pure-defense builds can't win (fanatic: 0/7). Candidate fix:
+  a defensive damage ability (e.g. thorns reflect) in a future package.
+- Deeproot logs occasional timeouts (2/30): the searcher can still judge
+  stalling safest. Revisit if it grows.
+- Magpie deaths cluster on floor 2 (harvest greed vs first real roster) -
+  watch after any floor 2 tuning.

@@ -8,7 +8,10 @@ const AsciiView := preload("res://sim/ascii_view.gd")
 const BOTS := {
 	"wanderer": preload("res://bots/wanderer.gd"),
 	"sprout": preload("res://bots/sprout.gd"),
+	"magpie": preload("res://bots/magpie.gd"),
+	"fanatic": preload("res://bots/fanatic.gd"),
 	"optimizer": preload("res://bots/optimizer.gd"),
+	"deeproot": preload("res://bots/deeproot.gd"),
 }
 
 const SEEDS := 30
@@ -32,22 +35,29 @@ func _run(bot_name: String, seed_v: int) -> Dictionary:
 	var game = Game.new(seed_v)
 	var bot = BOTS[bot_name].new()
 	bot.reset(seed_v * 7919 + 17)
+	if bot.has_method("set_sim"):
+		bot.set_sim(game)
 	var actions := 0
 	while not game.over and actions < MAX_ACTIONS and game.total_turns < MAX_TURNS:
 		var act: Dictionary = bot.choose_action(game.snapshot(), game.legal_actions())
 		game.step(act)
 		actions += 1
-	return {
+	var out := {
 		"won": game.won, "timeout": not game.over, "floor": game.floor_num,
 		"turns": game.total_turns, "bloom": game.bloom, "cause": game.death_cause,
 		"kit": game.player["kit"].duplicate(),
 	}
+	if bot.has_method("get_build"):
+		out["build"] = bot.get_build()
+	return out
 
 
 func _final_frame(bot_name: String, seed_v: int) -> String:
 	var game = Game.new(seed_v)
 	var bot = BOTS[bot_name].new()
 	bot.reset(seed_v * 7919 + 17)
+	if bot.has_method("set_sim"):
+		bot.set_sim(game)
 	var actions := 0
 	while not game.over and actions < MAX_ACTIONS and game.total_turns < MAX_TURNS:
 		var act: Dictionary = bot.choose_action(game.snapshot(), game.legal_actions())
@@ -93,3 +103,15 @@ func _report(bot_name: String, runs: Array) -> void:
 	for aid in kit_runs:
 		parts.append("%s %d/%d" % [aid, kit_wins.get(aid, 0), kit_runs[aid]])
 	print("           kit wins: %s" % ", ".join(parts))
+	var build_runs := {}
+	var build_wins := {}
+	for r in runs:
+		if r.has("build"):
+			build_runs[r["build"]] = build_runs.get(r["build"], 0) + 1
+			if r["won"]:
+				build_wins[r["build"]] = build_wins.get(r["build"], 0) + 1
+	if not build_runs.is_empty():
+		var bparts: Array = []
+		for b in build_runs:
+			bparts.append("%s %d/%d" % [b, build_wins.get(b, 0), build_runs[b]])
+		print("           build wins: %s" % ", ".join(bparts))

@@ -9,6 +9,8 @@ static func run_one(seed_v: int, config: Dictionary = {}) -> Dictionary:
 	var game = Game.new(seed_v, config)
 	var bot = Optimizer.new()
 	bot.reset(seed_v * 7919 + 17)
+	if bot.has_method("set_sim"):
+		bot.set_sim(game)
 	var actions := 0
 	while not game.over and actions < 4000 and game.total_turns < 400:
 		game.step(bot.choose_action(game.snapshot(), game.legal_actions()))

@@ -55,6 +55,11 @@ architecture below is designed to bend rather than block.
   asked per-persona ("floor 2 kills 60% of noob bots but 5% of minmaxers").
 - The playtest harness runs N seeds × M bots headless and reports death rates
   per floor, turns per depth, softlocks, and errors.
+- Current roster (`bots/`): wanderer (random, crash finder), sprout (cautious
+  noob), magpie (greedy explorer), fanatic (commits to one build archetype per
+  run; reports per-build win rates), optimizer (heuristic skilled play), and
+  deeproot (clone()-based 1-ply search; the measurable skill ceiling — bots
+  that need the sim as a forward model implement `set_sim(game)`).
 
 ### 6. Data-driven content
 

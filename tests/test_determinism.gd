@@ -8,7 +8,10 @@ const Game := preload("res://sim/game.gd")
 const BOTS := {
 	"wanderer": preload("res://bots/wanderer.gd"),
 	"sprout": preload("res://bots/sprout.gd"),
+	"magpie": preload("res://bots/magpie.gd"),
+	"fanatic": preload("res://bots/fanatic.gd"),
 	"optimizer": preload("res://bots/optimizer.gd"),
+	"deeproot": preload("res://bots/deeproot.gd"),
 }
 
 const SEEDS := [3, 11, 42]
@@ -65,6 +68,8 @@ func _run(bot_name: String, seed_v: int) -> Dictionary:
 	var game = Game.new(seed_v)
 	var bot = BOTS[bot_name].new()
 	bot.reset(seed_v * 7919 + 17)
+	if bot.has_method("set_sim"):
+		bot.set_sim(game)
 	var actions: Array = []
 	while not game.over and actions.size() < 4000 and game.total_turns < 400:
 		var act: Dictionary = bot.choose_action(game.snapshot(), game.legal_actions())
