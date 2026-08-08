@@ -59,6 +59,19 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 			if _kit_id(snap, a["slot"]) == "grow_spike":
 				return a
 
+	# Survival gate: standing in telegraphed damage without the HP to trade.
+	# A strike only helps here if it kills the attacker before the hit lands;
+	# otherwise step out first and fight from a safe tile.
+	if threat.has(ppos) and snap["player"]["hp"] + snap["player"]["shield"] <= _incoming_dmg(snap) * 2:
+		if by.has("strike"):
+			for a in by["strike"]:
+				var e = _enemy_at(snap, ppos + a["dir"])
+				if e != null and e["hp"] <= 1:
+					return a
+		var out := _dodge(snap, by, threat)
+		if not out.is_empty():
+			return out
+
 	if by.has("strike"):
 		var best = null
 		var best_hp := 999
@@ -91,25 +104,9 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 					return a
 
 	if threat.has(ppos):
-		if by.has("move"):
-			for a in by["move"]:
-				var dest: Vector2i = ppos + a["dir"]
-				if not threat.has(dest) and not _hazard(snap, dest):
-					return a
-		# cornered: shove an adjacent attacker away, dash out, or root the attacker in place
-		if by.has("ability"):
-			for a in by["ability"]:
-				if _kit_id(snap, a["slot"]) == "water_jet" and _enemy_at(snap, ppos + a["target"]) != null:
-					return a
-			for a in by["ability"]:
-				if _kit_id(snap, a["slot"]) == "mycelium_dash" and not threat.has(a["target"]):
-					return a
-			for a in by["ability"]:
-				if _kit_id(snap, a["slot"]) == "sap_snare":
-					return a
-			for a in by["ability"]:
-				if _kit_id(snap, a["slot"]) == "gust" and _enemy_at(snap, ppos + a["target"]) != null:
-					return a
+		var out := _dodge(snap, by, threat)
+		if not out.is_empty():
+			return out
 
 	# rest up on growth when the coast is clear
 	if snap["player"]["hp"] <= snap["player"]["max_hp"] - 3 and _nearest_enemy_dist(snap) > 4:
@@ -184,6 +181,51 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 			best_u = u
 			best_a = a
 	return best_a
+
+
+## Step out of telegraphed damage; when cornered, shove an adjacent attacker
+## away, dash out, or root the attacker in place. Empty dict if nothing works.
+func _dodge(snap: Dictionary, by: Dictionary, threat: Dictionary) -> Dictionary:
+	var ppos: Vector2i = snap["player"]["pos"]
+	if by.has("move"):
+		for a in by["move"]:
+			var dest: Vector2i = ppos + a["dir"]
+			if not threat.has(dest) and not _hazard(snap, dest):
+				return a
+	if by.has("ability"):
+		for a in by["ability"]:
+			if _kit_id(snap, a["slot"]) == "water_jet" and _enemy_at(snap, ppos + a["target"]) != null:
+				return a
+		for a in by["ability"]:
+			if _kit_id(snap, a["slot"]) == "mycelium_dash" and not threat.has(a["target"]):
+				return a
+		for a in by["ability"]:
+			if _kit_id(snap, a["slot"]) == "sap_snare":
+				return a
+		for a in by["ability"]:
+			if _kit_id(snap, a["slot"]) == "gust" and _enemy_at(snap, ppos + a["target"]) != null:
+				return a
+	return {}
+
+
+## Total telegraphed damage that will land on the player's current tile.
+func _incoming_dmg(snap: Dictionary) -> int:
+	var ppos: Vector2i = snap["player"]["pos"]
+	var total := 0
+	for e in snap["enemies"]:
+		var it: Dictionary = e["intent"]
+		match String(it.get("type", "")):
+			"attack":
+				if it["tile"] == ppos:
+					total += int(it["dmg"])
+			"slam":
+				var t: Vector2i = it["tile"]
+				if t == ppos or absi(t.x - ppos.x) + absi(t.y - ppos.y) == 1:
+					total += int(it["dmg"])
+			"quake":
+				if absi(e["pos"].x - ppos.x) + absi(e["pos"].y - ppos.y) == 1:
+					total += int(it.get("dmg", 2))
+	return total
 
 
 func _enemies_within(snap: Dictionary, radius: int) -> int:
