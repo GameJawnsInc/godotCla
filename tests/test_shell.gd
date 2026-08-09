@@ -9,6 +9,7 @@ const Art := preload("res://shell/svg_art.gd")
 const Shell := preload("res://shell/main.gd")
 const Content := preload("res://sim/content.gd")
 const Tutorial := preload("res://shell/tutorial.gd")
+const AudioKit := preload("res://shell/audio.gd")
 
 var fails := 0
 
@@ -28,6 +29,17 @@ func _init() -> void:
 		_check(Art.ART.has(kind), "enemy %s has a sprite" % kind)
 	for row in Shell.LEGEND:
 		_check(Art.ART.has(row[0]), "legend id %s has a sprite" % row[0])
+
+	# 1b. the whole audio bank synthesizes, and the music loop renders
+	var ak = AudioKit.new()
+	ak._rng.seed = 7
+	ak.build_bank()
+	_check(ak._bank.size() >= 15, "sfx bank has %d sounds" % ak._bank.size())
+	for id in ak._bank:
+		_check(ak._bank[id].data.size() > 100, "sfx %s has samples" % id)
+	var mus = ak.render_music_stream()
+	_check(mus != null and mus.data.size() > 100000, "music loop renders")
+	ak.free()
 
 	# 2. menu boots, PLAY starts a run, input handlers drive the sim
 	OS.set_environment("SHELL_SEED", "")

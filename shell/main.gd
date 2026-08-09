@@ -13,6 +13,7 @@ const Game := preload("res://sim/game.gd")
 const Content := preload("res://sim/content.gd")
 const Art := preload("res://shell/svg_art.gd")
 const Tutorial := preload("res://shell/tutorial.gd")
+const AudioKit := preload("res://shell/audio.gd")
 
 const CFG_PATH := "user://tender.cfg"
 
@@ -92,6 +93,10 @@ var _game_is_run := false  # current `game` is a real run (RESUME-able)
 var hold_ms := 420
 var seed_mode := "random"  # random | daily
 var intro_mode := "once"   # once | always | never
+var sfx_on := true
+var music_on := true
+
+var audio: Node
 
 var _sb: StyleBoxFlat
 var _sb_gold: StyleBoxFlat
@@ -113,7 +118,11 @@ var _status_end := 0.0
 func _ready() -> void:
 	font = ThemeDB.fallback_font
 	_mk_styles()
+	audio = AudioKit.new()
+	add_child(audio)
 	_load_settings()
+	audio.sfx_on = sfx_on
+	audio.music_on = music_on
 	set_process(true)
 	var env := OS.get_environment("SHELL_SEED")
 	if env != "":
@@ -162,6 +171,8 @@ func _load_settings() -> void:
 		hold_ms = int(cf.get_value("ui", "hold_ms", 420))
 		seed_mode = String(cf.get_value("ui", "seed_mode", "random"))
 		intro_mode = String(cf.get_value("ui", "intro_mode", "once"))
+		sfx_on = bool(cf.get_value("ui", "sfx_on", true))
+		music_on = bool(cf.get_value("ui", "music_on", true))
 
 
 func _save_settings() -> void:
@@ -169,6 +180,8 @@ func _save_settings() -> void:
 	cf.set_value("ui", "hold_ms", hold_ms)
 	cf.set_value("ui", "seed_mode", seed_mode)
 	cf.set_value("ui", "intro_mode", intro_mode)
+	cf.set_value("ui", "sfx_on", sfx_on)
+	cf.set_value("ui", "music_on", music_on)
 	cf.save(CFG_PATH)
 
 
@@ -185,7 +198,7 @@ func _act(a: Dictionary) -> void:
 		if not advances and not nav_ok:
 			_flash("follow the guide for now")
 			return
-		game.step(a)
+		_play_events(game.step(a))
 		if advances:
 			if st.get("until_dead", false):
 				if game.enemies.is_empty():
@@ -205,13 +218,14 @@ func _act(a: Dictionary) -> void:
 		queue_redraw()
 		return
 	var keep_shop := mode == "shop" and String(a.get("type", "")) == "buy"
-	game.step(a)
-	for ev in game.snapshot()["events"]:
+	var evs: Array = game.step(a)
+	for ev in evs:
 		var s := _ev_text(ev)
 		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
 			log_lines.append(s)
 	if log_lines.size() > 60:
 		log_lines = log_lines.slice(log_lines.size() - 60)
+	_play_events(evs)
 	mode = "normal"
 	if keep_shop and game.player["pos"] == game.map["shrine"] and not game.shop.is_empty():
 		mode = "shop"
@@ -219,6 +233,39 @@ func _act(a: Dictionary) -> void:
 	flash = ""
 	tooltip = []
 	queue_redraw()
+
+
+## Map a step's events to at most three synthesized sounds, worst first.
+func _play_events(evs: Array) -> void:
+	if audio == null:
+		return
+	var picks: Array = []
+	for ev in evs:
+		var t := String(ev.get("t", ""))
+		var id := ""
+		match t:
+			"player_death": id = "death"
+			"boss_phase": id = "boss"
+			"damage": id = "hurt" if ev.get("who", "") == "player" else ""
+			"death": id = "kill"
+			"strike": id = "hit"
+			"ability": id = "cast"
+			"cleanse": id = "sparkle"
+			"heal": id = "heal"
+			"buy", "draft_upgrade": id = "coin"
+			"drag": id = "drag"
+			"reinforcement", "summon": id = "vent"
+			"smog_dim", "choke", "stoke": id = "dim"
+			"floor": id = "descend"
+			"move": id = "step" if ev.get("who", "") == "player" else ""
+		if id != "" and not picks.has(id):
+			picks.append(id)
+	if game != null and game.won:
+		picks = ["win"]
+	elif picks.has("death"):
+		picks = ["death"]
+	for i in mini(3, picks.size()):
+		audio.play(picks[i])
 
 
 func _legal_of(kind: String) -> Array:
@@ -555,6 +602,8 @@ func _click(pos: Vector2) -> void:
 
 
 func _tap(tag: String) -> void:
+	if audio != null:
+		audio.play("tap")
 	if tag.begins_with("ability:"):
 		_ability_press(int(tag.get_slice(":", 1)))
 	elif tag.begins_with("buy:"):
@@ -592,6 +641,9 @@ func _tap(tag: String) -> void:
 		queue_redraw()
 	elif tag == "skip_draft":
 		_act({"type": "draft", "pick": -1})
+	elif tag == "draft_back":
+		mode = "normal"
+		queue_redraw()
 	elif tag == "play":
 		_roll_seed()
 		screen = "game"
@@ -615,6 +667,12 @@ func _tap(tag: String) -> void:
 			get_tree().quit()
 	elif tag.begins_with("set:"):
 		match tag.get_slice(":", 1):
+			"sfx":
+				sfx_on = not sfx_on
+				audio.sfx_on = sfx_on
+			"music":
+				music_on = not music_on
+				audio.set_music(music_on)
 			"hold":
 				hold_ms = {300: 420, 420: 650, 650: 300}.get(hold_ms, 420)
 			"seed":
@@ -972,6 +1030,10 @@ func _draw_settings(vw: float, vh: float) -> void:
 	_button(Rect2(vw * 0.06, y, bw, bh), "Run seed:  %s" % ("random every run" if seed_mode == "random" else "daily (same for everyone)"), "set:seed", int(bh * 0.28))
 	y += bh + vh * 0.025
 	_button(Rect2(vw * 0.06, y, bw, bh), "Intro tips:  %s" % intro_mode, "set:intro", int(bh * 0.3))
+	y += bh + vh * 0.025
+	_button(Rect2(vw * 0.06, y, bw, bh), "Sound effects:  %s" % ("on" if sfx_on else "off"), "set:sfx", int(bh * 0.3))
+	y += bh + vh * 0.025
+	_button(Rect2(vw * 0.06, y, bw, bh), "Music:  %s" % ("on" if music_on else "off"), "set:music", int(bh * 0.3))
 	y += bh + vh * 0.05
 	_button(Rect2(vw * 0.06, y, bw, bh), "BACK", "close", int(bh * 0.34))
 
@@ -1329,7 +1391,7 @@ func _draw_logsheet(vw: float, vh: float) -> void:
 func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 	hotspots.clear()
 	var y := _sheet(vw, vh, "DESCENT DRAFT")
-	_txt(Vector2(vw * 0.06, y), "Choose one ability to take down with you:", COL_TEXT, int(vh * 0.024)); y += vh * 0.055
+	_txt_fit(Vector2(vw * 0.06, y), "Choose one ability to take down with you:", COL_TEXT, int(vh * 0.024), vw * 0.88); y += vh * 0.055
 	var bh := vh * 0.105
 	if mode != "draft_drop":
 		for i in snap["draft_offers"].size():
@@ -1346,10 +1408,17 @@ func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 		y += vh * 0.015
 		_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.65), "skip - take nothing", "skip_draft", int(bh * 0.24))
 	else:
-		_txt(Vector2(vw * 0.06, y), "Kit is full - tap what to drop:", COL_RED, int(vh * 0.024)); y += vh * 0.05
+		_txt_fit(Vector2(vw * 0.06, y), "Kit is full - tap what to DROP for it:", COL_RED, int(vh * 0.024), vw * 0.88); y += vh * 0.05
 		for i in snap["player"]["kit"].size():
-			_button(Rect2(vw * 0.06, y, vw * 0.88, bh * 0.85), str(snap["player"]["kit"][i]), "drop:%d" % i, int(bh * 0.3))
-			y += bh * 0.85 + vh * 0.018
+			var kid: String = snap["player"]["kit"][i]
+			var kicon := "ab_" + kid.trim_suffix("+")
+			if not Art.ART.has(kicon):
+				kicon = "ab_default"
+			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), kicon,
+				Content.ABILITIES[kid]["name"], _ability_desc(kid), "drop:%d" % i, vh)
+			y += bh + vh * 0.02
+		y += vh * 0.02
+		_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.65), "BACK", "draft_back", int(bh * 0.26))
 
 
 func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
