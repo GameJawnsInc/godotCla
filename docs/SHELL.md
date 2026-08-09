@@ -1,5 +1,22 @@
 # TENDER — the human shell
 
+## Menu, settings, tutorial
+
+The shell boots to a main menu: PLAY (fresh run), RESUME (when a run is
+live), TUTORIAL, SETTINGS, QUIT. Settings persist to `user://tender.cfg`:
+hold-to-inspect delay, run seed mode (random / daily — everyone playing a
+daily gets the same run), and intro-tips frequency. The `=` button in the
+status strip returns to the menu mid-run without losing the run.
+
+The tutorial is **entirely data** in `shell/tutorial.gd`: an ASCII-drawn
+room, a fixed kit, and a step list (guide text + the action pattern that
+advances each step). It runs on the real sim via the `fixed_floor` run
+config, navigation is always free, and only the taught action advances the
+script. To change the tutorial, edit that one file — and note that
+`tests/test_shell.gd` plays every step through the sim headlessly, so a
+sim or content change that breaks the script fails the suite instead of
+shipping a broken tutorial.
+
 A thin Godot scene over the sim (style guide §1/§4): it draws `snapshot()`
 with runtime-rasterized SVG sprites and forwards input as `step()` actions.
 The sim has no idea it exists.

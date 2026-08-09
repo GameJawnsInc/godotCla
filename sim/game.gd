@@ -40,6 +40,7 @@ var tier := 0
 var mutators: Array = []
 var draft_pool: Array = []
 var stoked := 0  # pending extra smog ticks from live smokestacks
+var _fixed_floor := {}  # config "fixed_floor": scripted floor-1 layout (tutorials, tests)
 
 var _next_id := 1
 var _step_events: Array = []
@@ -53,6 +54,7 @@ func _init(seed_v: int, config: Dictionary = {}) -> void:
 		return
 	tier = int(config.get("tier", 0))
 	mutators = config.get("mutators", []).duplicate()
+	_fixed_floor = config.get("fixed_floor", {}).duplicate(true)
 	draft_pool = config.get("pool", Content.DRAFT_POOL).duplicate()
 	for pkg in config.get("packages", []):
 		for aid in Content.PACKAGES[pkg]:
@@ -107,6 +109,8 @@ func floor_def(n: int) -> Dictionary:
 	var extra_elites := _tier_mod("extra_elites")
 	if extra_elites > 0 and not fdef.get("boss", false):
 		fdef["elites"] = int(fdef.get("elites", 0)) + extra_elites
+	if n == 1 and not _fixed_floor.is_empty():
+		fdef.merge(_fixed_floor.get("fdef", {}), true)
 	return fdef
 
 
@@ -259,6 +263,7 @@ func clone():
 	g.tier = tier
 	g.mutators = mutators.duplicate()
 	g.stoked = stoked
+	g._fixed_floor = _fixed_floor.duplicate(true)
 	g.draft_pool = draft_pool.duplicate()
 	g.floor_num = floor_num
 	g.turn = turn
@@ -290,7 +295,11 @@ func _enter_floor(n: int) -> void:
 	smog = 0
 	dim = 0
 	var fdef := floor_def(n)
-	var gen := MapGen.generate(rng, fdef)
+	var gen: Dictionary
+	if n == 1 and not _fixed_floor.is_empty():
+		gen = _fixed_floor["gen"].duplicate(true)
+	else:
+		gen = MapGen.generate(rng, fdef)
 	map = gen
 	terrain = gen["terrain"]
 	player["pos"] = gen["start"]

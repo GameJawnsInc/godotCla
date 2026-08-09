@@ -12,8 +12,9 @@ extends Node2D
 const Game := preload("res://sim/game.gd")
 const Content := preload("res://sim/content.gd")
 const Art := preload("res://shell/svg_art.gd")
+const Tutorial := preload("res://shell/tutorial.gd")
 
-const HOLD_MS := 420
+const CFG_PATH := "user://tender.cfg"
 
 # zone fractions of screen height
 const Z_STATUS := 0.062
@@ -72,7 +73,8 @@ const DIRS4 := {
 
 var game
 var seed_v := 0
-var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | intro | help | shop | log
+var screen := "menu"  # menu | game | tutorial
+var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | intro | help | shop | log | settings
 var mode_slot := -1
 var mode_targets: Array = []
 var mode_pick := -1
@@ -81,6 +83,14 @@ var font: Font
 var hotspots: Array = []
 var seen_intro := false
 var log_lines: Array = []  # persistent readable history
+var tut_step := 0
+var tut_done := false
+var _game_is_run := false  # current `game` is a real run (RESUME-able)
+
+# settings (persisted to user://tender.cfg)
+var hold_ms := 420
+var seed_mode := "random"  # random | daily
+var intro_mode := "once"   # once | always | never
 
 var _press_pos := Vector2.ZERO
 var _press_ms := 0
@@ -96,19 +106,28 @@ var _moy := 0.0
 
 func _ready() -> void:
 	font = ThemeDB.fallback_font
+	_load_settings()
+	set_process(true)
 	var env := OS.get_environment("SHELL_SEED")
 	if env != "":
 		seed_v = int(env)
+		screen = "game"
+		_new_game()
+	queue_redraw()
+
+
+func _roll_seed() -> void:
+	if seed_mode == "daily":
+		seed_v = hash(Time.get_date_string_from_system(true)) & 0x7FFFFFFF
 	else:
-		seed_v = int(Time.get_unix_time_from_system()) % 1000000
-	set_process(true)
-	_new_game()
+		seed_v = (int(Time.get_unix_time_from_system()) * 1103515245 + Time.get_ticks_msec()) % 1000000
 
 
 func _new_game() -> void:
 	game = Game.new(seed_v)
+	_game_is_run = true
 	mode = "normal"
-	if not seen_intro:
+	if intro_mode == "always" or (intro_mode == "once" and not seen_intro):
 		seen_intro = true
 		mode = "intro"
 	flash = ""
@@ -117,8 +136,64 @@ func _new_game() -> void:
 	queue_redraw()
 
 
+func _start_tutorial() -> void:
+	screen = "tutorial"
+	game = Game.new(1, Tutorial.game_config())
+	_game_is_run = false
+	tut_step = 0
+	tut_done = false
+	mode = "normal"
+	flash = ""
+	tooltip = []
+	log_lines = []
+	queue_redraw()
+
+
+func _load_settings() -> void:
+	var cf := ConfigFile.new()
+	if cf.load(CFG_PATH) == OK:
+		hold_ms = int(cf.get_value("ui", "hold_ms", 420))
+		seed_mode = String(cf.get_value("ui", "seed_mode", "random"))
+		intro_mode = String(cf.get_value("ui", "intro_mode", "once"))
+
+
+func _save_settings() -> void:
+	var cf := ConfigFile.new()
+	cf.set_value("ui", "hold_ms", hold_ms)
+	cf.set_value("ui", "seed_mode", seed_mode)
+	cf.set_value("ui", "intro_mode", intro_mode)
+	cf.save(CFG_PATH)
+
+
 func _act(a: Dictionary) -> void:
-	if game.over:
+	if game == null or game.over:
+		return
+	if screen == "tutorial" and not tut_done:
+		var st: Dictionary = Tutorial.STEPS[tut_step]
+		var kind := String(a.get("type", ""))
+		var advances := Tutorial.matches(st, a)
+		# navigation is always free; other actions only when the step asks
+		if not advances and not (kind in ["move", "end_turn", "strike"]):
+			_flash("follow the guide for now")
+			return
+		game.step(a)
+		if advances:
+			if st.get("until_dead", false):
+				if game.enemies.is_empty():
+					tut_step += 1
+			else:
+				tut_step += 1
+			if tut_step >= Tutorial.STEPS.size():
+				tut_done = true
+		elif st.get("until_dead", false) and game.enemies.is_empty():
+			tut_step += 1
+			if tut_step >= Tutorial.STEPS.size():
+				tut_done = true
+		mode = "normal"
+		mode_targets = []
+		flash = ""
+		tooltip = []
+		queue_redraw()
 		return
 	var keep_shop := mode == "shop" and String(a.get("type", "")) == "buy"
 	game.step(a)
@@ -161,7 +236,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 			if had_tip:
 				tooltip = []
 				queue_redraw()
-			elif Time.get_ticks_msec() - _press_ms < HOLD_MS:
+			elif Time.get_ticks_msec() - _press_ms < hold_ms:
 				_click(ev.position)
 	elif ev is InputEventMouseMotion and _held:
 		if ev.position.distance_to(_press_pos) > 30.0:
@@ -169,7 +244,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 
 
 func _process(_dt: float) -> void:
-	if _held and tooltip.is_empty() and Time.get_ticks_msec() - _press_ms >= HOLD_MS:
+	if screen == "menu":
+		return
+	if _held and tooltip.is_empty() and Time.get_ticks_msec() - _press_ms >= hold_ms:
 		_show_tooltip(_press_pos)
 
 
@@ -241,6 +318,16 @@ func _dir_from_key(k: int) -> Vector2i:
 
 
 func _key(k: int) -> void:
+	if screen == "menu":
+		if mode == "settings":
+			mode = "normal"
+			queue_redraw()
+		elif k == KEY_ENTER or k == KEY_SPACE:
+			_tap("play")
+		return
+	if screen == "tutorial" and tut_done:
+		_tap("menu")
+		return
 	if mode == "intro" or mode == "help" or mode == "log" or mode == "shop":
 		if mode == "shop" and k == KEY_H:
 			_buy("heal")
@@ -262,10 +349,13 @@ func _key(k: int) -> void:
 			_new_game()
 		return
 	if k == KEY_ESCAPE:
-		mode = "normal"
-		mode_targets = []
-		flash = ""
-		queue_redraw()
+		if mode == "normal":
+			_tap("menu")
+		else:
+			mode = "normal"
+			mode_targets = []
+			flash = ""
+			queue_redraw()
 		return
 	if k == KEY_L:
 		mode = "help"
@@ -365,6 +455,18 @@ func _try_ability_target(slot: int, target) -> void:
 
 
 func _click(pos: Vector2) -> void:
+	if screen == "menu":
+		for hsp in hotspots:
+			if hsp["rect"].has_point(pos):
+				_tap(hsp["tag"])
+				return
+		if mode == "settings":
+			mode = "normal"
+			queue_redraw()
+		return
+	if screen == "tutorial" and tut_done:
+		_tap("menu")
+		return
 	if mode == "intro" or mode == "help" or mode == "log":
 		mode = "normal"
 		queue_redraw()
@@ -378,8 +480,11 @@ func _click(pos: Vector2) -> void:
 		queue_redraw()
 		return
 	if game.over:
-		seed_v += 1
-		_new_game()
+		if screen == "tutorial":
+			_tap("menu")
+		else:
+			_roll_seed()
+			_new_game()
 		return
 	if game.phase == "draft":
 		return
@@ -439,6 +544,37 @@ func _tap(tag: String) -> void:
 		queue_redraw()
 	elif tag == "skip_draft":
 		_act({"type": "draft", "pick": -1})
+	elif tag == "play":
+		_roll_seed()
+		screen = "game"
+		_new_game()
+	elif tag == "resume":
+		if game != null and not game.over and screen != "tutorial":
+			screen = "game"
+			queue_redraw()
+	elif tag == "tutorial":
+		_start_tutorial()
+	elif tag == "settings":
+		mode = "settings"
+		queue_redraw()
+	elif tag == "menu":
+		screen = "menu"
+		mode = "normal"
+		tooltip = []
+		queue_redraw()
+	elif tag == "quit":
+		if is_inside_tree():
+			get_tree().quit()
+	elif tag.begins_with("set:"):
+		match tag.get_slice(":", 1):
+			"hold":
+				hold_ms = {300: 420, 420: 650, 650: 300}.get(hold_ms, 420)
+			"seed":
+				seed_mode = "daily" if seed_mode == "random" else "random"
+			"intro":
+				intro_mode = {"once": "always", "always": "never", "never": "once"}.get(intro_mode, "once")
+		_save_settings()
+		queue_redraw()
 
 
 func _draft_key(k: int) -> void:
@@ -652,8 +788,13 @@ func _draw() -> void:
 	hotspots.clear()
 	var vw := get_viewport_rect().size.x
 	var vh := get_viewport_rect().size.y
-	var snap: Dictionary = game.snapshot()
 	draw_rect(Rect2(0, 0, vw, vh), COL_BG)
+	if screen == "menu":
+		_draw_menu(vw, vh)
+		if mode == "settings":
+			_draw_settings(vw, vh)
+		return
+	var snap: Dictionary = game.snapshot()
 
 	_draw_status(snap, vw, vh)
 	_draw_map(snap, vw, vh)
@@ -661,9 +802,11 @@ func _draw() -> void:
 	_draw_context(snap, vw, vh)
 	_draw_controls(snap, vw, vh)
 
+	if screen == "tutorial":
+		_draw_tut_banner(vw, vh)
 	if not tooltip.is_empty():
 		_draw_tooltip(vw, vh)
-	if snap["phase"] == "draft":
+	if snap["phase"] == "draft" and screen != "tutorial":
 		_draw_draft(snap, vw, vh)
 	if mode == "shop":
 		_draw_shop(snap, vw, vh)
@@ -673,8 +816,96 @@ func _draw() -> void:
 		_draw_help(vw, vh)
 	elif mode == "intro":
 		_draw_intro(vw, vh)
-	if snap["over"]:
+	if screen == "tutorial" and tut_done:
+		_draw_tut_done(vw, vh)
+	elif snap["over"]:
 		_draw_over(snap, vw, vh)
+
+
+func _draw_menu(vw: float, vh: float) -> void:
+	# title vignette: the tender flanked by what it fights
+	_txt_c(vw / 2.0, vh * 0.17, "T E N D E R", COL_GOLD, int(vh * 0.065))
+	_txt_c(vw / 2.0, vh * 0.21, "a solarpunk roguelike", COL_DIM_TEXT, int(vh * 0.021))
+	var big := vh * 0.11
+	var cy := vh * 0.27
+	var tx := Art.tex("player", int(big))
+	if tx != null:
+		draw_texture(tx, Vector2(vw / 2.0 - big / 2.0, cy))
+	var small := vh * 0.05
+	for spec in [["growth", -0.32], ["drill_bot", -0.18], ["smokestack", 0.18 - 0.046], ["oil", 0.32 - 0.046]]:
+		var t2 := Art.tex(spec[0], int(small))
+		if t2 != null:
+			draw_texture(t2, Vector2(vw / 2.0 + vw * spec[1], cy + big - small), Color(1, 1, 1, 0.75))
+	draw_rect(Rect2(vw * 0.2, cy + big + vh * 0.03, vw * 0.6, 2), Color(0.34, 0.44, 0.36))
+
+	var bw := vw * 0.62
+	var bh := vh * 0.072
+	var bx := (vw - bw) / 2.0
+	var y := vh * 0.46
+	if game != null and not game.over and _game_is_run:
+		_button(Rect2(bx, y, bw, bh), "RESUME RUN", "resume", int(bh * 0.38), COL_GOLD)
+		y += bh + vh * 0.024
+	_button(Rect2(bx, y, bw, bh), "PLAY", "play", int(bh * 0.42), COL_GOLD)
+	y += bh + vh * 0.024
+	_button(Rect2(bx, y, bw, bh), "TUTORIAL", "tutorial", int(bh * 0.38))
+	y += bh + vh * 0.024
+	_button(Rect2(bx, y, bw, bh), "SETTINGS", "settings", int(bh * 0.38))
+	y += bh + vh * 0.024
+	_button(Rect2(bx, y, bw, bh), "QUIT", "quit", int(bh * 0.38))
+	_txt_c(vw / 2.0, vh * 0.96, "seed mode: %s" % seed_mode, COL_DIM_TEXT, int(vh * 0.016))
+
+
+func _draw_settings(vw: float, vh: float) -> void:
+	hotspots.clear()
+	var y := _sheet(vw, vh, "SETTINGS")
+	var bw := vw * 0.88
+	var bh := vh * 0.08
+	var names := {300: "short", 420: "normal", 650: "long"}
+	_button(Rect2(vw * 0.06, y, bw, bh), "Hold-to-inspect delay:  %s" % names.get(hold_ms, "normal"), "set:hold", int(bh * 0.3))
+	y += bh + vh * 0.025
+	_button(Rect2(vw * 0.06, y, bw, bh), "Run seed:  %s" % ("random every run" if seed_mode == "random" else "daily (same for everyone)"), "set:seed", int(bh * 0.28))
+	y += bh + vh * 0.025
+	_button(Rect2(vw * 0.06, y, bw, bh), "Intro tips:  %s" % intro_mode, "set:intro", int(bh * 0.3))
+	y += bh + vh * 0.05
+	_button(Rect2(vw * 0.06, y, bw, bh), "BACK", "close", int(bh * 0.34))
+
+
+func _draw_tut_banner(vw: float, vh: float) -> void:
+	if tut_done:
+		return
+	var st: Dictionary = Tutorial.STEPS[tut_step]
+	var lines: Array = st["say"]
+	var fsz := int(vh * 0.0215)
+	var lh := fsz * 1.5
+	var bh := lines.size() * lh + vh * 0.045
+	var by := vh * Z_MAP_END - bh - vh * 0.004
+	draw_rect(Rect2(vw * 0.02, by, vw * 0.96, bh), Color(0.05, 0.09, 0.06, 0.97))
+	draw_rect(Rect2(vw * 0.02, by, vw * 0.96, bh), COL_GOLD, false, 2.0)
+	_txt(Vector2(vw * 0.05, by + vh * 0.028), "GUIDE  %d/%d" % [tut_step + 1, Tutorial.STEPS.size()], COL_GOLD, int(vh * 0.016))
+	var ty := by + vh * 0.03 + lh * 0.8
+	for line in lines:
+		_txt(Vector2(vw * 0.05, ty), line, COL_TEXT, fsz)
+		ty += lh
+	var xr := Rect2(vw * 0.86, by + vh * 0.008, vw * 0.11, vh * 0.032)
+	_button(xr, "EXIT", "menu", int(vh * 0.016))
+	# pulse the stairs when the guide points there
+	if st.get("guide_to_stairs", false) and game.map["stairs"] != Vector2i(-1, -1):
+		var pulse := 2.0 + 2.0 * absf(sin(Time.get_ticks_msec() / 300.0))
+		draw_rect(_tile_rect(game.map["stairs"]).grow(3), COL_GOLD, false, pulse)
+		queue_redraw()
+
+
+func _draw_tut_done(vw: float, vh: float) -> void:
+	hotspots.clear()
+	draw_rect(Rect2(0, 0, vw, vh), COL_SHEET)
+	_txt_c(vw / 2.0, vh * 0.22, "TUTORIAL COMPLETE", COL_GOLD, int(vh * 0.04))
+	var y := vh * 0.32
+	for line in Tutorial.DONE:
+		if line != "":
+			_txt_c(vw / 2.0, y, line, COL_TEXT, int(vh * 0.023))
+		y += vh * 0.04
+	y += vh * 0.05
+	_button(Rect2(vw * 0.19, y, vw * 0.62, vh * 0.072), "BACK TO MENU", "menu", int(vh * 0.028), COL_GOLD)
 
 
 func _chip(x: float, ypos: float, icon: String, value: String, vw: float, vh: float, col: Color = COL_TEXT) -> float:
@@ -726,6 +957,8 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	_txt(Vector2(vw - fw - vw * 0.12, y), fl, COL_GOLD, int(vh * 0.022))
 	var hr := Rect2(vw - vw * 0.095, vh * 0.008, vw * 0.075, vh * Z_STATUS - vh * 0.014)
 	_button(hr, "?", "help", int(vh * 0.028))
+	var mr := Rect2(vw - vw * 0.185, vh * 0.008, vw * 0.075, vh * Z_STATUS - vh * 0.014)
+	_button(mr, "=", "menu", int(vh * 0.028))
 
 
 func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
@@ -993,6 +1226,7 @@ func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 	_txt_c(vw / 2.0, vh * 0.46, "floor %d · turn %d · bloom %d" % [snap["floor"], snap["turn"], snap["bloom"]], COL_TEXT, int(vh * 0.024))
 	_txt_c(vw / 2.0, vh * 0.51, "seed %d" % seed_v, COL_DIM_TEXT, int(vh * 0.02))
 	_txt_c(vw / 2.0, vh * 0.62, "- tap anywhere for a new run -", COL_GOLD, int(vh * 0.026))
+	_button(Rect2(vw * 0.3, vh * 0.72, vw * 0.4, vh * 0.06), "MENU", "menu", int(vh * 0.024))
 
 
 func _draw_intro(vw: float, vh: float) -> void:
