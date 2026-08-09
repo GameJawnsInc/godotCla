@@ -73,6 +73,16 @@ func _init() -> void:
 	shell._tap("tutorial")
 	_check(shell.screen == "tutorial" and shell.game != null, "tutorial starts")
 	_check(not shell.game.enemies.is_empty(), "tutorial room has its enemy")
+	# regression: an out-of-charge move must never auto-end a forced step
+	shell._act({"type": "move", "dir": Vector2i(1, 0)})
+	shell._act({"type": "move", "dir": Vector2i(1, 0)})
+	_check(shell.tut_step == 2, "two moves reach the end-turn step")
+	shell._move_or_strike(Vector2i(1, 0))  # spends the last charge, no advance
+	var turns_b: int = shell.game.total_turns
+	var step_b: int = shell.tut_step
+	shell._move_or_strike(Vector2i(1, 0))  # dry: must flash, not end the turn
+	_check(shell.tut_step == step_b and shell.game.total_turns == turns_b,
+		"auto-move cannot skip a forced end-turn step")
 	var guard := 0
 	var stuck := false
 	while not shell.tut_done and guard < 500:

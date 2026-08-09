@@ -192,6 +192,35 @@ const GRAFTS := {
 	"carapace": {"name": "Carapace", "desc": "start each floor with 2 shield"},
 }
 
+## One-line effect text per base ability (upgrades fall back to the base and
+## show slightly better numbers in play). UI-facing data; the sim ignores it.
+const ABILITY_DESC := {
+	"solar_lance": "Beam up to 3 tiles: 2 dmg, ignites oil, thins smog",
+	"seed_bomb": "Plant a patch of healing growth within 3 tiles",
+	"vine_whip": "Yank an enemy 2 tiles toward you, 1 dmg",
+	"water_jet": "Shove enemies in a line 2 tiles, 1 dmg on impact",
+	"mycelium_dash": "Teleport to any growth tile within 4",
+	"root_wall": "Raise a wall of roots that blocks enemies",
+	"pollen_burst": "Stun everything within 2 tiles for a turn",
+	"sun_flare": "Flash burn: 1 dmg to all within 2, ignites oil",
+	"thorn_shield": "Raise 2 shield - blocks damage before HP",
+	"overgrowth": "Convert corruption around a tile into growth",
+	"sap_snare": "Root an enemy in place for 2 turns",
+	"grow_spike": "3 dmg to an enemy standing near growth",
+	"spore_cloud": "Spore all within 2: 1 dmg a turn for 3 turns",
+	"fungal_ring": "Sprout growth on every tile around you",
+	"burrow": "Tunnel to any open tile within 3",
+	"tide": "Wave outward: shove everything 2 tiles away",
+	"steam_vent": "Vent smoke onto a tile - blocks lances",
+	"geyser": "Erupt: 1 dmg beside you, shove everything 2",
+	"gust": "Gust down a line: shove 3 tiles, clears smoke",
+	"updraft": "Ride the wind: dash in a straight line",
+	"clear_air": "Clear nearby smoke and push enemies back",
+	"bramble_coat": "Grow spikes: attackers take 2 dmg, 4 turns",
+	"anchor_roots": "Root yourself: immune to drags for 4 turns",
+	"moss_filter": "Filter the air: restore a stage of dimmed regen",
+}
+
 const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 5}
 
 ## Optional run mutators: free-form spice chosen at run start (unlock-gated).

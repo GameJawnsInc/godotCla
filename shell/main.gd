@@ -92,6 +92,10 @@ var hold_ms := 420
 var seed_mode := "random"  # random | daily
 var intro_mode := "once"   # once | always | never
 
+var _sb: StyleBoxFlat
+var _sb_gold: StyleBoxFlat
+var _sb_card: StyleBoxFlat
+
 var _press_pos := Vector2.ZERO
 var _press_ms := 0
 var _held := false
@@ -107,6 +111,7 @@ var _status_end := 0.0
 
 func _ready() -> void:
 	font = ThemeDB.fallback_font
+	_mk_styles()
 	_load_settings()
 	set_process(true)
 	var env := OS.get_environment("SHELL_SEED")
@@ -271,7 +276,7 @@ func _show_tooltip(pos: Vector2) -> void:
 			var slot := int(String(hsp["tag"]).get_slice(":", 1))
 			var aid: String = game.player["kit"][slot]
 			var adef: Dictionary = Content.ABILITIES[aid]
-			tooltip = ["%s - costs %d charge" % [adef["name"], adef["cost"]], "targets: %s" % adef["target"]]
+			tooltip = ["%s - costs %d charge" % [adef["name"], adef["cost"]], _ability_desc(aid)]
 			tooltip_tile = Vector2i(-1, -1)
 			queue_redraw()
 			return
@@ -406,6 +411,11 @@ func _move_or_strike(d: Vector2i) -> void:
 		if a["dir"] == d:
 			_act(a)
 			return
+	# in the tutorial, running dry is the lesson - never auto-end a turn there,
+	# because the synthetic end_turn would advance "end your turn" steps
+	if screen == "tutorial":
+		_flash("out of charge - press END to refill")
+		return
 	# the way is open but charge ran dry: end the turn, then go
 	var m: Dictionary = game.map
 	var dest: Vector2i = game.player["pos"] + d
@@ -808,17 +818,41 @@ func _safe_top(vh: float) -> float:
 	return minf(pad, vh * 0.06)
 
 
+## Solarpunk button skin: rounded moss-green panels, brass borders on the
+## primary actions, soft drop shadow - grown, not stamped.
+func _mk_styles() -> void:
+	_sb = StyleBoxFlat.new()
+	_sb.bg_color = Color("233029")
+	_sb.set_corner_radius_all(14)
+	_sb.set_border_width_all(2)
+	_sb.border_color = Color("5e7d62")
+	_sb.shadow_color = Color(0, 0, 0, 0.35)
+	_sb.shadow_size = 5
+	_sb.shadow_offset = Vector2(0, 3)
+	_sb_gold = _sb.duplicate()
+	_sb_gold.border_color = Color("c9a94e")
+	_sb_gold.bg_color = Color("2b3629")
+	_sb_card = _sb.duplicate()
+	_sb_card.bg_color = Color("1c2822")
+	_sb_card.border_color = Color("46604c")
+
+
+func _box(r: Rect2, style: StyleBoxFlat) -> void:
+	style.set_corner_radius_all(int(clampf(r.size.y * 0.18, 6, 18)))
+	draw_style_box(style, r)
+
+
 func _button(r: Rect2, label: String, tag: String, size: int, border: Color = COL_DIM_TEXT) -> void:
-	draw_rect(r, COL_BTN)
-	draw_rect(r, border, false, 2.0)
+	_box(r, _sb_gold if border == COL_GOLD else _sb)
+	if border == COL_RED:
+		draw_rect(r.grow(-2), COL_RED, false, 2.0)
 	var fs2 := _fit_size(label, size, r.size.x * 0.92)
 	_txt_c(r.get_center().x, r.get_center().y + fs2 * 0.35, label, COL_TEXT, fs2)
 	_hot(r, tag)
 
 
 func _arrow_button(r: Rect2, dir_name: String) -> void:
-	draw_rect(r, COL_BTN)
-	draw_rect(r, COL_DIM_TEXT, false, 2.0)
+	_box(r, _sb)
 	var c := r.get_center()
 	var a := r.size.x * 0.22
 	var d: Vector2i = DIRS4[dir_name]
@@ -1097,11 +1131,8 @@ func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
 		var adef: Dictionary = Content.ABILITIES[aid]
 		var r := Rect2(x, y, b, b)
 		var usable: bool = int(pl["charge"]) >= int(adef["cost"]) and not pl["gummed"].has(i)
-		draw_rect(r, COL_BTN)
-		var border := COL_DIM_TEXT
-		if (mode == "target_dir" or mode == "target_tile") and mode_slot == i:
-			border = COL_GOLD
-		draw_rect(r, border, false, 2.0)
+		var aiming: bool = (mode == "target_dir" or mode == "target_tile") and mode_slot == i
+		_box(r, _sb_gold if aiming else _sb)
 		var icon := "ab_" + aid.trim_suffix("+")
 		if not Art.ART.has(icon):
 			icon = "ab_default"
@@ -1207,21 +1238,53 @@ func _sheet(vw: float, vh: float, title: String) -> float:
 	return vh * 0.16
 
 
+func _ability_desc(aid: String) -> String:
+	return Content.ABILITY_DESC.get(aid.trim_suffix("+"), "")
+
+
+## A choice card: icon, title with cost, and the effect explained inline -
+## the whole card is the tap target, so no extra info taps needed.
+func _card(r: Rect2, icon: String, title: String, desc: String, tag: String, vh: float) -> void:
+	_box(r, _sb_card)
+	var isz := int(r.size.y * 0.62)
+	var tx := Art.tex(icon, isz)
+	var text_x := r.position.x + r.size.y * 0.28
+	if tx != null:
+		draw_texture(tx, r.position + Vector2(r.size.y * 0.19, (r.size.y - isz) / 2.0))
+		text_x = r.position.x + r.size.y * 1.05
+	var max_w := r.position.x + r.size.x - text_x - vh * 0.01
+	_txt_fit(Vector2(text_x, r.position.y + r.size.y * 0.42), title, COL_TEXT, int(r.size.y * 0.27), max_w)
+	_txt_fit(Vector2(text_x, r.position.y + r.size.y * 0.76), desc, COL_DIM_TEXT, int(r.size.y * 0.2), max_w)
+	_hot(r, tag)
+
+
 func _draw_shop(snap: Dictionary, vw: float, vh: float) -> void:
 	hotspots.clear()
 	var y := _sheet(vw, vh, "SHRINE SHOP")
-	_txt(Vector2(vw * 0.06, y), "bloom: %d" % snap["bloom"], COL_TEXT, int(vh * 0.026)); y += vh * 0.06
-	var bh := vh * 0.085
+	_txt(Vector2(vw * 0.06, y), "your bloom: %d" % snap["bloom"], COL_GOLD, int(vh * 0.026)); y += vh * 0.055
+	var ch := vh * 0.105
 	if snap["shop"].get("heal", false):
-		_button(Rect2(vw * 0.06, y, vw * 0.88, bh), "Heal 4 HP  —  %d bloom" % game.shop_cost("heal"), "buy:heal", int(bh * 0.34)); y += bh + vh * 0.025
+		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "ic_hp",
+			"Heal  —  %d bloom" % game.shop_cost("heal"),
+			"Restore 4 HP (up to your maximum)", "buy:heal", vh)
+		y += ch + vh * 0.022
 	if snap["shop"].has("ability"):
-		_button(Rect2(vw * 0.06, y, vw * 0.88, bh), "Learn %s  —  %d bloom" % [Content.ABILITIES[snap["shop"]["ability"]]["name"], game.shop_cost("ability")], "buy:ability", int(bh * 0.3)); y += bh + vh * 0.025
+		var aid: String = snap["shop"]["ability"]
+		var icon := "ab_" + aid.trim_suffix("+")
+		if not Art.ART.has(icon):
+			icon = "ab_default"
+		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), icon,
+			"%s  —  %d bloom" % [Content.ABILITIES[aid]["name"], game.shop_cost("ability")],
+			_ability_desc(aid), "buy:ability", vh)
+		y += ch + vh * 0.022
 	if snap["shop"].has("graft"):
 		var gid: String = snap["shop"]["graft"]
-		_button(Rect2(vw * 0.06, y, vw * 0.88, bh), "Graft: %s  —  %d bloom" % [Content.GRAFTS[gid]["name"], game.shop_cost("graft")], "buy:graft", int(bh * 0.3)); y += bh * 0.75
-		_txt(Vector2(vw * 0.08, y + bh * 0.55), Content.GRAFTS[gid]["desc"], COL_DIM_TEXT, int(vh * 0.02)); y += bh * 0.8
-	y += vh * 0.05
-	_button(Rect2(vw * 0.06, y, vw * 0.88, bh), "CLOSE", "close", int(bh * 0.36))
+		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "shrine",
+			"%s  —  %d bloom" % [Content.GRAFTS[gid]["name"], game.shop_cost("graft")],
+			"Graft (permanent): %s" % Content.GRAFTS[gid]["desc"], "buy:graft", vh)
+		y += ch + vh * 0.022
+	y += vh * 0.04
+	_button(Rect2(vw * 0.25, y, vw * 0.5, vh * 0.07), "CLOSE", "close", int(vh * 0.026))
 
 
 func _draw_logsheet(vw: float, vh: float) -> void:
@@ -1238,26 +1301,21 @@ func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 	hotspots.clear()
 	var y := _sheet(vw, vh, "DESCENT DRAFT")
 	_txt(Vector2(vw * 0.06, y), "Choose one ability to take down with you:", COL_TEXT, int(vh * 0.024)); y += vh * 0.055
-	var bh := vh * 0.09
+	var bh := vh * 0.105
 	if mode != "draft_drop":
 		for i in snap["draft_offers"].size():
 			var aid: String = snap["draft_offers"][i]
 			var adef: Dictionary = Content.ABILITIES[aid]
-			var r := Rect2(vw * 0.06, y, vw * 0.88, bh)
-			draw_rect(r, COL_BTN)
-			draw_rect(r, COL_DIM_TEXT, false, 2.0)
 			var icon := "ab_" + aid.trim_suffix("+")
 			if not Art.ART.has(icon):
 				icon = "ab_default"
-			var isz := int(bh * 0.7)
-			var tx := Art.tex(icon, isz)
-			if tx != null:
-				draw_texture(tx, r.position + Vector2(bh * 0.15, bh * 0.15))
-			_txt(Vector2(r.position.x + bh * 1.1, r.get_center().y + bh * 0.12), "%s   (cost %d)" % [adef["name"], adef["cost"]], COL_TEXT, int(bh * 0.32))
-			_hot(r, "draft:%d" % i)
+			var up := "  (upgrade)" if aid.ends_with("+") else ""
+			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), icon,
+				"%s  —  %d charge%s" % [adef["name"], adef["cost"], up],
+				_ability_desc(aid), "draft:%d" % i, vh)
 			y += bh + vh * 0.02
 		y += vh * 0.015
-		_button(Rect2(vw * 0.06, y, vw * 0.88, bh * 0.8), "skip - take nothing", "skip_draft", int(bh * 0.28))
+		_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.65), "skip - take nothing", "skip_draft", int(bh * 0.24))
 	else:
 		_txt(Vector2(vw * 0.06, y), "Kit is full - tap what to drop:", COL_RED, int(vh * 0.024)); y += vh * 0.05
 		for i in snap["player"]["kit"].size():
