@@ -23,10 +23,10 @@ const Z_AB_END := 0.66
 const Z_CTX_END := 0.70
 
 const COL_BG := Color("11161a")
-const COL_FLOOR := Color("222b26")
-const COL_FLOOR_EDGE := Color("2c362f")
-const COL_WALL := Color("39424a")
-const COL_WALL_TOP := Color("4a545d")
+const COL_FLOOR := Color("31402f")
+const COL_FLOOR_ALT := Color("2b392b")
+const COL_WALL := Color("4a5761")
+const COL_WALL_TOP := Color("5d6a74")
 const COL_THREAT := Color(0.88, 0.25, 0.15, 0.30)
 const COL_TARGET := Color(0.45, 0.95, 0.45, 0.9)
 const COL_TEXT := Color("d8e0d4")
@@ -85,6 +85,7 @@ var seen_intro := false
 var log_lines: Array = []  # persistent readable history
 var tut_step := 0
 var tut_done := false
+var help_page := 0
 var _game_is_run := false  # current `game` is a real run (RESUME-able)
 
 # settings (persisted to user://tender.cfg)
@@ -334,7 +335,14 @@ func _key(k: int) -> void:
 	if screen == "tutorial" and tut_done:
 		_tap("menu")
 		return
-	if mode == "intro" or mode == "help" or mode == "log" or mode == "shop":
+	if mode == "help":
+		if help_page < _help_pages() - 1:
+			help_page += 1
+		else:
+			mode = "normal"
+		queue_redraw()
+		return
+	if mode == "intro" or mode == "log" or mode == "shop":
 		if mode == "shop" and k == KEY_H:
 			_buy("heal")
 			return
@@ -365,6 +373,7 @@ func _key(k: int) -> void:
 		return
 	if k == KEY_L:
 		mode = "help"
+		help_page = 0
 		queue_redraw()
 		return
 	if game.phase == "draft":
@@ -496,7 +505,14 @@ func _click(pos: Vector2) -> void:
 	if screen == "tutorial" and tut_done:
 		_tap("menu")
 		return
-	if mode == "intro" or mode == "help" or mode == "log":
+	if mode == "help":
+		if help_page < _help_pages() - 1:
+			help_page += 1
+		else:
+			mode = "normal"
+		queue_redraw()
+		return
+	if mode == "intro" or mode == "log":
 		mode = "normal"
 		queue_redraw()
 		return
@@ -564,6 +580,7 @@ func _tap(tag: String) -> void:
 			queue_redraw()
 	elif tag == "help":
 		mode = "help"
+		help_page = 0
 		queue_redraw()
 	elif tag == "log":
 		mode = "log"
@@ -778,6 +795,14 @@ func _sprite(id: String, p: Vector2i) -> void:
 	var tx := Art.tex(id, int(_ts))
 	if tx != null:
 		draw_texture(tx, Vector2(_mox + p.x * _ts, _moy + p.y * _ts))
+
+
+## Soft ground shadow that lifts creatures off the tiles.
+func _shadow(p: Vector2i) -> void:
+	var r := _tile_rect(p)
+	draw_set_transform(Vector2(r.get_center().x, r.position.y + _ts * 0.86), 0.0, Vector2(1.0, 0.42))
+	draw_circle(Vector2.ZERO, _ts * 0.36, Color(0, 0, 0, 0.32))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 func _hot(r: Rect2, tag: String) -> void:
@@ -1056,7 +1081,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			var p := Vector2i(x, y)
 			var r := _tile_rect(p)
 			if m["tiles"][y * w + x] == 1:
-				draw_rect(r, COL_FLOOR)
+				draw_rect(r, COL_FLOOR if (x + y) % 2 == 0 else COL_FLOOR_ALT)
 			else:
 				draw_rect(r, COL_WALL)
 				# highlight only exposed wall tops, not every wall row
@@ -1091,6 +1116,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		draw_rect(_tile_rect(t), COL_THREAT)
 
 	for e in snap["enemies"]:
+		_shadow(e["pos"])
 		_sprite(e["kind"], e["pos"])
 		var r := _tile_rect(e["pos"])
 		if e.get("elite", false):
@@ -1102,6 +1128,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2(_ts - 4, 3)), Color(0, 0, 0, 0.6))
 			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2((_ts - 4) * frac, 3)), COL_RED)
 
+	_shadow(snap["player"]["pos"])
 	_sprite("player", snap["player"]["pos"])
 	var pr := _tile_rect(snap["player"]["pos"])
 	draw_rect(pr.grow(1), Color(0.56, 0.86, 0.42, 0.85), false, 2.0)
@@ -1364,19 +1391,28 @@ func _draw_intro(vw: float, vh: float) -> void:
 	_txt_c(vw / 2.0, y, "- tap to begin -", COL_GOLD, int(vh * 0.03))
 
 
+const HELP_PAGE_SIZE := 13
+
+
+func _help_pages() -> int:
+	return int(ceil(LEGEND.size() / float(HELP_PAGE_SIZE)))
+
+
 func _draw_help(vw: float, vh: float) -> void:
 	hotspots.clear()
-	var y := _sheet(vw, vh, "LEGEND  (tap to close)")
-	var rows := int(ceil(LEGEND.size() / 2.0))
-	var row_h := (vh - y - vh * 0.03) / rows
-	var isz := int(minf(row_h * 0.8, vh * 0.034))
-	for i in LEGEND.size():
-		var col := i / rows
-		var row := i % rows
-		var x := vw * 0.04 + col * vw * 0.48
-		var yy := y + row * row_h
-		var tx := Art.tex(LEGEND[i][0], isz)
+	var pages := _help_pages()
+	var next_hint := "tap for more" if help_page < pages - 1 else "tap to close"
+	var y := _sheet(vw, vh, "LEGEND  %d/%d  (%s)" % [help_page + 1, pages, next_hint])
+	var start := help_page * HELP_PAGE_SIZE
+	var count := mini(HELP_PAGE_SIZE, LEGEND.size() - start)
+	var row_h := (vh - y - vh * 0.03) / HELP_PAGE_SIZE
+	for i in count:
+		var row: Array = LEGEND[start + i]
+		var yy := y + i * row_h
+		var isz := int(minf(row_h * 0.72, vh * 0.038))
+		var tx := Art.tex(row[0], isz)
 		if tx != null:
-			draw_texture(tx, Vector2(x, yy))
-		_txt(Vector2(x + isz * 1.25, yy + row_h * 0.42), LEGEND[i][1], COL_TEXT, int(vh * 0.019))
-		_txt(Vector2(x + isz * 1.25, yy + row_h * 0.82), LEGEND[i][2], COL_DIM_TEXT, int(vh * 0.0145))
+			draw_texture(tx, Vector2(vw * 0.05, yy))
+		var text_x := vw * 0.05 + isz * 1.35
+		_txt_fit(Vector2(text_x, yy + row_h * 0.38), row[1], COL_TEXT, int(minf(vh * 0.023, row_h * 0.34)), vw * 0.95 - text_x)
+		_txt_fit(Vector2(text_x, yy + row_h * 0.76), row[2], COL_DIM_TEXT, int(minf(vh * 0.0165, row_h * 0.27)), vw * 0.95 - text_x)
