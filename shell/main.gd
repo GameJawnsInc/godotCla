@@ -39,6 +39,7 @@ var mode_targets: Array = []
 var mode_pick := -1
 var flash := ""
 var font: Font
+var hotspots: Array = []  # rebuilt every _draw: {rect, tag} tap targets
 
 
 func _ready() -> void:
@@ -215,13 +216,52 @@ func _try_ability_target(slot: int, target) -> void:
 
 
 func _click(pos: Vector2) -> void:
-	if game.over or game.phase == "draft":
+	for hsp in hotspots:
+		if hsp["rect"].has_point(pos):
+			_tap(hsp["tag"])
+			return
+	if game.over:
+		seed_v += 1
+		_new_game()
+		return
+	if game.phase == "draft":
 		return
 	var t := Vector2i(int((pos.x - MAP_X) / TILE), int((pos.y - MAP_Y) / TILE))
-	if mode == "target_tile" and mode_targets.has(t):
-		_try_ability_target(mode_slot, t)
-	elif mode == "cleanse":
-		_act({"type": "cleanse", "target": t})
+	var pp: Vector2i = game.player["pos"]
+	match mode:
+		"target_tile":
+			if mode_targets.has(t):
+				_try_ability_target(mode_slot, t)
+		"cleanse":
+			_act({"type": "cleanse", "target": t})
+		"target_dir":
+			var d := t - pp
+			if absi(d.x) + absi(d.y) == 1:
+				_try_ability_target(mode_slot, d)
+		"normal":
+			if t == pp:
+				_act({"type": "end_turn"})
+			elif absi(t.x - pp.x) + absi(t.y - pp.y) == 1:
+				_move_or_strike(t - pp)
+
+
+func _tap(tag: String) -> void:
+	if tag.begins_with("ability:"):
+		_ability_press(int(tag.get_slice(":", 1)))
+	elif tag.begins_with("buy:"):
+		_buy(tag.get_slice(":", 1))
+	elif tag.begins_with("draft:"):
+		_draft_pick(int(tag.get_slice(":", 1)))
+	elif tag.begins_with("drop:"):
+		_act({"type": "draft", "pick": mode_pick, "drop": int(tag.get_slice(":", 1))})
+	elif tag == "end_turn":
+		_act({"type": "end_turn"})
+	elif tag == "cleanse":
+		_key(KEY_C)
+	elif tag == "descend":
+		_key(KEY_E)
+	elif tag == "skip_draft":
+		_act({"type": "draft", "pick": -1})
 
 
 func _draft_key(k: int) -> void:
@@ -234,18 +274,21 @@ func _draft_key(k: int) -> void:
 		_act({"type": "draft", "pick": -1})
 		return
 	if k >= KEY_1 and k <= KEY_1 + snap["draft_offers"].size() - 1:
-		var pick := k - KEY_1
-		var needs_drop := false
-		for a in game.legal_actions():
-			if String(a.get("type", "")) == "draft" and int(a.get("pick", -2)) == pick:
-				needs_drop = a.has("drop")
-				break
-		if needs_drop:
-			mode = "draft_drop"
-			mode_pick = pick
-			queue_redraw()
-		else:
-			_act({"type": "draft", "pick": pick})
+		_draft_pick(k - KEY_1)
+
+
+func _draft_pick(pick: int) -> void:
+	var needs_drop := false
+	for a in game.legal_actions():
+		if String(a.get("type", "")) == "draft" and int(a.get("pick", -2)) == pick:
+			needs_drop = a.has("drop")
+			break
+	if needs_drop:
+		mode = "draft_drop"
+		mode_pick = pick
+		queue_redraw()
+	else:
+		_act({"type": "draft", "pick": pick})
 
 
 func _flash(msg: String) -> void:
@@ -282,7 +325,21 @@ func _sprite(id: String, p: Vector2i) -> void:
 		draw_texture(tx, Vector2(MAP_X + p.x * TILE, MAP_Y + p.y * TILE))
 
 
+func _hot(r: Rect2, tag: String) -> void:
+	hotspots.append({"rect": r, "tag": tag})
+
+
+func _button(px: float, py: float, wd: float, label: String, tag: String) -> float:
+	var r := Rect2(px, py, wd, 36)
+	draw_rect(r, Color(0.16, 0.22, 0.18))
+	draw_rect(r, COL_DIM_TEXT, false, 1.0)
+	_txt(Vector2(px + 12, py + 24), label, COL_TEXT, 14)
+	_hot(r, tag)
+	return py + 44
+
+
 func _draw() -> void:
+	hotspots.clear()
 	var snap: Dictionary = game.snapshot()
 	var m: Dictionary = snap["map"]
 	var w: int = m["w"]
@@ -368,6 +425,7 @@ func _draw_panel(snap: Dictionary, px: int) -> void:
 		if pl["gummed"].has(i):
 			gum = "  GUMMED %d" % pl["gummed"][i]
 		var col := COL_TEXT if int(pl["charge"]) >= int(adef["cost"]) and not pl["gummed"].has(i) else COL_DIM_TEXT
+		_hot(Rect2(px - 4, y - 14, PANEL_W - 20, 18), "ability:%d" % i)
 		_txt(Vector2(px, y), "%d  %s (%d)%s" % [i + 1, adef["name"], adef["cost"], gum], col); y += 18
 	if not pl["grafts"].is_empty():
 		var names: Array = []
@@ -378,10 +436,13 @@ func _draw_panel(snap: Dictionary, px: int) -> void:
 	if pl["pos"] == snap["map"]["shrine"] and not snap["shop"].is_empty():
 		_txt(Vector2(px, y), "SHRINE:", COL_GOLD); y += 18
 		if snap["shop"].get("heal", false):
+			_hot(Rect2(px - 4, y - 13, PANEL_W - 20, 16), "buy:heal")
 			_txt(Vector2(px, y), "  H  heal 4 (%d bloom)" % game.shop_cost("heal")); y += 16
 		if snap["shop"].has("ability"):
+			_hot(Rect2(px - 4, y - 13, PANEL_W - 20, 16), "buy:ability")
 			_txt(Vector2(px, y), "  B  learn %s (%d bloom)" % [snap["shop"]["ability"], game.shop_cost("ability")]); y += 16
 		if snap["shop"].has("graft"):
+			_hot(Rect2(px - 4, y - 13, PANEL_W - 20, 16), "buy:graft")
 			_txt(Vector2(px, y), "  G  graft %s (%d bloom)" % [Content.GRAFTS[snap["shop"]["graft"]]["name"], game.shop_cost("graft")]); y += 16
 		y += 6
 	for e in snap["enemies"]:
@@ -401,6 +462,12 @@ func _draw_panel(snap: Dictionary, px: int) -> void:
 	elif mode == "target_tile":
 		hint = "AIM: click a highlighted tile (ESC cancels)"
 	_txt(Vector2(px, y), hint, COL_DIM_TEXT, 12)
+	y += 14
+	y = _button(px, y, 130, "END TURN", "end_turn")
+	if not _legal_of("cleanse").is_empty():
+		y = _button(px, y, 130, "CLEANSE", "cleanse")
+	if not _legal_of("descend").is_empty():
+		y = _button(px, y, 130, "DESCEND", "descend")
 
 
 func _draw_log(snap: Dictionary, ly: int) -> void:
@@ -413,7 +480,7 @@ func _draw_log(snap: Dictionary, ly: int) -> void:
 
 
 func _draw_draft(snap: Dictionary, w: int, h: int) -> void:
-	var r := Rect2(MAP_X + w * TILE / 2.0 - 220, MAP_Y + h * TILE / 2.0 - 110, 440, 220)
+	var r := Rect2(MAP_X + w * TILE / 2.0 - 220, MAP_Y + h * TILE / 2.0 - 140, 440, 280)
 	draw_rect(r, Color(0.05, 0.08, 0.06, 0.95))
 	draw_rect(r, COL_GOLD, false, 2.0)
 	var y := r.position.y + 28
@@ -421,11 +488,17 @@ func _draw_draft(snap: Dictionary, w: int, h: int) -> void:
 	for i in snap["draft_offers"].size():
 		var aid: String = snap["draft_offers"][i]
 		var adef: Dictionary = Content.ABILITIES[aid]
+		if mode != "draft_drop":
+			_hot(Rect2(r.position.x + 10, y - 15, r.size.x - 20, 19), "draft:%d" % i)
 		_txt(Vector2(r.position.x + 16, y), "%d  %s  (cost %d, %s)" % [i + 1, adef["name"], adef["cost"], adef["target"]]); y += 20
+	if mode != "draft_drop":
+		_hot(Rect2(r.position.x + 10, y - 13, r.size.x - 20, 17), "skip_draft")
+		_txt(Vector2(r.position.x + 16, y), "0  skip", COL_DIM_TEXT); y += 18
 	if mode == "draft_drop":
 		y += 6
-		_txt(Vector2(r.position.x + 16, y), "kit full — press 1-%d to drop:" % snap["player"]["kit"].size(), COL_RED); y += 20
+		_txt(Vector2(r.position.x + 16, y), "kit full — press/tap what to drop:", COL_RED); y += 20
 		for i in snap["player"]["kit"].size():
+			_hot(Rect2(r.position.x + 20, y - 15, r.size.x - 40, 18), "drop:%d" % i)
 			_txt(Vector2(r.position.x + 26, y), "%d  %s" % [i + 1, snap["player"]["kit"][i]]); y += 18
 
 

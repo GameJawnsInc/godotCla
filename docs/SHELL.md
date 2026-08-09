@@ -35,6 +35,31 @@ panel lists every enemy's exact intent; the strip below the map is the
 event log. Elites wear a gold ring, bosses show HP bars, your buffs ring
 the player sprite (brown = anchored, green = thorns).
 
+## Touch controls (Android / any touchscreen)
+
+Everything is tappable — no keyboard needed:
+
+- tap an adjacent tile: move (or strike the enemy on it)
+- tap your own tile: end turn
+- tap a kit line in the panel: cast it — then tap an adjacent tile to aim
+  directional abilities, or a highlighted tile for tile abilities
+- tap the END TURN / CLEANSE / DESCEND buttons under the panel
+- tap shop lines at a shrine, draft options between floors
+- after a run: tap anywhere for the next seed
+
+## Building the APK
+
+`export_presets.cfg` holds an Android preset (arm64, non-gradle). With
+export templates, a JDK, zipalign, and an apksigner on the SDK path:
+
+```
+godot --headless --path . --export-debug "Android" build/tender.apk
+```
+
+This container builds it with GitHub-sourced pieces only: Temurin JDK 17,
+lzhiyong/android-sdk-tools (zipalign), and an `apksigner` shim over
+patrickfav/uber-apk-signer for signing — no Google SDK download needed.
+
 ## Screenshots without a display
 
 `tests/render_frame.gd` composes the same sprites into a standalone SVG,
