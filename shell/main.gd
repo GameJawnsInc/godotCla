@@ -1,24 +1,25 @@
 extends Node2D
 ## The human shell (style guide §1/§4): draws the sim's snapshot and forwards
-## input as step() actions. The sim never knows this exists — everything here
-## reads snapshot()/legal_actions() and writes step(action).
+## input as step() actions. The sim never knows this exists.
 ##
-## Portrait, touch-first layout: map on top, log + status below, D-pad and
-## action buttons at the bottom. Long-press any tile for a tooltip.
-## Keyboard still works everywhere (see docs/SHELL.md).
+## Mobile-first, two-scale layout: the MAP scales to fit its zone (whole floor
+## always visible), while all UI is sized in fractions of the physical screen,
+## so text and buttons stay finger-sized no matter how big the floor is.
+## Zones, top to bottom: status strip · map · ability bar · context line ·
+## D-pad + actions. Draft/shop/legend/log/death are full-screen sheets.
+## Long-press any tile for a tooltip. Keyboard still works (docs/SHELL.md).
 
 const Game := preload("res://sim/game.gd")
 const Content := preload("res://sim/content.gd")
 const Art := preload("res://shell/svg_art.gd")
 
-const TILE := 40
-const MAP_X := 10
-const MAP_Y := 10
-const LOG_H := 96
-const PANEL_BUDGET := 470
-const DPAD_H := 300
-const LOG_LINES := 4
 const HOLD_MS := 420
+
+# zone fractions of screen height
+const Z_STATUS := 0.062
+const Z_MAP_END := 0.56
+const Z_AB_END := 0.66
+const Z_CTX_END := 0.70
 
 const COL_BG := Color("11161a")
 const COL_FLOOR := Color("222b26")
@@ -32,12 +33,13 @@ const COL_DIM_TEXT := Color("97a29a")
 const COL_GOLD := Color("e8c840")
 const COL_RED := Color("e04b3a")
 const COL_BTN := Color(0.16, 0.22, 0.18)
+const COL_SHEET := Color(0.04, 0.07, 0.05, 0.985)
 
-## sprite id, display name, one-line blurb — HELP overlay and hold-tooltips
+## sprite id, display name, one-line blurb — legend sheet and hold-tooltips
 const LEGEND := [
 	["player", "You, the Tender", "descend, cleanse, survive"],
-	["stairs", "Stairs", "the way down - your objective each floor"],
-	["shrine", "Shrine", "stand here and spend bloom on heals, abilities, grafts"],
+	["stairs", "Stairs", "the way down - your goal each floor"],
+	["shrine", "Shrine", "stand here to open the shop"],
 	["vent", "Vent", "vents reinforcements as the smog rises"],
 	["oil", "Oil", "corruption - cleanse it (adjacent) for bloom"],
 	["goo", "Goo", "corruption - cleansing yields bloom"],
@@ -70,20 +72,26 @@ const DIRS4 := {
 
 var game
 var seed_v := 0
-var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | intro | help
+var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | intro | help | shop | log
 var mode_slot := -1
 var mode_targets: Array = []
 var mode_pick := -1
 var flash := ""
 var font: Font
-var hotspots: Array = []  # rebuilt every _draw: {rect, tag} tap targets
+var hotspots: Array = []
 var seen_intro := false
+var log_lines: Array = []  # persistent readable history
 
-var _press_local := Vector2.ZERO
+var _press_pos := Vector2.ZERO
 var _press_ms := 0
 var _held := false
-var tooltip: Array = []           # lines currently shown
+var tooltip: Array = []
 var tooltip_tile := Vector2i(-1, -1)
+
+# layout state recomputed each draw, used by input mapping
+var _ts := 40.0
+var _mox := 0.0
+var _moy := 0.0
 
 
 func _ready() -> void:
@@ -105,38 +113,27 @@ func _new_game() -> void:
 		mode = "intro"
 	flash = ""
 	tooltip = []
-	_fit()
+	log_lines = []
 	queue_redraw()
-
-
-func _content_size() -> Vector2:
-	var m: Dictionary = game.map
-	var cw := maxf(float(MAP_X * 2 + int(m["w"]) * TILE), 760.0)
-	var ch := float(MAP_Y + int(m["h"]) * TILE + LOG_H + PANEL_BUDGET + DPAD_H + 20)
-	return Vector2(cw, ch)
-
-
-## Scale + center the whole canvas so the content fills the window — the map
-## fills a portrait phone's width and the text scales up with it.
-func _fit() -> void:
-	if not is_inside_tree() or game == null:
-		return
-	var cs := _content_size()
-	var vp := get_viewport_rect().size
-	var sc := minf(vp.x / cs.x, vp.y / cs.y)
-	scale = Vector2(sc, sc)
-	position = Vector2((vp.x - cs.x * sc) / 2.0, 0)
 
 
 func _act(a: Dictionary) -> void:
 	if game.over:
 		return
+	var keep_shop := mode == "shop" and String(a.get("type", "")) == "buy"
 	game.step(a)
+	for ev in game.snapshot()["events"]:
+		var s := _ev_text(ev)
+		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
+			log_lines.append(s)
+	if log_lines.size() > 60:
+		log_lines = log_lines.slice(log_lines.size() - 60)
 	mode = "normal"
+	if keep_shop and game.player["pos"] == game.map["shrine"] and not game.shop.is_empty():
+		mode = "shop"
 	mode_targets = []
 	flash = ""
 	tooltip = []
-	_fit()
 	queue_redraw()
 
 
@@ -155,7 +152,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 		_key(ev.keycode)
 	elif ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT:
 		if ev.pressed:
-			_press_local = to_local(ev.position)
+			_press_pos = ev.position
 			_press_ms = Time.get_ticks_msec()
 			_held = true
 		else:
@@ -165,15 +162,19 @@ func _unhandled_input(ev: InputEvent) -> void:
 				tooltip = []
 				queue_redraw()
 			elif Time.get_ticks_msec() - _press_ms < HOLD_MS:
-				_click(to_local(ev.position))
+				_click(ev.position)
 	elif ev is InputEventMouseMotion and _held:
-		if to_local(ev.position).distance_to(_press_local) > 26.0:
+		if ev.position.distance_to(_press_pos) > 30.0:
 			_held = false
 
 
 func _process(_dt: float) -> void:
 	if _held and tooltip.is_empty() and Time.get_ticks_msec() - _press_ms >= HOLD_MS:
-		_show_tooltip(_press_local)
+		_show_tooltip(_press_pos)
+
+
+func _map_tile(pos: Vector2) -> Vector2i:
+	return Vector2i(int((pos.x - _mox) / _ts), int((pos.y - _moy) / _ts))
 
 
 func _legend_of(id: String) -> Array:
@@ -183,12 +184,21 @@ func _legend_of(id: String) -> Array:
 	return []
 
 
-## Long-press: describe whatever is on the tile under the finger.
 func _show_tooltip(pos: Vector2) -> void:
-	if mode == "intro" or mode == "help" or game.over:
+	if mode == "intro" or mode == "help" or mode == "log" or game.over:
 		return
+	# holding an ability button explains the ability
+	for hsp in hotspots:
+		if hsp["rect"].has_point(pos) and String(hsp["tag"]).begins_with("ability:"):
+			var slot := int(String(hsp["tag"]).get_slice(":", 1))
+			var aid: String = game.player["kit"][slot]
+			var adef: Dictionary = Content.ABILITIES[aid]
+			tooltip = ["%s - costs %d charge" % [adef["name"], adef["cost"]], "targets: %s" % adef["target"]]
+			tooltip_tile = Vector2i(-1, -1)
+			queue_redraw()
+			return
 	var snap: Dictionary = game.snapshot()
-	var t := Vector2i(int((pos.x - MAP_X) / TILE), int((pos.y - MAP_Y) / TILE))
+	var t := _map_tile(pos)
 	if t.x < 0 or t.y < 0 or t.x >= int(snap["map"]["w"]) or t.y >= int(snap["map"]["h"]):
 		return
 	var lines: Array = []
@@ -231,7 +241,16 @@ func _dir_from_key(k: int) -> Vector2i:
 
 
 func _key(k: int) -> void:
-	if mode == "intro" or mode == "help":
+	if mode == "intro" or mode == "help" or mode == "log" or mode == "shop":
+		if mode == "shop" and k == KEY_H:
+			_buy("heal")
+			return
+		if mode == "shop" and k == KEY_B:
+			_buy("ability")
+			return
+		if mode == "shop" and k == KEY_G:
+			_buy("graft")
+			return
 		mode = "normal"
 		queue_redraw()
 		return
@@ -267,11 +286,7 @@ func _key(k: int) -> void:
 		KEY_E:
 			_tap("descend")
 		KEY_H:
-			_buy("heal")
-		KEY_B:
-			_buy("ability")
-		KEY_G:
-			_buy("graft")
+			_tap("shop")
 		KEY_1, KEY_2, KEY_3, KEY_4, KEY_5:
 			_ability_press(k - KEY_1)
 		KEY_R:
@@ -281,8 +296,6 @@ func _key(k: int) -> void:
 			_new_game()
 
 
-## One directional input, from key, D-pad button, or adjacent-tile tap:
-## aims in targeting modes, cleanses in cleanse mode, else moves/strikes.
 func _dir_input(d: Vector2i) -> void:
 	match mode:
 		"target_dir":
@@ -310,7 +323,7 @@ func _buy(item: String) -> void:
 		if a["item"] == item:
 			_act(a)
 			return
-	_flash("can't buy %s here" % item)
+	_flash("can't buy that")
 
 
 func _ability_press(slot: int) -> void:
@@ -321,14 +334,14 @@ func _ability_press(slot: int) -> void:
 		if int(a["slot"]) == slot:
 			acts.append(a)
 	if acts.is_empty():
-		_flash("%s: no legal target / not enough charge / gummed" % game.player["kit"][slot])
+		_flash("%s: no target / no charge / gummed" % Content.ABILITIES[game.player["kit"][slot]]["name"])
 		return
 	var aid: String = game.player["kit"][slot]
 	var ttype: String = Content.ABILITIES[aid]["target"]
 	if ttype == "dir" or ttype == "enemy_line":
 		mode = "target_dir"
 		mode_slot = slot
-		_flash("%s: pick a direction (D-pad or tap beside you)" % aid)
+		_flash("AIM %s: D-pad or tap beside you" % Content.ABILITIES[aid]["name"])
 	elif acts.size() == 1:
 		_act(acts[0])
 	else:
@@ -337,7 +350,7 @@ func _ability_press(slot: int) -> void:
 		mode_targets = []
 		for a in acts:
 			mode_targets.append(a["target"])
-		_flash("%s: tap a highlighted tile" % aid)
+		_flash("AIM %s: tap a green tile" % Content.ABILITIES[aid]["name"])
 	queue_redraw()
 
 
@@ -352,7 +365,7 @@ func _try_ability_target(slot: int, target) -> void:
 
 
 func _click(pos: Vector2) -> void:
-	if mode == "intro" or mode == "help":
+	if mode == "intro" or mode == "help" or mode == "log":
 		mode = "normal"
 		queue_redraw()
 		return
@@ -360,13 +373,17 @@ func _click(pos: Vector2) -> void:
 		if hsp["rect"].has_point(pos):
 			_tap(hsp["tag"])
 			return
+	if mode == "shop":
+		mode = "normal"
+		queue_redraw()
+		return
 	if game.over:
 		seed_v += 1
 		_new_game()
 		return
 	if game.phase == "draft":
 		return
-	var t := Vector2i(int((pos.x - MAP_X) / TILE), int((pos.y - MAP_Y) / TILE))
+	var t := _map_tile(pos)
 	var pp: Vector2i = game.player["pos"]
 	match mode:
 		"target_tile":
@@ -400,17 +417,25 @@ func _tap(tag: String) -> void:
 		_act({"type": "end_turn"})
 	elif tag == "cleanse":
 		if _legal_of("cleanse").is_empty():
-			_flash("nothing cleansable adjacent (or no charge)")
+			_flash("no corruption beside you (or no charge)")
 		else:
 			mode = "cleanse"
 			queue_redraw()
 	elif tag == "descend":
 		if not _legal_of("descend").is_empty():
 			_act({"type": "descend"})
-		else:
-			_flash("not on the stairs")
+	elif tag == "shop":
+		if game.player["pos"] == game.map["shrine"] and not game.shop.is_empty():
+			mode = "shop"
+			queue_redraw()
 	elif tag == "help":
 		mode = "help"
+		queue_redraw()
+	elif tag == "log":
+		mode = "log"
+		queue_redraw()
+	elif tag == "close":
+		mode = "normal"
 		queue_redraw()
 	elif tag == "skip_draft":
 		_act({"type": "draft", "pick": -1})
@@ -475,7 +500,7 @@ func _ev_text(ev: Dictionary) -> String:
 		"reinforcement":
 			return "A vent releases a drill bot"
 		"gummed":
-			return "Tar gums up %s" % str(ev.get("id", "an ability"))
+			return "Tar gums up an ability"
 		"drain":
 			return "Leech drone drains %d banked charge" % ev["amt"]
 		"drag":
@@ -572,43 +597,49 @@ func _threat_tiles(snap: Dictionary) -> Dictionary:
 				t[it["tile"]] = true
 			"slam":
 				t[it["tile"]] = true
-				for d in [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
+				for d in DIRS4.values():
 					t[it["tile"] + d] = true
 			"quake":
-				for d in [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
+				for d in DIRS4.values():
 					t[e["pos"] + d] = true
 	return t
 
 
 func _tile_rect(p: Vector2i) -> Rect2:
-	return Rect2(MAP_X + p.x * TILE, MAP_Y + p.y * TILE, TILE, TILE)
+	return Rect2(_mox + p.x * _ts, _moy + p.y * _ts, _ts, _ts)
 
 
 func _sprite(id: String, p: Vector2i) -> void:
-	var tx := Art.tex(id, TILE)
+	var tx := Art.tex(id, int(_ts))
 	if tx != null:
-		draw_texture(tx, Vector2(MAP_X + p.x * TILE, MAP_Y + p.y * TILE))
+		draw_texture(tx, Vector2(_mox + p.x * _ts, _moy + p.y * _ts))
 
 
 func _hot(r: Rect2, tag: String) -> void:
 	hotspots.append({"rect": r, "tag": tag})
 
 
-func _button(px: float, py: float, wd: float, ht: float, label: String, tag: String, size: int = 20) -> void:
-	var r := Rect2(px, py, wd, ht)
+func _txt(pos: Vector2, s: String, color: Color = COL_TEXT, size: int = 20) -> void:
+	draw_string(font, pos, s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
+
+
+func _txt_c(cx: float, ypos: float, s: String, color: Color, size: int) -> void:
+	var tw := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	draw_string(font, Vector2(cx - tw / 2.0, ypos), s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
+
+
+func _button(r: Rect2, label: String, tag: String, size: int, border: Color = COL_DIM_TEXT) -> void:
 	draw_rect(r, COL_BTN)
-	draw_rect(r, COL_DIM_TEXT, false, 1.0)
-	var tw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
-	_txt(Vector2(px + (wd - tw) / 2.0, py + ht / 2.0 + size * 0.35), label, COL_TEXT, size)
+	draw_rect(r, border, false, 2.0)
+	_txt_c(r.get_center().x, r.get_center().y + size * 0.35, label, COL_TEXT, size)
 	_hot(r, tag)
 
 
-func _arrow_button(px: float, py: float, sz: float, dir_name: String) -> void:
-	var r := Rect2(px, py, sz, sz)
+func _arrow_button(r: Rect2, dir_name: String) -> void:
 	draw_rect(r, COL_BTN)
-	draw_rect(r, COL_DIM_TEXT, false, 1.0)
+	draw_rect(r, COL_DIM_TEXT, false, 2.0)
 	var c := r.get_center()
-	var a := sz * 0.22
+	var a := r.size.x * 0.22
 	var d: Vector2i = DIRS4[dir_name]
 	var tip := c + Vector2(d.x, d.y) * a
 	var base := c - Vector2(d.x, d.y) * a * 0.6
@@ -617,18 +648,95 @@ func _arrow_button(px: float, py: float, sz: float, dir_name: String) -> void:
 	_hot(r, "dir:%s" % dir_name)
 
 
-func _txt(pos: Vector2, s: String, color: Color = COL_TEXT, size: int = 17) -> void:
-	draw_string(font, pos, s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
-
-
 func _draw() -> void:
-	_fit()
 	hotspots.clear()
+	var vw := get_viewport_rect().size.x
+	var vh := get_viewport_rect().size.y
 	var snap: Dictionary = game.snapshot()
+	draw_rect(Rect2(0, 0, vw, vh), COL_BG)
+
+	_draw_status(snap, vw, vh)
+	_draw_map(snap, vw, vh)
+	_draw_ability_bar(snap, vw, vh)
+	_draw_context(snap, vw, vh)
+	_draw_controls(snap, vw, vh)
+
+	if not tooltip.is_empty():
+		_draw_tooltip(vw, vh)
+	if snap["phase"] == "draft":
+		_draw_draft(snap, vw, vh)
+	if mode == "shop":
+		_draw_shop(snap, vw, vh)
+	elif mode == "log":
+		_draw_logsheet(vw, vh)
+	elif mode == "help":
+		_draw_help(vw, vh)
+	elif mode == "intro":
+		_draw_intro(vw, vh)
+	if snap["over"]:
+		_draw_over(snap, vw, vh)
+
+
+func _chip(x: float, ypos: float, icon: String, value: String, vw: float, vh: float, col: Color = COL_TEXT) -> float:
+	var isz := vh * 0.032
+	var tx := Art.tex(icon, int(isz))
+	if tx != null:
+		draw_texture(tx, Vector2(x, ypos - isz * 0.78))
+	var fsz := int(vh * 0.026)
+	_txt(Vector2(x + isz + vw * 0.008, ypos), value, col, fsz)
+	return x + isz + vw * 0.008 + font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x + vw * 0.035
+
+
+func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
+	var pl: Dictionary = snap["player"]
+	var y := vh * Z_STATUS * 0.68
+	var x := vw * 0.025
+	x = _chip(x, y, "ic_hp", "%d/%d" % [pl["hp"], pl["max_hp"]], vw, vh, COL_TEXT if int(pl["hp"]) > 3 else COL_RED)
+	if int(pl["shield"]) > 0:
+		x = _chip(x, y, "ic_shield", str(pl["shield"]), vw, vh)
+	x = _chip(x, y, "ic_charge", "%d" % pl["charge"], vw, vh)
+	x = _chip(x, y, "ic_bloom", str(snap["bloom"]), vw, vh)
+	# smog meter with dim/choke ticks
+	var fdef: Dictionary = game.floor_def(game.floor_num)
+	var choke: float = float(fdef.get("smog_choke", 40))
+	var mw := vw * 0.22
+	var mx := x
+	var my := y - vh * 0.016
+	var frac: float = clampf(snap["smog"] / (choke * 1.15), 0.0, 1.0)
+	draw_rect(Rect2(mx, my, mw, vh * 0.018), Color(0, 0, 0, 0.55))
+	var mcol := COL_DIM_TEXT
+	if snap["dim"] >= 1:
+		mcol = COL_GOLD
+	if snap["smog"] >= choke:
+		mcol = COL_RED
+	draw_rect(Rect2(mx, my, mw * frac, vh * 0.018), mcol)
+	for dv in fdef.get("smog_dim", []):
+		var tx2 := mx + mw * clampf(float(dv) / (choke * 1.15), 0.0, 1.0)
+		draw_rect(Rect2(tx2, my - 2, 2, vh * 0.018 + 4), COL_GOLD)
+	var ck := mx + mw * clampf(choke / (choke * 1.15), 0.0, 1.0)
+	draw_rect(Rect2(ck, my - 2, 2, vh * 0.018 + 4), COL_RED)
+	_txt(Vector2(mx, my - vh * 0.006), "SMOG", COL_DIM_TEXT, int(vh * 0.012))
+	x = mx + mw + vw * 0.03
+	# incoming-damage warning
+	if _threat_tiles(snap).has(pl["pos"]):
+		_txt(Vector2(x, y), "! INCOMING", COL_RED, int(vh * 0.024))
+	# floor + help, right-aligned
+	var fl := "floor %d/7" % snap["floor"]
+	var fw := font.get_string_size(fl, HORIZONTAL_ALIGNMENT_LEFT, -1, int(vh * 0.022)).x
+	_txt(Vector2(vw - fw - vw * 0.12, y), fl, COL_GOLD, int(vh * 0.022))
+	var hr := Rect2(vw - vw * 0.095, vh * 0.008, vw * 0.075, vh * Z_STATUS - vh * 0.014)
+	_button(hr, "?", "help", int(vh * 0.028))
+
+
+func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	var m: Dictionary = snap["map"]
 	var w: int = m["w"]
 	var h: int = m["h"]
-	draw_rect(Rect2(-3000, -3000, 9000, 9000), COL_BG)
+	var zone_y := vh * Z_STATUS + vh * 0.006
+	var zone_h := vh * Z_MAP_END - zone_y
+	_ts = minf(vw * 0.996 / w, zone_h / h)
+	_mox = (vw - w * _ts) / 2.0
+	_moy = zone_y  # anchored under the status strip; slack below feeds the log
 
 	for y in h:
 		for x in w:
@@ -636,10 +744,25 @@ func _draw() -> void:
 			var r := _tile_rect(p)
 			if m["tiles"][y * w + x] == 1:
 				draw_rect(r, COL_FLOOR)
-				draw_rect(Rect2(r.position, Vector2(TILE, 1)), COL_FLOOR_EDGE)
 			else:
 				draw_rect(r, COL_WALL)
-				draw_rect(Rect2(r.position, Vector2(TILE, 4)), COL_WALL_TOP)
+				# highlight only exposed wall tops, not every wall row
+				if y + 1 < h and m["tiles"][(y + 1) * w + x] == 1:
+					draw_rect(Rect2(r.position + Vector2(0, _ts * 0.82), Vector2(_ts, _ts * 0.18)), COL_WALL_TOP)
+				if y > 0 and m["tiles"][(y - 1) * w + x] == 1:
+					draw_rect(Rect2(r.position, Vector2(_ts, maxf(_ts * 0.1, 2))), COL_WALL_TOP)
+
+	# recent events fill whatever space this floor leaves under the map
+	var log_top := _moy + h * _ts + vh * 0.012
+	var log_space := vh * Z_MAP_END - log_top
+	var lfs := int(vh * 0.018)
+	var fit := int(log_space / (lfs * 1.4))
+	if fit > 0 and not log_lines.is_empty():
+		var start: int = maxi(0, log_lines.size() - fit)
+		var ly := log_top + lfs
+		for i in range(start, log_lines.size()):
+			_txt(Vector2(vw * 0.025, ly), log_lines[i], COL_TEXT if i == log_lines.size() - 1 else COL_DIM_TEXT, lfs)
+			ly += lfs * 1.4
 
 	for t in snap["terrain"].keys():
 		_sprite(snap["terrain"][t]["kind"], t)
@@ -651,8 +774,7 @@ func _draw() -> void:
 	if m["shrine"] != Vector2i(-1, -1):
 		_sprite("shrine", m["shrine"])
 
-	var threat := _threat_tiles(snap)
-	for t in threat:
+	for t in _threat_tiles(snap):
 		draw_rect(_tile_rect(t), COL_THREAT)
 
 	for e in snap["enemies"]:
@@ -664,241 +786,257 @@ func _draw() -> void:
 		var maxhp: int = int(edef["hp"]) + (Content.ELITE_HP_BONUS if e.get("elite", false) else 0)
 		if e["hp"] < maxhp or edef["traits"].has("boss"):
 			var frac: float = clampf(float(e["hp"]) / maxf(1.0, float(maxhp)), 0.0, 1.0)
-			draw_rect(Rect2(r.position + Vector2(3, -5), Vector2(TILE - 6, 4)), Color(0, 0, 0, 0.6))
-			draw_rect(Rect2(r.position + Vector2(3, -5), Vector2((TILE - 6) * frac, 4)), COL_RED)
+			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2(_ts - 4, 3)), Color(0, 0, 0, 0.6))
+			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2((_ts - 4) * frac, 3)), COL_RED)
 
 	_sprite("player", snap["player"]["pos"])
 	var pr := _tile_rect(snap["player"]["pos"])
+	draw_rect(pr.grow(1), Color(0.56, 0.86, 0.42, 0.85), false, 2.0)
 	if int(snap["player"].get("anchor_turns", 0)) > 0:
-		draw_rect(pr.grow(-1), Color("7a5a34"), false, 2.0)
+		draw_rect(pr.grow(-2), Color("7a5a34"), false, 2.0)
 	if int(snap["player"].get("thorns_turns", 0)) > 0:
-		draw_rect(pr.grow(-3), Color("57b34a"), false, 1.5)
+		draw_rect(pr.grow(-4), Color("57b34a"), false, 1.5)
 
 	if mode == "target_tile":
 		for t in mode_targets:
-			draw_rect(_tile_rect(t).grow(-2), COL_TARGET, false, 2.0)
+			draw_rect(_tile_rect(t).grow(-1), COL_TARGET, false, 2.5)
 	elif mode == "target_dir" or mode == "cleanse":
 		for d in DIRS4.values():
-			draw_rect(_tile_rect(snap["player"]["pos"] + d).grow(-2), COL_TARGET, false, 1.5)
-
-	var log_y := MAP_Y + h * TILE + 6
-	_draw_log(snap, log_y)
-	var panel_y := log_y + LOG_H
-	_draw_panel(snap, panel_y)
-	_draw_dpad(snap, panel_y + PANEL_BUDGET)
-
-	if not tooltip.is_empty():
-		_draw_tooltip()
-	if snap["phase"] == "draft":
-		_draw_draft(snap, w, h)
-	if snap["over"]:
-		_draw_over(snap, w, h)
-	if mode == "intro":
-		_draw_intro(w, h)
-	elif mode == "help":
-		_draw_help(w, h)
+			draw_rect(_tile_rect(snap["player"]["pos"] + d).grow(-1), COL_TARGET, false, 2.0)
 
 
-func _draw_tooltip() -> void:
-	var r := _tile_rect(tooltip_tile)
-	var bw := 0.0
-	for line in tooltip:
-		bw = maxf(bw, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x)
-	bw += 24
-	var bh := tooltip.size() * 24.0 + 14
-	var bx := clampf(r.position.x - bw / 2.0 + TILE / 2.0, 4, _content_size().x - bw - 4)
-	var by := r.position.y - bh - 8
-	if by < 4:
-		by = r.position.y + TILE + 8
-	draw_rect(Rect2(bx, by, bw, bh), Color(0.03, 0.05, 0.04, 0.97))
-	draw_rect(Rect2(bx, by, bw, bh), COL_GOLD, false, 1.5)
-	var y := by + 24
-	for i in tooltip.size():
-		_txt(Vector2(bx + 12, y), tooltip[i], COL_TEXT if i == 0 else COL_DIM_TEXT, 17)
-		y += 24
-
-
-func _draw_log(snap: Dictionary, ly: float) -> void:
-	var lines: Array = []
-	for ev in snap["events"]:
-		var s := _ev_text(ev)
-		if s != "":
-			lines.append(s)
-	var start: int = maxi(0, lines.size() - LOG_LINES)
-	var y := ly + 18
-	for i in range(start, lines.size()):
-		_txt(Vector2(MAP_X, y), lines[i], COL_DIM_TEXT if i < lines.size() - 1 else COL_TEXT, 16)
-		y += 21
-
-
-func _draw_panel(snap: Dictionary, py: float) -> void:
+func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
 	var pl: Dictionary = snap["player"]
-	var cw := _content_size().x
-	var col2_x := cw / 2.0 + 6
-	# --- column 1: you ---
-	var x := float(MAP_X)
-	var y := py + 22
-	_txt(Vector2(x, y), "TENDER  seed %d" % seed_v, COL_GOLD, 18); y += 24
-	var objective := "Goal: reach the gold-ringed stairs  (floor %d/7)" % snap["floor"]
-	if snap["floor"] == 7:
-		objective = "Goal: DESTROY THE BOSS"
-	_txt(Vector2(x, y), objective, COL_GOLD, 17); y += 24
-	var smog_note := "smog %d - rises every turn, keep moving" % snap["smog"]
-	if snap["dim"] > 0:
-		smog_note = "smog %d - SKIES DIM %d, regen down" % [snap["smog"], snap["dim"]]
-	_txt(Vector2(x, y), smog_note, COL_DIM_TEXT if snap["dim"] == 0 else COL_RED, 15); y += 26
-	_txt(Vector2(x, y), "HP %d/%d    shield %d" % [pl["hp"], pl["max_hp"], pl["shield"]],
-		COL_TEXT if pl["hp"] > 3 else COL_RED, 21); y += 25
-	_txt(Vector2(x, y), "charge %d   bank %d   bloom %d" % [pl["charge"], pl["bank"], snap["bloom"]], COL_TEXT, 18); y += 28
-	_txt(Vector2(x, y), "ABILITIES - tap to cast:", COL_DIM_TEXT, 14); y += 21
-	for i in pl["kit"].size():
+	var n: int = pl["kit"].size()
+	var gap := vw * 0.018
+	var b := minf(vh * (Z_AB_END - Z_MAP_END) * 0.86, (vw * 0.95 - (n - 1) * gap) / n)
+	var total := n * b + (n - 1) * gap
+	var x := (vw - total) / 2.0
+	var y := vh * Z_MAP_END + (vh * (Z_AB_END - Z_MAP_END) - b) / 2.0
+	for i in n:
 		var aid: String = pl["kit"][i]
 		var adef: Dictionary = Content.ABILITIES[aid]
-		var gum := ""
+		var r := Rect2(x, y, b, b)
+		var usable: bool = int(pl["charge"]) >= int(adef["cost"]) and not pl["gummed"].has(i)
+		draw_rect(r, COL_BTN)
+		var border := COL_DIM_TEXT
+		if (mode == "target_dir" or mode == "target_tile") and mode_slot == i:
+			border = COL_GOLD
+		draw_rect(r, border, false, 2.0)
+		var icon := "ab_" + aid.trim_suffix("+")
+		if not Art.ART.has(icon):
+			icon = "ab_default"
+		var isz := int(b * 0.68)
+		var tx := Art.tex(icon, isz)
+		if tx != null:
+			draw_texture(tx, r.position + Vector2((b - isz) / 2.0, b * 0.04), Color(1, 1, 1, 1.0 if usable else 0.32))
+		# cost pips
+		for c in int(adef["cost"]):
+			draw_circle(r.position + Vector2(b * 0.12 + c * b * 0.14, b * 0.88), b * 0.05, COL_GOLD if usable else COL_DIM_TEXT)
+		if aid.ends_with("+"):
+			_txt(Vector2(r.position.x + b * 0.8, r.position.y + b * 0.24), "+", COL_GOLD, int(b * 0.3))
 		if pl["gummed"].has(i):
-			gum = "  GUMMED %d" % pl["gummed"][i]
-		var col := COL_TEXT if int(pl["charge"]) >= int(adef["cost"]) and not pl["gummed"].has(i) else COL_DIM_TEXT
-		_hot(Rect2(x - 4, y - 18, cw / 2.0 - 10, 25), "ability:%d" % i)
-		_txt(Vector2(x, y), "%d  %s  (%d)%s" % [i + 1, adef["name"], adef["cost"], gum], col, 19); y += 25
-	if not pl["grafts"].is_empty():
-		var names: Array = []
-		for g in pl["grafts"]:
-			names.append(Content.GRAFTS[g]["name"])
-		_txt(Vector2(x, y), "grafts: %s" % ", ".join(names), COL_DIM_TEXT, 14); y += 19
-	if pl["pos"] == snap["map"]["shrine"] and not snap["shop"].is_empty():
-		y += 4
-		_txt(Vector2(x, y), "SHRINE - tap to buy:", COL_GOLD, 17); y += 23
-		if snap["shop"].get("heal", false):
-			_hot(Rect2(x - 4, y - 17, cw / 2.0 - 10, 22), "buy:heal")
-			_txt(Vector2(x, y), "  heal 4 HP (%d bloom)" % game.shop_cost("heal"), COL_TEXT, 17); y += 22
-		if snap["shop"].has("ability"):
-			_hot(Rect2(x - 4, y - 17, cw / 2.0 - 10, 22), "buy:ability")
-			_txt(Vector2(x, y), "  learn %s (%d bloom)" % [snap["shop"]["ability"], game.shop_cost("ability")], COL_TEXT, 17); y += 22
-		if snap["shop"].has("graft"):
-			_hot(Rect2(x - 4, y - 17, cw / 2.0 - 10, 22), "buy:graft")
-			_txt(Vector2(x, y), "  graft: %s (%d bloom)" % [Content.GRAFTS[snap["shop"]["graft"]]["name"], game.shop_cost("graft")], COL_TEXT, 17); y += 22
-	# --- column 2: them ---
-	var y2 := py + 22
-	_txt(Vector2(col2_x, y2), "THREATS  (hold a tile for info):", COL_DIM_TEXT, 14); y2 += 21
-	var shown := 0
-	for e in snap["enemies"]:
-		if shown >= 7:
-			_txt(Vector2(col2_x, y2), "… and %d more" % (snap["enemies"].size() - shown), COL_DIM_TEXT, 15)
-			break
-		var elite := "  ELITE" if e.get("elite", false) else ""
-		_txt(Vector2(col2_x, y2), "%s  hp %d%s" % [_ename(e["kind"]), e["hp"], elite], COL_TEXT, 17); y2 += 21
-		_txt(Vector2(col2_x + 12, y2), _intent_words(e), COL_DIM_TEXT, 14); y2 += 21
-		shown += 1
-	if flash != "":
-		y2 += 6
-		_txt(Vector2(col2_x, y2), flash, COL_GOLD, 17); y2 += 22
+			_txt_c(r.get_center().x, r.get_center().y + b * 0.12, "GUM %d" % pl["gummed"][i], COL_RED, int(b * 0.22))
+		_hot(r, "ability:%d" % i)
+		x += b + gap
+
+
+func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
+	var y := vh * Z_AB_END + (vh * (Z_CTX_END - Z_AB_END)) * 0.62
+	var msg := ""
+	var col := COL_DIM_TEXT
 	match mode:
 		"cleanse":
-			_txt(Vector2(col2_x, y2 + 6), "CLEANSE: tap/aim at corruption beside you", COL_TARGET, 16)
+			msg = "CLEANSE: tap corruption beside you (or D-pad)"
+			col = COL_TARGET
 		"target_dir":
-			_txt(Vector2(col2_x, y2 + 6), "AIM with the D-pad or tap beside you", COL_TARGET, 16)
+			msg = flash
+			col = COL_TARGET
 		"target_tile":
-			_txt(Vector2(col2_x, y2 + 6), "AIM: tap a highlighted tile", COL_TARGET, 16)
+			msg = flash
+			col = COL_TARGET
+		_:
+			if flash != "":
+				msg = flash
+				col = COL_GOLD
+			elif not log_lines.is_empty():
+				msg = log_lines.back()
+	_txt(Vector2(vw * 0.025, y), msg, col, int(vh * 0.022))
+	_hot(Rect2(0, vh * Z_AB_END, vw, vh * (Z_CTX_END - Z_AB_END)), "log")
 
 
-func _draw_dpad(snap: Dictionary, py: float) -> void:
-	var cw := _content_size().x
-	var b := 92.0
-	var gap := 6.0
-	var dx := float(MAP_X) + 10
-	var dy := py + 10
-	_arrow_button(dx + b + gap, dy, b, "up")
-	_arrow_button(dx, dy + b + gap, b, "left")
-	_button(dx + b + gap, dy + b + gap, b, b, "END", "end_turn", 20)
-	_arrow_button(dx + (b + gap) * 2, dy + b + gap, b, "right")
-	_arrow_button(dx + b + gap, dy + (b + gap) * 2, b, "down")
-	var bx := cw - 230.0
-	var bw := 220.0
+func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
+	var top := vh * Z_CTX_END
+	var zone_h := vh - top
+	var b := minf(vw * 0.145, zone_h * 0.3)
+	var gap := vw * 0.012
+	var dx := vw * 0.035
+	var dy := top + (zone_h - (b * 3 + gap * 2)) / 2.0
+	_arrow_button(Rect2(dx + b + gap, dy, b, b), "up")
+	_arrow_button(Rect2(dx, dy + b + gap, b, b), "left")
+	_button(Rect2(dx + b + gap, dy + b + gap, b, b), "END", "end_turn", int(b * 0.28))
+	_arrow_button(Rect2(dx + (b + gap) * 2, dy + b + gap, b, b), "right")
+	_arrow_button(Rect2(dx + b + gap, dy + (b + gap) * 2, b, b), "down")
+
+	var bw := vw * 0.36
+	var bx := vw - bw - vw * 0.035
+	var bh := zone_h * 0.185
 	var by := dy
-	_button(bx, by, bw, 62, "CLEANSE", "cleanse", 20); by += 70
 	if not _legal_of("descend").is_empty():
-		_button(bx, by, bw, 62, "DESCEND", "descend", 20); by += 70
-	_button(bx, by, bw, 62, "HELP / LEGEND", "help", 18)
+		_button(Rect2(bx, by, bw, bh), "DESCEND", "descend", int(bh * 0.42), COL_GOLD)
+		by += bh + zone_h * 0.03
+	elif game.player["pos"] == game.map["shrine"] and not game.shop.is_empty():
+		_button(Rect2(bx, by, bw, bh), "SHRINE SHOP", "shop", int(bh * 0.4), COL_GOLD)
+		by += bh + zone_h * 0.03
+	_button(Rect2(bx, by, bw, bh), "CLEANSE", "cleanse", int(bh * 0.4))
+	by += bh + zone_h * 0.03
+	_button(Rect2(bx, by, bw, bh), "END TURN", "end_turn", int(bh * 0.42))
+	by += bh + zone_h * 0.03
+	var sl := "seed %d" % seed_v
+	_txt(Vector2(bx, by + bh * 0.5), sl, COL_DIM_TEXT, int(vh * 0.014))
 
 
-func _overlay_rect(w: int, h: int, ow: float, oh: float) -> Rect2:
-	var cs := _content_size()
-	return Rect2((cs.x - ow) / 2.0, maxf((MAP_Y * 2 + h * TILE - oh) / 2.0, 8.0), ow, oh)
+func _draw_tooltip(vw: float, vh: float) -> void:
+	var fsz := int(vh * 0.021)
+	var bw := 0.0
+	for line in tooltip:
+		bw = maxf(bw, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x)
+	bw += vw * 0.04
+	var lh := fsz * 1.5
+	var bh := tooltip.size() * lh + vh * 0.018
+	var anchor := Vector2(vw / 2.0, vh * 0.3)
+	if tooltip_tile != Vector2i(-1, -1):
+		var r := _tile_rect(tooltip_tile)
+		anchor = Vector2(r.get_center().x, r.position.y)
+	var bx := clampf(anchor.x - bw / 2.0, 6, vw - bw - 6)
+	var by := anchor.y - bh - vh * 0.012
+	if by < vh * Z_STATUS:
+		by = anchor.y + _ts + vh * 0.012
+	draw_rect(Rect2(bx, by, bw, bh), Color(0.03, 0.05, 0.04, 0.97))
+	draw_rect(Rect2(bx, by, bw, bh), COL_GOLD, false, 1.5)
+	var y := by + lh * 0.85
+	for i in tooltip.size():
+		_txt(Vector2(bx + vw * 0.02, y), tooltip[i], COL_TEXT if i == 0 else COL_DIM_TEXT, fsz)
+		y += lh
 
 
-func _draw_draft(snap: Dictionary, w: int, h: int) -> void:
-	var r := _overlay_rect(w, h, minf(600, _content_size().x - 20), 340)
-	draw_rect(r, Color(0.05, 0.08, 0.06, 0.97))
-	draw_rect(r, COL_GOLD, false, 2.0)
-	var y := r.position.y + 36
-	_txt(Vector2(r.position.x + 20, y), "DESCENT DRAFT - tap an ability to add it", COL_GOLD, 20); y += 34
-	for i in snap["draft_offers"].size():
-		var aid: String = snap["draft_offers"][i]
-		var adef: Dictionary = Content.ABILITIES[aid]
-		if mode != "draft_drop":
-			_hot(Rect2(r.position.x + 12, y - 19, r.size.x - 24, 27), "draft:%d" % i)
-		_txt(Vector2(r.position.x + 20, y), "%d   %s   (cost %d)" % [i + 1, adef["name"], adef["cost"]], COL_TEXT, 20); y += 28
+func _sheet(vw: float, vh: float, title: String) -> float:
+	draw_rect(Rect2(0, 0, vw, vh), COL_SHEET)
+	_txt(Vector2(vw * 0.06, vh * 0.09), title, COL_GOLD, int(vh * 0.034))
+	return vh * 0.16
+
+
+func _draw_shop(snap: Dictionary, vw: float, vh: float) -> void:
+	hotspots.clear()
+	var y := _sheet(vw, vh, "SHRINE SHOP")
+	_txt(Vector2(vw * 0.06, y), "bloom: %d" % snap["bloom"], COL_TEXT, int(vh * 0.026)); y += vh * 0.06
+	var bh := vh * 0.085
+	if snap["shop"].get("heal", false):
+		_button(Rect2(vw * 0.06, y, vw * 0.88, bh), "Heal 4 HP  —  %d bloom" % game.shop_cost("heal"), "buy:heal", int(bh * 0.34)); y += bh + vh * 0.025
+	if snap["shop"].has("ability"):
+		_button(Rect2(vw * 0.06, y, vw * 0.88, bh), "Learn %s  —  %d bloom" % [Content.ABILITIES[snap["shop"]["ability"]]["name"], game.shop_cost("ability")], "buy:ability", int(bh * 0.3)); y += bh + vh * 0.025
+	if snap["shop"].has("graft"):
+		var gid: String = snap["shop"]["graft"]
+		_button(Rect2(vw * 0.06, y, vw * 0.88, bh), "Graft: %s  —  %d bloom" % [Content.GRAFTS[gid]["name"], game.shop_cost("graft")], "buy:graft", int(bh * 0.3)); y += bh * 0.75
+		_txt(Vector2(vw * 0.08, y + bh * 0.55), Content.GRAFTS[gid]["desc"], COL_DIM_TEXT, int(vh * 0.02)); y += bh * 0.8
+	y += vh * 0.05
+	_button(Rect2(vw * 0.06, y, vw * 0.88, bh), "CLOSE", "close", int(bh * 0.36))
+
+
+func _draw_logsheet(vw: float, vh: float) -> void:
+	hotspots.clear()
+	var y := _sheet(vw, vh, "EVENT LOG  (tap to close)")
+	var fsz := int(vh * 0.021)
+	var start: int = maxi(0, log_lines.size() - 28)
+	for i in range(start, log_lines.size()):
+		_txt(Vector2(vw * 0.06, y), log_lines[i], COL_TEXT if i == log_lines.size() - 1 else COL_DIM_TEXT, fsz)
+		y += fsz * 1.45
+
+
+func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
+	hotspots.clear()
+	var y := _sheet(vw, vh, "DESCENT DRAFT")
+	_txt(Vector2(vw * 0.06, y), "Choose one ability to take down with you:", COL_TEXT, int(vh * 0.024)); y += vh * 0.055
+	var bh := vh * 0.09
 	if mode != "draft_drop":
-		_hot(Rect2(r.position.x + 12, y - 18, r.size.x - 24, 25), "skip_draft")
-		_txt(Vector2(r.position.x + 20, y), "0   skip - take nothing", COL_DIM_TEXT, 18); y += 26
-	if mode == "draft_drop":
-		y += 8
-		_txt(Vector2(r.position.x + 20, y), "Kit is full - tap what to drop:", COL_RED, 19); y += 28
+		for i in snap["draft_offers"].size():
+			var aid: String = snap["draft_offers"][i]
+			var adef: Dictionary = Content.ABILITIES[aid]
+			var r := Rect2(vw * 0.06, y, vw * 0.88, bh)
+			draw_rect(r, COL_BTN)
+			draw_rect(r, COL_DIM_TEXT, false, 2.0)
+			var icon := "ab_" + aid.trim_suffix("+")
+			if not Art.ART.has(icon):
+				icon = "ab_default"
+			var isz := int(bh * 0.7)
+			var tx := Art.tex(icon, isz)
+			if tx != null:
+				draw_texture(tx, r.position + Vector2(bh * 0.15, bh * 0.15))
+			_txt(Vector2(r.position.x + bh * 1.1, r.get_center().y + bh * 0.12), "%s   (cost %d)" % [adef["name"], adef["cost"]], COL_TEXT, int(bh * 0.32))
+			_hot(r, "draft:%d" % i)
+			y += bh + vh * 0.02
+		y += vh * 0.015
+		_button(Rect2(vw * 0.06, y, vw * 0.88, bh * 0.8), "skip - take nothing", "skip_draft", int(bh * 0.28))
+	else:
+		_txt(Vector2(vw * 0.06, y), "Kit is full - tap what to drop:", COL_RED, int(vh * 0.024)); y += vh * 0.05
 		for i in snap["player"]["kit"].size():
-			_hot(Rect2(r.position.x + 24, y - 19, r.size.x - 48, 26), "drop:%d" % i)
-			_txt(Vector2(r.position.x + 32, y), "%d   %s" % [i + 1, snap["player"]["kit"][i]], COL_TEXT, 19); y += 27
+			_button(Rect2(vw * 0.06, y, vw * 0.88, bh * 0.85), str(snap["player"]["kit"][i]), "drop:%d" % i, int(bh * 0.3))
+			y += bh * 0.85 + vh * 0.018
 
 
-func _draw_over(snap: Dictionary, w: int, h: int) -> void:
-	var r := _overlay_rect(w, h, minf(560, _content_size().x - 20), 210)
-	draw_rect(r, Color(0.05, 0.08, 0.06, 0.97))
-	draw_rect(r, COL_GOLD if snap["won"] else COL_RED, false, 2.0)
-	var msg := "THE FURNACE IS COLD - YOU WIN" if snap["won"] else "YOU DIED - %s" % snap["death_cause"]
-	_txt(Vector2(r.position.x + 24, r.position.y + 54), msg, COL_GOLD if snap["won"] else COL_RED, 25)
-	_txt(Vector2(r.position.x + 24, r.position.y + 96), "floor %d - turn %d - bloom %d - seed %d" % [snap["floor"], snap["turn"], snap["bloom"], seed_v], COL_TEXT, 18)
-	_txt(Vector2(r.position.x + 24, r.position.y + 146), "tap anywhere for a new run  (R replays this seed)", COL_DIM_TEXT, 17)
+func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
+	hotspots.clear()
+	draw_rect(Rect2(0, 0, vw, vh), COL_SHEET)
+	var won: bool = snap["won"]
+	_txt_c(vw / 2.0, vh * 0.3, "THE FURNACE IS COLD" if won else "YOU DIED", COL_GOLD if won else COL_RED, int(vh * 0.042))
+	_txt_c(vw / 2.0, vh * 0.37, "the valley breathes again" if won else "cause: %s" % snap["death_cause"], COL_TEXT, int(vh * 0.024))
+	_txt_c(vw / 2.0, vh * 0.46, "floor %d · turn %d · bloom %d" % [snap["floor"], snap["turn"], snap["bloom"]], COL_TEXT, int(vh * 0.024))
+	_txt_c(vw / 2.0, vh * 0.51, "seed %d" % seed_v, COL_DIM_TEXT, int(vh * 0.02))
+	_txt_c(vw / 2.0, vh * 0.62, "- tap anywhere for a new run -", COL_GOLD, int(vh * 0.026))
 
 
-func _draw_intro(w: int, h: int) -> void:
-	var r := _overlay_rect(w, h, minf(720, _content_size().x - 16), 500)
-	draw_rect(r, Color(0.04, 0.07, 0.05, 0.98))
-	draw_rect(r, COL_GOLD, false, 2.0)
-	var x := r.position.x + 26
-	var y := r.position.y + 50
-	_txt(Vector2(x, y), "TENDER", COL_GOLD, 32); y += 42
-	_txt(Vector2(x, y), "The combine poisoned the world. You are a Tender.", COL_TEXT, 19); y += 27
-	_txt(Vector2(x, y), "Descend all 7 floors and shut down the Furnace.", COL_TEXT, 19); y += 40
-	for line in [
-		"TAP a tile next to you (or use the D-pad) to move.",
-		"Move into an enemy to attack it. Tap yourself: end turn.",
-		"RED tiles are incoming damage next turn. Stay off them.",
-		"The GOLD-RINGED stairs are the way down. Move fast -",
-		"    smog rises every turn, and deep smog kills.",
-		"CLEANSE oil and goo for bloom; spend it at shrines.",
-		"Green growth heals you while you stand on it.",
-		"HOLD your finger on anything to see what it is.",
+func _draw_intro(vw: float, vh: float) -> void:
+	hotspots.clear()
+	draw_rect(Rect2(0, 0, vw, vh), COL_SHEET)
+	var x := vw * 0.07
+	var y := vh * 0.1
+	_txt(Vector2(x, y), "TENDER", COL_GOLD, int(vh * 0.05)); y += vh * 0.07
+	for pair in [
+		["The combine poisoned the world. You are a Tender.", COL_TEXT],
+		["Descend all 7 floors and shut down the Furnace.", COL_TEXT],
+		["", COL_TEXT],
+		["MOVE with the D-pad, or tap a tile next to you.", COL_TEXT],
+		["Move into an enemy to attack it.", COL_TEXT],
+		["RED tiles are incoming damage. Stay off them.", COL_TEXT],
+		["The GOLD-RINGED stairs are the way down.", COL_TEXT],
+		["", COL_TEXT],
+		["Move fast: smog rises every turn, and deep smog kills.", COL_GOLD],
+		["", COL_TEXT],
+		["CLEANSE oil and goo for bloom; spend it at shrines.", COL_TEXT],
+		["Green growth heals you while you stand on it.", COL_TEXT],
+		["", COL_TEXT],
+		["HOLD your finger on anything to see what it is.", COL_GOLD],
 	]:
-		_txt(Vector2(x, y), line, COL_TEXT, 18); y += 28
-	y += 14
-	_txt(Vector2(x, y), "- tap to begin -", COL_GOLD, 21)
+		if pair[0] != "":
+			_txt(Vector2(x, y), pair[0], pair[1], int(vh * 0.0235))
+		y += vh * 0.037
+	y += vh * 0.04
+	_txt_c(vw / 2.0, y, "- tap to begin -", COL_GOLD, int(vh * 0.03))
 
 
-func _draw_help(w: int, h: int) -> void:
-	var cs := _content_size()
-	var two_col: bool = cs.x >= 940
-	var rows := int(ceil(LEGEND.size() / (2.0 if two_col else 1.0)))
-	var col_w := 450.0
-	var r := Rect2((cs.x - (col_w * (2 if two_col else 1) + 40)) / 2.0, 8, col_w * (2 if two_col else 1) + 40, 82 + rows * 46.0)
-	draw_rect(r, Color(0.04, 0.07, 0.05, 0.98))
-	draw_rect(r, COL_GOLD, false, 2.0)
-	_txt(Vector2(r.position.x + 24, r.position.y + 40), "LEGEND  (tap anywhere to close)", COL_GOLD, 22)
+func _draw_help(vw: float, vh: float) -> void:
+	hotspots.clear()
+	var y := _sheet(vw, vh, "LEGEND  (tap to close)")
+	var rows := int(ceil(LEGEND.size() / 2.0))
+	var row_h := (vh - y - vh * 0.03) / rows
+	var isz := int(minf(row_h * 0.8, vh * 0.034))
 	for i in LEGEND.size():
 		var col := i / rows
 		var row := i % rows
-		var x := r.position.x + 24 + col * col_w
-		var y := r.position.y + 60 + row * 46.0
-		var tx := Art.tex(LEGEND[i][0], 40)
+		var x := vw * 0.04 + col * vw * 0.48
+		var yy := y + row * row_h
+		var tx := Art.tex(LEGEND[i][0], isz)
 		if tx != null:
-			draw_texture(tx, Vector2(x, y))
-		_txt(Vector2(x + 50, y + 18), LEGEND[i][1], COL_TEXT, 17)
-		_txt(Vector2(x + 50, y + 37), LEGEND[i][2], COL_DIM_TEXT, 13)
+			draw_texture(tx, Vector2(x, yy))
+		_txt(Vector2(x + isz * 1.25, yy + row_h * 0.42), LEGEND[i][1], COL_TEXT, int(vh * 0.019))
+		_txt(Vector2(x + isz * 1.25, yy + row_h * 0.82), LEGEND[i][2], COL_DIM_TEXT, int(vh * 0.0145))
