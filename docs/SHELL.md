@@ -37,13 +37,16 @@ the player sprite (brown = anchored, green = thorns).
 
 ## Touch controls (Android / any touchscreen)
 
-Everything is tappable — no keyboard needed:
+Portrait layout: map on top, log + status in the middle, D-pad and action
+buttons at the bottom. Everything is tappable — no keyboard needed:
 
-- tap an adjacent tile: move (or strike the enemy on it)
-- tap your own tile: end turn
-- tap a kit line in the panel: cast it — then tap an adjacent tile to aim
-  directional abilities, or a highlighted tile for tile abilities
-- tap the END TURN / CLEANSE / DESCEND buttons under the panel
+- D-pad arrows: move (into an enemy = strike); center END button ends turn
+- tap an adjacent tile: same as a D-pad press; tap your own tile: end turn
+- **hold your finger on any tile**: tooltip naming what's there, its HP,
+  and exactly what it will do next turn
+- tap a kit line to cast — aim with the D-pad / adjacent tap for
+  directional abilities, or tap a highlighted tile for tile abilities
+- CLEANSE / DESCEND / HELP buttons bottom-right
 - tap shop lines at a shrine, draft options between floors
 - after a run: tap anywhere for the next seed
 

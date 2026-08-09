@@ -9,11 +9,10 @@ config/features=PackedStringArray("4.7")
 
 [display]
 
-window/size/viewport_width=1380
-window/size/viewport_height=790
-window/stretch/mode="canvas_items"
-window/stretch/aspect="keep"
-window/handheld/orientation=4
+window/size/viewport_width=920
+window/size/viewport_height=1680
+window/stretch/mode="disabled"
+window/handheld/orientation=5
 
 [input_devices]
 
