@@ -11,6 +11,9 @@ extends RefCounted
 ##   do       the exact action the headless test performs for this step
 ##            (defaults to expect when expect is fully concrete)
 ##   free     optional: if true, ANY action advances (sandbox moments)
+##   allow_nav optional: if true, move/end_turn/strike are allowed without
+##            advancing (steps that need the player to walk somewhere first).
+##            Steps WITHOUT it are strict: only the expected action works.
 ##
 ## tests/test_shell.gd plays every step's `do` through the real sim each
 ## suite run - if a sim or content change breaks the script, the suite
@@ -53,11 +56,13 @@ const STEPS := [
 	{
 		"say": ["If a RED tile is under you, step off it or", "fight. Walk INTO the drill bot to strike it.", "(Move toward it - striking is just moving into it.)"],
 		"expect": {"type": "strike"},
+		"allow_nav": true,
 		"do": null,
 	},
 	{
 		"say": ["Hit it again. Strikes cost 1 charge and deal 1.", "Your abilities below hit much harder."],
 		"expect": {"type": "strike"},
+		"allow_nav": true,
 		"do": null,
 	},
 	{
@@ -70,11 +75,13 @@ const STEPS := [
 	{
 		"say": ["Scrapped. See the dark OIL puddles? That is the", "combine's corruption. Stand NEXT to one, press", "CLEANSE, then aim at it. It pays 1 bloom."],
 		"expect": {"type": "cleanse"},
+		"allow_nav": true,
 		"do": null,
 	},
 	{
 		"say": ["Bloom is money - shrines sell heals, abilities,", "and grafts. And see the smog meter filling up top?", "It never stops. Slow runs suffocate.", "Head for the GOLD-RINGED stairs and stand on them."],
 		"expect": {"type": "descend"},
+		"allow_nav": true,
 		"do": null,
 		"guide_to_stairs": true,
 	},

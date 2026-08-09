@@ -179,8 +179,10 @@ func _act(a: Dictionary) -> void:
 		var st: Dictionary = Tutorial.STEPS[tut_step]
 		var kind := String(a.get("type", ""))
 		var advances := Tutorial.matches(st, a)
-		# navigation is always free; other actions only when the step asks
-		if not advances and not (kind in ["move", "end_turn", "strike"]):
+		# strict by default: only the taught action works. Steps that need the
+		# player to walk somewhere first opt into free navigation (allow_nav).
+		var nav_ok: bool = st.get("allow_nav", false) and kind in ["move", "end_turn", "strike"]
+		if not advances and not nav_ok:
 			_flash("follow the guide for now")
 			return
 		game.step(a)
