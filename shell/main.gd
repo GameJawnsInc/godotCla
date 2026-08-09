@@ -34,7 +34,7 @@ const COL_DIM_TEXT := Color("97a29a")
 const COL_GOLD := Color("e8c840")
 const COL_RED := Color("e04b3a")
 const COL_BTN := Color(0.16, 0.22, 0.18)
-const COL_SHEET := Color(0.04, 0.07, 0.05, 0.985)
+const COL_SHEET := Color(0.04, 0.07, 0.05, 1.0)
 
 ## sprite id, display name, one-line blurb — legend sheet and hold-tooltips
 const LEGEND := [
@@ -102,6 +102,7 @@ var tooltip_tile := Vector2i(-1, -1)
 var _ts := 40.0
 var _mox := 0.0
 var _moy := 0.0
+var _status_end := 0.0
 
 
 func _ready() -> void:
@@ -405,7 +406,25 @@ func _move_or_strike(d: Vector2i) -> void:
 		if a["dir"] == d:
 			_act(a)
 			return
-	_flash("blocked (or no charge)")
+	# the way is open but charge ran dry: end the turn, then go
+	var m: Dictionary = game.map
+	var dest: Vector2i = game.player["pos"] + d
+	var open: bool = dest.x >= 0 and dest.y >= 0 and dest.x < int(m["w"]) and dest.y < int(m["h"]) \
+		and int(m["tiles"][dest.y * int(m["w"]) + dest.x]) == 1
+	if open:
+		_act({"type": "end_turn"})
+		if game.over:
+			return
+		for a in _legal_of("strike"):
+			if a["dir"] == d:
+				_act(a)
+				return
+		for a in _legal_of("move"):
+			if a["dir"] == d:
+				_act(a)
+				return
+		return
+	_flash("blocked")
 
 
 func _buy(item: String) -> void:
@@ -764,10 +783,36 @@ func _txt_c(cx: float, ypos: float, s: String, color: Color, size: int) -> void:
 	draw_string(font, Vector2(cx - tw / 2.0, ypos), s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
 
 
+## Shrink a font size until the string fits max_w — no more clipped lines.
+func _fit_size(s: String, size: int, max_w: float) -> int:
+	while size > 9 and font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > max_w:
+		size -= 1
+	return size
+
+
+func _txt_fit(pos: Vector2, s: String, color: Color, size: int, max_w: float) -> void:
+	_txt(pos, s, color, _fit_size(s, size, max_w))
+
+
+func _txt_c_fit(cx: float, ypos: float, s: String, color: Color, size: int, max_w: float) -> void:
+	_txt_c(cx, ypos, s, color, _fit_size(s, size, max_w))
+
+
+## Top inset so notches / punch-hole cameras don't cover the status strip.
+func _safe_top(vh: float) -> float:
+	var pad := vh * 0.012
+	if is_inside_tree():
+		var sa := DisplayServer.get_display_safe_area()
+		var wp := DisplayServer.window_get_position()
+		pad = maxf(pad, float(sa.position.y - wp.y))
+	return minf(pad, vh * 0.06)
+
+
 func _button(r: Rect2, label: String, tag: String, size: int, border: Color = COL_DIM_TEXT) -> void:
 	draw_rect(r, COL_BTN)
 	draw_rect(r, border, false, 2.0)
-	_txt_c(r.get_center().x, r.get_center().y + size * 0.35, label, COL_TEXT, size)
+	var fs2 := _fit_size(label, size, r.size.x * 0.92)
+	_txt_c(r.get_center().x, r.get_center().y + fs2 * 0.35, label, COL_TEXT, fs2)
 	_hot(r, tag)
 
 
@@ -884,7 +929,7 @@ func _draw_tut_banner(vw: float, vh: float) -> void:
 	_txt(Vector2(vw * 0.05, by + vh * 0.028), "GUIDE  %d/%d" % [tut_step + 1, Tutorial.STEPS.size()], COL_GOLD, int(vh * 0.016))
 	var ty := by + vh * 0.03 + lh * 0.8
 	for line in lines:
-		_txt(Vector2(vw * 0.05, ty), line, COL_TEXT, fsz)
+		_txt_fit(Vector2(vw * 0.05, ty), line, COL_TEXT, fsz, vw * 0.9)
 		ty += lh
 	var xr := Rect2(vw * 0.86, by + vh * 0.008, vw * 0.11, vh * 0.032)
 	_button(xr, "EXIT", "menu", int(vh * 0.016))
@@ -902,7 +947,7 @@ func _draw_tut_done(vw: float, vh: float) -> void:
 	var y := vh * 0.32
 	for line in Tutorial.DONE:
 		if line != "":
-			_txt_c(vw / 2.0, y, line, COL_TEXT, int(vh * 0.023))
+			_txt_c_fit(vw / 2.0, y, line, COL_TEXT, int(vh * 0.023), vw * 0.92)
 		y += vh * 0.04
 	y += vh * 0.05
 	_button(Rect2(vw * 0.19, y, vw * 0.62, vh * 0.072), "BACK TO MENU", "menu", int(vh * 0.028), COL_GOLD)
@@ -920,52 +965,53 @@ func _chip(x: float, ypos: float, icon: String, value: String, vw: float, vh: fl
 
 func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	var pl: Dictionary = snap["player"]
-	var y := vh * Z_STATUS * 0.68
+	var pad := _safe_top(vh)
+	var row_h := vh * 0.036
+	# row 1: vitals left, menu/help buttons right
+	var y := pad + row_h * 0.72
 	var x := vw * 0.025
 	x = _chip(x, y, "ic_hp", "%d/%d" % [pl["hp"], pl["max_hp"]], vw, vh, COL_TEXT if int(pl["hp"]) > 3 else COL_RED)
 	if int(pl["shield"]) > 0:
 		x = _chip(x, y, "ic_shield", str(pl["shield"]), vw, vh)
 	x = _chip(x, y, "ic_charge", "%d" % pl["charge"], vw, vh)
 	x = _chip(x, y, "ic_bloom", str(snap["bloom"]), vw, vh)
-	# smog meter with dim/choke ticks
+	var btn_h := row_h * 1.05
+	_button(Rect2(vw - vw * 0.095, pad, vw * 0.075, btn_h), "?", "help", int(vh * 0.024))
+	_button(Rect2(vw - vw * 0.185, pad, vw * 0.075, btn_h), "=", "menu", int(vh * 0.024))
+	# row 2: smog meter, warning, floor
+	var y2 := pad + row_h * 1.35
+	var mx := vw * 0.025
+	var mh := vh * 0.017
 	var fdef: Dictionary = game.floor_def(game.floor_num)
 	var choke: float = float(fdef.get("smog_choke", 40))
-	var mw := vw * 0.22
-	var mx := x
-	var my := y - vh * 0.016
+	var mw := vw * 0.5
 	var frac: float = clampf(snap["smog"] / (choke * 1.15), 0.0, 1.0)
-	draw_rect(Rect2(mx, my, mw, vh * 0.018), Color(0, 0, 0, 0.55))
+	_txt(Vector2(mx, y2 + mh + vh * 0.0155), "SMOG", COL_DIM_TEXT, int(vh * 0.0125))
+	draw_rect(Rect2(mx, y2, mw, mh), Color(0, 0, 0, 0.55))
 	var mcol := COL_DIM_TEXT
 	if snap["dim"] >= 1:
 		mcol = COL_GOLD
 	if snap["smog"] >= choke:
 		mcol = COL_RED
-	draw_rect(Rect2(mx, my, mw * frac, vh * 0.018), mcol)
+	draw_rect(Rect2(mx, y2, mw * frac, mh), mcol)
 	for dv in fdef.get("smog_dim", []):
-		var tx2 := mx + mw * clampf(float(dv) / (choke * 1.15), 0.0, 1.0)
-		draw_rect(Rect2(tx2, my - 2, 2, vh * 0.018 + 4), COL_GOLD)
-	var ck := mx + mw * clampf(choke / (choke * 1.15), 0.0, 1.0)
-	draw_rect(Rect2(ck, my - 2, 2, vh * 0.018 + 4), COL_RED)
-	_txt(Vector2(mx, my - vh * 0.006), "SMOG", COL_DIM_TEXT, int(vh * 0.012))
-	x = mx + mw + vw * 0.03
-	# incoming-damage warning
+		var tick := mx + mw * clampf(float(dv) / (choke * 1.15), 0.0, 1.0)
+		draw_rect(Rect2(tick, y2 - 2, 2, mh + 4), COL_GOLD)
+	draw_rect(Rect2(mx + mw / 1.15, y2 - 2, 2, mh + 4), COL_RED)
 	if _threat_tiles(snap).has(pl["pos"]):
-		_txt(Vector2(x, y), "! INCOMING", COL_RED, int(vh * 0.024))
-	# floor + help, right-aligned
+		_txt(Vector2(mx + mw + vw * 0.03, y2 + mh), "! INCOMING", COL_RED, int(vh * 0.021))
 	var fl := "floor %d/7" % snap["floor"]
-	var fw := font.get_string_size(fl, HORIZONTAL_ALIGNMENT_LEFT, -1, int(vh * 0.022)).x
-	_txt(Vector2(vw - fw - vw * 0.12, y), fl, COL_GOLD, int(vh * 0.022))
-	var hr := Rect2(vw - vw * 0.095, vh * 0.008, vw * 0.075, vh * Z_STATUS - vh * 0.014)
-	_button(hr, "?", "help", int(vh * 0.028))
-	var mr := Rect2(vw - vw * 0.185, vh * 0.008, vw * 0.075, vh * Z_STATUS - vh * 0.014)
-	_button(mr, "=", "menu", int(vh * 0.028))
+	var fsz := int(vh * 0.02)
+	var fw := font.get_string_size(fl, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x
+	_txt(Vector2(vw - fw - vw * 0.025, y2 + mh), fl, COL_GOLD, fsz)
+	_status_end = pad + row_h * 1.35 + mh + vh * 0.022
 
 
 func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	var m: Dictionary = snap["map"]
 	var w: int = m["w"]
 	var h: int = m["h"]
-	var zone_y := vh * Z_STATUS + vh * 0.006
+	var zone_y := _status_end + vh * 0.004
 	var zone_h := vh * Z_MAP_END - zone_y
 	_ts = minf(vw * 0.996 / w, zone_h / h)
 	_mox = (vw - w * _ts) / 2.0
@@ -1094,7 +1140,7 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 				col = COL_GOLD
 			elif not log_lines.is_empty():
 				msg = log_lines.back()
-	_txt(Vector2(vw * 0.025, y), msg, col, int(vh * 0.022))
+	_txt_fit(Vector2(vw * 0.025, y), msg, col, int(vh * 0.022), vw * 0.95)
 	_hot(Rect2(0, vh * Z_AB_END, vw, vh * (Z_CTX_END - Z_AB_END)), "log")
 
 
@@ -1125,12 +1171,14 @@ func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
 	by += bh + zone_h * 0.03
 	_button(Rect2(bx, by, bw, bh), "END TURN", "end_turn", int(bh * 0.42))
 	by += bh + zone_h * 0.03
-	var sl := "seed %d" % seed_v
-	_txt(Vector2(bx, by + bh * 0.5), sl, COL_DIM_TEXT, int(vh * 0.014))
+	if screen != "tutorial":
+		_txt(Vector2(bx, by + bh * 0.5), "seed %d" % seed_v, COL_DIM_TEXT, int(vh * 0.014))
 
 
 func _draw_tooltip(vw: float, vh: float) -> void:
 	var fsz := int(vh * 0.021)
+	for line in tooltip:
+		fsz = _fit_size(line, fsz, vw * 0.9)
 	var bw := 0.0
 	for line in tooltip:
 		bw = maxf(bw, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x)
@@ -1143,7 +1191,7 @@ func _draw_tooltip(vw: float, vh: float) -> void:
 		anchor = Vector2(r.get_center().x, r.position.y)
 	var bx := clampf(anchor.x - bw / 2.0, 6, vw - bw - 6)
 	var by := anchor.y - bh - vh * 0.012
-	if by < vh * Z_STATUS:
+	if by < _status_end:
 		by = anchor.y + _ts + vh * 0.012
 	draw_rect(Rect2(bx, by, bw, bh), Color(0.03, 0.05, 0.04, 0.97))
 	draw_rect(Rect2(bx, by, bw, bh), COL_GOLD, false, 1.5)
@@ -1252,7 +1300,7 @@ func _draw_intro(vw: float, vh: float) -> void:
 		["HOLD your finger on anything to see what it is.", COL_GOLD],
 	]:
 		if pair[0] != "":
-			_txt(Vector2(x, y), pair[0], pair[1], int(vh * 0.0235))
+			_txt_fit(Vector2(x, y), pair[0], pair[1], int(vh * 0.0235), vw * 0.88)
 		y += vh * 0.037
 	y += vh * 0.04
 	_txt_c(vw / 2.0, y, "- tap to begin -", COL_GOLD, int(vh * 0.03))
