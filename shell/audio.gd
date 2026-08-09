@@ -26,6 +26,9 @@ func _ready() -> void:
 	_music_player = AudioStreamPlayer.new()
 	_music_player.volume_db = -14.0
 	add_child(_music_player)
+	# restart from the player side - in-stream WAV loop points crashed the
+	# Android audio driver at the wrap
+	_music_player.finished.connect(_on_music_finished)
 	build_bank()
 	if is_inside_tree():
 		_music_thread = Thread.new()
@@ -45,6 +48,11 @@ func play(id: String) -> void:
 	p.stream = _bank[id]
 	p.volume_db = -7.0
 	p.play()
+
+
+func _on_music_finished() -> void:
+	if music_on and _music_player.stream != null:
+		_music_player.play()
 
 
 func set_music(on: bool) -> void:
@@ -91,14 +99,14 @@ func _tone(buf: PackedFloat32Array, start_s: float, dur: float, f0: float, f1: f
 		buf[idx] += v
 
 
-## Brown-ish noise burst with decay envelope.
-func _noise(buf: PackedFloat32Array, start_s: float, dur: float, vol: float, decay := 2.0, wrap := false) -> void:
+## Brown-ish noise burst with decay envelope; higher `smooth` = darker.
+func _noise(buf: PackedFloat32Array, start_s: float, dur: float, vol: float, decay := 2.0, wrap := false, smooth := 0.94) -> void:
 	var n0 := int(start_s * RATE)
 	var n := int(dur * RATE)
 	var prev := 0.0
 	for i in n:
 		var t := float(i) / n
-		prev = prev * 0.94 + (_rng.randf() * 2.0 - 1.0) * 0.35
+		prev = prev * smooth + (_rng.randf() * 2.0 - 1.0) * (1.0 - smooth) * 5.0
 		var idx := n0 + i
 		if wrap:
 			idx = idx % buf.size()
@@ -227,12 +235,9 @@ func render_music_stream() -> AudioStreamWAV:
 			var m2: int = chords[ci][(k * 3) % chords[ci].size()] + 12
 			_tone(buf, t0 + k * cd / 8.0, 0.3, 440.0 * pow(2.0, (m2 - 69) / 12.0),
 				440.0 * pow(2.0, (m2 - 69) / 12.0), 0.075, 3.0, 0.25, true)
-	_noise(buf, 0.0, cd * chords.size(), 0.018, 0.001, true)
-	var stream := _wav(buf)
-	stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
-	stream.loop_begin = 0
-	stream.loop_end = buf.size()
-	return stream
+	# wind bed: very quiet, very dark
+	_noise(buf, 0.0, cd * chords.size(), 0.006, 0.001, true, 0.99)
+	return _wav(buf)
 
 
 func _music_ready(stream: AudioStreamWAV) -> void:
