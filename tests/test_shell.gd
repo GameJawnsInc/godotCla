@@ -33,6 +33,12 @@ func _init() -> void:
 	var shell = Shell.new()
 	shell._ready()
 	_check(shell.game != null and shell.seed_v == 42, "shell boots with pinned seed")
+	_check(shell.mode == "intro", "first boot shows the intro")
+	shell._key(KEY_SPACE)  # dismiss intro
+	_check(shell.mode == "normal", "any key dismisses the intro")
+	shell._key(KEY_L)
+	_check(shell.mode == "help", "L opens the legend")
+	shell._key(KEY_SPACE)
 	var t0: int = shell.game.total_turns
 	shell._key(KEY_SPACE)
 	shell._key(KEY_SPACE)
@@ -63,6 +69,7 @@ func _init() -> void:
 	# 3. a scripted run reaches a draft and the draft keys work
 	var shell2 = Shell.new()
 	shell2._ready()
+	shell2._key(KEY_SPACE)
 	var guard := 0
 	while shell2.game.phase != "draft" and not shell2.game.over and guard < 3000:
 		var acts: Array = shell2.game.legal_actions()
