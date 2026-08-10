@@ -80,7 +80,7 @@ func _init() -> void:
 			if m["tiles"][y * w + x] == 1:
 				b += '<rect x="%d" y="%d" width="%d" height="%d" fill="#31402f"/>' % [px, py, T, T]
 			else:
-				b += '<rect x="%d" y="%d" width="%d" height="%d" fill="#4a5761"/><rect x="%d" y="%d" width="%d" height="4" fill="#5d6a74"/>' % [px, py, T, T, px, py, T]
+				b += '<rect x="%d" y="%d" width="%d" height="%d" fill="#3a434b"/><rect x="%d" y="%d" width="%d" height="4" fill="#485259"/>' % [px, py, T, T, px, py, T]
 	for t in snap["terrain"].keys():
 		b += _sp(snap["terrain"][t]["kind"], PAD + t.x * T, PAD + t.y * T)
 	for v in m["vents"]:

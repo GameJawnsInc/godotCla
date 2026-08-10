@@ -26,8 +26,10 @@ const Z_CTX_END := 0.70
 const COL_BG := Color("11161a")
 const COL_FLOOR := Color("31402f")
 const COL_FLOOR_ALT := Color("2b392b")
-const COL_WALL := Color("4a5761")
-const COL_WALL_TOP := Color("5d6a74")
+const COL_WALL := Color("3a434b")
+const COL_WALL_TOP := Color("485259")
+const COL_MOSS := Color("55704a")
+const COL_CREAM := Color("e6edd8")
 const COL_THREAT := Color(0.88, 0.25, 0.15, 0.30)
 const COL_TARGET := Color(0.45, 0.95, 0.45, 0.9)
 const COL_TEXT := Color("d8e0d4")
@@ -907,24 +909,27 @@ func _safe_top(vh: float) -> float:
 ## primary actions, soft drop shadow - grown, not stamped.
 func _mk_styles() -> void:
 	_sb = StyleBoxFlat.new()
-	_sb.bg_color = Color("233029")
-	_sb.set_corner_radius_all(14)
+	_sb.bg_color = Color("2e4632")
+	_sb.set_corner_radius_all(16)
 	_sb.set_border_width_all(2)
-	_sb.border_color = Color("5e7d62")
+	_sb.border_color = Color("79a865")
 	_sb.shadow_color = Color(0, 0, 0, 0.35)
 	_sb.shadow_size = 5
 	_sb.shadow_offset = Vector2(0, 3)
 	_sb_gold = _sb.duplicate()
-	_sb_gold.border_color = Color("c9a94e")
-	_sb_gold.bg_color = Color("2b3629")
+	_sb_gold.border_color = Color("e0b74d")
+	_sb_gold.bg_color = Color("40482a")
 	_sb_card = _sb.duplicate()
-	_sb_card.bg_color = Color("1c2822")
-	_sb_card.border_color = Color("46604c")
+	_sb_card.bg_color = Color("25382b")
+	_sb_card.border_color = Color("5c8253")
 
 
 func _box(r: Rect2, style: StyleBoxFlat) -> void:
-	style.set_corner_radius_all(int(clampf(r.size.y * 0.18, 6, 18)))
+	style.set_corner_radius_all(int(clampf(r.size.y * 0.22, 8, 22)))
 	draw_style_box(style, r)
+	# soft sun-sheen along the top edge
+	draw_rect(Rect2(r.position.x + r.size.y * 0.25, r.position.y + 2.5,
+		maxf(r.size.x - r.size.y * 0.5, 4.0), 2.0), Color(0.9, 1.0, 0.8, 0.10))
 
 
 func _button(r: Rect2, label: String, tag: String, size: int, border: Color = COL_DIM_TEXT) -> void:
@@ -944,7 +949,7 @@ func _arrow_button(r: Rect2, dir_name: String) -> void:
 	var tip := c + Vector2(d.x, d.y) * a
 	var base := c - Vector2(d.x, d.y) * a * 0.6
 	var side := Vector2(-d.y, d.x) * a
-	draw_colored_polygon(PackedVector2Array([tip, base + side, base - side]), COL_TEXT)
+	draw_colored_polygon(PackedVector2Array([tip, base + side, base - side]), COL_CREAM)
 	_hot(r, "dir:%s" % dir_name)
 
 
@@ -1146,6 +1151,14 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			var r := _tile_rect(p)
 			if m["tiles"][y * w + x] == 1:
 				draw_rect(r, COL_FLOOR if (x + y) % 2 == 0 else COL_FLOOR_ALT)
+				var hsh := (x * 73856093) ^ (y * 19349663)
+				if hsh % 7 == 0:
+					var ox := 0.2 + float(hsh % 5) * 0.13
+					var oy := 0.25 + float(hsh % 3) * 0.2
+					draw_circle(r.position + Vector2(_ts * ox, _ts * oy), _ts * 0.05, COL_MOSS)
+					draw_circle(r.position + Vector2(_ts * (ox + 0.11), _ts * (oy + 0.07)), _ts * 0.035, COL_MOSS)
+				elif hsh % 11 == 3:
+					draw_circle(r.position + Vector2(_ts * 0.7, _ts * 0.6), _ts * 0.04, Color(0.42, 0.47, 0.42))
 			else:
 				draw_rect(r, COL_WALL)
 				# highlight only exposed wall tops, not every wall row
@@ -1260,8 +1273,12 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 			if flash != "":
 				msg = flash
 				col = COL_GOLD
-			elif not log_lines.is_empty():
-				msg = log_lines.back()
+			elif screen == "tutorial":
+				msg = ""
+			elif snap["floor"] == 7:
+				msg = "Objective: DESTROY THE BOSS  (tap here for the log)"
+			else:
+				msg = "Objective: reach the gold-ringed stairs  (tap for log)"
 	_txt_fit(Vector2(vw * 0.025, y), msg, col, int(vh * 0.022), vw * 0.95)
 	_hot(Rect2(0, vh * Z_AB_END, vw, vh * (Z_CTX_END - Z_AB_END)), "log")
 
