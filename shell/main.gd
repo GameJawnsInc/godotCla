@@ -126,6 +126,9 @@ const ANIM_MS := 140
 var _anim_from := {}  # "player" / enemy id -> Vector2 tile pos before the step
 var _anim_ms := -99999
 
+const FX_MS := 700
+var _fx: Array = []  # transient map effects {kind, pos: Vector2 tile, text, col, t0}
+
 
 func _ready() -> void:
 	font = ThemeDB.fallback_font
@@ -214,7 +217,10 @@ func _act(a: Dictionary) -> void:
 		if not advances and not nav_ok:
 			_flash("follow the guide for now")
 			return
-		_play_events(game.step(a))
+		var tevs: Array = game.step(a)
+		_arm_anim(prev, prev_floor)
+		_spawn_fx(tevs, prev)
+		_play_events(tevs)
 		if advances:
 			if st.get("until_dead", false):
 				if game.enemies.is_empty():
@@ -236,6 +242,7 @@ func _act(a: Dictionary) -> void:
 	var keep_shop := mode == "shop" and String(a.get("type", "")) == "buy"
 	var evs: Array = game.step(a)
 	_arm_anim(prev, prev_floor)
+	_spawn_fx(evs, prev)
 	for ev in evs:
 		var s := _ev_text(ev)
 		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
@@ -285,9 +292,61 @@ func _play_events(evs: Array) -> void:
 		audio.play(picks[i])
 
 
+## Turn a step's events into transient map effects: floating numbers over
+## whoever was hit, white hit flashes, gold cleanse bursts, grey death puffs.
+func _spawn_fx(evs: Array, prev: Dictionary) -> void:
+	var now := Time.get_ticks_msec()
+	var stack := {}  # tile -> count, so numbers landing together fan out in time
+	for ev in evs:
+		match String(ev.get("t", "")):
+			"damage":
+				var p := _fx_pos(ev, prev)
+				if p.x < -0.5:
+					continue
+				var k := str(p)
+				stack[k] = int(stack.get(k, -1)) + 1
+				var mine: bool = ev.get("who", "") == "player"
+				_fx.append({"kind": "float", "pos": p, "text": "-%d" % int(ev["amt"]),
+					"col": COL_RED if mine else COL_CREAM, "t0": now + int(stack[k]) * 110})
+				_fx.append({"kind": "flash", "pos": p, "col": Color(1, 1, 1), "t0": now})
+			"heal":
+				_fx.append({"kind": "float", "pos": Vector2(game.player["pos"]),
+					"text": "+%d" % int(ev["amt"]), "col": Color("8fdc6a"), "t0": now})
+			"shield":
+				_fx.append({"kind": "float", "pos": Vector2(game.player["pos"]),
+					"text": "shield", "col": Color("7fb6d9"), "t0": now})
+			"cleanse":
+				var cp := Vector2(ev["tile"])
+				_fx.append({"kind": "burst", "pos": cp, "col": COL_GOLD, "t0": now})
+				_fx.append({"kind": "float", "pos": cp, "text": "+%d" % int(ev.get("bloom", 1)),
+					"col": COL_GOLD, "t0": now})
+			"death":
+				var dp := _fx_pos(ev, prev)
+				if dp.x > -0.5:
+					_fx.append({"kind": "puff", "pos": dp, "col": Color(0.62, 0.64, 0.66), "t0": now})
+	if _fx.size() > 40:
+		_fx = _fx.slice(_fx.size() - 40)
+
+
+## Best-known tile for an event's subject: the player, a live enemy, or the
+## pre-step position of something that just died.
+func _fx_pos(ev: Dictionary, prev: Dictionary) -> Vector2:
+	if ev.get("who", "") == "player":
+		return Vector2(game.player["pos"])
+	var id = ev.get("id", null)
+	if id != null:
+		for e in game.enemies:
+			if e["id"] == id:
+				return Vector2(e["pos"])
+		if prev.has(id):
+			return prev[id]
+	return Vector2(-9, -9)
+
+
 func _arm_anim(prev: Dictionary, prev_floor: int) -> void:
 	if game.floor_num != prev_floor:
 		_anim_from = {}
+		_fx = []
 		return
 	_anim_from = prev
 	_anim_ms = Time.get_ticks_msec()
@@ -342,11 +401,18 @@ func _unhandled_input(ev: InputEvent) -> void:
 
 func _process(_dt: float) -> void:
 	if screen == "menu":
+		queue_redraw()  # spores drift across the title vista
 		return
 	if _held and tooltip.is_empty() and Time.get_ticks_msec() - _press_ms >= hold_ms:
 		_show_tooltip(_press_pos)
 	var animating: bool = Time.get_ticks_msec() - _anim_ms < ANIM_MS + 40
 	var smoggy: bool = game != null and not game.over and (int(game.smog) > 0 or int(game.dim) > 0)
+	if not _fx.is_empty():
+		var fnow := Time.get_ticks_msec()
+		_fx = _fx.filter(func(f): return fnow - int(f["t0"]) < FX_MS)
+		animating = true
+	if game != null and game.over:
+		animating = true  # win/loss screens drift
 	if animating or smoggy:
 		queue_redraw()
 
@@ -1118,20 +1184,57 @@ func _draw() -> void:
 
 
 func _draw_menu(vw: float, vh: float) -> void:
-	# title vignette: the tender flanked by what it fights
-	_txt_c(vw / 2.0, vh * 0.17, "T E N D E R", COL_GOLD, int(vh * 0.065))
-	_txt_c(vw / 2.0, vh * 0.21, "a solarpunk roguelike", COL_DIM_TEXT, int(vh * 0.021))
-	var big := vh * 0.11
-	var cy := vh * 0.27
+	# painted vista: jade sky, a low sun, the dead combine's stacks on the
+	# skyline, and the canopy reclaiming the valley beneath them
+	var sh := vh * 0.42
+	draw_rect(Rect2(0, 0, vw, sh), Color("233c37"))
+	draw_rect(Rect2(0, sh * 0.35, vw, sh * 0.65), Color("2b4a40"))
+	draw_rect(Rect2(0, sh * 0.62, vw, sh * 0.38), Color("35584a"))
+	var tsec := Time.get_ticks_msec() / 1000.0
+	var sun := Vector2(vw * 0.74, sh * 0.30)
+	draw_circle(sun, vw * 0.13, Color(0.95, 0.88, 0.55, 0.10))
+	draw_circle(sun, vw * 0.095, Color(0.95, 0.88, 0.55, 0.16))
+	draw_circle(sun, vw * 0.062, Color("f2e4a0"))
+	for spec in [[0.10, 0.30, 0.052], [0.175, 0.22, 0.040], [0.30, 0.34, 0.036]]:
+		var stx: float = vw * spec[0]
+		var sty: float = sh * spec[1]
+		draw_rect(Rect2(stx, sty, vw * spec[2], sh * 0.67 - sty), Color("1d2b2c"))
+		draw_rect(Rect2(stx - vw * 0.006, sty, vw * (spec[2] + 0.012), sh * 0.035), Color("182325"))
+	for i in 3:
+		var wob := sin(tsec * 0.8 + float(i) * 1.9)
+		draw_circle(Vector2(vw * (0.196 + 0.012 * wob), sh * (0.17 - 0.045 * float(i))),
+			vw * (0.010 + 0.006 * float(i)), Color(0.62, 0.64, 0.66, 0.10))
+	for spec2 in [[0.12, 0.86, 0.30, Color("2e4632")], [0.46, 0.92, 0.34, Color("3a5a3c")],
+			[0.82, 0.88, 0.28, Color("476b44")], [0.30, 1.02, 0.40, Color("31502f")],
+			[0.68, 1.04, 0.42, Color("3c5f38")]]:
+		draw_circle(Vector2(vw * spec2[0], sh * spec2[1]), vw * spec2[2], spec2[3])
+	for i in 14:
+		var hsh := i * 2654435761
+		draw_circle(Vector2(vw * (0.04 + 0.92 * float(hsh % 97) / 97.0),
+			sh * (0.72 + 0.24 * float(hsh % 53) / 53.0)), vw * 0.006, Color(0.55, 0.72, 0.45, 0.5))
+	draw_rect(Rect2(0, sh, vw, vh - sh), COL_BG)
+	var fade_top := sh - vh * 0.05
+	draw_polygon(
+		PackedVector2Array([Vector2(0, fade_top), Vector2(vw, fade_top), Vector2(vw, sh), Vector2(0, sh)]),
+		PackedColorArray([Color(COL_BG, 0.0), Color(COL_BG, 0.0), Color(COL_BG, 1.0), Color(COL_BG, 1.0)]))
+	for i in 12:
+		var ph := float(i) * 0.83
+		var rise := fposmod(tsec * (0.03 + 0.015 * float(i % 3)) + ph, 1.0)
+		draw_circle(Vector2(vw * fposmod(ph * 0.41 + sin(tsec * 0.4 + ph) * 0.02, 1.0), sh * (1.0 - rise)),
+			vw * (0.0035 + 0.002 * float(i % 2)), Color(0.93, 0.90, 0.70, 0.35 * (1.0 - rise)))
+	# the tender stands on the ridge, growth at their feet
+	var big := vh * 0.085
 	var tx := Art.tex("player", int(big))
 	if tx != null:
-		draw_texture(tx, Vector2(vw / 2.0 - big / 2.0, cy))
-	var small := vh * 0.05
-	for spec in [["growth", -0.32], ["drill_bot", -0.18], ["smokestack", 0.18 - 0.046], ["oil", 0.32 - 0.046]]:
-		var t2 := Art.tex(spec[0], int(small))
+		draw_texture(tx, Vector2(vw / 2.0 - big / 2.0, sh * 0.62 - big * 0.9))
+	var small := vh * 0.038
+	for spec3 in [["growth", -0.17], ["growth", 0.13]]:
+		var t2 := Art.tex(String(spec3[0]), int(small))
 		if t2 != null:
-			draw_texture(t2, Vector2(vw / 2.0 + vw * spec[1], cy + big - small), Color(1, 1, 1, 0.75))
-	draw_rect(Rect2(vw * 0.2, cy + big + vh * 0.03, vw * 0.6, 2), Color(0.34, 0.44, 0.36))
+			draw_texture(t2, Vector2(vw / 2.0 + vw * spec3[1], sh * 0.62 - small * 0.9), Color(1, 1, 1, 0.9))
+	_txt_c(vw / 2.0 + 2, vh * 0.155 + 2, "T E N D E R", Color(0, 0, 0, 0.55), int(vh * 0.065))
+	_txt_c(vw / 2.0, vh * 0.155, "T E N D E R", COL_GOLD, int(vh * 0.065))
+	_txt_c(vw / 2.0, vh * 0.195, "a solarpunk roguelike", COL_CREAM, int(vh * 0.021))
 
 	var bw := vw * 0.62
 	var bh := vh * 0.072
@@ -1402,6 +1505,44 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 				hcol = Color(0.62, 0.42, 0.38, minf(0.045 * float(dimlvl), 0.13))
 			draw_circle(Vector2(hx, hy), hr, hcol)
 
+	# transient combat feedback: flashes, bursts, puffs, floating numbers
+	var fnow := Time.get_ticks_msec()
+	for fx in _fx:
+		var age := float(fnow - int(fx["t0"])) / FX_MS
+		if age < 0.0 or age > 1.0:
+			continue
+		var fp: Vector2 = fx["pos"]
+		if not _vis(Vector2i(int(fp.x), int(fp.y))):
+			continue
+		var fr := _tile_rect_f(fp)
+		var c: Vector2 = fr.get_center()
+		match String(fx["kind"]):
+			"flash":
+				if age < 0.35:
+					draw_rect(fr, Color(1, 1, 1, 0.38 * (1.0 - age / 0.35)))
+			"burst":
+				var bcol: Color = fx["col"]
+				bcol.a = 1.0 - age
+				var rad := _ts * (0.25 + age * 0.55)
+				for i in 6:
+					var ang := TAU * float(i) / 6.0 + age * 1.8
+					draw_circle(c + Vector2(cos(ang), sin(ang)) * rad, _ts * 0.06 * (1.0 - age * 0.5), bcol)
+			"puff":
+				var pcol: Color = fx["col"]
+				pcol.a = 0.5 * (1.0 - age)
+				draw_circle(c + Vector2(0, -_ts * age * 0.4), _ts * (0.2 + age * 0.35), pcol)
+				draw_circle(c + Vector2(-_ts * 0.22, -_ts * age * 0.55), _ts * (0.12 + age * 0.25), pcol)
+				draw_circle(c + Vector2(_ts * 0.2, -_ts * age * 0.3), _ts * (0.1 + age * 0.22), pcol)
+			"float":
+				var fcol: Color = fx["col"]
+				fcol.a = 1.0 if age < 0.55 else 1.0 - (age - 0.55) / 0.45
+				var fsz2 := int(_ts * 0.42)
+				var s2 := String(fx["text"])
+				var fy := fr.position.y - _ts * (0.15 + age * 0.75)
+				var tw2 := font.get_string_size(s2, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz2).x
+				draw_string(font, Vector2(c.x - tw2 / 2.0 + 1, fy + 1), s2, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz2, Color(0, 0, 0, fcol.a * 0.8))
+				draw_string(font, Vector2(c.x - tw2 / 2.0, fy), s2, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz2, fcol)
+
 	if mode == "target_tile":
 		for t in mode_targets:
 			if _vis(t):
@@ -1635,6 +1776,24 @@ func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 	hotspots.clear()
 	draw_rect(Rect2(0, 0, vw, vh), COL_SHEET)
 	var won: bool = snap["won"]
+	var tsec := Time.get_ticks_msec() / 1000.0
+	if won:
+		var sun := Vector2(vw / 2.0, vh * 0.185)
+		draw_circle(sun, vw * 0.20, Color(0.95, 0.88, 0.55, 0.08))
+		draw_circle(sun, vw * 0.14, Color(0.95, 0.88, 0.55, 0.12))
+		draw_circle(sun, vw * 0.08, Color("f2e4a0"))
+		for i in 10:  # petals drift down through the clear air
+			var ph := float(i) * 1.7
+			var fall := fposmod(tsec * (0.05 + 0.02 * float(i % 3)) + ph, 1.0)
+			draw_circle(Vector2(vw * fposmod(ph * 0.37 + sin(tsec * 0.6 + ph) * 0.03, 1.0), vh * 0.55 * fall),
+				vw * 0.006, Color(0.91, 0.62, 0.80, 0.7 * (1.0 - fall)))
+	else:
+		for i in 5:  # the smog closes over the screen
+			var drift := fposmod(tsec * (0.02 + 0.01 * float(i % 2)) + float(i) * 0.23, 1.2) - 0.1
+			draw_circle(Vector2(vw * drift, vh * (0.08 + 0.06 * float(i))), vw * 0.16, Color(0.5, 0.5, 0.54, 0.07))
+		var skt := Art.tex("ic_choke", int(vh * 0.055))
+		if skt != null:
+			draw_texture(skt, Vector2(vw / 2.0 - vh * 0.0275, vh * 0.165))
 	_txt_c(vw / 2.0, vh * 0.3, "THE FURNACE IS COLD" if won else "YOU DIED", COL_GOLD if won else COL_RED, int(vh * 0.042))
 	_txt_c(vw / 2.0, vh * 0.37, "the valley breathes again" if won else "cause: %s" % snap["death_cause"], COL_TEXT, int(vh * 0.024))
 	_txt_c(vw / 2.0, vh * 0.46, "floor %d · turn %d · bloom %d" % [snap["floor"], snap["turn"], snap["bloom"]], COL_TEXT, int(vh * 0.024))
