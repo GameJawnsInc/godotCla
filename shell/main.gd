@@ -439,8 +439,10 @@ func _process(_dt: float) -> void:
 		var fnow := Time.get_ticks_msec()
 		_fx = _fx.filter(func(f): return fnow - int(f["t0"]) < FX_MS)
 		animating = true
-	if Time.get_ticks_msec() - _floor_fade_ms < 500:
+	if Time.get_ticks_msec() - _floor_fade_ms < 1450:
 		animating = true
+	if game != null and not game.over and int(game.player["hp"]) <= maxi(2, int(game.player["max_hp"]) / 4):
+		animating = true  # danger vignette pulse
 	if Time.get_ticks_msec() - _shake_ms < 360:
 		animating = true
 	if game != null and game.over:
@@ -1651,11 +1653,42 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		draw_rect(Rect2(bx2, by2, bw2, bh2), Color(0.9, 0.4, 0.3, 0.7), false, 1.5)
 		break
 
+	# danger vignette: the edges bleed red while the tender is nearly down
+	var pl0: Dictionary = snap["player"]
+	if int(pl0["hp"]) <= maxi(2, int(pl0["max_hp"]) / 4) and not game.over:
+		var da := 0.10 + 0.07 * sin(Time.get_ticks_msec() / 300.0)
+		var dc := Color(0.85, 0.2, 0.12, da)
+		var d0 := Color(0.85, 0.2, 0.12, 0.0)
+		var dd := _ts * 1.6
+		draw_polygon(PackedVector2Array([mr.position, Vector2(mr.position.x + dd, mr.position.y + dd),
+			Vector2(mr.position.x + dd, mr.end.y - dd), Vector2(mr.position.x, mr.end.y)]),
+			PackedColorArray([dc, d0, d0, dc]))
+		draw_polygon(PackedVector2Array([Vector2(mr.end.x, mr.position.y), Vector2(mr.end.x - dd, mr.position.y + dd),
+			Vector2(mr.end.x - dd, mr.end.y - dd), mr.end]),
+			PackedColorArray([dc, d0, d0, dc]))
+		draw_polygon(PackedVector2Array([mr.position, Vector2(mr.end.x, mr.position.y),
+			Vector2(mr.end.x - dd, mr.position.y + dd), Vector2(mr.position.x + dd, mr.position.y + dd)]),
+			PackedColorArray([dc, dc, d0, d0]))
+		draw_polygon(PackedVector2Array([Vector2(mr.position.x, mr.end.y), Vector2(mr.position.x + dd, mr.end.y - dd),
+			Vector2(mr.end.x - dd, mr.end.y - dd), mr.end]),
+			PackedColorArray([dc, d0, d0, dc]))
+
 	# each new floor fades in from the dark of the descent
 	var fage := float(Time.get_ticks_msec() - _floor_fade_ms) / 450.0
 	if fage < 1.0:
 		draw_rect(Rect2(0, _status_end, vw, vh * Z_MAP_END - _status_end),
 			Color(0.02, 0.03, 0.03, 1.0 - maxf(fage, 0.0)))
+
+	# and its name hangs over the map for a moment
+	var spl := float(Time.get_ticks_msec() - _floor_fade_ms) / 1400.0
+	if spl >= 0.0 and spl < 1.0:
+		var sa := 1.0 if spl < 0.55 else 1.0 - (spl - 0.55) / 0.45
+		var scy := (mr.position.y + mr.end.y) / 2.0
+		var nm := String(snap["floor_name"]).to_upper()
+		var nsz := int(vh * 0.032)
+		_txt_c(vw / 2.0 + 2, scy + 2, nm, Color(0, 0, 0, 0.6 * sa), nsz)
+		_txt_c(vw / 2.0, scy, nm, Color(COL_GOLD, sa), nsz)
+		_txt_c(vw / 2.0, scy + vh * 0.028, "floor %d of 7" % snap["floor"], Color(COL_CREAM, sa * 0.85), int(vh * 0.018))
 
 
 func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
@@ -1782,7 +1815,17 @@ func _draw_tooltip(vw: float, vh: float) -> void:
 
 func _sheet(vw: float, vh: float, title: String) -> float:
 	draw_rect(Rect2(0, 0, vw, vh), COL_SHEET)
-	_txt(Vector2(vw * 0.06, vh * 0.09), title, COL_GOLD, int(vh * 0.034))
+	# panel frame with a sun-sheen top edge and sprouting corner accents
+	var fr := Rect2(vw * 0.025, vh * 0.035, vw * 0.95, vh * 0.93)
+	draw_rect(fr, Color(0.07, 0.11, 0.08, 0.9))
+	draw_rect(fr, Color(0.35, 0.48, 0.35, 0.8), false, 2.0)
+	draw_rect(Rect2(fr.position.x + 8, fr.position.y + 3, fr.size.x - 16, 2), Color(0.9, 1.0, 0.8, 0.10))
+	var lt := Art.tex("growth", int(vh * 0.026))
+	if lt != null:
+		draw_texture(lt, fr.position + Vector2(vw * 0.02, vh * 0.012), Color(1, 1, 1, 0.8))
+		draw_texture(lt, Vector2(fr.end.x - vw * 0.02 - vh * 0.026, fr.position.y + vh * 0.012), Color(1, 1, 1, 0.8))
+	_txt_c_fit(vw / 2.0, vh * 0.095, title, COL_GOLD, int(vh * 0.034), vw * 0.82)
+	draw_rect(Rect2(vw * 0.2, vh * 0.115, vw * 0.6, 2), Color(0.91, 0.78, 0.25, 0.55))
 	return vh * 0.16
 
 
@@ -1913,6 +1956,11 @@ func _draw_intro(vw: float, vh: float) -> void:
 	draw_rect(Rect2(0, 0, vw, vh), COL_SHEET)
 	var x := vw * 0.07
 	var y := vh * 0.1
+	draw_circle(Vector2(vw * 0.82, vh * 0.085), vw * 0.09, Color(0.95, 0.88, 0.55, 0.10))
+	draw_circle(Vector2(vw * 0.82, vh * 0.085), vw * 0.055, Color("f2e4a0"))
+	var pt := Art.tex("player", int(vh * 0.055))
+	if pt != null:
+		draw_texture(pt, Vector2(vw * 0.66, vh * 0.055))
 	_txt(Vector2(x, y), "TENDER", COL_GOLD, int(vh * 0.05)); y += vh * 0.07
 	for pair in [
 		["The combine poisoned the world. You are a Tender.", COL_TEXT],
