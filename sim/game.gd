@@ -123,6 +123,10 @@ func _tier_mod(key: String) -> int:
 
 func shop_cost(item: String) -> int:
 	var cost: int = Content.SHOP_COSTS.get(item, 9999)
+	if item == "graft":
+		# permanent power gets dearer the more of it you already own, so
+		# "farm early, buy everything" is a real commitment, not a default
+		cost += player["grafts"].size() * Content.GRAFT_PRICE_STEP
 	for i in range(mini(tier, Content.TIERS.size())):
 		cost += int(Content.TIERS[i].get("shop_markup", 0))
 	return cost
@@ -746,6 +750,8 @@ func _act_cleanse(action: Dictionary) -> void:
 	terrain.erase(target)
 	var yield_: int = Content.RICH_GOO_BLOOM if k == "rich_goo" else 1
 	bloom += yield_ + (1 if _has_graft("bloom_surge") else 0)
+	# tending the world buys time: every cleanse thins the smog clock
+	smog = maxi(smog - Content.CLEANSE_SMOG_RELIEF, 0)
 	_emit({"t": "cleanse", "tile": target, "bloom": bloom})
 
 

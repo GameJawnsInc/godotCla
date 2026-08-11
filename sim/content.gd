@@ -17,7 +17,7 @@ const STARTING_KIT := ["solar_lance", "seed_bomb", "mycelium_dash"]
 const ABILITIES := {
 	"solar_lance": {
 		"name": "Solar Lance", "cost": 2, "target": "dir", "range": 3,
-		"effects": [{"op": "lance", "dmg": 2, "clear_smog_bonus": 1, "ignite": true}],
+		"effects": [{"op": "lance", "dmg": 2, "clear_smog_bonus": 0, "ignite": true}],
 	},
 	"seed_bomb": {
 		"name": "Seed Bomb", "cost": 2, "target": "tile", "range": 3,
@@ -195,7 +195,7 @@ const GRAFTS := {
 ## One-line effect text per base ability (upgrades fall back to the base and
 ## show slightly better numbers in play). UI-facing data; the sim ignores it.
 const ABILITY_DESC := {
-	"solar_lance": "Beam up to 3 tiles: 2 dmg, ignites oil, thins smog",
+	"solar_lance": "Beam up to 3 tiles: 2 dmg, ignites oil (+: 3 dmg, 4 under clear skies)",
 	"seed_bomb": "Plant a patch of healing growth within 3 tiles",
 	"vine_whip": "Yank an enemy 2 tiles toward you, 1 dmg",
 	"water_jet": "Shove enemies in a line 2 tiles, 1 dmg on impact",
@@ -221,7 +221,9 @@ const ABILITY_DESC := {
 	"moss_filter": "Filter the air: restore a stage of dimmed regen",
 }
 
-const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 5}
+const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 4}
+const GRAFT_PRICE_STEP := 2  # each owned graft raises the next graft's price
+const CLEANSE_SMOG_RELIEF := 1  # a cleanse pauses the smog clock, never rewinds it
 
 ## Optional run mutators: free-form spice chosen at run start (unlock-gated).
 const MUTATORS := {

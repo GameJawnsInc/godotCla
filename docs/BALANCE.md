@@ -352,6 +352,39 @@ Death-cause shape: optimizer dies mostly to combat, sprout mostly to smog
 - Optimizer seed 2 - the death that started the whole tempo
   investigation - now wins.
 
+## 2026-08-11 - bloom economy round (first human-found degenerate line)
+
+A human player won the base run via: farm every early-floor cleanse,
+buy all six grafts flat-priced at 5, then solar-lance spam to the end,
+skipping cleansing entirely on floors 5-7 (+50 bloom surplus at the
+win screen). Instrumentation (30 seeds) confirmed all of it:
+optimizer's casts were 77% solar_lance; NEITHER ceiling bot ever
+bought a graft; deeproot banked 12.7 surplus bloom with 3 total spent.
+
+Changes:
+- Solar lance base loses the clear-skies +1 (flat 2 dmg). The bonus
+  is now the + upgrade's edge (3 dmg, 4 under clear skies) - upgrading
+  the starter finally matters.
+- Graft prices escalate: 4 bloom + 2 per graft already owned
+  (4/6/8/10/12/14; full set 54 vs the old flat 30). "Buy every
+  permanent upgrade" is a commitment, not a default.
+- Cleansing thins the smog by 1: a cleanse turn pauses the clock
+  instead of losing it, so late-floor cleansing has tempo value.
+  (First tried relief 2: deeproot immediately turned floors 5-7 into
+  a stall engine - 3,547 late cleanses / 126 surplus bloom over 30
+  seeds, the exact unwinnable-but-unlosable pattern the escalating
+  choke exists to kill. Relief must stay strictly below the tick.)
+- The shell now surfaces the meta layer: profile persisted on device,
+  difficulty picker after the first win, unlock notices on the win
+  screen. The answer to "I won easily" is the tier ladder, which was
+  invisible on the phone.
+
+Post-change rates: optimizer 51/100 (baseline 48), deeproot 23/30,
+magpie 5/100 (top of the greed band - cleanse relief feeds greed;
+watch it), sprout 0 with avg floor 4.6, wanderer 0, zero timeouts.
+Tier ladder re-run: all tiers winnable; tier 7 is 0/20 for the
+heuristic but 5/20 for deeproot (ceiling-hard, fair).
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from

@@ -98,3 +98,12 @@ rasterization + input handlers driving the sim), part of the suite.
 All sprites live in `shell/svg_art.gd` as hand-written 32×32 SVG strings,
 rasterized at runtime via `Image.load_svg_from_string` — no import
 pipeline, no binary assets, diffable art. Edit the string, rerun.
+
+## Career and difficulty
+
+The shell persists a career profile (`user://tender_profile.json`,
+`meta/profile.gd`). Finished runs are recorded automatically; the first
+win unlocks the difficulty ladder and a DIFFICULTY cycler appears on the
+menu (tiers from `Content.TIERS`, clamped to what is unlocked). The win
+screen lists newly unlocked tiers/packages/mutators, and the menu footer
+shows runs / wins / best floor.

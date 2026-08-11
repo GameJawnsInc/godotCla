@@ -14,6 +14,8 @@ const Content := preload("res://sim/content.gd")
 const Art := preload("res://shell/svg_art.gd")
 const Tutorial := preload("res://shell/tutorial.gd")
 const AudioKit := preload("res://shell/audio.gd")
+const Profile := preload("res://meta/profile.gd")
+const PROFILE_PATH := "user://tender_profile.json"
 
 const CFG_PATH := "user://tender.cfg"
 
@@ -140,12 +142,18 @@ var _anim_ms := -99999
 const FX_MS := 700
 var _fx: Array = []  # transient map effects {kind, pos: Vector2 tile, text, col, t0}
 var _floor_fade_ms := -99999  # descend wipe: new floor fades in from dark
+var profile  # meta career: unlocks tiers/packages across runs (meta/profile.gd)
+var sel_tier := 0  # difficulty picked on the menu, clamped to what is unlocked
+var run_tier := 0  # tier the live run actually started at
+var _run_recorded := false
+var _run_unlocks: Array = []
 var _shake_ms := -99999
 var _shake_mag := 0.0
 
 
 func _ready() -> void:
 	font = ThemeDB.fallback_font
+	profile = Profile.load_from(PROFILE_PATH)
 	_mk_styles()
 	audio = AudioKit.new()
 	add_child(audio)
@@ -169,8 +177,12 @@ func _roll_seed() -> void:
 
 
 func _new_game() -> void:
-	game = Game.new(seed_v)
+	sel_tier = clampi(sel_tier, 0, int(profile.unlocked_tier))
+	run_tier = sel_tier
+	game = Game.new(seed_v, profile.game_config(sel_tier))
 	_game_is_run = true
+	_run_recorded = false
+	_run_unlocks = []
 	mode = "normal"
 	if intro_mode == "always" or (intro_mode == "once" and not seen_intro):
 		seen_intro = true
@@ -257,6 +269,13 @@ func _act(a: Dictionary) -> void:
 	var evs: Array = game.step(a)
 	_arm_anim(prev, prev_floor)
 	_spawn_fx(evs, prev)
+	if game.over and _game_is_run and not _run_recorded:
+		_run_recorded = true
+		var prev_ut: int = int(profile.unlocked_tier)
+		_run_unlocks = profile.record_run({"won": game.won, "floor": game.floor_num, "tier": run_tier})
+		if int(profile.unlocked_tier) > prev_ut:
+			_run_unlocks.push_front("tier:%d" % int(profile.unlocked_tier))
+		profile.save(PROFILE_PATH)
 	for ev in evs:
 		var s := _ev_text(ev)
 		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
@@ -860,6 +879,8 @@ func _tap(tag: String) -> void:
 			"music":
 				music_on = not music_on
 				audio.set_music(music_on)
+			"tier":
+				sel_tier = (sel_tier + 1) % (int(profile.unlocked_tier) + 1)
 			"hold":
 				hold_ms = {300: 420, 420: 650, 650: 300}.get(hold_ms, 420)
 			"seed":
@@ -921,7 +942,7 @@ func _ev_text(ev: Dictionary) -> String:
 		"heal":
 			return "Growth heals you +%d" % ev["amt"]
 		"cleanse":
-			return "Cleansed - bloom earned"
+			return "Cleansed +bloom - the air thins"
 		"choke":
 			return "The smog chokes you"
 		"smog_dim":
@@ -1276,18 +1297,29 @@ func _draw_menu(vw: float, vh: float) -> void:
 	var bw := vw * 0.62
 	var bh := vh * 0.072
 	var bx := (vw - bw) / 2.0
-	var y := vh * 0.46
-	if game != null and not game.over and _game_is_run:
+	var has_resume: bool = game != null and not game.over and _game_is_run
+	var has_tier: bool = int(profile.unlocked_tier) > 0
+	var y := vh * (0.43 if has_resume and has_tier else 0.46)
+	if has_resume:
 		_button(Rect2(bx, y, bw, bh), "RESUME RUN", "resume", int(bh * 0.38), COL_GOLD)
-		y += bh + vh * 0.024
+		y += bh + vh * 0.022
 	_button(Rect2(bx, y, bw, bh), "PLAY", "play", int(bh * 0.42), COL_GOLD)
-	y += bh + vh * 0.024
+	y += bh + vh * 0.022
+	if has_tier:
+		sel_tier = clampi(sel_tier, 0, int(profile.unlocked_tier))
+		var tn := "base run" if sel_tier == 0 else String(Content.TIERS[sel_tier - 1]["name"])
+		var th := bh * 0.82
+		_button(Rect2(bx, y, bw, th), "DIFFICULTY %d: %s" % [sel_tier, tn], "set:tier", int(th * 0.34))
+		y += th + vh * 0.022
 	_button(Rect2(bx, y, bw, bh), "TUTORIAL", "tutorial", int(bh * 0.38))
-	y += bh + vh * 0.024
+	y += bh + vh * 0.022
 	_button(Rect2(bx, y, bw, bh), "SETTINGS", "settings", int(bh * 0.38))
-	y += bh + vh * 0.024
+	y += bh + vh * 0.022
 	_button(Rect2(bx, y, bw, bh), "QUIT", "quit", int(bh * 0.38))
-	_txt_c(vw / 2.0, vh * 0.96, "seed mode: %s" % seed_mode, COL_DIM_TEXT, int(vh * 0.016))
+	var career := "seed mode: %s" % seed_mode
+	if int(profile.runs) > 0:
+		career += "  ·  runs %d · wins %d · best floor %d" % [profile.runs, profile.wins, profile.best_floor]
+	_txt_c_fit(vw / 2.0, vh * 0.96, career, COL_DIM_TEXT, int(vh * 0.016), vw * 0.92)
 
 
 func _draw_settings(vw: float, vh: float) -> void:
@@ -1946,7 +1978,21 @@ func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 	_txt_c(vw / 2.0, vh * 0.3, "THE FURNACE IS COLD" if won else "YOU DIED", COL_GOLD if won else COL_RED, int(vh * 0.042))
 	_txt_c(vw / 2.0, vh * 0.37, "the valley breathes again" if won else "cause: %s" % snap["death_cause"], COL_TEXT, int(vh * 0.024))
 	_txt_c(vw / 2.0, vh * 0.46, "floor %d · turn %d · bloom %d" % [snap["floor"], snap["turn"], snap["bloom"]], COL_TEXT, int(vh * 0.024))
-	_txt_c(vw / 2.0, vh * 0.51, "seed %d" % seed_v, COL_DIM_TEXT, int(vh * 0.02))
+	var seedline := "seed %d" % seed_v
+	if run_tier > 0:
+		seedline += "  ·  difficulty %d" % run_tier
+	_txt_c(vw / 2.0, vh * 0.51, seedline, COL_DIM_TEXT, int(vh * 0.02))
+	var uy := vh * 0.555
+	for u in _run_unlocks:
+		var us := String(u)
+		var label := ""
+		if us.begins_with("tier:"):
+			var tn2 := String(Content.TIERS[int(us.substr(5)) - 1]["name"])
+			label = "NEW DIFFICULTY UNLOCKED: %s" % tn2.to_upper()
+		else:
+			label = "UNLOCKED: %s" % us.replace("_", " ").to_upper()
+		_txt_c_fit(vw / 2.0, uy, label, COL_GOLD, int(vh * 0.02), vw * 0.92)
+		uy += vh * 0.028
 	_txt_c(vw / 2.0, vh * 0.62, "- tap anywhere for a new run -", COL_GOLD, int(vh * 0.026))
 	_button(Rect2(vw * 0.3, vh * 0.72, vw * 0.4, vh * 0.06), "MENU", "menu", int(vh * 0.024))
 
@@ -1973,7 +2019,8 @@ func _draw_intro(vw: float, vh: float) -> void:
 		["", COL_TEXT],
 		["Move fast: smog rises every turn, and deep smog kills.", COL_GOLD],
 		["", COL_TEXT],
-		["CLEANSE oil and goo for bloom; spend it at shrines.", COL_TEXT],
+		["CLEANSE oil and goo: earn bloom AND thin the smog.", COL_TEXT],
+		["Spend bloom at shrines - graft prices rise as you stack them.", COL_TEXT],
 		["Green growth heals you while you stand on it.", COL_TEXT],
 		["", COL_TEXT],
 		["HOLD your finger on anything to see what it is.", COL_GOLD],
