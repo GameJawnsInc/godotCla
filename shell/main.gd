@@ -295,7 +295,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_press_ms = Time.get_ticks_msec()
 			_held = true
 		else:
-			var had_tip := not tooltip.is_empty()
+			var had_tip := not tooltip.is_empty() and not inspect_live
 			_held = false
 			if had_tip:
 				tooltip = []
@@ -305,11 +305,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 	elif ev is InputEventMouseMotion:
 		if inspect_live and screen != "menu" and game != null and not game.over and mode == "normal":
 			var t := _map_tile(ev.position)
-			if t != tooltip_tile or tooltip.is_empty():
-				tooltip = []
-				tooltip_tile = Vector2i(-1, -1)
-				_show_tooltip(ev.position)
-				queue_redraw()
+			if t != tooltip_tile:
+				_show_tooltip(ev.position)  # only replaces when there is something to say
 		if _held and ev.position.distance_to(_press_pos) > 30.0:
 			_held = false
 
@@ -1399,10 +1396,10 @@ func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
 	_button(Rect2(dx + b + gap, dy + b + gap, b, b), "END", "end_turn", int(b * 0.28))
 	_arrow_button(Rect2(dx + (b + gap) * 2, dy + b + gap, b, b), "right")
 	_arrow_button(Rect2(dx + b + gap, dy + (b + gap) * 2, b, b), "down")
-	var tbx := dx + (b + gap) * 3 + vw * 0.012
-	var tb := b * 0.78
-	_icon_button(Rect2(tbx, dy + b * 0.35, tb, tb), "ic_camera", "zoom", zoom_room)
-	_icon_button(Rect2(tbx, dy + b * 0.35 + tb + vw * 0.012, tb, tb), "ic_lens", "inspect", inspect_live)
+	# the D-pad's empty top corners host the view toggles (bottom corners
+	# stay free for future features)
+	_icon_button(Rect2(dx, dy, b, b), "ic_camera", "zoom", zoom_room)
+	_icon_button(Rect2(dx + (b + gap) * 2, dy, b, b), "ic_lens", "inspect", inspect_live)
 
 	var bw := vw * 0.36
 	var bx := vw - bw - vw * 0.035
