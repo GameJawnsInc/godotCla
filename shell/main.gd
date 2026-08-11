@@ -122,6 +122,10 @@ var _vy0 := 0
 var _vx1 := 999
 var _vy1 := 999
 
+const ANIM_MS := 140
+var _anim_from := {}  # "player" / enemy id -> Vector2 tile pos before the step
+var _anim_ms := -99999
+
 
 func _ready() -> void:
 	font = ThemeDB.fallback_font
@@ -196,6 +200,10 @@ func _save_settings() -> void:
 func _act(a: Dictionary) -> void:
 	if game == null or game.over:
 		return
+	var prev := {"player": Vector2(game.player["pos"])}
+	var prev_floor: int = game.floor_num
+	for e in game.enemies:
+		prev[e["id"]] = Vector2(e["pos"])
 	if screen == "tutorial" and not tut_done:
 		var st: Dictionary = Tutorial.STEPS[tut_step]
 		var kind := String(a.get("type", ""))
@@ -227,6 +235,7 @@ func _act(a: Dictionary) -> void:
 		return
 	var keep_shop := mode == "shop" and String(a.get("type", "")) == "buy"
 	var evs: Array = game.step(a)
+	_arm_anim(prev, prev_floor)
 	for ev in evs:
 		var s := _ev_text(ev)
 		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
@@ -276,6 +285,26 @@ func _play_events(evs: Array) -> void:
 		audio.play(picks[i])
 
 
+func _arm_anim(prev: Dictionary, prev_floor: int) -> void:
+	if game.floor_num != prev_floor:
+		_anim_from = {}
+		return
+	_anim_from = prev
+	_anim_ms = Time.get_ticks_msec()
+
+
+## Where to draw a creature right now: sliding from its previous tile for a
+## beat after each step. Long jumps (teleports, dashes) snap instead.
+func _anim_pos(key, cur: Vector2i) -> Vector2:
+	var t := (Time.get_ticks_msec() - _anim_ms) / float(ANIM_MS)
+	if t >= 1.0 or not _anim_from.has(key):
+		return Vector2(cur)
+	var from: Vector2 = _anim_from[key]
+	if from.distance_to(Vector2(cur)) > 3.0:
+		return Vector2(cur)
+	return from.lerp(Vector2(cur), clampf(t, 0.0, 1.0))
+
+
 func _legal_of(kind: String) -> Array:
 	var out: Array = []
 	for a in game.legal_actions():
@@ -316,6 +345,10 @@ func _process(_dt: float) -> void:
 		return
 	if _held and tooltip.is_empty() and Time.get_ticks_msec() - _press_ms >= hold_ms:
 		_show_tooltip(_press_pos)
+	var animating: bool = Time.get_ticks_msec() - _anim_ms < ANIM_MS + 40
+	var smoggy: bool = game != null and not game.over and (int(game.smog) > 0 or int(game.dim) > 0)
+	if animating or smoggy:
+		queue_redraw()
 
 
 func _map_tile(pos: Vector2) -> Vector2i:
@@ -920,6 +953,23 @@ func _tile_rect(p: Vector2i) -> Rect2:
 	return Rect2(_mox + p.x * _ts, _moy + p.y * _ts, _ts, _ts)
 
 
+func _tile_rect_f(p: Vector2) -> Rect2:
+	return Rect2(_mox + p.x * _ts, _moy + p.y * _ts, _ts, _ts)
+
+
+func _sprite_f(id: String, p: Vector2) -> void:
+	var tx := Art.tex(id, int(_ts))
+	if tx != null:
+		draw_texture(tx, Vector2(_mox + p.x * _ts, _moy + p.y * _ts))
+
+
+func _shadow_f(p: Vector2) -> void:
+	var r := _tile_rect_f(p)
+	draw_set_transform(Vector2(r.get_center().x, r.position.y + _ts * 0.86), 0.0, Vector2(1.0, 0.42))
+	draw_circle(Vector2.ZERO, _ts * 0.36, Color(0, 0, 0, 0.32))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
 func _sprite(id: String, p: Vector2i) -> void:
 	var tx := Art.tex(id, int(_ts))
 	if tx != null:
@@ -1182,26 +1232,45 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	var btn_h := row_h * 1.05
 	_button(Rect2(vw - vw * 0.095, pad, vw * 0.075, btn_h), "?", "help", int(vh * 0.024))
 	_button(Rect2(vw - vw * 0.185, pad, vw * 0.075, btn_h), "=", "menu", int(vh * 0.024))
-	# row 2: smog meter, warning, floor
+	# row 2: the sky window - clean jade skies being swallowed by the smoke
+	# front as smog rises; suns mark the dim thresholds, the skull marks choke
 	var y2 := pad + row_h * 1.35
 	var mx := vw * 0.025
-	var mh := vh * 0.017
+	var mh := vh * 0.024
 	var fdef: Dictionary = game.floor_def(game.floor_num)
 	var choke: float = float(fdef.get("smog_choke", 40))
 	var mw := vw * 0.5
-	var frac: float = clampf(snap["smog"] / (choke * 1.15), 0.0, 1.0)
-	_txt(Vector2(mx, y2 + mh + vh * 0.0155), "SMOG", COL_DIM_TEXT, int(vh * 0.0125))
-	draw_rect(Rect2(mx, y2, mw, mh), Color(0, 0, 0, 0.55))
-	var mcol := COL_DIM_TEXT
-	if snap["dim"] >= 1:
-		mcol = COL_GOLD
-	if snap["smog"] >= choke:
-		mcol = COL_RED
-	draw_rect(Rect2(mx, y2, mw * frac, mh), mcol)
+	var span := choke * 1.15
+	var frac: float = clampf(snap["smog"] / span, 0.0, 1.0)
+	_txt(Vector2(mx, y2 + mh + vh * 0.0155), "SKIES", COL_DIM_TEXT, int(vh * 0.0125))
+	draw_rect(Rect2(mx, y2, mw, mh), Color("6fae9c"))
+	draw_rect(Rect2(mx, y2, mw, mh * 0.45), Color("8cc7ae"))
+	draw_circle(Vector2(mx + mw * 0.93, y2 + mh * 0.42), mh * 0.30, Color("f2e4a0"))
+	var sw := mw * frac
+	if sw > 0.5:
+		var tsec := Time.get_ticks_msec() / 1000.0
+		var scol := Color("3d3a41")
+		draw_rect(Rect2(mx, y2, sw, mh), scol)
+		for i in 3:
+			var br := mh * (0.42 + 0.16 * float(i % 2))
+			var bx := sw + mx + sin(tsec * (1.1 + float(i) * 0.7) + float(i) * 2.1) * mh * 0.22
+			var by := y2 + mh * (0.22 + 0.28 * float(i))
+			draw_circle(Vector2(bx, by), br, scol)
+			draw_circle(Vector2(bx - br * 0.7, by - mh * 0.1), br * 0.7, Color("4a4650"))
 	for dv in fdef.get("smog_dim", []):
-		var tick := mx + mw * clampf(float(dv) / (choke * 1.15), 0.0, 1.0)
-		draw_rect(Rect2(tick, y2 - 2, 2, mh + 4), COL_GOLD)
-	draw_rect(Rect2(mx + mw / 1.15, y2 - 2, 2, mh + 4), COL_RED)
+		var tick := mx + mw * clampf(float(dv) / span, 0.0, 1.0)
+		var dsz := int(mh * 1.5)
+		var dtx := Art.tex("ic_dim", dsz)
+		if dtx != null:
+			draw_texture(dtx, Vector2(tick - dsz / 2.0, y2 + (mh - dsz) / 2.0))
+	var csz := int(mh * 1.5)
+	var ctx := Art.tex("ic_choke", csz)
+	if ctx != null:
+		draw_texture(ctx, Vector2(mx + mw / 1.15 - csz / 2.0, y2 + (mh - csz) / 2.0))
+	draw_rect(Rect2(mx, y2, mw, mh), Color(0, 0, 0, 0.35), false, 1.0)
+	if snap["smog"] >= choke:
+		var pulse := 0.45 + 0.35 * sin(Time.get_ticks_msec() / 180.0)
+		draw_rect(Rect2(mx - 2, y2 - 2, mw + 4, mh + 4), Color(0.88, 0.29, 0.23, pulse), false, 2.0)
 	if _threat_tiles(snap).has(pl["pos"]):
 		_txt(Vector2(mx + mw + vw * 0.03, y2 + mh), "! INCOMING", COL_RED, int(vh * 0.021))
 	var fl := "floor %d/7" % snap["floor"]
@@ -1293,9 +1362,10 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	for e in snap["enemies"]:
 		if not _vis(e["pos"]):
 			continue
-		_shadow(e["pos"])
-		_sprite(e["kind"], e["pos"])
-		var r := _tile_rect(e["pos"])
+		var ap := _anim_pos(e["id"], e["pos"])
+		_shadow_f(ap)
+		_sprite_f(e["kind"], ap)
+		var r := _tile_rect_f(ap)
 		if e.get("elite", false):
 			draw_rect(r.grow(-1), COL_GOLD, false, 2.0)
 		var edef: Dictionary = Content.ENEMIES[e["kind"]]
@@ -1305,14 +1375,32 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2(_ts - 4, 3)), Color(0, 0, 0, 0.6))
 			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2((_ts - 4) * frac, 3)), COL_RED)
 
-	_shadow(snap["player"]["pos"])
-	_sprite("player", snap["player"]["pos"])
-	var pr := _tile_rect(snap["player"]["pos"])
+	var pap := _anim_pos("player", snap["player"]["pos"])
+	_shadow_f(pap)
+	_sprite_f("player", pap)
+	var pr := _tile_rect_f(pap)
 	draw_rect(pr.grow(1), Color(0.56, 0.86, 0.42, 0.85), false, 2.0)
 	if int(snap["player"].get("anchor_turns", 0)) > 0:
 		draw_rect(pr.grow(-2), Color("7a5a34"), false, 2.0)
 	if int(snap["player"].get("thorns_turns", 0)) > 0:
 		draw_rect(pr.grow(-4), Color("57b34a"), false, 1.5)
+
+	# ambient haze drifts across the world once the skies dim
+	var dimlvl: int = int(snap["dim"])
+	if dimlvl > 0:
+		var hz := Rect2(_mox + _vx0 * _ts, _moy + _vy0 * _ts,
+			(_vx1 - _vx0 + 1) * _ts, (_vy1 - _vy0 + 1) * _ts)
+		var hsec := Time.get_ticks_msec() / 1000.0
+		var choked: bool = int(snap["smog"]) >= int(game.floor_def(game.floor_num).get("smog_choke", 40))
+		for i in 6:
+			var hr := hz.size.x * (0.09 + 0.045 * float(i % 3))
+			var spd := 8.0 + 3.5 * float(i % 4)
+			var hx := hz.position.x - hr + fposmod(float(i) * hz.size.x * 0.37 + hsec * spd, hz.size.x + hr * 2.0)
+			var hy := hz.position.y + hz.size.y * (0.12 + 0.15 * float(i)) + sin(hsec * 0.5 + float(i) * 1.7) * _ts * 0.4
+			var hcol := Color(0.55, 0.55, 0.58, minf(0.035 * float(dimlvl), 0.11))
+			if choked:
+				hcol = Color(0.62, 0.42, 0.38, minf(0.045 * float(dimlvl), 0.13))
+			draw_circle(Vector2(hx, hy), hr, hcol)
 
 	if mode == "target_tile":
 		for t in mode_targets:

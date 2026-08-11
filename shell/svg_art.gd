@@ -72,6 +72,8 @@ static var ART := {
 	"ic_hp": _svg('<path d="M16 27C6 20 4 13 8 9q4-4 8 1 4-5 8-1 4 4-8 18z" fill="#e04b3a"/>'),
 	"ic_charge": _svg('<path d="M18 3L7 18h7l-2 11 12-16h-7z" fill="#f7c948"/>'),
 	"ic_bloom": _svg('<circle cx="16" cy="16" r="4" fill="#e8c840"/><ellipse cx="16" cy="7" rx="4" ry="5" fill="#d878b8"/><ellipse cx="25" cy="16" rx="5" ry="4" fill="#d878b8"/><ellipse cx="16" cy="25" rx="4" ry="5" fill="#d878b8"/><ellipse cx="7" cy="16" rx="5" ry="4" fill="#d878b8"/>'),
+	"ic_dim": _svg('<circle cx="16" cy="14" r="8" fill="#e8c840"/><path d="M16 2v4M16 22v4M4 14h4M24 14h4M7 5l3 3M25 5l-3 3" stroke="#e8c840" stroke-width="2"/><ellipse cx="19" cy="20" rx="11" ry="6" fill="#5a5f66"/><ellipse cx="12" cy="22" rx="8" ry="5" fill="#6b7076"/>'),
+	"ic_choke": _svg('<circle cx="16" cy="14" r="10" fill="#d8dde0"/><rect x="11" y="20" width="10" height="8" rx="2" fill="#d8dde0"/><circle cx="12" cy="13" r="2.8" fill="#1a1d20"/><circle cx="20" cy="13" r="2.8" fill="#1a1d20"/><path d="M16 16l-1.5 4h3z" fill="#1a1d20"/><path d="M12 24v3M16 24v3M20 24v3" stroke="#1a1d20" stroke-width="1.6"/>'),
 	"ic_camera": _svg('<rect x="3" y="10" width="26" height="17" rx="3" fill="#cfe3c4"/><rect x="11" y="5" width="10" height="7" rx="2" fill="#cfe3c4"/><circle cx="16" cy="18" r="6.5" fill="#2e4632"/><circle cx="16" cy="18" r="3.5" fill="#79a865"/><circle cx="25" cy="14" r="1.5" fill="#2e4632"/>'),
 	"ic_lens": _svg('<circle cx="13" cy="13" r="8" fill="none" stroke="#cfe3c4" stroke-width="3"/><path d="M19.5 19.5L28 28" stroke="#cfe3c4" stroke-width="3.5"/><circle cx="13" cy="13" r="4" fill="#79a865" opacity="0.5"/>'),
 	"ic_shield": _svg('<path d="M16 3l10 4v9q0 8-10 13Q6 24 6 16V7z" fill="#7ec8e0"/>'),
