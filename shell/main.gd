@@ -89,6 +89,8 @@ var log_lines: Array = []  # persistent readable history
 var tut_step := 0
 var tut_done := false
 var help_page := 0
+var zoom_room := false     # camera toggle: fit the current room, not the floor
+var inspect_live := false  # magnifier toggle: hover/drag shows tooltips instantly
 var _game_is_run := false  # current `game` is a real run (RESUME-able)
 
 # settings (persisted to user://tender.cfg)
@@ -115,6 +117,10 @@ var _ts := 40.0
 var _mox := 0.0
 var _moy := 0.0
 var _status_end := 0.0
+var _vx0 := 0
+var _vy0 := 0
+var _vx1 := 999
+var _vy1 := 999
 
 
 func _ready() -> void:
@@ -296,8 +302,15 @@ func _unhandled_input(ev: InputEvent) -> void:
 				queue_redraw()
 			elif Time.get_ticks_msec() - _press_ms < hold_ms:
 				_click(ev.position)
-	elif ev is InputEventMouseMotion and _held:
-		if ev.position.distance_to(_press_pos) > 30.0:
+	elif ev is InputEventMouseMotion:
+		if inspect_live and screen != "menu" and game != null and not game.over and mode == "normal":
+			var t := _map_tile(ev.position)
+			if t != tooltip_tile or tooltip.is_empty():
+				tooltip = []
+				tooltip_tile = Vector2i(-1, -1)
+				_show_tooltip(ev.position)
+				queue_redraw()
+		if _held and ev.position.distance_to(_press_pos) > 30.0:
 			_held = false
 
 
@@ -445,6 +458,10 @@ func _key(k: int) -> void:
 			_tap("shop")
 		KEY_1, KEY_2, KEY_3, KEY_4, KEY_5:
 			_ability_press(k - KEY_1)
+		KEY_Z:
+			_tap("zoom")
+		KEY_I:
+			_tap("inspect")
 		KEY_R:
 			_new_game()
 		KEY_N:
@@ -457,9 +474,34 @@ func _dir_input(d: Vector2i) -> void:
 		"target_dir":
 			_try_ability_target(mode_slot, d)
 		"cleanse":
-			_act({"type": "cleanse", "target": game.player["pos"] + d})
+			_cleanse_at(game.player["pos"] + d)
 		_:
 			_move_or_strike(d)
+
+
+## Cleanse a tile; if the target is valid but charge ran dry, end the turn
+## first and then cleanse (same convenience as movement).
+func _cleanse_at(target: Vector2i) -> void:
+	for a in _legal_of("cleanse"):
+		if a["target"] == target:
+			_act(a)
+			return
+	var pp: Vector2i = game.player["pos"]
+	var kind: String = game.terrain.get(target, {}).get("kind", "")
+	var corrupt: bool = kind in ["oil", "goo", "rich_goo"]
+	if corrupt and absi(target.x - pp.x) + absi(target.y - pp.y) == 1:
+		if screen == "tutorial":
+			_flash("out of charge - press END to refill")
+			return
+		_act({"type": "end_turn"})
+		if game.over:
+			return
+		for a in _legal_of("cleanse"):
+			if a["target"] == target:
+				_act(a)
+				return
+	else:
+		_flash("aim at corruption right next to you")
 
 
 func _move_or_strike(d: Vector2i) -> void:
@@ -591,7 +633,7 @@ func _click(pos: Vector2) -> void:
 			if mode_targets.has(t):
 				_try_ability_target(mode_slot, t)
 		"cleanse":
-			_act({"type": "cleanse", "target": t})
+			_cleanse_at(t)
 		"target_dir":
 			var d := t - pp
 			if absi(d.x) + absi(d.y) == 1:
@@ -619,11 +661,17 @@ func _tap(tag: String) -> void:
 	elif tag == "end_turn":
 		_act({"type": "end_turn"})
 	elif tag == "cleanse":
-		if _legal_of("cleanse").is_empty():
-			_flash("no corruption beside you (or no charge)")
-		else:
+		var can := not _legal_of("cleanse").is_empty()
+		if not can and game != null:
+			for d in DIRS4.values():
+				if String(game.terrain.get(game.player["pos"] + d, {}).get("kind", "")) in ["oil", "goo", "rich_goo"]:
+					can = true
+					break
+		if can:
 			mode = "cleanse"
 			queue_redraw()
+		else:
+			_flash("no corruption beside you")
 	elif tag == "descend":
 		if not _legal_of("descend").is_empty():
 			_act({"type": "descend"})
@@ -631,6 +679,13 @@ func _tap(tag: String) -> void:
 		if game.player["pos"] == game.map["shrine"] and not game.shop.is_empty():
 			mode = "shop"
 			queue_redraw()
+	elif tag == "zoom":
+		zoom_room = not zoom_room
+		queue_redraw()
+	elif tag == "inspect":
+		inspect_live = not inspect_live
+		tooltip = []
+		queue_redraw()
 	elif tag == "help":
 		mode = "help"
 		help_page = 0
@@ -832,6 +887,21 @@ func _intent_words(e: Dictionary) -> String:
 
 # --- drawing ------------------------------------------------------------------
 
+func _vis(p: Vector2i) -> bool:
+	return p.x >= _vx0 and p.x <= _vx1 and p.y >= _vy0 and p.y <= _vy1
+
+
+## The room the player stands in (grown by one for its doorways), or a small
+## window around them when they're in a corridor.
+func _room_view(m: Dictionary) -> Rect2i:
+	var pp: Vector2i = game.player["pos"]
+	for r in m.get("rooms", []):
+		var rr: Rect2i = r
+		if rr.grow(1).has_point(pp):
+			return rr.grow(1)
+	return Rect2i(pp.x - 4, pp.y - 3, 9, 7)
+
+
 func _threat_tiles(snap: Dictionary) -> Dictionary:
 	var t := {}
 	for e in snap["enemies"]:
@@ -938,6 +1008,15 @@ func _button(r: Rect2, label: String, tag: String, size: int, border: Color = CO
 		draw_rect(r.grow(-2), COL_RED, false, 2.0)
 	var fs2 := _fit_size(label, size, r.size.x * 0.92)
 	_txt_c(r.get_center().x, r.get_center().y + fs2 * 0.35, label, COL_TEXT, fs2)
+	_hot(r, tag)
+
+
+func _icon_button(r: Rect2, icon: String, tag: String, active: bool) -> void:
+	_box(r, _sb_gold if active else _sb)
+	var isz := int(r.size.x * 0.6)
+	var tx := Art.tex(icon, isz)
+	if tx != null:
+		draw_texture(tx, r.position + (r.size - Vector2(isz, isz)) / 2.0)
 	_hot(r, tag)
 
 
@@ -1062,7 +1141,7 @@ func _draw_tut_banner(vw: float, vh: float) -> void:
 	var xr := Rect2(vw * 0.86, by + vh * 0.008, vw * 0.11, vh * 0.032)
 	_button(xr, "EXIT", "menu", int(vh * 0.016))
 	# pulse the stairs when the guide points there
-	if st.get("guide_to_stairs", false) and game.map["stairs"] != Vector2i(-1, -1):
+	if st.get("guide_to_stairs", false) and game.map["stairs"] != Vector2i(-1, -1) and _vis(game.map["stairs"]):
 		var pulse := 2.0 + 2.0 * absf(sin(Time.get_ticks_msec() / 300.0))
 		draw_rect(_tile_rect(game.map["stairs"]).grow(3), COL_GOLD, false, pulse)
 		queue_redraw()
@@ -1141,12 +1220,31 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	var h: int = m["h"]
 	var zone_y := _status_end + vh * 0.004
 	var zone_h := vh * Z_MAP_END - zone_y
-	_ts = minf(vw * 0.996 / w, zone_h / h)
-	_mox = (vw - w * _ts) / 2.0
-	_moy = zone_y  # anchored under the status strip; slack below feeds the log
+	var vx0 := 0
+	var vy0 := 0
+	var vtw := w
+	var vth := h
+	if zoom_room:
+		var vp := _room_view(m)
+		vtw = mini(maxi(vp.size.x, 9), w)
+		vth = mini(maxi(vp.size.y, 7), h)
+		var pp0: Vector2i = game.player["pos"]
+		vx0 = clampi(vp.get_center().x - vtw / 2, 0, w - vtw)
+		vy0 = clampi(vp.get_center().y - vth / 2, 0, h - vth)
+		vx0 = clampi(vx0, maxi(0, pp0.x - vtw + 1), mini(pp0.x, w - vtw))
+		vy0 = clampi(vy0, maxi(0, pp0.y - vth + 1), mini(pp0.y, h - vth))
+	_vx0 = vx0
+	_vy0 = vy0
+	_vx1 = vx0 + vtw - 1
+	_vy1 = vy0 + vth - 1
+	_ts = minf(minf(vw * 0.996 / vtw, zone_h / vth), vw / 8.0)
+	_mox = (vw - vtw * _ts) / 2.0 - vx0 * _ts
+	_moy = zone_y + (zone_h - vth * _ts) / 2.0 - vy0 * _ts
+	if not zoom_room:
+		_moy = zone_y  # anchored under the status strip; slack below feeds the log
 
-	for y in h:
-		for x in w:
+	for y in range(_vy0, _vy1 + 1):
+		for x in range(_vx0, _vx1 + 1):
 			var p := Vector2i(x, y)
 			var r := _tile_rect(p)
 			if m["tiles"][y * w + x] == 1:
@@ -1168,7 +1266,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 					draw_rect(Rect2(r.position, Vector2(_ts, maxf(_ts * 0.1, 2))), COL_WALL_TOP)
 
 	# recent events fill whatever space this floor leaves under the map
-	var log_top := _moy + h * _ts + vh * 0.012
+	var log_top := _moy + (_vy1 + 1) * _ts + vh * 0.012
 	var log_space := vh * Z_MAP_END - log_top
 	var lfs := int(vh * 0.018)
 	var fit := int(log_space / (lfs * 1.4))
@@ -1180,19 +1278,24 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			ly += lfs * 1.4
 
 	for t in snap["terrain"].keys():
-		_sprite(snap["terrain"][t]["kind"], t)
+		if _vis(t):
+			_sprite(snap["terrain"][t]["kind"], t)
 	for v in m["vents"]:
-		_sprite("vent", v)
-	if m["stairs"] != Vector2i(-1, -1):
+		if _vis(v):
+			_sprite("vent", v)
+	if m["stairs"] != Vector2i(-1, -1) and _vis(m["stairs"]):
 		_sprite("stairs", m["stairs"])
 		draw_rect(_tile_rect(m["stairs"]).grow(-1), COL_GOLD, false, 3.0)
-	if m["shrine"] != Vector2i(-1, -1):
+	if m["shrine"] != Vector2i(-1, -1) and _vis(m["shrine"]):
 		_sprite("shrine", m["shrine"])
 
 	for t in _threat_tiles(snap):
-		draw_rect(_tile_rect(t), COL_THREAT)
+		if _vis(t):
+			draw_rect(_tile_rect(t), COL_THREAT)
 
 	for e in snap["enemies"]:
+		if not _vis(e["pos"]):
+			continue
 		_shadow(e["pos"])
 		_sprite(e["kind"], e["pos"])
 		var r := _tile_rect(e["pos"])
@@ -1216,7 +1319,8 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 
 	if mode == "target_tile":
 		for t in mode_targets:
-			draw_rect(_tile_rect(t).grow(-1), COL_TARGET, false, 2.5)
+			if _vis(t):
+				draw_rect(_tile_rect(t).grow(-1), COL_TARGET, false, 2.5)
 	elif mode == "target_dir" or mode == "cleanse":
 		for d in DIRS4.values():
 			draw_rect(_tile_rect(snap["player"]["pos"] + d).grow(-1), COL_TARGET, false, 2.0)
@@ -1295,6 +1399,10 @@ func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
 	_button(Rect2(dx + b + gap, dy + b + gap, b, b), "END", "end_turn", int(b * 0.28))
 	_arrow_button(Rect2(dx + (b + gap) * 2, dy + b + gap, b, b), "right")
 	_arrow_button(Rect2(dx + b + gap, dy + (b + gap) * 2, b, b), "down")
+	var tbx := dx + (b + gap) * 3 + vw * 0.012
+	var tb := b * 0.78
+	_icon_button(Rect2(tbx, dy + b * 0.35, tb, tb), "ic_camera", "zoom", zoom_room)
+	_icon_button(Rect2(tbx, dy + b * 0.35 + tb + vw * 0.012, tb, tb), "ic_lens", "inspect", inspect_live)
 
 	var bw := vw * 0.36
 	var bx := vw - bw - vw * 0.035

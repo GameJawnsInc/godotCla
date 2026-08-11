@@ -79,6 +79,13 @@ func _init() -> void:
 	_check(shell.screen == "game", "RESUME returns to the live run")
 	shell._tap("set:hold")
 	_check(shell.hold_ms in [300, 420, 650], "settings cycle hold delay")
+	shell._tap("zoom")
+	_check(shell.zoom_room, "camera button toggles room zoom")
+	_check(not shell.game.map.get("rooms", []).is_empty(), "generated floors expose rooms")
+	shell._tap("zoom")
+	shell._tap("inspect")
+	_check(shell.inspect_live, "magnifier button toggles live inspect")
+	shell._tap("inspect")
 
 	# 3. the scripted tutorial plays through end to end
 	shell._tap("menu")

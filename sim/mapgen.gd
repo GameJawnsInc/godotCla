@@ -140,7 +140,7 @@ static func generate(rng: RandomNumberGenerator, fdef: Dictionary) -> Dictionary
 	return {
 		"w": w, "h": h, "tiles": tiles,
 		"start": start, "stairs": stairs, "vents": vents, "shrine": shrine,
-		"enemies": enemies, "terrain": terrain,
+		"enemies": enemies, "terrain": terrain, "rooms": rooms,
 	}
 
 
