@@ -128,6 +128,7 @@ var _anim_ms := -99999
 
 const FX_MS := 700
 var _fx: Array = []  # transient map effects {kind, pos: Vector2 tile, text, col, t0}
+var _floor_fade_ms := -99999  # descend wipe: new floor fades in from dark
 
 
 func _ready() -> void:
@@ -347,6 +348,7 @@ func _arm_anim(prev: Dictionary, prev_floor: int) -> void:
 	if game.floor_num != prev_floor:
 		_anim_from = {}
 		_fx = []
+		_floor_fade_ms = Time.get_ticks_msec()
 		return
 	_anim_from = prev
 	_anim_ms = Time.get_ticks_msec()
@@ -410,6 +412,8 @@ func _process(_dt: float) -> void:
 	if not _fx.is_empty():
 		var fnow := Time.get_ticks_msec()
 		_fx = _fx.filter(func(f): return fnow - int(f["t0"]) < FX_MS)
+		animating = true
+	if Time.get_ticks_msec() - _floor_fade_ms < 500:
 		animating = true
 	if game != null and game.over:
 		animating = true  # win/loss screens drift
@@ -1448,19 +1452,32 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 
 	for t in snap["terrain"].keys():
 		if _vis(t):
+			if String(snap["terrain"][t]["kind"]) == "fire":
+				var fl := 0.14 + 0.09 * sin(Time.get_ticks_msec() / 130.0 + float(t.x * 3 + t.y * 5))
+				draw_circle(_tile_rect(t).get_center(), _ts * 0.62, Color(0.95, 0.55, 0.2, fl))
 			_sprite(snap["terrain"][t]["kind"], t)
 	for v in m["vents"]:
 		if _vis(v):
 			_sprite("vent", v)
+			var vph := fposmod(Time.get_ticks_msec() / 2000.0 + float(v.x * 7 + v.y * 13) * 0.31, 1.0)
+			if vph < 0.55:
+				draw_circle(_tile_rect(v).get_center() + Vector2(_ts * 0.1 * sin(vph * 9.0), -_ts * (0.2 + vph * 0.8)),
+					_ts * (0.06 + vph * 0.10), Color(0.7, 0.72, 0.74, 0.35 * (1.0 - vph / 0.55)))
 	if m["stairs"] != Vector2i(-1, -1) and _vis(m["stairs"]):
 		_sprite("stairs", m["stairs"])
-		draw_rect(_tile_rect(m["stairs"]).grow(-1), COL_GOLD, false, 3.0)
+		draw_rect(_tile_rect(m["stairs"]).grow(-1), COL_GOLD, false,
+			2.2 + 1.2 * sin(Time.get_ticks_msec() / 400.0))
 	if m["shrine"] != Vector2i(-1, -1) and _vis(m["shrine"]):
 		_sprite("shrine", m["shrine"])
+		var twk := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 350.0)
+		draw_circle(_tile_rect(m["shrine"]).position + Vector2(_ts * 0.82, _ts * 0.18),
+			_ts * 0.05, Color(0.95, 0.9, 0.6, 0.25 + 0.55 * twk))
 
+	var thc := COL_THREAT
+	thc.a = 0.22 + 0.12 * sin(Time.get_ticks_msec() / 240.0)
 	for t in _threat_tiles(snap):
 		if _vis(t):
-			draw_rect(_tile_rect(t), COL_THREAT)
+			draw_rect(_tile_rect(t), thc)
 
 	for e in snap["enemies"]:
 		if not _vis(e["pos"]):
@@ -1550,6 +1567,32 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	elif mode == "target_dir" or mode == "cleanse":
 		for d in DIRS4.values():
 			draw_rect(_tile_rect(snap["player"]["pos"] + d).grow(-1), COL_TARGET, false, 2.0)
+
+	# boss banner: name and a real health bar across the top of the map
+	for e in snap["enemies"]:
+		var edef2: Dictionary = Content.ENEMIES[e["kind"]]
+		if not edef2["traits"].has("boss"):
+			continue
+		var bw2 := vw * 0.88
+		var bx2 := (vw - bw2) / 2.0
+		var by2 := _status_end + vh * 0.030
+		var bh2 := vh * 0.014
+		var bfrac := clampf(float(e["hp"]) / maxf(1.0, float(edef2["hp"])), 0.0, 1.0)
+		draw_rect(Rect2(bx2 - vw * 0.015, by2 - vh * 0.024, bw2 + vw * 0.03, bh2 + vh * 0.031), Color(0.03, 0.05, 0.04, 0.82))
+		_txt(Vector2(bx2, by2 - vh * 0.006), String(edef2["name"]).to_upper(), COL_RED, int(vh * 0.017))
+		var hps := "%d / %d" % [int(e["hp"]), int(edef2["hp"])]
+		var hpw := font.get_string_size(hps, HORIZONTAL_ALIGNMENT_LEFT, -1, int(vh * 0.014)).x
+		_txt(Vector2(bx2 + bw2 - hpw, by2 - vh * 0.006), hps, COL_TEXT, int(vh * 0.014))
+		draw_rect(Rect2(bx2, by2, bw2, bh2), Color(0, 0, 0, 0.6))
+		draw_rect(Rect2(bx2, by2, bw2 * bfrac, bh2), COL_RED)
+		draw_rect(Rect2(bx2, by2, bw2, bh2), Color(0.9, 0.4, 0.3, 0.7), false, 1.5)
+		break
+
+	# each new floor fades in from the dark of the descent
+	var fage := float(Time.get_ticks_msec() - _floor_fade_ms) / 450.0
+	if fage < 1.0:
+		draw_rect(Rect2(0, _status_end, vw, vh * Z_MAP_END - _status_end),
+			Color(0.02, 0.03, 0.03, 1.0 - maxf(fage, 0.0)))
 
 
 func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
