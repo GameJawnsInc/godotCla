@@ -9,6 +9,7 @@ extends SceneTree
 const Game := preload("res://sim/game.gd")
 const Content := preload("res://sim/content.gd")
 const Art := preload("res://shell/svg_art.gd")
+const Shell := preload("res://shell/main.gd")
 const AsciiView := preload("res://sim/ascii_view.gd")
 const BOTS := {
 	"wanderer": preload("res://bots/wanderer.gd"),
@@ -72,15 +73,18 @@ func _init() -> void:
 	var total_w := panel_x + 330
 	var total_h := maxi(PAD * 2 + h * T + 130, 560)
 
+	var pal: Dictionary = Shell.BIOME_PAL.get(
+		String(game.floor_def(game.floor_num).get("biome", "strip_mine")), Shell.BIOME_PAL["strip_mine"])
 	var b := '<rect width="%d" height="%d" fill="#11161a"/>' % [total_w, total_h]
 	for y in h:
 		for x in w:
 			var px := PAD + x * T
 			var py := PAD + y * T
 			if m["tiles"][y * w + x] == 1:
-				b += '<rect x="%d" y="%d" width="%d" height="%d" fill="#31402f"/>' % [px, py, T, T]
+				var fc: Color = pal["f1"] if (x + y) % 2 == 0 else pal["f2"]
+				b += '<rect x="%d" y="%d" width="%d" height="%d" fill="#%s"/>' % [px, py, T, T, fc.to_html(false)]
 			else:
-				b += '<rect x="%d" y="%d" width="%d" height="%d" fill="#3a434b"/><rect x="%d" y="%d" width="%d" height="4" fill="#485259"/>' % [px, py, T, T, px, py, T]
+				b += '<rect x="%d" y="%d" width="%d" height="%d" fill="#%s"/><rect x="%d" y="%d" width="%d" height="4" fill="#%s"/>' % [px, py, T, T, Color(pal["w"]).to_html(false), px, py, T, Color(pal["wt"]).to_html(false)]
 	for t in snap["terrain"].keys():
 		b += _sp(snap["terrain"][t]["kind"], PAD + t.x * T, PAD + t.y * T)
 	for v in m["vents"]:

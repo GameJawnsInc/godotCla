@@ -39,6 +39,17 @@ const COL_RED := Color("e04b3a")
 const COL_BTN := Color(0.16, 0.22, 0.18)
 const COL_SHEET := Color(0.04, 0.07, 0.05, 1.0)
 
+## per-biome map palette: floor checker, wall body/top, two speckle colors.
+## descending should feel like travelling, not repainting the same corridor.
+const BIOME_PAL := {
+	"strip_mine": {"f1": Color("31402f"), "f2": Color("2b392b"), "w": Color("3a434b"),
+		"wt": Color("485259"), "s1": Color("55704a"), "s2": Color(0.42, 0.47, 0.42)},
+	"refinery": {"f1": Color("2c3a3c"), "f2": Color("263336"), "w": Color("424b58"),
+		"wt": Color("566476"), "s1": Color("4a7364"), "s2": Color(0.48, 0.35, 0.25)},
+	"furnace": {"f1": Color("3e332b"), "f2": Color("372d27"), "w": Color("4a3b35"),
+		"wt": Color("5e463a"), "s1": Color("9a5c30"), "s2": Color(0.42, 0.38, 0.35)},
+}
+
 ## sprite id, display name, one-line blurb — legend sheet and hold-tooltips
 const LEGEND := [
 	["player", "You, the Tender", "descend, cleanse, survive"],
@@ -129,6 +140,8 @@ var _anim_ms := -99999
 const FX_MS := 700
 var _fx: Array = []  # transient map effects {kind, pos: Vector2 tile, text, col, t0}
 var _floor_fade_ms := -99999  # descend wipe: new floor fades in from dark
+var _shake_ms := -99999
+var _shake_mag := 0.0
 
 
 func _ready() -> void:
@@ -310,6 +323,8 @@ func _spawn_fx(evs: Array, prev: Dictionary) -> void:
 				_fx.append({"kind": "float", "pos": p, "text": "-%d" % int(ev["amt"]),
 					"col": COL_RED if mine else COL_CREAM, "t0": now + int(stack[k]) * 110})
 				_fx.append({"kind": "flash", "pos": p, "col": Color(1, 1, 1), "t0": now})
+				if mine:
+					_shake(2.0 + minf(float(int(ev["amt"])) * 1.2, 6.0))
 			"heal":
 				_fx.append({"kind": "float", "pos": Vector2(game.player["pos"]),
 					"text": "+%d" % int(ev["amt"]), "col": Color("8fdc6a"), "t0": now})
@@ -325,6 +340,8 @@ func _spawn_fx(evs: Array, prev: Dictionary) -> void:
 				var dp := _fx_pos(ev, prev)
 				if dp.x > -0.5:
 					_fx.append({"kind": "puff", "pos": dp, "col": Color(0.62, 0.64, 0.66), "t0": now})
+			"boss_phase", "ignite_all", "flood", "smoke_burst":
+				_shake(9.0)
 	if _fx.size() > 40:
 		_fx = _fx.slice(_fx.size() - 40)
 
@@ -342,6 +359,14 @@ func _fx_pos(ev: Dictionary, prev: Dictionary) -> Vector2:
 		if prev.has(id):
 			return prev[id]
 	return Vector2(-9, -9)
+
+
+## Brief screen shake; magnitudes from concurrent hits keep the strongest.
+func _shake(mag: float) -> void:
+	if Time.get_ticks_msec() - _shake_ms > 320:
+		_shake_mag = 0.0
+	_shake_ms = Time.get_ticks_msec()
+	_shake_mag = maxf(_shake_mag, mag)
 
 
 func _arm_anim(prev: Dictionary, prev_floor: int) -> void:
@@ -384,14 +409,15 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_press_pos = ev.position
 			_press_ms = Time.get_ticks_msec()
 			_held = true
+			queue_redraw()  # pressed-state shading on buttons
 		else:
 			var had_tip := not tooltip.is_empty() and not inspect_live
 			_held = false
 			if had_tip:
 				tooltip = []
-				queue_redraw()
 			elif Time.get_ticks_msec() - _press_ms < hold_ms:
 				_click(ev.position)
+			queue_redraw()
 	elif ev is InputEventMouseMotion:
 		if inspect_live and screen != "menu" and game != null and not game.over and mode == "normal":
 			var t := _map_tile(ev.position)
@@ -414,6 +440,8 @@ func _process(_dt: float) -> void:
 		_fx = _fx.filter(func(f): return fnow - int(f["t0"]) < FX_MS)
 		animating = true
 	if Time.get_ticks_msec() - _floor_fade_ms < 500:
+		animating = true
+	if Time.get_ticks_msec() - _shake_ms < 360:
 		animating = true
 	if game != null and game.over:
 		animating = true  # win/loss screens drift
@@ -1117,6 +1145,9 @@ func _box(r: Rect2, style: StyleBoxFlat) -> void:
 	# soft sun-sheen along the top edge
 	draw_rect(Rect2(r.position.x + r.size.y * 0.25, r.position.y + 2.5,
 		maxf(r.size.x - r.size.y * 0.5, 4.0), 2.0), Color(0.9, 1.0, 0.8, 0.10))
+	# pressed-state shading while a finger is down on this box
+	if _held and r.has_point(_press_pos):
+		draw_rect(r.grow(-2), Color(0, 0, 0, 0.22))
 
 
 func _button(r: Rect2, label: String, tag: String, size: int, border: Color = COL_DIM_TEXT) -> void:
@@ -1415,28 +1446,35 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	_moy = zone_y + (zone_h - vth * _ts) / 2.0 - vy0 * _ts
 	if not zoom_room:
 		_moy = zone_y  # anchored under the status strip; slack below feeds the log
+	var sage := float(Time.get_ticks_msec() - _shake_ms) / 320.0
+	if sage < 1.0:
+		var amp := _shake_mag * (1.0 - sage)
+		_mox += sin(float(Time.get_ticks_msec()) * 0.09) * amp
+		_moy += cos(float(Time.get_ticks_msec()) * 0.115) * amp
 
+	var pal: Dictionary = BIOME_PAL.get(
+		String(game.floor_def(game.floor_num).get("biome", "strip_mine")), BIOME_PAL["strip_mine"])
 	for y in range(_vy0, _vy1 + 1):
 		for x in range(_vx0, _vx1 + 1):
 			var p := Vector2i(x, y)
 			var r := _tile_rect(p)
 			if m["tiles"][y * w + x] == 1:
-				draw_rect(r, COL_FLOOR if (x + y) % 2 == 0 else COL_FLOOR_ALT)
+				draw_rect(r, pal["f1"] if (x + y) % 2 == 0 else pal["f2"])
 				var hsh := (x * 73856093) ^ (y * 19349663)
 				if hsh % 7 == 0:
 					var ox := 0.2 + float(hsh % 5) * 0.13
 					var oy := 0.25 + float(hsh % 3) * 0.2
-					draw_circle(r.position + Vector2(_ts * ox, _ts * oy), _ts * 0.05, COL_MOSS)
-					draw_circle(r.position + Vector2(_ts * (ox + 0.11), _ts * (oy + 0.07)), _ts * 0.035, COL_MOSS)
+					draw_circle(r.position + Vector2(_ts * ox, _ts * oy), _ts * 0.05, pal["s1"])
+					draw_circle(r.position + Vector2(_ts * (ox + 0.11), _ts * (oy + 0.07)), _ts * 0.035, pal["s1"])
 				elif hsh % 11 == 3:
-					draw_circle(r.position + Vector2(_ts * 0.7, _ts * 0.6), _ts * 0.04, Color(0.42, 0.47, 0.42))
+					draw_circle(r.position + Vector2(_ts * 0.7, _ts * 0.6), _ts * 0.04, pal["s2"])
 			else:
-				draw_rect(r, COL_WALL)
+				draw_rect(r, pal["w"])
 				# highlight only exposed wall tops, not every wall row
 				if y + 1 < h and m["tiles"][(y + 1) * w + x] == 1:
-					draw_rect(Rect2(r.position + Vector2(0, _ts * 0.82), Vector2(_ts, _ts * 0.18)), COL_WALL_TOP)
+					draw_rect(Rect2(r.position + Vector2(0, _ts * 0.82), Vector2(_ts, _ts * 0.18)), pal["wt"])
 				if y > 0 and m["tiles"][(y - 1) * w + x] == 1:
-					draw_rect(Rect2(r.position, Vector2(_ts, maxf(_ts * 0.1, 2))), COL_WALL_TOP)
+					draw_rect(Rect2(r.position, Vector2(_ts, maxf(_ts * 0.1, 2))), pal["wt"])
 
 	# recent events fill whatever space this floor leaves under the map
 	var log_top := _moy + (_vy1 + 1) * _ts + vh * 0.012
@@ -1452,10 +1490,15 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 
 	for t in snap["terrain"].keys():
 		if _vis(t):
-			if String(snap["terrain"][t]["kind"]) == "fire":
+			var tk := String(snap["terrain"][t]["kind"])
+			if tk == "fire":
 				var fl := 0.14 + 0.09 * sin(Time.get_ticks_msec() / 130.0 + float(t.x * 3 + t.y * 5))
 				draw_circle(_tile_rect(t).get_center(), _ts * 0.62, Color(0.95, 0.55, 0.2, fl))
-			_sprite(snap["terrain"][t]["kind"], t)
+			_sprite(tk, t)
+			if tk == "oil" or tk == "goo" or tk == "rich_goo":
+				var shm := 0.04 + 0.04 * sin(Time.get_ticks_msec() / 600.0 + float(t.x * 5 + t.y * 3))
+				draw_circle(_tile_rect(t).get_center() + Vector2(-_ts * 0.15, -_ts * 0.1),
+					_ts * 0.10, Color(0.75, 0.82, 0.9, shm))
 	for v in m["vents"]:
 		if _vis(v):
 			_sprite("vent", v)
@@ -1497,7 +1540,8 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 
 	var pap := _anim_pos("player", snap["player"]["pos"])
 	_shadow_f(pap)
-	_sprite_f("player", pap)
+	var bob := pap + Vector2(0, -0.02 - 0.02 * sin(Time.get_ticks_msec() / 480.0))
+	_sprite_f("player", bob)
 	var pr := _tile_rect_f(pap)
 	draw_rect(pr.grow(1), Color(0.56, 0.86, 0.42, 0.85), false, 2.0)
 	if int(snap["player"].get("anchor_turns", 0)) > 0:
@@ -1567,6 +1611,25 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	elif mode == "target_dir" or mode == "cleanse":
 		for d in DIRS4.values():
 			draw_rect(_tile_rect(snap["player"]["pos"] + d).grow(-1), COL_TARGET, false, 2.0)
+
+	# soft vignette around the tile field for depth
+	var mr := Rect2(_mox + _vx0 * _ts, _moy + _vy0 * _ts,
+		float(_vx1 - _vx0 + 1) * _ts, float(_vy1 - _vy0 + 1) * _ts)
+	var vd := _ts * 0.9
+	var vc := Color(0, 0, 0, 0.28)
+	var v0 := Color(0, 0, 0, 0.0)
+	draw_polygon(PackedVector2Array([mr.position, Vector2(mr.position.x + vd, mr.position.y + vd),
+		Vector2(mr.position.x + vd, mr.end.y - vd), Vector2(mr.position.x, mr.end.y)]),
+		PackedColorArray([vc, v0, v0, vc]))
+	draw_polygon(PackedVector2Array([Vector2(mr.end.x, mr.position.y), Vector2(mr.end.x - vd, mr.position.y + vd),
+		Vector2(mr.end.x - vd, mr.end.y - vd), mr.end]),
+		PackedColorArray([vc, v0, v0, vc]))
+	draw_polygon(PackedVector2Array([mr.position, Vector2(mr.end.x, mr.position.y),
+		Vector2(mr.end.x - vd, mr.position.y + vd), Vector2(mr.position.x + vd, mr.position.y + vd)]),
+		PackedColorArray([vc, vc, v0, v0]))
+	draw_polygon(PackedVector2Array([Vector2(mr.position.x, mr.end.y), Vector2(mr.position.x + vd, mr.end.y - vd),
+		Vector2(mr.end.x - vd, mr.end.y - vd), mr.end]),
+		PackedColorArray([vc, v0, v0, vc]))
 
 	# boss banner: name and a real health bar across the top of the map
 	for e in snap["enemies"]:
