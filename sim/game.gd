@@ -480,7 +480,22 @@ func _compute_boss_intent(e: Dictionary, edef: Dictionary) -> void:
 				e["intent"] = {"type": "gather"}
 
 
+## Forced movement interrupts the wind-up: the enemy drops its telegraphed
+## intent and re-decides next turn. Per-enemy cooldown so cheap displacement
+## cannot interrupt-lock a single target forever; bosses hold their footing.
+func _stagger(e: Dictionary) -> void:
+	if int(e["status"].get("stagger_cd", 0)) > 0:
+		return
+	if Content.ENEMIES[e["kind"]]["traits"].has("boss"):
+		return
+	e["status"]["stagger_cd"] = 3
+	e["intent"] = {"type": "idle"}
+	_emit({"t": "staggered", "id": e["id"]})
+
+
 func _execute_intent(e: Dictionary) -> void:
+	if int(e["status"].get("stagger_cd", 0)) > 0:
+		e["status"]["stagger_cd"] -= 1
 	if int(e["status"].get("stun", 0)) > 0:
 		e["status"]["stun"] -= 1
 		_emit({"t": "stunned", "id": e["id"]})
@@ -982,18 +997,25 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 			_emit({"t": "growth", "tile": target})
 		"pull":
 			var e = _enemy_at(target)
-			if e == null or Content.ENEMIES[e["kind"]]["traits"].has("massive"):
+			if e == null:
 				return
-			var delta: Vector2i = player["pos"] - e["pos"]
-			var dir := Vector2i(signi(delta.x), signi(delta.y))
-			for i in range(int(eff["dist"])):
-				var nxt: Vector2i = e["pos"] + dir
-				if _manhattan(e["pos"], player["pos"]) <= 1 or not _open(nxt):
-					break
-				e["pos"] = nxt
-				_enemy_enter_tile(e)
-				if not enemies.has(e):
-					return
+			# massive enemies cannot be dragged, but the lash still lands -
+			# no ability should be a dead button against bosses
+			if not Content.ENEMIES[e["kind"]]["traits"].has("massive"):
+				var delta: Vector2i = player["pos"] - e["pos"]
+				var dir := Vector2i(signi(delta.x), signi(delta.y))
+				var pulled := 0
+				for i in range(int(eff["dist"])):
+					var nxt: Vector2i = e["pos"] + dir
+					if _manhattan(e["pos"], player["pos"]) <= 1 or not _open(nxt):
+						break
+					e["pos"] = nxt
+					pulled += 1
+					_enemy_enter_tile(e)
+					if not enemies.has(e):
+						return
+				if pulled > 0:
+					_stagger(e)
 			_damage_enemy(e, int(eff["dmg"]), "vine_whip")
 		"wash_push":
 			_wash_dir(target, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]))
@@ -1189,16 +1211,25 @@ func _damage_player(amt: int, src: String) -> void:
 func _push_enemy(e: Dictionary, dir: Vector2i, dist: int, collision_dmg: int) -> void:
 	if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
 		return
+	var moved := 0
 	for i in range(dist):
 		var nxt: Vector2i = e["pos"] + dir
 		if not _open(nxt):
 			if collision_dmg > 0:
 				_damage_enemy(e, collision_dmg, "collision")
+				var hit = _enemy_at(nxt)
+				if hit != null:
+					_damage_enemy(hit, collision_dmg, "collision")
+			if moved > 0 and enemies.has(e):
+				_stagger(e)
 			return
 		e["pos"] = nxt
+		moved += 1
 		_enemy_enter_tile(e)
 		if not enemies.has(e):
 			return
+	if moved > 0:
+		_stagger(e)
 
 
 func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int) -> void:
@@ -1217,7 +1248,12 @@ func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int) -> void:
 			_emit({"t": "wash", "tile": t})
 		if pushed == null:
 			var e = _enemy_at(t)
-			if e != null and not Content.ENEMIES[e["kind"]]["traits"].has("massive"):
+			if e != null:
+				if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
+					# too heavy to shove; the jet's pressure still hits
+					if collision_dmg > 0:
+						_damage_enemy(e, collision_dmg, "collision")
+					return
 				pushed = e
 	if pushed != null:
 		_push_enemy(pushed, dir, push, collision_dmg)

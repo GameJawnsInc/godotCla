@@ -385,6 +385,33 @@ watch it), sprout 0 with avg floor 4.6, wanderer 0, zero timeouts.
 Tier ladder re-run: all tiers winnable; tier 7 is 0/20 for the
 heuristic but 5/20 for deeproot (ceiling-hard, fair).
 
+## 2026-08-11b - shover viability round (forced-movement interrupts)
+
+Fanatic's shover build sat at 3-4/25 while pyro ran 13/25. Autopsy
+over all 25 shover seeds: deaths cluster on floors 5-7, smog first
+(9/21) and bosses second (7/21) - control play stalls the clock, and
+BOTH shover buttons were dead against every boss (massive blocks
+push/pull entirely, and the pull op returned before dealing damage).
+
+Changes (all system-level, no numbers-only patches):
+- Forced movement now staggers: a pushed or pulled enemy drops its
+  telegraphed intent and re-decides next turn. Per-enemy 3-turn
+  cooldown so cheap displacement cannot interrupt-lock; bosses hold
+  their footing.
+- Vine whip lashes massive enemies it cannot drag; water jet
+  pressure-hits massive enemies it cannot shove. No dead buttons vs
+  bosses.
+- Shoving an enemy into another enemy deals collision damage to both.
+- Numbers: vine_whip 1->2 dmg (+: 2->3), water_jet collision 1->2
+  (+: 2->3).
+
+Result: ceiling check is the verdict - deeproot with a FORCED shover
+kit wins 9/20 (45%), so the archetype is real. Fanatic-shover stays
+low (2-3/25): the 1-ply heuristic cannot play control tempo; recorded
+as persona limitation, not archetype failure. Full personas after the
+round: fanatic 28-29/100 (in band), optimizer 51/100, magpie 5/100,
+deeproot 24/30, zero timeouts everywhere.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from
@@ -395,7 +422,11 @@ heuristic but 5/20 for deeproot (ceiling-hard, fair).
   before shipping; thorn_shield's persistent mild underperformance in pair
   tables is probably the same bleed.
 - Magpie is now a greed canary at 0-5% (see 2026-08-08 magpie entry);
-  watch for rises, not falls.
+  watch for rises, not falls. Sitting at exactly 5/100 since the
+  cleanse-smog-relief change - the next rise is a real signal.
+- Fanatic cannot demo control archetypes (shover 2-3/25 while the
+  ceiling wins 45% with the same kit): judge push/pull changes with
+  deeproot forced-kit runs, not the fanatic number.
 - Boss deaths are rare once seed_bomb is protected; arrivals are the real
   filter. If arrival rates rise, re-check Furnace difficulty.
 - Elites are tanky bounty-carriers (+2 hp, +0 dmg, +4 bloom). The +1 dmg

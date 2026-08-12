@@ -991,6 +991,8 @@ func _ev_text(ev: Dictionary) -> String:
 			return "The boss shrugs off the status"
 		"stunned":
 			return "Enemy stunned"
+		"staggered":
+			return "Staggered - it loses its wind-up"
 		"rooted":
 			return "Enemy rooted in place"
 		"floor":

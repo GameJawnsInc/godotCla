@@ -25,11 +25,11 @@ const ABILITIES := {
 	},
 	"vine_whip": {
 		"name": "Vine Whip", "cost": 1, "target": "enemy_line", "range": 3,
-		"effects": [{"op": "pull", "dist": 2, "dmg": 1}],
+		"effects": [{"op": "pull", "dist": 2, "dmg": 2}],
 	},
 	"water_jet": {
 		"name": "Water Jet", "cost": 1, "target": "dir", "range": 2,
-		"effects": [{"op": "wash_push", "push": 2, "collision_dmg": 1}],
+		"effects": [{"op": "wash_push", "push": 2, "collision_dmg": 2}],
 	},
 	"mycelium_dash": {
 		"name": "Mycelium Dash", "cost": 1, "target": "growth", "range": 4,
@@ -122,11 +122,11 @@ const ABILITIES := {
 	},
 	"vine_whip+": {
 		"name": "Vine Whip+", "cost": 1, "target": "enemy_line", "range": 4,
-		"effects": [{"op": "pull", "dist": 3, "dmg": 2}],
+		"effects": [{"op": "pull", "dist": 3, "dmg": 3}],
 	},
 	"water_jet+": {
 		"name": "Water Jet+", "cost": 1, "target": "dir", "range": 3,
-		"effects": [{"op": "wash_push", "push": 3, "collision_dmg": 2}],
+		"effects": [{"op": "wash_push", "push": 3, "collision_dmg": 3}],
 	},
 	"mycelium_dash+": {
 		"name": "Mycelium Dash+", "cost": 1, "target": "growth", "range": 7,
@@ -197,8 +197,8 @@ const GRAFTS := {
 const ABILITY_DESC := {
 	"solar_lance": "Beam up to 3 tiles: 2 dmg, ignites oil (+: 3 dmg, 4 under clear skies)",
 	"seed_bomb": "Plant a patch of healing growth within 3 tiles",
-	"vine_whip": "Yank an enemy 2 tiles toward you, 1 dmg",
-	"water_jet": "Shove enemies in a line 2 tiles, 1 dmg on impact",
+	"vine_whip": "Yank an enemy 2 tiles toward you, 2 dmg; moving it interrupts its attack",
+	"water_jet": "Shove enemies 2 tiles, 2 dmg on impact; moving them interrupts",
 	"mycelium_dash": "Teleport to any growth tile within 4",
 	"root_wall": "Raise a wall of roots that blocks enemies",
 	"pollen_burst": "Stun everything within 2 tiles for a turn",

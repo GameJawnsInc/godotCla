@@ -128,8 +128,11 @@ func _build_cast(snap: Dictionary, by: Dictionary) -> Variant:
 				if near3 >= 1 and near2 == 0:
 					return a
 			"water_jet":
-				if _enemy_at(snap, ppos + a["target"]) != null:
-					return a
+				# shove-and-interrupt is the archetype; the jet also
+				# pressure-hits massive targets it cannot move
+				for i in range(1, 3):
+					if _enemy_at(snap, ppos + a["target"] * i) != null:
+						return a
 	return null
 
 
