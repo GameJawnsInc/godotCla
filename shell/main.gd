@@ -1249,7 +1249,7 @@ func _draw_menu(vw: float, vh: float) -> void:
 	draw_rect(Rect2(0, sh * 0.35, vw, sh * 0.65), Color("2b4a40"))
 	draw_rect(Rect2(0, sh * 0.62, vw, sh * 0.38), Color("35584a"))
 	var tsec := Time.get_ticks_msec() / 1000.0
-	var sun := Vector2(vw * 0.74, sh * 0.30)
+	var sun := Vector2(vw * 0.82, sh * 0.52)
 	draw_circle(sun, vw * 0.13, Color(0.95, 0.88, 0.55, 0.10))
 	draw_circle(sun, vw * 0.095, Color(0.95, 0.88, 0.55, 0.16))
 	draw_circle(sun, vw * 0.062, Color("f2e4a0"))
@@ -1295,31 +1295,34 @@ func _draw_menu(vw: float, vh: float) -> void:
 	_txt_c(vw / 2.0, vh * 0.195, "a solarpunk roguelike", COL_CREAM, int(vh * 0.021))
 
 	var bw := vw * 0.62
-	var bh := vh * 0.072
 	var bx := (vw - bw) / 2.0
 	var has_resume: bool = game != null and not game.over and _game_is_run
 	var has_tier: bool = int(profile.unlocked_tier) > 0
-	var y := vh * (0.43 if has_resume and has_tier else 0.46)
+	sel_tier = clampi(sel_tier, 0, int(profile.unlocked_tier))
+	# build the row list first, then size the stack to the space above the footer
+	var rows: Array = []
 	if has_resume:
-		_button(Rect2(bx, y, bw, bh), "RESUME RUN", "resume", int(bh * 0.38), COL_GOLD)
-		y += bh + vh * 0.022
-	_button(Rect2(bx, y, bw, bh), "PLAY", "play", int(bh * 0.42), COL_GOLD)
-	y += bh + vh * 0.022
+		rows.append(["RESUME RUN", "resume", true])
+	rows.append(["PLAY", "play", true])
 	if has_tier:
-		sel_tier = clampi(sel_tier, 0, int(profile.unlocked_tier))
 		var tn := "base run" if sel_tier == 0 else String(Content.TIERS[sel_tier - 1]["name"])
-		var th := bh * 0.82
-		_button(Rect2(bx, y, bw, th), "DIFFICULTY %d: %s" % [sel_tier, tn], "set:tier", int(th * 0.34))
-		y += th + vh * 0.022
-	_button(Rect2(bx, y, bw, bh), "TUTORIAL", "tutorial", int(bh * 0.38))
-	y += bh + vh * 0.022
-	_button(Rect2(bx, y, bw, bh), "SETTINGS", "settings", int(bh * 0.38))
-	y += bh + vh * 0.022
-	_button(Rect2(bx, y, bw, bh), "QUIT", "quit", int(bh * 0.38))
+		rows.append(["DIFFICULTY %d: %s" % [sel_tier, tn], "set:tier", false])
+	rows.append(["TUTORIAL", "tutorial", false])
+	rows.append(["SETTINGS", "settings", false])
+	rows.append(["QUIT", "quit", false])
+	var top := vh * 0.46
+	var bottom := vh * 0.935
+	var gap := vh * 0.02
+	var bh := minf(vh * 0.072, (bottom - top - gap * (rows.size() - 1)) / rows.size())
+	var y := top + (bottom - top - (bh * rows.size() + gap * (rows.size() - 1))) / 2.0
+	for row in rows:
+		_button(Rect2(bx, y, bw, bh), String(row[0]), String(row[1]), int(bh * 0.38),
+			COL_GOLD if bool(row[2]) else COL_DIM_TEXT)
+		y += bh + gap
 	var career := "seed mode: %s" % seed_mode
 	if int(profile.runs) > 0:
 		career += "  ·  runs %d · wins %d · best floor %d" % [profile.runs, profile.wins, profile.best_floor]
-	_txt_c_fit(vw / 2.0, vh * 0.96, career, COL_DIM_TEXT, int(vh * 0.016), vw * 0.92)
+	_txt_c_fit(vw / 2.0, vh * 0.972, career, COL_DIM_TEXT, int(vh * 0.016), vw * 0.92)
 
 
 func _draw_settings(vw: float, vh: float) -> void:
@@ -1975,15 +1978,19 @@ func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 		var skt := Art.tex("ic_choke", int(vh * 0.055))
 		if skt != null:
 			draw_texture(skt, Vector2(vw / 2.0 - vh * 0.0275, vh * 0.165))
-	_txt_c(vw / 2.0, vh * 0.3, "THE FURNACE IS COLD" if won else "YOU DIED", COL_GOLD if won else COL_RED, int(vh * 0.042))
-	_txt_c(vw / 2.0, vh * 0.37, "the valley breathes again" if won else "cause: %s" % snap["death_cause"], COL_TEXT, int(vh * 0.024))
-	_txt_c(vw / 2.0, vh * 0.46, "floor %d · turn %d · bloom %d" % [snap["floor"], snap["turn"], snap["bloom"]], COL_TEXT, int(vh * 0.024))
+	var oy := vh * 0.30
+	_txt_c(vw / 2.0, oy, "THE FURNACE IS COLD" if won else "YOU DIED", COL_GOLD if won else COL_RED, int(vh * 0.042))
+	oy += vh * 0.055
+	_txt_c_fit(vw / 2.0, oy, "the valley breathes again" if won else "cause: %s" % snap["death_cause"], COL_TEXT, int(vh * 0.024), vw * 0.9)
+	oy += vh * 0.07
+	_txt_c(vw / 2.0, oy, "floor %d · turn %d · bloom %d" % [snap["floor"], snap["turn"], snap["bloom"]], COL_TEXT, int(vh * 0.024))
+	oy += vh * 0.04
 	var seedline := "seed %d" % seed_v
 	if run_tier > 0:
 		seedline += "  ·  difficulty %d" % run_tier
-	_txt_c(vw / 2.0, vh * 0.51, seedline, COL_DIM_TEXT, int(vh * 0.02))
-	var uy := vh * 0.555
-	for u in _run_unlocks:
+	_txt_c(vw / 2.0, oy, seedline, COL_DIM_TEXT, int(vh * 0.02))
+	oy += vh * 0.05
+	for u in _run_unlocks.slice(0, 4):
 		var us := String(u)
 		var label := ""
 		if us.begins_with("tier:"):
@@ -1991,10 +1998,11 @@ func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 			label = "NEW DIFFICULTY UNLOCKED: %s" % tn2.to_upper()
 		else:
 			label = "UNLOCKED: %s" % us.replace("_", " ").to_upper()
-		_txt_c_fit(vw / 2.0, uy, label, COL_GOLD, int(vh * 0.02), vw * 0.92)
-		uy += vh * 0.028
-	_txt_c(vw / 2.0, vh * 0.62, "- tap anywhere for a new run -", COL_GOLD, int(vh * 0.026))
-	_button(Rect2(vw * 0.3, vh * 0.72, vw * 0.4, vh * 0.06), "MENU", "menu", int(vh * 0.024))
+		_txt_c_fit(vw / 2.0, oy, label, COL_GOLD, int(vh * 0.021), vw * 0.92)
+		oy += vh * 0.032
+	oy = maxf(oy + vh * 0.03, vh * 0.64)
+	_txt_c(vw / 2.0, oy, "- tap anywhere for a new run -", COL_GOLD, int(vh * 0.026))
+	_button(Rect2(vw * 0.3, oy + vh * 0.05, vw * 0.4, vh * 0.06), "MENU", "menu", int(vh * 0.024))
 
 
 func _draw_intro(vw: float, vh: float) -> void:
