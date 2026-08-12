@@ -21,8 +21,30 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 			by[k] = []
 		by[k].append(a)
 
+	# consumables are free actions - fire them on clear triggers
+	if by.has("use_item"):
+		var pl0: Dictionary = snap["player"]
+		var th0 := _threat_tiles(snap)
+		for a in by["use_item"]:
+			match String(pl0["items"][a["slot"]]):
+				"balm_fruit":
+					if pl0["hp"] <= maxi(6, int(pl0["max_hp"]) / 2):
+						return a
+				"sun_capsule":
+					if pl0["charge"] == 0 and _enemies_within(snap, 3) >= 1:
+						return a
+				"iron_seed":
+					if pl0["shield"] == 0 and th0.has(pl0["pos"]):
+						return a
+				"spore_vial":
+					if _enemies_within(snap, 1) >= 2:
+						return a
+				"clearair_pod":
+					if int(snap["dim"]) >= 2:
+						return a
+
 	if by.has("buy"):
-		for item in ["graft", "heal", "ability"]:
+		for item in ["graft", "heal", "ability", "item"]:
 			for a in by["buy"]:
 				if a["item"] == item:
 					return a

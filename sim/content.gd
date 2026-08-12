@@ -183,6 +183,18 @@ const DRAFT_POOL := [
 
 ## Grafts: passive run-long modifiers (the relic analog). Pure data; the sim
 ## consults owned grafts at the relevant decision points.
+## One-use consumables: harvested when a room blooms, or bought at shrines.
+## Using one is a free action - the turn does not advance.
+const ITEMS := {
+	"sun_capsule": {"name": "Sun Capsule", "desc": "Drink stored light: +3 charge, right now"},
+	"balm_fruit": {"name": "Balm Fruit", "desc": "Eat: heal 4 HP"},
+	"spore_vial": {"name": "Spore Vial", "desc": "Burst: stun every enemy within 2 tiles"},
+	"clearair_pod": {"name": "Clear-Air Pod", "desc": "Pop: smog falls by 5"},
+	"iron_seed": {"name": "Iron Seed", "desc": "Crack open: +3 shield"},
+}
+const ITEM_CAP := 2  # satchel slots
+const ROOM_BLOOM_BONUS := 2  # extra bloom when a room's last corruption falls
+
 const GRAFTS := {
 	"deep_cells": {"name": "Deep Cells", "desc": "+2 bank cap"},
 	"verdant_pulse": {"name": "Verdant Pulse", "desc": "growth heals +1"},
@@ -221,7 +233,7 @@ const ABILITY_DESC := {
 	"moss_filter": "Filter the air: restore a stage of dimmed regen",
 }
 
-const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 4}
+const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 4, "item": 2}
 const GRAFT_PRICE_STEP := 2  # each owned graft raises the next graft's price
 const CLEANSE_SMOG_RELIEF := 1  # a cleanse pauses the smog clock, never rewinds it
 

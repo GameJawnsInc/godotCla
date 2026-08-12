@@ -101,6 +101,9 @@ func _score(g) -> float:
 	s += pl["hp"] * 40.0 + pl["shield"] * 12.0
 	s += (pl["charge"] + pl["bank"]) * 2.0
 	s += g.bloom * 4.0
+	# a stocked satchel is stored tempo/safety; slightly below the raw value
+	# of its effects so the search still spends items when they matter
+	s += pl["items"].size() * 30.0
 	s += g.floor_num * 800.0
 	if g.phase == "draft":
 		s += 800.0  # descent taken, floor counter updates after the pick

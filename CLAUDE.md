@@ -99,6 +99,10 @@ architecture below is designed to bend rather than block.
   - `tests/sweep_combos.gd` — pairwise ability win rates vs baseline
   - `tests/sweep_packages.gd` — each tech package added to the pool
   - `tests/sweep_tiers.gd` — every difficulty tier must stay bot-winnable
+- Side-channel rng: incidental draws (shop flavor, supply drops) use
+  `_side_rng(tag)` (hash of seed+floor+tag), NEVER the main `rng` stream -
+  one stray main-stream draw reshuffles every seed's downstream rolls and
+  invalidates cross-version win-rate comparisons.
 - Sim run config: `Game.new(seed, {kit, pool, packages, tier, mutators})` for
   sweeps, meta-unlocks, and post-win difficulty tiers.
 - Meta layer: `meta/profile.gd` records runs against `Content.MILESTONES` and

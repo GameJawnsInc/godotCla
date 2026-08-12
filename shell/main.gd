@@ -58,6 +58,7 @@ const LEGEND := [
 	["stairs", "Stairs", "the way down - your goal each floor"],
 	["shrine", "Shrine", "stand here to open the shop"],
 	["vent", "Vent", "vents reinforcements as the smog rises"],
+	["supply", "Supply pod", "walk over it to stock your satchel (2 slots)"],
 	["oil", "Oil", "corruption - cleanse it (adjacent) for bloom"],
 	["goo", "Goo", "corruption - cleansing yields bloom"],
 	["rich_goo", "Rich goo", "corruption - cleanses for extra bloom"],
@@ -309,7 +310,9 @@ func _play_events(evs: Array) -> void:
 			"ability": id = "cast"
 			"cleanse": id = "sparkle"
 			"heal": id = "heal"
-			"buy", "draft_upgrade": id = "coin"
+			"buy", "draft_upgrade", "item_pickup": id = "coin"
+			"room_bloom": id = "heal"
+			"item_use": id = "cast"
 			"drag": id = "drag"
 			"reinforcement", "summon": id = "vent"
 			"smog_dim", "choke", "stoke": id = "dim"
@@ -359,6 +362,11 @@ func _spawn_fx(evs: Array, prev: Dictionary) -> void:
 				var dp := _fx_pos(ev, prev)
 				if dp.x > -0.5:
 					_fx.append({"kind": "puff", "pos": dp, "col": Color(0.62, 0.64, 0.66), "t0": now})
+			"room_bloom":
+				var bp := Vector2(game.player["pos"])
+				_fx.append({"kind": "burst", "pos": bp, "col": Color(0.91, 0.70, 0.82), "t0": now})
+				_fx.append({"kind": "float", "pos": bp, "text": "BLOOM +%d" % int(ev.get("bonus", 2)),
+					"col": COL_GOLD, "t0": now + 120})
 			"boss_phase", "ignite_all", "flood", "smoke_burst":
 				_shake(9.0)
 	if _fx.size() > 40:
@@ -486,6 +494,14 @@ func _show_tooltip(pos: Vector2) -> void:
 		return
 	# holding an ability button explains the ability
 	for hsp in hotspots:
+		if hsp["rect"].has_point(pos) and String(hsp["tag"]).begins_with("item:"):
+			var islot := int(String(hsp["tag"]).get_slice(":", 1))
+			if islot < game.player["items"].size():
+				var idef: Dictionary = Content.ITEMS[game.player["items"][islot]]
+				tooltip = ["%s - tap to use (free action)" % idef["name"], idef["desc"]]
+				tooltip_tile = Vector2i(-1, -1)
+				queue_redraw()
+				return
 		if hsp["rect"].has_point(pos) and String(hsp["tag"]).begins_with("ability:"):
 			var slot := int(String(hsp["tag"]).get_slice(":", 1))
 			var aid: String = game.player["kit"][slot]
@@ -799,6 +815,10 @@ func _tap(tag: String) -> void:
 		audio.play("tap")
 	if tag.begins_with("ability:"):
 		_ability_press(int(tag.get_slice(":", 1)))
+	elif tag.begins_with("item:"):
+		var islot := int(tag.get_slice(":", 1))
+		if islot < game.player["items"].size():
+			_act({"type": "use_item", "slot": islot})
 	elif tag.begins_with("buy:"):
 		_buy(tag.get_slice(":", 1))
 	elif tag.begins_with("draft:"):
@@ -943,6 +963,14 @@ func _ev_text(ev: Dictionary) -> String:
 			return "Growth heals you +%d" % ev["amt"]
 		"cleanse":
 			return "Cleansed +bloom - the air thins"
+		"room_bloom":
+			return "The room BLOOMS  +%d bloom, a supply pod drops" % ev.get("bonus", 2)
+		"item_pickup":
+			return "Picked up %s" % Content.ITEMS[ev["id"]]["name"]
+		"item_use":
+			return "%s used" % Content.ITEMS[ev["id"]]["name"]
+		"satchel_full":
+			return "Satchel full (2 slots)"
 		"choke":
 			return "The smog chokes you"
 		"smog_dim":
@@ -1493,6 +1521,9 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 
 	var pal: Dictionary = BIOME_PAL.get(
 		String(game.floor_def(game.floor_num).get("biome", "strip_mine")), BIOME_PAL["strip_mine"])
+	var brects: Array = []
+	for ri in m.get("bloomed", []):
+		brects.append(m["rooms"][ri])
 	for y in range(_vy0, _vy1 + 1):
 		for x in range(_vx0, _vx1 + 1):
 			var p := Vector2i(x, y)
@@ -1507,6 +1538,15 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 					draw_circle(r.position + Vector2(_ts * (ox + 0.11), _ts * (oy + 0.07)), _ts * 0.035, pal["s1"])
 				elif hsh % 11 == 3:
 					draw_circle(r.position + Vector2(_ts * 0.7, _ts * 0.6), _ts * 0.04, pal["s2"])
+				for br in brects:
+					if br.has_point(p):
+						draw_rect(r, Color(0.45, 0.75, 0.38, 0.10))
+						if hsh % 5 == 1:
+							draw_circle(r.position + Vector2(_ts * (0.3 + float(hsh % 3) * 0.2), _ts * 0.42),
+								_ts * 0.05, Color(0.91, 0.70, 0.82, 0.85))
+							draw_circle(r.position + Vector2(_ts * (0.3 + float(hsh % 3) * 0.2), _ts * 0.42),
+								_ts * 0.02, Color(0.95, 0.9, 0.55))
+						break
 			else:
 				draw_rect(r, pal["w"])
 				# highlight only exposed wall tops, not every wall row
@@ -1801,10 +1841,18 @@ func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
 	_button(Rect2(dx + b + gap, dy + b + gap, b, b), "END", "end_turn", int(b * 0.28))
 	_arrow_button(Rect2(dx + (b + gap) * 2, dy + b + gap, b, b), "right")
 	_arrow_button(Rect2(dx + b + gap, dy + (b + gap) * 2, b, b), "down")
-	# the D-pad's empty top corners host the view toggles (bottom corners
-	# stay free for future features)
+	# the D-pad's empty top corners host the view toggles; the bottom corners
+	# are the satchel - one-tap consumables (hold for what they do)
 	_icon_button(Rect2(dx, dy, b, b), "ic_camera", "zoom", zoom_room)
 	_icon_button(Rect2(dx + (b + gap) * 2, dy, b, b), "ic_lens", "inspect", inspect_live)
+	var items: Array = game.player["items"]
+	for i in 2:
+		var ir := Rect2(dx + (b + gap) * 2 * i, dy + (b + gap) * 2, b, b)
+		if i < items.size():
+			_icon_button(ir, "it_" + String(items[i]), "item:%d" % i, false)
+		else:
+			draw_rect(ir.grow(-b * 0.06), Color(1, 1, 1, 0.04))
+			draw_rect(ir.grow(-b * 0.06), Color(0.35, 0.44, 0.36, 0.45), false, 1.5)
 
 	var bw := vw * 0.36
 	var bx := vw - bw - vw * 0.035
@@ -1910,6 +1958,12 @@ func _draw_shop(snap: Dictionary, vw: float, vh: float) -> void:
 		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "shrine",
 			"%s  —  %d bloom" % [Content.GRAFTS[gid]["name"], game.shop_cost("graft")],
 			"Graft (permanent): %s" % Content.GRAFTS[gid]["desc"], "buy:graft", vh)
+		y += ch + vh * 0.022
+	if snap["shop"].has("item") and snap["player"]["items"].size() < Content.ITEM_CAP:
+		var iid: String = snap["shop"]["item"]
+		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "it_" + iid,
+			"%s  —  %d bloom" % [Content.ITEMS[iid]["name"], game.shop_cost("item")],
+			"Consumable: %s" % Content.ITEMS[iid]["desc"], "buy:item", vh)
 		y += ch + vh * 0.022
 	y += vh * 0.04
 	_button(Rect2(vw * 0.25, y, vw * 0.5, vh * 0.07), "CLOSE", "close", int(vh * 0.026))
@@ -2031,6 +2085,7 @@ func _draw_intro(vw: float, vh: float) -> void:
 		["", COL_TEXT],
 		["CLEANSE oil and goo: earn bloom AND thin the smog.", COL_TEXT],
 		["Spend bloom at shrines - graft prices rise as you stack them.", COL_TEXT],
+		["Cleanse a WHOLE room and it blooms: bonus + a supply pod.", COL_GOLD],
 		["Green growth heals you while you stand on it.", COL_TEXT],
 		["", COL_TEXT],
 		["HOLD your finger on anything to see what it is.", COL_GOLD],

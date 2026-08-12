@@ -412,6 +412,40 @@ as persona limitation, not archetype failure. Full personas after the
 round: fanatic 28-29/100 (in band), optimizer 51/100, magpie 5/100,
 deeproot 24/30, zero timeouts everywhere.
 
+## 2026-08-11c - green mechanics round (rooms bloom, consumable satchel)
+
+Theme-first mechanics request: make greenifying the world a core loop.
+
+- Cleansing now leaves growth on the tile - tended rooms literally
+  turn green (and feed mycelium_dash / grow_spike / the Dredge).
+- Room bloom: when a room's last corruption is cleansed the room
+  blooms once - +2 bloom and a supply pod springs up beside the
+  tender (nearest open tile; row-major tie-break). Bloomed rooms are
+  tinted and flowered in the shell.
+- Consumable satchel (2 slots, using one is a FREE action):
+  sun_capsule +3 charge, balm_fruit heal 4, spore_vial stun r2,
+  clearair_pod smog -5, iron_seed +3 shield. Sources: bloom pods and
+  shrines (2 bloom, always stocked). Fills the shell's two reserved
+  D-pad corner buttons.
+
+Measurement traps hit and fixed:
+- First cut drew shop-item / pod rng from the MAIN stream; one extra
+  draw per floor reshuffled every downstream roll and the optimizer
+  "dropped" 51->32/100. Isolation (stock line toggled) proved the
+  mechanics were neutral; fix is a forked side rng
+  (hash(seed, floor, tag)) for side-channel draws. Rule for the
+  future: incidental draws NEVER touch the main stream.
+- Deeproot ignored pods (1 pickup/20 blooms) until (a) pods drop
+  adjacent and (b) its eval scores held items (+30/item, below raw
+  effect value so search still spends them).
+
+Post-round: optimizer 20/30 and 51/100 (baseline held), deeproot
+25-26/30 (up ~2 - it cleanses, so the loop pays it; intended),
+sprout floor 4.7 / bloom 24.9, magpie 1/30, zero timeouts, tier
+ladder winnable everywhere (tier 7: 1/20 heuristic, deeproot-fair).
+Loop engagement at ceiling: 16 blooms / 15 pickups / 9 uses per 10
+runs.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from

@@ -64,7 +64,7 @@ func _init(seed_v: int, config: Dictionary = {}) -> void:
 		"pos": Vector2i.ZERO, "hp": Content.PLAYER_HP, "max_hp": Content.PLAYER_HP,
 		"charge": 0, "bank": 0, "shield": 0,
 		"kit": config.get("kit", Content.STARTING_KIT).duplicate(),
-		"uses": {}, "grafts": [], "gummed": {},
+		"uses": {}, "grafts": [], "gummed": {}, "items": [],
 		"thorns_dmg": 0, "thorns_turns": 0, "anchor_turns": 0,
 	}
 	if mutators.has("brittle"):
@@ -156,6 +156,8 @@ func step(action: Dictionary) -> Array:
 			_act_ability(action)
 		"descend":
 			_act_descend()
+		"use_item":
+			_act_use_item(action)
 		"buy":
 			_act_buy(action)
 		"end_turn":
@@ -199,6 +201,8 @@ func legal_actions() -> Array:
 		if player["charge"] >= int(Content.ABILITIES[aid]["cost"]):
 			for tgt in _ability_targets(aid):
 				acts.append({"type": "ability", "slot": slot, "target": tgt})
+	for i in player["items"].size():
+		acts.append({"type": "use_item", "slot": i})
 	if player["pos"] == map["stairs"]:
 		acts.append({"type": "descend"})
 	if player["pos"] == map["shrine"]:
@@ -208,6 +212,8 @@ func legal_actions() -> Array:
 			acts.append({"type": "buy", "item": "ability"})
 		if shop.has("graft") and bloom >= shop_cost("graft"):
 			acts.append({"type": "buy", "item": "graft"})
+		if shop.has("item") and bloom >= shop_cost("item") and player["items"].size() < Content.ITEM_CAP:
+			acts.append({"type": "buy", "item": "item"})
 	acts.append({"type": "end_turn"})
 	return acts
 
@@ -241,13 +247,14 @@ func snapshot() -> Dictionary:
 			"kit": player["kit"].duplicate(), "uses": player["uses"].duplicate(),
 			"grafts": player["grafts"].duplicate(), "gummed": player["gummed"].duplicate(),
 			"thorns_dmg": player["thorns_dmg"], "thorns_turns": player["thorns_turns"],
-			"anchor_turns": player["anchor_turns"],
+			"anchor_turns": player["anchor_turns"], "items": player["items"].duplicate(),
 		},
 		"enemies": ens,
 		"map": {
 			"w": map["w"], "h": map["h"], "tiles": map["tiles"].duplicate(),
 			"start": map["start"], "stairs": map["stairs"], "vents": map["vents"].duplicate(),
-			"shrine": map["shrine"],
+			"shrine": map["shrine"], "rooms": map.get("rooms", []).duplicate(),
+			"bloomed": map.get("bloomed", []).duplicate(),
 		},
 		"shop": shop.duplicate(),
 		"terrain": terr,
@@ -306,6 +313,7 @@ func _enter_floor(n: int) -> void:
 		gen = MapGen.generate(rng, fdef)
 	map = gen
 	terrain = gen["terrain"]
+	map["bloomed"] = []
 	player["pos"] = gen["start"]
 	enemies.clear()
 	for spec in gen["enemies"]:
@@ -318,6 +326,15 @@ func _enter_floor(n: int) -> void:
 		player["shield"] = mini(maxi(player["shield"], 2), _shield_cap())
 	_emit({"t": "floor", "floor": n, "name": fdef["name"]})
 	_compute_intents()
+
+
+## Deterministic side-stream: draws that are incidental to the core action
+## economy (shop flavor, supply drops) come from a forked generator so they
+## never shift the main rng stream - keeps cross-version seed comparability.
+func _side_rng(tag: String) -> RandomNumberGenerator:
+	var r := RandomNumberGenerator.new()
+	r.seed = hash([seed_value, floor_num, tag])
+	return r
 
 
 func _stock_shop() -> Dictionary:
@@ -334,6 +351,9 @@ func _stock_shop() -> Dictionary:
 			gids.append(gid)
 	if not gids.is_empty():
 		stock["graft"] = gids[rng.randi_range(0, gids.size() - 1)]
+	var iids: Array = Content.ITEMS.keys()
+	var srng := _side_rng("shop_item")
+	stock["item"] = iids[srng.randi_range(0, iids.size() - 1)]
 	return stock
 
 
@@ -762,12 +782,14 @@ func _act_cleanse(action: Dictionary) -> void:
 		_emit({"t": "illegal", "action": "cleanse"})
 		return
 	player["charge"] -= Content.CLEANSE_COST
-	terrain.erase(target)
+	# tending leaves life behind: the cleansed tile sprouts growth
+	terrain[target] = {"kind": "growth"}
 	var yield_: int = Content.RICH_GOO_BLOOM if k == "rich_goo" else 1
 	bloom += yield_ + (1 if _has_graft("bloom_surge") else 0)
 	# tending the world buys time: every cleanse thins the smog clock
 	smog = maxi(smog - Content.CLEANSE_SMOG_RELIEF, 0)
 	_emit({"t": "cleanse", "tile": target, "bloom": bloom})
+	_check_room_bloom(target)
 
 
 func _act_descend() -> void:
@@ -843,6 +865,74 @@ func _act_draft(action: Dictionary) -> void:
 	_begin_player_turn()
 
 
+func _act_use_item(action: Dictionary) -> void:
+	var slot := int(action.get("slot", -1))
+	if slot < 0 or slot >= player["items"].size():
+		_emit({"t": "illegal", "action": "use_item"})
+		return
+	var iid := String(player["items"][slot])
+	player["items"].remove_at(slot)
+	match iid:
+		"sun_capsule":
+			player["charge"] += 3
+		"balm_fruit":
+			player["hp"] = mini(player["hp"] + 4, player["max_hp"])
+		"spore_vial":
+			for e in enemies:
+				if _manhattan(e["pos"], player["pos"]) <= 2 and not Content.ENEMIES[e["kind"]]["traits"].has("boss"):
+					e["status"]["stun"] = maxi(int(e["status"].get("stun", 0)), 1)
+		"clearair_pod":
+			smog = maxi(smog - 5, 0)
+		"iron_seed":
+			player["shield"] = mini(player["shield"] + 3, _shield_cap())
+	_emit({"t": "item_use", "id": iid})
+
+
+func _room_of(p: Vector2i) -> int:
+	var rooms: Array = map.get("rooms", [])
+	for i in rooms.size():
+		if rooms[i].has_point(p):
+			return i
+	return -1
+
+
+func _room_has_corruption(ri: int) -> bool:
+	var r: Rect2i = map["rooms"][ri]
+	for t in terrain.keys():
+		if r.has_point(t):
+			var k := String(terrain[t]["kind"])
+			if k == "oil" or k == "goo" or k == "rich_goo":
+				return true
+	return false
+
+
+## A fully tended room blooms once: bonus bloom and a supply drop.
+func _check_room_bloom(p: Vector2i) -> void:
+	var ri := _room_of(p)
+	if ri < 0 or map.get("bloomed", []).has(ri) or _room_has_corruption(ri):
+		return
+	map["bloomed"].append(ri)
+	bloom += Content.ROOM_BLOOM_BONUS
+	var r: Rect2i = map["rooms"][ri]
+	var spots: Array = []
+	for y in range(r.position.y, r.end.y):
+		for x in range(r.position.x, r.end.x):
+			var t := Vector2i(x, y)
+			if _open(t) and not terrain.has(t) and t != player["pos"] and t != map["stairs"] and t != map["shrine"]:
+				spots.append(t)
+	if not spots.is_empty():
+		# the pod springs up as close to the tender as the room allows
+		# (row-major scan order breaks ties deterministically)
+		var t2: Vector2i = spots[0]
+		for t3 in spots:
+			if _manhattan(t3, player["pos"]) < _manhattan(t2, player["pos"]):
+				t2 = t3
+		var srng := _side_rng("supply%d" % ri)
+		var ids: Array = Content.ITEMS.keys()
+		terrain[t2] = {"kind": "supply", "item": ids[srng.randi_range(0, ids.size() - 1)]}
+	_emit({"t": "room_bloom", "room": ri, "bonus": Content.ROOM_BLOOM_BONUS})
+
+
 func _act_buy(action: Dictionary) -> void:
 	var item := String(action.get("item", ""))
 	var cost: int = shop_cost(item)
@@ -877,6 +967,15 @@ func _act_buy(action: Dictionary) -> void:
 			shop.erase("graft")
 			player["grafts"].append(gid)
 			_emit({"t": "buy", "item": "graft", "id": gid})
+		"item":
+			if not shop.has("item") or player["items"].size() >= Content.ITEM_CAP:
+				_emit({"t": "illegal", "action": "buy"})
+				return
+			bloom -= cost
+			var iid2: String = shop["item"]
+			shop.erase("item")
+			player["items"].append(iid2)
+			_emit({"t": "buy", "item": "item", "id": iid2})
 		_:
 			_emit({"t": "illegal", "action": "buy"})
 
@@ -1265,6 +1364,14 @@ func _player_enter_tile() -> void:
 		_damage_player(1, "fire")
 	elif k == "goo" or k == "rich_goo":
 		_damage_player(1, "goo")
+	elif k == "supply":
+		if player["items"].size() < Content.ITEM_CAP:
+			var iid := String(terrain[player["pos"]].get("item", "balm_fruit"))
+			player["items"].append(iid)
+			terrain.erase(player["pos"])
+			_emit({"t": "item_pickup", "id": iid})
+		else:
+			_emit({"t": "satchel_full"})
 
 
 func _corruption_adjacent(p: Vector2i) -> bool:

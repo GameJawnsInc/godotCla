@@ -107,3 +107,10 @@ win unlocks the difficulty ladder and a DIFFICULTY cycler appears on the
 menu (tiers from `Content.TIERS`, clamped to what is unlocked). The win
 screen lists newly unlocked tiers/packages/mutators, and the menu footer
 shows runs / wins / best floor.
+
+## Satchel
+
+The two free D-pad corner slots are the satchel: tap a stocked item to
+use it (free action - the turn does not advance), hold it to read what
+it does. Supply pods drop when a room blooms and shrines always stock
+one consumable.
