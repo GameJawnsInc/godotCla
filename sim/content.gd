@@ -328,37 +328,37 @@ const FLOORS := [
 	{
 		"name": "Strip Mine I", "biome": "strip_mine", "w": 22, "h": 14, "rooms": 4,
 		"enemies": {"drill_bot": 2},
-		"oil": 4, "goo": 2, "vents": 1,
+		"oil": 4, "goo": 2, "vents": 1, "green_need": 2,
 		"smog_spawn": [10, 20], "smog_spawn_every": 12, "smog_dim": [14, 22], "smog_choke": 38,
 	},
 	{
 		"name": "Strip Mine II", "biome": "strip_mine", "w": 24, "h": 15, "rooms": 5,
 		"enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1},
-		"oil": 6, "goo": 3, "vents": 2, "vaults": ["old_garden"],
+		"oil": 6, "goo": 3, "vents": 2, "green_need": 3, "vaults": ["old_garden"],
 		"smog_spawn": [9, 17], "smog_spawn_every": 10, "smog_dim": [12, 20], "smog_choke": 36,
 	},
 	{
 		"name": "Refinery Gate", "biome": "refinery", "w": 26, "h": 16, "rooms": 5,
 		"enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1, "coal_golem": 1},
-		"oil": 8, "goo": 4, "vents": 2, "elites": 1, "vaults": ["tar_hoard", "old_garden"], "pipes": 1,
+		"oil": 8, "goo": 4, "vents": 2, "green_need": 3, "elites": 1, "vaults": ["tar_hoard", "old_garden"], "pipes": 1,
 		"smog_spawn": [10, 18], "smog_spawn_every": 11, "smog_dim": [14, 22], "smog_choke": 36,
 	},
 	{
 		"name": "Cracking Yard", "biome": "refinery", "w": 26, "h": 16, "rooms": 6,
 		"enemies": {"drill_bot": 1, "oil_sludge": 1, "tar_spitter": 1, "extractor_engine": 1, "rust_hound": 1, "magnet_crane": 1},
-		"oil": 9, "goo": 4, "vents": 2, "vaults": ["oil_spill", "tar_hoard"], "pipes": 1,
+		"oil": 9, "goo": 4, "vents": 2, "green_need": 3, "vaults": ["oil_spill", "tar_hoard"], "pipes": 1,
 		"smog_spawn": [12, 22], "smog_spawn_every": 12, "smog_dim": [14, 22], "smog_choke": 34,
 	},
 	{
 		"name": "Pipeworks", "biome": "refinery", "w": 28, "h": 16, "rooms": 6,
 		"enemies": {"drill_bot": 1, "oil_sludge": 1, "coal_golem": 1, "extractor_engine": 1, "pump_jack": 1, "rust_hound": 1, "smokestack": 1},
-		"oil": 10, "goo": 5, "vents": 3, "elites": 1, "vaults": ["oil_spill", "tar_hoard", "fuel_depot"], "pipes": 2,
+		"oil": 10, "goo": 5, "vents": 3, "green_need": 3, "elites": 1, "vaults": ["oil_spill", "tar_hoard", "fuel_depot"], "pipes": 2,
 		"smog_spawn": [12, 20], "smog_spawn_every": 12, "smog_dim": [13, 21], "smog_choke": 32,
 	},
 	{
 		"name": "Furnace Approach", "biome": "furnace", "w": 28, "h": 17, "rooms": 6,
 		"enemies": {"drill_bot": 1, "coal_golem": 2, "tar_spitter": 1, "extractor_engine": 1, "cinder_mite": 2, "smokestack": 1},
-		"oil": 12, "goo": 5, "vents": 3, "elites": 1, "vaults": ["fuel_depot", "tar_hoard", "sacred_grove"], "pipes": 2,
+		"oil": 12, "goo": 5, "vents": 3, "green_need": 4, "elites": 1, "vaults": ["fuel_depot", "tar_hoard", "sacred_grove"], "pipes": 2,
 		"smog_spawn": [10, 18], "smog_spawn_every": 11, "smog_dim": [12, 20], "smog_choke": 30,
 	},
 	{

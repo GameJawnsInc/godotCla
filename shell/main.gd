@@ -150,6 +150,8 @@ var _run_recorded := false
 var _run_unlocks: Array = []
 var _shake_ms := -99999
 var _shake_mag := 0.0
+var _banner: Array = []
+var _banner_ms := -99999
 
 
 func _ready() -> void:
@@ -312,6 +314,9 @@ func _play_events(evs: Array) -> void:
 			"heal": id = "heal"
 			"buy", "draft_upgrade", "item_pickup": id = "coin"
 			"room_bloom": id = "heal"
+			"stairs_awaken": id = "sparkle"
+			"seal_burst": id = "vent"
+			"floor_restored": id = "heal"
 			"item_use": id = "cast"
 			"drag": id = "drag"
 			"reinforcement", "summon": id = "vent"
@@ -367,6 +372,15 @@ func _spawn_fx(evs: Array, prev: Dictionary) -> void:
 				_fx.append({"kind": "burst", "pos": bp, "col": Color(0.91, 0.70, 0.82), "t0": now})
 				_fx.append({"kind": "float", "pos": bp, "text": "BLOOM +%d" % int(ev.get("bonus", 2)),
 					"col": COL_GOLD, "t0": now + 120})
+			"stairs_awaken":
+				_banner = ["THE STAIRS AWAKEN"]
+				_banner_ms = now
+				if ev.has("tile"):
+					_fx.append({"kind": "burst", "pos": Vector2(ev["tile"]), "col": COL_GOLD, "t0": now})
+			"floor_restored":
+				_banner = ["FLOOR RESTORED", "the skies clear"]
+				_banner_ms = now
+				_fx.append({"kind": "burst", "pos": Vector2(game.player["pos"]), "col": Color(0.6, 0.9, 0.5), "t0": now})
 			"boss_phase", "ignite_all", "flood", "smoke_burst":
 				_shake(9.0)
 	if _fx.size() > 40:
@@ -467,6 +481,8 @@ func _process(_dt: float) -> void:
 		_fx = _fx.filter(func(f): return fnow - int(f["t0"]) < FX_MS)
 		animating = true
 	if Time.get_ticks_msec() - _floor_fade_ms < 1450:
+		animating = true
+	if Time.get_ticks_msec() - _banner_ms < 1650:
 		animating = true
 	if game != null and not game.over and int(game.player["hp"]) <= maxi(2, int(game.player["max_hp"]) / 4):
 		animating = true  # danger vignette pulse
@@ -971,6 +987,14 @@ func _ev_text(ev: Dictionary) -> String:
 			return "%s used" % Content.ITEMS[ev["id"]]["name"]
 		"satchel_full":
 			return "Satchel full (2 slots)"
+		"stairs_dormant":
+			return "The stairs are dormant - green the floor (%d/%d)" % [ev.get("have", 0), ev.get("need", 0)]
+		"stairs_awaken":
+			return "The floor greens - THE STAIRS AWAKEN"
+		"seal_burst":
+			return "An overgrown vent chokes - spawn absorbed"
+		"floor_restored":
+			return "FLOOR RESTORED - the skies clear (+%d bloom)" % ev.get("bonus", 5)
 		"choke":
 			return "The smog chokes you"
 		"smog_dim":
@@ -1482,6 +1506,12 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	var fsz := int(vh * 0.02)
 	var fw := font.get_string_size(fl, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x
 	_txt(Vector2(vw - fw - vw * 0.025, y2 + mh), fl, COL_GOLD, fsz)
+	if int(snap["green_need"]) > 0:
+		var gl := "green %d/%d" % [snap["greened"], snap["green_need"]]
+		var done: bool = int(snap["greened"]) >= int(snap["green_need"])
+		var gw := font.get_string_size(gl, HORIZONTAL_ALIGNMENT_LEFT, -1, int(vh * 0.016)).x
+		_txt(Vector2(vw - fw - gw - vw * 0.055, y2 + mh), gl,
+			Color(0.6, 0.85, 0.55) if not done else COL_DIM_TEXT, int(vh * 0.016))
 	_status_end = pad + row_h * 1.35 + mh + vh * 0.022
 
 
@@ -1549,11 +1579,18 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 						break
 			else:
 				draw_rect(r, pal["w"])
-				# highlight only exposed wall tops, not every wall row
+				# highlight only exposed wall tops, not every wall row; walls
+				# beside a bloomed room get overgrown instead
+				var vine := false
+				for br0 in brects:
+					if br0.grow(1).has_point(p):
+						vine = true
+						break
+				var wtc: Color = Color(0.33, 0.5, 0.3) if vine else pal["wt"]
 				if y + 1 < h and m["tiles"][(y + 1) * w + x] == 1:
-					draw_rect(Rect2(r.position + Vector2(0, _ts * 0.82), Vector2(_ts, _ts * 0.18)), pal["wt"])
+					draw_rect(Rect2(r.position + Vector2(0, _ts * 0.82), Vector2(_ts, _ts * 0.18)), wtc)
 				if y > 0 and m["tiles"][(y - 1) * w + x] == 1:
-					draw_rect(Rect2(r.position, Vector2(_ts, maxf(_ts * 0.1, 2))), pal["wt"])
+					draw_rect(Rect2(r.position, Vector2(_ts, maxf(_ts * 0.1, 2))), wtc)
 
 	# recent events fill whatever space this floor leaves under the map
 	var log_top := _moy + (_vy1 + 1) * _ts + vh * 0.012
@@ -1573,7 +1610,20 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			if tk == "fire":
 				var fl := 0.14 + 0.09 * sin(Time.get_ticks_msec() / 130.0 + float(t.x * 3 + t.y * 5))
 				draw_circle(_tile_rect(t).get_center(), _ts * 0.62, Color(0.95, 0.55, 0.2, fl))
-			_sprite(tk, t)
+			if tk == "growth":
+				# alive: each plant sways on its own phase; some carry a flower
+				var gph := float(t.x * 7 + t.y * 11)
+				var ctr := _tile_rect(t).get_center()
+				draw_set_transform(ctr, sin(Time.get_ticks_msec() / 900.0 + gph) * 0.055, Vector2.ONE)
+				var gtx := Art.tex("growth", int(_ts))
+				if gtx != null:
+					draw_texture(gtx, Vector2(-_ts / 2.0, -_ts / 2.0))
+				draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+				if ((t.x * 73856093) ^ (t.y * 19349663)) % 4 == 0:
+					draw_circle(ctr + Vector2(_ts * 0.26, -_ts * 0.18), _ts * 0.055, Color(0.91, 0.70, 0.82))
+					draw_circle(ctr + Vector2(_ts * 0.26, -_ts * 0.18), _ts * 0.022, Color(0.95, 0.9, 0.55))
+			else:
+				_sprite(tk, t)
 			if tk == "oil" or tk == "goo" or tk == "rich_goo":
 				var shm := 0.04 + 0.04 * sin(Time.get_ticks_msec() / 600.0 + float(t.x * 5 + t.y * 3))
 				draw_circle(_tile_rect(t).get_center() + Vector2(-_ts * 0.15, -_ts * 0.1),
@@ -1581,14 +1631,26 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	for v in m["vents"]:
 		if _vis(v):
 			_sprite("vent", v)
+			if snap["terrain"].has(v) and String(snap["terrain"][v]["kind"]) == "growth":
+				# sealed: the growth chokes the grate (drawn again over the vent)
+				_sprite("growth", v)
+				draw_rect(_tile_rect(v).grow(-2), Color(0.42, 0.72, 0.35, 0.85), false, 2.0)
+				continue
 			var vph := fposmod(Time.get_ticks_msec() / 2000.0 + float(v.x * 7 + v.y * 13) * 0.31, 1.0)
 			if vph < 0.55:
 				draw_circle(_tile_rect(v).get_center() + Vector2(_ts * 0.1 * sin(vph * 9.0), -_ts * (0.2 + vph * 0.8)),
 					_ts * (0.06 + vph * 0.10), Color(0.7, 0.72, 0.74, 0.35 * (1.0 - vph / 0.55)))
 	if m["stairs"] != Vector2i(-1, -1) and _vis(m["stairs"]):
 		_sprite("stairs", m["stairs"])
-		draw_rect(_tile_rect(m["stairs"]).grow(-1), COL_GOLD, false,
-			2.2 + 1.2 * sin(Time.get_ticks_msec() / 400.0))
+		if int(snap["greened"]) < int(snap["green_need"]):
+			# dormant: grey ring, vines creeping over the steps
+			draw_rect(_tile_rect(m["stairs"]).grow(-1), Color(0.45, 0.5, 0.45, 0.8), false, 2.0)
+			var sc := _tile_rect(m["stairs"]).position
+			draw_arc(sc + Vector2(_ts * 0.25, _ts * 0.8), _ts * 0.18, PI, TAU, 6, Color(0.35, 0.55, 0.3), 2.0)
+			draw_arc(sc + Vector2(_ts * 0.7, _ts * 0.65), _ts * 0.14, PI, TAU, 6, Color(0.35, 0.55, 0.3), 2.0)
+		else:
+			draw_rect(_tile_rect(m["stairs"]).grow(-1), COL_GOLD, false,
+				2.2 + 1.2 * sin(Time.get_ticks_msec() / 400.0))
 	if m["shrine"] != Vector2i(-1, -1) and _vis(m["shrine"]):
 		_sprite("shrine", m["shrine"])
 		var twk := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 350.0)
@@ -1644,6 +1706,31 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			if choked:
 				hcol = Color(0.62, 0.42, 0.38, minf(0.045 * float(dimlvl), 0.13))
 			draw_circle(Vector2(hx, hy), hr, hcol)
+
+	# life returns: butterflies over bloomed rooms
+	var lts := Time.get_ticks_msec() / 1000.0
+	for bi in brects.size():
+		var br2: Rect2i = brects[bi]
+		for k in 2:
+			var bph := float(bi * 13 + k * 7)
+			var btx := float(br2.position.x) + (0.5 + 0.42 * sin(lts * 0.31 + bph)) * float(br2.size.x)
+			var bty := float(br2.position.y) + (0.5 + 0.42 * sin(lts * 0.23 + bph * 1.7)) * float(br2.size.y)
+			if not _vis(Vector2i(int(btx), int(bty))):
+				continue
+			var wingc := Vector2(_mox + btx * _ts, _moy + bty * _ts + sin(lts * 2.0 + bph) * _ts * 0.1)
+			var flap := 0.3 + 0.7 * absf(sin(lts * 7.0 + bph))
+			var bcol2 := Color(0.95, 0.75, 0.45, 0.95) if k == 0 else Color(0.91, 0.66, 0.80, 0.95)
+			draw_circle(wingc + Vector2(-_ts * 0.055 * flap, 0), _ts * 0.045, bcol2)
+			draw_circle(wingc + Vector2(_ts * 0.055 * flap, 0), _ts * 0.045, bcol2)
+	# and fireflies drift once the skies dim - life glowing against the smog
+	if int(snap["dim"]) >= 1 and not game.over:
+		for i in 6:
+			var fph := float(i) * 1.31
+			var fx2 := _mox + (float(_vx0) + (0.5 + 0.46 * sin(lts * 0.17 + fph * 2.3)) * float(_vx1 - _vx0)) * _ts
+			var fy2 := _moy + (float(_vy0) + (0.5 + 0.44 * sin(lts * 0.13 + fph * 1.4)) * float(_vy1 - _vy0)) * _ts
+			var glow := 0.4 + 0.6 * absf(sin(lts * 1.1 + fph * 3.0))
+			draw_circle(Vector2(fx2, fy2), _ts * 0.10, Color(0.95, 0.85, 0.4, 0.10 * glow))
+			draw_circle(Vector2(fx2, fy2), _ts * 0.028, Color(0.98, 0.92, 0.6, 0.85 * glow))
 
 	# transient combat feedback: flashes, bursts, puffs, floating numbers
 	var fnow := Time.get_ticks_msec()
@@ -1766,6 +1853,18 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		_txt_c(vw / 2.0 + 2, scy + 2, nm, Color(0, 0, 0, 0.6 * sa), nsz)
 		_txt_c(vw / 2.0, scy, nm, Color(COL_GOLD, sa), nsz)
 		_txt_c(vw / 2.0, scy + vh * 0.028, "floor %d of 7" % snap["floor"], Color(COL_CREAM, sa * 0.85), int(vh * 0.018))
+		_txt_c(vw / 2.0, scy + vh * 0.052, "green %d tiles to wake the stairs" % snap["green_need"],
+			Color(0.6, 0.85, 0.55, sa * 0.9), int(vh * 0.016))
+
+	# event banners (stairs awaken, floor restored)
+	var bage := float(Time.get_ticks_msec() - _banner_ms) / 1600.0
+	if bage >= 0.0 and bage < 1.0 and not _banner.is_empty():
+		var ba := 1.0 if bage < 0.6 else 1.0 - (bage - 0.6) / 0.4
+		var bcy := (mr.position.y + mr.end.y) / 2.0 - vh * 0.05
+		_txt_c(vw / 2.0 + 2, bcy + 2, String(_banner[0]), Color(0, 0, 0, 0.6 * ba), int(vh * 0.03))
+		_txt_c(vw / 2.0, bcy, String(_banner[0]), Color(COL_GOLD, ba), int(vh * 0.03))
+		if _banner.size() > 1:
+			_txt_c(vw / 2.0, bcy + vh * 0.026, String(_banner[1]), Color(COL_CREAM, ba * 0.9), int(vh * 0.017))
 
 
 func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
@@ -1823,6 +1922,9 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 				msg = ""
 			elif snap["floor"] == 7:
 				msg = "Objective: DESTROY THE BOSS  (tap here for the log)"
+			elif int(snap["greened"]) < int(snap["green_need"]):
+				msg = "Objective: green the floor (%d/%d cleansed) - stairs dormant" % [snap["greened"], snap["green_need"]]
+				col = Color(0.6, 0.85, 0.55)
 			else:
 				msg = "Objective: reach the gold-ringed stairs  (tap for log)"
 	_txt_fit(Vector2(vw * 0.025, y), msg, col, int(vh * 0.022), vw * 0.95)
@@ -2085,7 +2187,8 @@ func _draw_intro(vw: float, vh: float) -> void:
 		["", COL_TEXT],
 		["CLEANSE oil and goo: earn bloom AND thin the smog.", COL_TEXT],
 		["Spend bloom at shrines - graft prices rise as you stack them.", COL_TEXT],
-		["Cleanse a WHOLE room and it blooms: bonus + a supply pod.", COL_GOLD],
+		["Cleanse a WHOLE room and it blooms: bonus + a supply pod.", COL_TEXT],
+		["The stairs are DORMANT until you green the floor's quota.", COL_GOLD],
 		["Green growth heals you while you stand on it.", COL_TEXT],
 		["", COL_TEXT],
 		["HOLD your finger on anything to see what it is.", COL_GOLD],

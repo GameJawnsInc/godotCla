@@ -34,7 +34,7 @@ const ROOM := """
 const KIT := ["solar_lance", "seed_bomb", "mycelium_dash"]
 
 ## Tutorial floor pacing: no reinforcements, sky never dims, choke far away.
-const FDEF := {"smog_spawn": [999], "smog_spawn_every": 0, "smog_dim": [900, 950], "smog_choke": 999}
+const FDEF := {"smog_spawn": [999], "smog_spawn_every": 0, "smog_dim": [900, 950], "smog_choke": 999, "green_need": 0}
 
 const STEPS := [
 	{
@@ -73,7 +73,7 @@ const STEPS := [
 		"do": null,
 	},
 	{
-		"say": ["Scrapped. See the dark OIL puddles? That is the", "combine's corruption. Stand NEXT to one, press", "CLEANSE, then aim at it. It pays 1 bloom."],
+		"say": ["Scrapped. See the dark OIL puddles? That is the", "combine's corruption. Stand NEXT to one, press", "CLEANSE, then aim at it. It pays 1 bloom, leaves", "growth - and on real floors, greening WAKES the stairs."],
 		"expect": {"type": "cleanse"},
 		"allow_nav": true,
 		"do": null,

@@ -62,6 +62,19 @@ func _candidates(legal: Array) -> Array:
 func _refresh_field(snap: Dictionary) -> void:
 	var m: Dictionary = snap["map"]
 	var goal: Vector2i = m["stairs"]
+	# dormant stairs: while the green quota is unmet, the gradient points at
+	# the nearest corruption instead
+	if int(snap.get("green_need", 0)) > int(snap.get("greened", 0)):
+		var pp0: Vector2i = snap["player"]["pos"]
+		var bd0 := 99999
+		for t in snap["terrain"].keys():
+			var k0 := String(snap["terrain"][t]["kind"])
+			if k0 != "oil" and k0 != "goo" and k0 != "rich_goo":
+				continue
+			var d0: int = absi(t.x - pp0.x) + absi(t.y - pp0.y)
+			if d0 < bd0:
+				bd0 = d0
+				goal = t
 	if goal == Vector2i(-1, -1):
 		for e in snap["enemies"]:
 			if e["traits"].has("boss"):
@@ -104,6 +117,8 @@ func _score(g) -> float:
 	# a stocked satchel is stored tempo/safety; slightly below the raw value
 	# of its effects so the search still spends items when they matter
 	s += pl["items"].size() * 30.0
+	# unmet green quota is distance-to-descent in disguise
+	s -= maxf(0.0, float(g.green_need - g.greened)) * 80.0
 	s += g.floor_num * 800.0
 	if g.phase == "draft":
 		s += 800.0  # descent taken, floor counter updates after the pick

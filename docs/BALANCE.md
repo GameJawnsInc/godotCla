@@ -446,6 +446,40 @@ ladder winnable everywhere (tier 7: 1/20 heuristic, deeproot-fair).
 Loop engagement at ceiling: 16 blooms / 15 pickups / 9 uses per 10
 runs.
 
+## 2026-08-11d - the green gate (user-directed core mechanic)
+
+Direction: greening is REQUIRED to advance. The stairs lie dormant
+until the floor's green quota is cleansed (green_need per floor def:
+2/3/3/3/3/4, floor 7 gated by the boss instead; clamped at floor
+entry to the corruption that actually generated). Cleansing while
+the quota is unmet gives smog relief 2 (net -1: the sky funds the
+detour the gate demands); post-quota relief returns to the
+stall-safe 1. Extras: growth planted on a vent absorbs that vent's
+next smog-clock reinforcement (boss-phase spawns punch through);
+cleansing the LAST corruption anywhere restores the floor - dim
+clears, smog -8, +5 bloom, one-time.
+
+Tuning history (all measured at 30 seeds, key rates at 100):
+- Gate landed hard: optimizer 20->7/30, sprout avg floor 4.6->2.0
+  (25/30 deaths were smog with quota UNMET - bots stalled at dormant
+  stairs). Bots are part of the game: sprout paths to corruption
+  when gated ("even a noob reads the banner"), optimizer cleanses
+  whenever standing safe and walks to corruption in calm moments,
+  deeproot's field gradient and eval learned the quota.
+- Quota trim (floors 4-6: 4/4/5 -> 3/3/4) + gate-aware bots:
+  optimizer 13/30, sprout floor 3.9, fanatic 7/30, deeproot 26/30,
+  magpie 1/30, zero timeouts.
+- Post-gate world is deliberately harder than pre-gate (optimizer
+  ~43% vs 51%): mandatory objectives cost tempo. Accepted.
+- Tier ladder re-judged: heuristic 10/10/10/6/5/7 through tier 5;
+  tiers 6-8 by deeproot: 12/20, 9/20, 8/20. The green economy pays
+  skilled play, so high tiers actually softened for the ceiling.
+
+Watch: deeproot 26/30 (87%) - the ceiling exploits quota relief +
+restoration + satchel hard. If the human reports the game feels
+farmable again, the levers are quota relief (2->fixed 1) and the
+restoration bonus (-8 smog / +5 bloom).
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from

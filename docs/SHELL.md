@@ -114,3 +114,11 @@ The two free D-pad corner slots are the satchel: tap a stocked item to
 use it (free action - the turn does not advance), hold it to read what
 it does. Supply pods drop when a room blooms and shrines always stock
 one consumable.
+
+## The green gate
+
+Each floor's stairs start dormant (grey ring, vines) and awaken when
+the floor's green quota is met - the status row shows "green x/y" and
+the objective line tracks it. Overgrown vents (growth planted on the
+grate) absorb their next reinforcement. Cleansing every last corruption
+tile restores the floor: banner, skies clear, bonus bloom.

@@ -146,6 +146,16 @@ func _bfs_step_blind(snap: Dictionary) -> Vector2i:
 	var h: int = m["h"]
 	var start: Vector2i = snap["player"]["pos"]
 	var goal: Vector2i = m["stairs"]
+	# even a noob reads "the stairs are dormant": head for corruption instead
+	if int(snap.get("green_need", 0)) > int(snap.get("greened", 0)):
+		var bd := 99999
+		for t in snap["terrain"].keys():
+			var k := String(snap["terrain"][t]["kind"])
+			if k == "oil" or k == "goo" or k == "rich_goo":
+				var d: int = absi(t.x - start.x) + absi(t.y - start.y)
+				if d < bd:
+					bd = d
+					goal = t
 	var occupied := {}
 	for e in snap["enemies"]:
 		occupied[e["pos"]] = true

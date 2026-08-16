@@ -87,6 +87,12 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 	# take the hits on the way out.
 	var stairs_d: Vector2i = snap["map"]["stairs"]
 	if int(snap["turn"]) > 120 and stairs_d != Vector2i(-1, -1):
+		if int(snap.get("green_need", 0)) > int(snap.get("greened", 0)):
+			if by.has("cleanse"):
+				return by["cleanse"][0]
+			var cg2 := _nearest_corruption(snap)
+			if cg2 != Vector2i(-1, -1):
+				stairs_d = cg2
 		if by.has("move"):
 			var dstep := _bfs_step(snap, false, threat, stairs_d)
 			if dstep != Vector2i.ZERO:
@@ -116,6 +122,21 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		var out := _dodge(snap, by, threat)
 		if not out.is_empty():
 			return out
+
+	# green gate: the stairs stay dormant until the quota is met. A cleanse
+	# is one cheap tap - take it whenever standing safe; only the walk toward
+	# corruption waits for a calm moment.
+	if int(snap.get("green_need", 0)) > int(snap.get("greened", 0)):
+		if by.has("cleanse") and not threat.has(ppos):
+			return by["cleanse"][0]
+		if _enemies_within(snap, 2) == 0:
+			var cg := _nearest_corruption(snap)
+			if cg != Vector2i(-1, -1) and by.has("move"):
+				var gstep := _bfs_step(snap, false, threat, cg)
+				if gstep != Vector2i.ZERO:
+					for a in by["move"]:
+						if a["dir"] == gstep and not threat.has(ppos + a["dir"]):
+							return a
 
 	if by.has("strike"):
 		# lowest HP first, but summoners outrank their spawns - executing the
@@ -539,3 +560,18 @@ func _bfs_step(snap: Dictionary, strict: bool, threat: Dictionary, goal: Vector2
 			prev[nxt] = cur
 			queue.append(nxt)
 	return Vector2i.ZERO
+
+
+func _nearest_corruption(snap: Dictionary) -> Vector2i:
+	var pp: Vector2i = snap["player"]["pos"]
+	var best := Vector2i(-1, -1)
+	var bd := 99999
+	for t in snap["terrain"].keys():
+		var k := String(snap["terrain"][t]["kind"])
+		if k != "oil" and k != "goo" and k != "rich_goo":
+			continue
+		var d: int = absi(t.x - pp.x) + absi(t.y - pp.y)
+		if d < bd:
+			bd = d
+			best = t
+	return best

@@ -39,7 +39,9 @@ var shop := {}
 var tier := 0
 var mutators: Array = []
 var draft_pool: Array = []
-var stoked := 0  # pending extra smog ticks from live smokestacks
+var stoked := 0
+var greened := 0  # corruption cleansed this floor
+var green_need := 0  # dormant-stairs quota (clamped to generated corruption)  # pending extra smog ticks from live smokestacks
 var _fixed_floor := {}  # config "fixed_floor": scripted floor-1 layout (tutorials, tests)
 
 var _next_id := 1
@@ -203,7 +205,7 @@ func legal_actions() -> Array:
 				acts.append({"type": "ability", "slot": slot, "target": tgt})
 	for i in player["items"].size():
 		acts.append({"type": "use_item", "slot": i})
-	if player["pos"] == map["stairs"]:
+	if player["pos"] == map["stairs"] and greened >= green_need:
 		acts.append({"type": "descend"})
 	if player["pos"] == map["shrine"]:
 		if shop.get("heal", false) and bloom >= shop_cost("heal") and player["hp"] < player["max_hp"]:
@@ -239,6 +241,7 @@ func snapshot() -> Dictionary:
 		"stoked": stoked,
 		"turn": turn, "total_turns": total_turns,
 		"smog": smog, "dim": dim, "bloom": bloom,
+		"greened": greened, "green_need": green_need,
 		"over": over, "won": won, "death_cause": death_cause,
 		"phase": phase, "draft_offers": draft_offers.duplicate(),
 		"player": {
@@ -255,6 +258,7 @@ func snapshot() -> Dictionary:
 			"start": map["start"], "stairs": map["stairs"], "vents": map["vents"].duplicate(),
 			"shrine": map["shrine"], "rooms": map.get("rooms", []).duplicate(),
 			"bloomed": map.get("bloomed", []).duplicate(),
+			"restored": map.get("restored", false),
 		},
 		"shop": shop.duplicate(),
 		"terrain": terr,
@@ -274,6 +278,8 @@ func clone():
 	g.tier = tier
 	g.mutators = mutators.duplicate()
 	g.stoked = stoked
+	g.greened = greened
+	g.green_need = green_need
 	g._fixed_floor = _fixed_floor.duplicate(true)
 	g.draft_pool = draft_pool.duplicate()
 	g.floor_num = floor_num
@@ -314,6 +320,10 @@ func _enter_floor(n: int) -> void:
 	map = gen
 	terrain = gen["terrain"]
 	map["bloomed"] = []
+	map["restored"] = false
+	greened = 0
+	# the quota can never exceed what the floor actually generated
+	green_need = mini(int(fdef.get("green_need", 0)), _count_corruption())
 	player["pos"] = gen["start"]
 	enemies.clear()
 	for spec in gen["enemies"]:
@@ -743,6 +753,11 @@ func _tick_smog() -> void:
 		if spawn:
 			for v in map["vents"]:
 				if _open(v):
+					if _terrain_kind(v) == "growth":
+						# nature chokes the machine: the seal absorbs this spawn
+						terrain.erase(v)
+						_emit({"t": "seal_burst", "tile": v})
+						continue
 					var e := _spawn("drill_bot", v)
 					e["intent"] = {"type": "idle"}
 					_emit({"t": "reinforcement", "tile": v})
@@ -786,15 +801,33 @@ func _act_cleanse(action: Dictionary) -> void:
 	terrain[target] = {"kind": "growth"}
 	var yield_: int = Content.RICH_GOO_BLOOM if k == "rich_goo" else 1
 	bloom += yield_ + (1 if _has_graft("bloom_surge") else 0)
-	# tending the world buys time: every cleanse thins the smog clock
-	smog = maxi(smog - Content.CLEANSE_SMOG_RELIEF, 0)
+	# tending the world buys time: every cleanse thins the smog clock, and
+	# while the floor's quota is unmet the sky answers harder (funds the
+	# detour the gate demands; post-quota relief stays stall-safe at 1)
+	var relief := Content.CLEANSE_SMOG_RELIEF
+	if greened < green_need:
+		relief += 1
+	smog = maxi(smog - relief, 0)
+	greened += 1
 	_emit({"t": "cleanse", "tile": target, "bloom": bloom})
+	if green_need > 0 and greened == green_need:
+		_emit({"t": "stairs_awaken", "tile": map["stairs"]})
 	_check_room_bloom(target)
+	# the whole floor scrubbed clean: it is RESTORED - skies clear for good
+	if not map.get("restored", false) and _count_corruption() == 0:
+		map["restored"] = true
+		dim = 0
+		smog = maxi(smog - 8, 0)
+		bloom += 5
+		_emit({"t": "floor_restored", "bonus": 5})
 
 
 func _act_descend() -> void:
 	if player["pos"] != map["stairs"]:
 		_emit({"t": "illegal", "action": "descend"})
+		return
+	if greened < green_need:
+		_emit({"t": "stairs_dormant", "have": greened, "need": green_need})
 		return
 	if floor_num >= Content.FLOORS.size():
 		won = true
@@ -894,6 +927,15 @@ func _room_of(p: Vector2i) -> int:
 		if rooms[i].has_point(p):
 			return i
 	return -1
+
+
+func _count_corruption() -> int:
+	var cnt := 0
+	for t in terrain.keys():
+		var k := String(terrain[t]["kind"])
+		if k == "oil" or k == "goo" or k == "rich_goo":
+			cnt += 1
+	return cnt
 
 
 func _room_has_corruption(ri: int) -> bool:
