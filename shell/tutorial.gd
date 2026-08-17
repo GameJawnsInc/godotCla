@@ -11,6 +11,8 @@ extends RefCounted
 ##   do       the exact action the headless test performs for this step
 ##            (defaults to expect when expect is fully concrete)
 ##   free     optional: if true, ANY action advances (sandbox moments)
+##   until_dead optional: true = advance once no enemies remain; a String
+##            kind = advance once no enemy of that kind remains
 ##   allow_nav optional: if true, move/end_turn/strike are allowed without
 ##            advancing (steps that need the player to walk somewhere first).
 ##            Steps WITHOUT it are strict: only the expected action works.
@@ -25,8 +27,8 @@ const ROOM := """
 ##############
 #............#
 #.@....d.....#
-#......~~....#
-#..""....~...#
+#......~.....#
+#..""....~..G#
 #........>...#
 ##############
 """
@@ -34,7 +36,7 @@ const ROOM := """
 const KIT := ["solar_lance", "seed_bomb", "mycelium_dash"]
 
 ## Tutorial floor pacing: no reinforcements, sky never dims, choke far away.
-const FDEF := {"smog_spawn": [999], "smog_spawn_every": 0, "smog_dim": [900, 950], "smog_choke": 999, "green_need": 0}
+const FDEF := {"smog_spawn": [999], "smog_spawn_every": 0, "smog_dim": [900, 950], "smog_choke": 999, "green_need": 2}
 
 const STEPS := [
 	{
@@ -69,17 +71,42 @@ const STEPS := [
 		"say": ["Finish it however you like - strike again, or", "tap ability 1 (Solar Lance) and aim at it."],
 		"expect": {},
 		"free": true,
-		"until_dead": true,
+		"until_dead": "drill_bot",
 		"do": null,
 	},
 	{
-		"say": ["Scrapped. See the dark OIL puddles? That is the", "combine's corruption. Stand NEXT to one, press", "CLEANSE, then aim at it. It pays 1 bloom, leaves", "growth - and on real floors, greening WAKES the stairs."],
+		"say": ["Scrapped. Now the far machine: a Coal Golem.", "It is SPIKED - punching it costs YOU 1 HP.", "Use a tool instead: tap SOLAR LANCE (ability 1)", "and aim down its row. Walk to line it up first."],
+		"expect": {"type": "ability", "slot": 0},
+		"allow_nav": true,
+		"until_dead": "coal_golem",
+		"do": null,
+	},
+	{
+		"say": ["See the dark OIL puddles? The combine's filth.", "The stairs are DORMANT until this floor is", "greened ('green 0/2' up top). Stand NEXT to an", "oil, press CLEANSE, aim at it. It pays bloom,", "thins the smog, and leaves GROWTH behind."],
 		"expect": {"type": "cleanse"},
 		"allow_nav": true,
 		"do": null,
 	},
 	{
-		"say": ["Bloom is money - shrines sell heals, abilities,", "and grafts. And see the smog meter filling up top?", "It never stops. Slow runs suffocate.", "Head for the GOLD-RINGED stairs and stand on them."],
+		"say": ["Growth heals you when you stand on it - and it", "FUELS your casts. Stand ON a growth tile, then", "cast SEED BOMB (ability 2) anywhere: a verdant", "surge pays 1 of the cost and spends the tile."],
+		"expect": {"type": "ability", "slot": 1},
+		"allow_nav": true,
+		"do": null,
+	},
+	{
+		"say": ["Now cleanse the LAST oil. A fully tended room", "BLOOMS: bonus bloom, a supply pod drops - and", "with the quota met, THE STAIRS AWAKEN."],
+		"expect": {"type": "cleanse"},
+		"allow_nav": true,
+		"do": null,
+	},
+	{
+		"say": ["That pod holds a one-use item. Walk over it to", "pocket it, then TAP the satchel slot (bottom", "corner by the D-pad) to use it. Items are free", "actions - your turn carries on."],
+		"expect": {"type": "use_item"},
+		"allow_nav": true,
+		"do": null,
+	},
+	{
+		"say": ["Bloom is money - shrines sell heals, abilities,", "grafts, and items. The smog never stops rising,", "so slow runs suffocate. Every floor: green the", "quota, wake the stairs, get down. Stand on them."],
 		"expect": {"type": "descend"},
 		"allow_nav": true,
 		"do": null,
@@ -88,9 +115,10 @@ const STEPS := [
 ]
 
 const DONE := [
-	"That's the whole loop: read the red tiles, spend",
-	"charge well, cleanse what you can afford to,",
-	"and always beat the smog downstairs.",
+	"That's the whole loop: read the red tiles, green",
+	"each floor to wake its stairs, cast from your",
+	"garden, save the satchel for emergencies - and",
+	"always beat the smog downstairs.",
 	"",
 	"Six more floors and the Furnace waits below.",
 	"Good luck, Tender.",
@@ -135,6 +163,7 @@ static func floor_config() -> Dictionary:
 			elif GLYPH_ENEMY.has(ch):
 				gen["enemies"].append({"kind": GLYPH_ENEMY[ch], "pos": p})
 	gen["tiles"] = tiles
+	gen["rooms"] = [Rect2i(1, 1, w - 2, h - 2)]
 	return {"gen": gen, "fdef": FDEF}
 
 

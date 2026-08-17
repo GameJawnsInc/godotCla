@@ -252,13 +252,13 @@ func _act(a: Dictionary) -> void:
 		_play_events(tevs)
 		if advances:
 			if st.get("until_dead", false):
-				if game.enemies.is_empty():
+				if _tut_cleared(st["until_dead"]):
 					tut_step += 1
 			else:
 				tut_step += 1
 			if tut_step >= Tutorial.STEPS.size():
 				tut_done = true
-		elif st.get("until_dead", false) and game.enemies.is_empty():
+		elif st.get("until_dead", false) and _tut_cleared(st["until_dead"]):
 			tut_step += 1
 			if tut_step >= Tutorial.STEPS.size():
 				tut_done = true
@@ -412,6 +412,18 @@ func _shake(mag: float) -> void:
 		_shake_mag = 0.0
 	_shake_ms = Time.get_ticks_msec()
 	_shake_mag = maxf(_shake_mag, mag)
+
+
+## Tutorial until_dead condition: `true` waits for an empty floor, a String
+## waits until no enemy of that kind remains (lets later steps keep their
+## own target alive through earlier sandbox steps).
+func _tut_cleared(cond) -> bool:
+	if cond is String:
+		for e in game.enemies:
+			if String(e["kind"]) == String(cond):
+				return false
+		return true
+	return game.enemies.is_empty()
 
 
 func _arm_anim(prev: Dictionary, prev_floor: int) -> void:

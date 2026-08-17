@@ -115,6 +115,8 @@ func _init() -> void:
 			stuck = true
 			break
 	_check(shell.tut_done and not stuck, "tutorial completes (%d actions)" % guard)
+	_check(not shell.game.map.get("bloomed", []).is_empty(), "tutorial room bloomed on the way")
+	_check(bool(shell.game.map.get("restored", false)), "tutorial floor got restored")
 	shell._tap("menu")
 	_check(shell.screen == "menu", "tutorial returns to the menu")
 
@@ -150,6 +152,39 @@ func _solve(shell) -> Dictionary:
 				return {"type": "move", "dir": expect["dir"]}
 			return _approach(g, g.map["stairs"])
 		"end_turn":
+			return {"type": "end_turn"}
+		"ability":
+			var slot := int(expect.get("slot", 0))
+			var opts: Array = []
+			for a in shell._legal_of("ability"):
+				if int(a["slot"]) == slot:
+					opts.append(a)
+			if slot == 0:
+				# lance: pick a direction with an enemy in the beam, else close in
+				var pp2: Vector2i = g.player["pos"]
+				for a in opts:
+					var d2: Vector2i = a["target"]
+					for i in range(1, 4):
+						if _enemy_pos_at(g, pp2 + d2 * i):
+							return a
+				if not g.enemies.is_empty():
+					return _approach(g, _nearest_enemy(g))
+				return {"type": "end_turn"}
+			# other slots: step onto adjacent growth first (verdant), then cast
+			if g.terrain.get(g.player["pos"], {}).get("kind", "") != "growth":
+				for a2 in g.legal_actions():
+					if String(a2.get("type", "")) == "move" and 							g.terrain.get(g.player["pos"] + a2["dir"], {}).get("kind", "") == "growth":
+						return a2
+			if not opts.is_empty():
+				return opts[0]
+			return {"type": "end_turn"}
+		"use_item":
+			var ui: Array = shell._legal_of("use_item")
+			if not ui.is_empty():
+				return ui[0]
+			for tt in g.terrain.keys():
+				if String(g.terrain[tt]["kind"]) == "supply":
+					return _approach(g, tt)
 			return {"type": "end_turn"}
 		"strike":
 			var s: Array = shell._legal_of("strike")
@@ -192,6 +227,13 @@ func _approach(g, goal: Vector2i) -> Dictionary:
 	if best.is_empty():
 		return {"type": "end_turn"}
 	return best
+
+
+func _enemy_pos_at(g, p: Vector2i) -> bool:
+	for e in g.enemies:
+		if e["pos"] == p:
+			return true
+	return false
 
 
 func _nearest_enemy(g) -> Vector2i:
