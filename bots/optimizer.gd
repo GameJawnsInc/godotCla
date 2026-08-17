@@ -141,6 +141,20 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 							return a
 
 	if by.has("strike"):
+		# spiked targets (golems, elites) bleed melee attackers: skip the
+		# punch unless it kills or we have HP to spare - reach for a tool
+		var filtered: Array = []
+		for a in by["strike"]:
+			var se = _enemy_at(snap, ppos + a["dir"])
+			if se != null and (se["traits"].has("spiked") or se.get("elite", false)):
+				if se["hp"] > 1 and snap["player"]["hp"] + snap["player"]["shield"] <= 6:
+					continue
+			filtered.append(a)
+		if filtered.is_empty():
+			by.erase("strike")
+		else:
+			by["strike"] = filtered
+	if by.has("strike"):
 		# lowest HP first, but summoners outrank their spawns - executing the
 		# endless hp-1 stream while the engine keeps summoning is how magpie
 		# runs used to time out at turn 400

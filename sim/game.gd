@@ -200,7 +200,7 @@ func legal_actions() -> Array:
 		if player["gummed"].has(slot):
 			continue
 		var aid: String = player["kit"][slot]
-		if player["charge"] >= int(Content.ABILITIES[aid]["cost"]):
+		if player["charge"] >= ability_cost(aid):
 			for tgt in _ability_targets(aid):
 				acts.append({"type": "ability", "slot": slot, "target": tgt})
 	for i in player["items"].size():
@@ -780,6 +780,13 @@ func _act_move(action: Dictionary) -> void:
 	_player_enter_tile()
 
 
+## Spiked chassis: melee strikes hurt the attacker back. Coal golems carry
+## it inherently; every elite is retrofitted - elites are the "bring a tool"
+## moments, not bigger punching bags.
+func _spiked(e: Dictionary) -> bool:
+	return Content.ENEMIES[e["kind"]]["traits"].has("spiked") or e.get("elite", false)
+
+
 func _act_strike(action: Dictionary) -> void:
 	var dir: Vector2i = action.get("dir", Vector2i.ZERO)
 	var e = _enemy_at(player["pos"] + dir)
@@ -788,7 +795,10 @@ func _act_strike(action: Dictionary) -> void:
 		return
 	player["charge"] -= Content.STRIKE_COST
 	_emit({"t": "strike", "id": e["id"]})
+	var spiked := _spiked(e)
 	_damage_enemy(e, Content.STRIKE_DMG, "strike")
+	if spiked and not over:
+		_damage_player(1, "spikes")
 
 
 func _act_cleanse(action: Dictionary) -> void:
@@ -1051,14 +1061,28 @@ func _act_ability(action: Dictionary) -> void:
 	var aid: String = player["kit"][slot]
 	var adef: Dictionary = Content.ABILITIES[aid]
 	var target = action.get("target")
-	if player["charge"] < int(adef["cost"]) or not _ability_targets(aid).has(target):
+	var cost := ability_cost(aid)
+	if player["charge"] < cost or not _ability_targets(aid).has(target):
 		_emit({"t": "illegal", "action": "ability", "id": aid})
 		return
-	player["charge"] -= int(adef["cost"])
+	if cost < int(adef["cost"]):
+		# verdant surge: the cast draws the growth underfoot up into itself
+		terrain.erase(player["pos"])
+		_emit({"t": "verdant", "tile": player["pos"]})
+	player["charge"] -= cost
 	player["uses"][aid] = int(player["uses"].get(aid, 0)) + 1
 	_emit({"t": "ability", "id": aid, "target": target})
 	for eff in adef["effects"]:
 		_apply_effect(eff, adef, target)
+
+
+## Live cost of an ability right now: standing on growth discounts a
+## 2+ cost cast by 1, consuming the tile (verdant surge).
+func ability_cost(aid: String) -> int:
+	var base: int = int(Content.ABILITIES[aid]["cost"])
+	if base >= 2 and _terrain_kind(player["pos"]) == "growth":
+		return base - 1
+	return base
 
 
 func _ability_targets(aid: String) -> Array:

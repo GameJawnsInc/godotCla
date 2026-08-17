@@ -506,6 +506,34 @@ optimizer band is 35-45 (currently 40/100).
 Watch: magpie logged its first timeout since the tempo fixes (1/30,
 turns 129) - greed vs the gate can stall; revisit if it grows.
 
+## 2026-08-11e - skills round (spiked chassis + verdant surge)
+
+Human feedback: "too many runs I get by with just attacking."
+Measured mix (strikes vs casts): sprout 67%, optimizer 60% strikes -
+while deeproot, the ceiling, plays 17% strikes / 83% casts. Skilled
+play is already ability play; strike-spam was merely good enough.
+
+Changes:
+- Spiked chassis: coal golems, rust hounds, and EVERY elite hurt to
+  punch - a melee strike deals 1 damage back to the attacker. Elites
+  become the "bring a tool" moments rather than bigger punching bags.
+  Spiked enemies wear visible spike studs; tooltips warn.
+- Verdant surge: casting a 2+ cost ability while standing on growth
+  consumes the tile for -1 charge. The garden is ability fuel - the
+  green loop now feeds skill play, and it is a spend, not a passive
+  discount (self-limiting, anti-stall). Ability-bar pips turn green
+  when the surge is live; live cost comes from game.ability_cost().
+- Optimizer skips punching spiked targets without HP to spare.
+
+Post-round: optimizer 39/100 (band 35-45 held; only 2 golem deaths -
+the avoidance works), sprout floor 3.8, fanatic 5/30, magpie 2/30,
+deeproot 28/30 (ceiling creeps up again - verdant surge pays perfect
+play; base-run ceiling is design-accepted, tiers absorb it), zero
+timeouts. Tier ladder: heuristic 7/7/7/7/8/7 through tier 5, tiers
+6-8 by deeproot 8/10/6 of 20. Bot strike share moved only a little
+(58-62%) - these mechanics primarily target human hands: punching
+now has a price where it should, and casting has a visible reward.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from

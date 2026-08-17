@@ -71,9 +71,9 @@ const LEGEND := [
 	["sludgeling", "Sludgeling", "weak spawn"],
 	["leech_drone", "Leech Drone", "drains your banked charge from range"],
 	["tar_spitter", "Tar Spitter", "gums up one of your abilities"],
-	["coal_golem", "Coal Golem", "tough; bursts into smoke"],
+	["coal_golem", "Coal Golem", "SPIKED (melee hurts you back); bursts into smoke"],
 	["extractor_engine", "Extractor", "summons sludgelings - kill it first"],
-	["rust_hound", "Rust Hound", "fast - moves twice"],
+	["rust_hound", "Rust Hound", "fast - moves twice; SPIKED"],
 	["cinder_mite", "Cinder Mite", "ignites oil"],
 	["pump_jack", "Pump Jack", "pumps out fresh oil"],
 	["smokestack", "Smokestack", "makes the smog clock tick faster"],
@@ -315,6 +315,7 @@ func _play_events(evs: Array) -> void:
 			"buy", "draft_upgrade", "item_pickup": id = "coin"
 			"room_bloom": id = "heal"
 			"stairs_awaken": id = "sparkle"
+			"verdant": id = "sparkle"
 			"seal_burst": id = "vent"
 			"floor_restored": id = "heal"
 			"item_use": id = "cast"
@@ -381,6 +382,9 @@ func _spawn_fx(evs: Array, prev: Dictionary) -> void:
 				_banner = ["FLOOR RESTORED", "the skies clear"]
 				_banner_ms = now
 				_fx.append({"kind": "burst", "pos": Vector2(game.player["pos"]), "col": Color(0.6, 0.9, 0.5), "t0": now})
+			"verdant":
+				if ev.has("tile"):
+					_fx.append({"kind": "burst", "pos": Vector2(ev["tile"]), "col": Color(0.55, 0.9, 0.45), "t0": now})
 			"boss_phase", "ignite_all", "flood", "smoke_burst":
 				_shake(9.0)
 	if _fx.size() > 40:
@@ -522,7 +526,11 @@ func _show_tooltip(pos: Vector2) -> void:
 			var slot := int(String(hsp["tag"]).get_slice(":", 1))
 			var aid: String = game.player["kit"][slot]
 			var adef: Dictionary = Content.ABILITIES[aid]
-			tooltip = ["%s - costs %d charge" % [adef["name"], adef["cost"]], _ability_desc(aid)]
+			var tc: int = game.ability_cost(aid)
+			var thdr := "%s - costs %d charge" % [adef["name"], tc]
+			if tc < int(adef["cost"]):
+				thdr += " (verdant surge!)"
+			tooltip = [thdr, _ability_desc(aid)]
 			tooltip_tile = Vector2i(-1, -1)
 			queue_redraw()
 			return
@@ -536,6 +544,8 @@ func _show_tooltip(pos: Vector2) -> void:
 			var row := _legend_of(e["kind"])
 			lines.append("%s - hp %d%s" % [_ename(e["kind"]), e["hp"], "  ELITE" if e.get("elite", false) else ""])
 			lines.append(_intent_words(e))
+			if e["traits"].has("spiked") or e.get("elite", false):
+				lines.append("SPIKED - striking it in melee costs you 1 HP")
 			if not row.is_empty():
 				lines.append(row[2])
 	if lines.is_empty() and snap["player"]["pos"] == t:
@@ -995,6 +1005,8 @@ func _ev_text(ev: Dictionary) -> String:
 			return "An overgrown vent chokes - spawn absorbed"
 		"floor_restored":
 			return "FLOOR RESTORED - the skies clear (+%d bloom)" % ev.get("bonus", 5)
+		"verdant":
+			return "Verdant surge - the growth fuels your cast (-1)"
 		"choke":
 			return "The smog chokes you"
 		"smog_dim":
@@ -1672,6 +1684,10 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		var r := _tile_rect_f(ap)
 		if e.get("elite", false):
 			draw_rect(r.grow(-1), COL_GOLD, false, 2.0)
+		if e["traits"].has("spiked") or e.get("elite", false):
+			for sp in 4:
+				var sang := TAU * float(sp) / 4.0 + PI / 4.0
+				draw_circle(r.get_center() + Vector2(cos(sang), sin(sang)) * _ts * 0.44, _ts * 0.045, Color(0.75, 0.78, 0.8))
 		var edef: Dictionary = Content.ENEMIES[e["kind"]]
 		var maxhp: int = int(edef["hp"]) + (Content.ELITE_HP_BONUS if e.get("elite", false) else 0)
 		if e["hp"] < maxhp or edef["traits"].has("boss"):
@@ -1879,7 +1895,9 @@ func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
 		var aid: String = pl["kit"][i]
 		var adef: Dictionary = Content.ABILITIES[aid]
 		var r := Rect2(x, y, b, b)
-		var usable: bool = int(pl["charge"]) >= int(adef["cost"]) and not pl["gummed"].has(i)
+		var live_cost: int = game.ability_cost(aid)
+		var verdant: bool = live_cost < int(adef["cost"])
+		var usable: bool = int(pl["charge"]) >= live_cost and not pl["gummed"].has(i)
 		var aiming: bool = (mode == "target_dir" or mode == "target_tile") and mode_slot == i
 		_box(r, _sb_gold if aiming else _sb)
 		var icon := "ab_" + aid.trim_suffix("+")
@@ -1890,8 +1908,11 @@ func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
 		if tx != null:
 			draw_texture(tx, r.position + Vector2((b - isz) / 2.0, b * 0.04), Color(1, 1, 1, 1.0 if usable else 0.32))
 		# cost pips
-		for c in int(adef["cost"]):
-			draw_circle(r.position + Vector2(b * 0.12 + c * b * 0.14, b * 0.88), b * 0.05, COL_GOLD if usable else COL_DIM_TEXT)
+		for c in live_cost:
+			var pipc := COL_GOLD if usable else COL_DIM_TEXT
+			if verdant:
+				pipc = Color(0.55, 0.9, 0.45) if usable else Color(0.4, 0.55, 0.38)
+			draw_circle(r.position + Vector2(b * 0.12 + c * b * 0.14, b * 0.88), b * 0.05, pipc)
 		if aid.ends_with("+"):
 			_txt(Vector2(r.position.x + b * 0.8, r.position.y + b * 0.24), "+", COL_GOLD, int(b * 0.3))
 		if pl["gummed"].has(i):
@@ -2189,6 +2210,8 @@ func _draw_intro(vw: float, vh: float) -> void:
 		["Spend bloom at shrines - graft prices rise as you stack them.", COL_TEXT],
 		["Cleanse a WHOLE room and it blooms: bonus + a supply pod.", COL_TEXT],
 		["The stairs are DORMANT until you green the floor's quota.", COL_GOLD],
+		["Cast FROM growth: it fuels the ability (-1 charge, tile spent).", COL_TEXT],
+		["SPIKED enemies (golems, elites) hurt to punch - use abilities.", COL_TEXT],
 		["Green growth heals you while you stand on it.", COL_TEXT],
 		["", COL_TEXT],
 		["HOLD your finger on anything to see what it is.", COL_GOLD],
