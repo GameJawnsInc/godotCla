@@ -480,6 +480,32 @@ restoration + satchel hard. If the human reports the game feels
 farmable again, the levers are quota relief (2->fixed 1) and the
 restoration bonus (-8 smog / +5 bloom).
 
+## 2026-08-11e - gate balance pass 2 (ceiling guards, Dredge cap)
+
+Measured before tuning: deeproot 55/60 (92%) at the new economy;
+optimizer 32/100 with The Dredge suddenly 9/68 deaths (the greened
+world feeds the growth-eating boss); restoration fires 0.00/run for
+BOTH bots - it is not the ceiling's engine, compounding skill is.
+
+Changes:
+- Relief taper: quota cleanses thin smog by 2, the next 4 by 1,
+  beyond that cleansing pays bloom/growth/blooms but no longer
+  pauses the clock. Insurance against marathon cleanse-stalling
+  (the taper barely moved today's rates - kept as a guard).
+- Dredge heal cap: 3 hp per bite (uncapped radius-3 dredges swung
+  6-8 hp per action post-greening). Optimizer dredge deaths 9->3.
+- Optimizer banks the taper: cleanses opportunistically through
+  quota+4 while standing safe. 32->40/100, and item usage jumped to
+  227 uses/100 runs (more cleansing -> more pods -> satchel works).
+
+Design position, recorded: deeproot ~87-92% on the base run is
+ACCEPTED. The base run is the first-run experience; the ceiling's
+real game is the tier ladder (deeproot tiers 6-8: 40-60%). Post-gate
+optimizer band is 35-45 (currently 40/100).
+
+Watch: magpie logged its first timeout since the tempo fixes (1/30,
+turns 129) - greed vs the gate can stall; revisit if it grows.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from

@@ -638,8 +638,10 @@ func _execute_intent(e: Dictionary) -> void:
 					terrain[t] = {"kind": "goo"}
 					dredged += 1
 			if dredged > 0:
+				# heal caps at 3 per bite: in the greened world an uncapped
+				# radius-3 dredge was a 6-8 hp swing per action
 				var cap: int = int(Content.ENEMIES[e["kind"]]["hp"]) + _tier_mod("boss_hp_delta")
-				e["hp"] = mini(e["hp"] + dredged, cap)
+				e["hp"] = mini(e["hp"] + mini(dredged, 3), cap)
 				_emit({"t": "dredge", "id": e["id"], "tiles": dredged})
 		"summon":
 			var edef: Dictionary = Content.ENEMIES[e["kind"]]
@@ -801,12 +803,17 @@ func _act_cleanse(action: Dictionary) -> void:
 	terrain[target] = {"kind": "growth"}
 	var yield_: int = Content.RICH_GOO_BLOOM if k == "rich_goo" else 1
 	bloom += yield_ + (1 if _has_graft("bloom_surge") else 0)
-	# tending the world buys time: every cleanse thins the smog clock, and
-	# while the floor's quota is unmet the sky answers harder (funds the
-	# detour the gate demands; post-quota relief stays stall-safe at 1)
-	var relief := Content.CLEANSE_SMOG_RELIEF
+	# tending the world buys time, but the sky can only mend so fast per
+	# floor: quota cleanses thin the smog by 2 (funds the gate's detour),
+	# the next few thin it by 1, and beyond that cleansing still pays
+	# bloom/growth/blooms but no longer pauses the clock - this is what
+	# keeps marathon cleanse-farming from stalling the game (measured:
+	# uncapped relief-1 put the ceiling bot at 92%)
+	var relief := 0
 	if greened < green_need:
-		relief += 1
+		relief = Content.CLEANSE_SMOG_RELIEF + 1
+	elif greened < green_need + 4:
+		relief = Content.CLEANSE_SMOG_RELIEF
 	smog = maxi(smog - relief, 0)
 	greened += 1
 	_emit({"t": "cleanse", "tile": target, "bloom": bloom})

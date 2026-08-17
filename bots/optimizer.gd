@@ -124,11 +124,13 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 			return out
 
 	# green gate: the stairs stay dormant until the quota is met. A cleanse
-	# is one cheap tap - take it whenever standing safe; only the walk toward
-	# corruption waits for a calm moment.
-	if int(snap.get("green_need", 0)) > int(snap.get("greened", 0)):
-		if by.has("cleanse") and not threat.has(ppos):
-			return by["cleanse"][0]
+	# is one cheap tap - take it whenever standing safe, and keep taking
+	# them into the relief taper (quota + 4 cleanses still pause the clock);
+	# only the walk toward corruption waits for a calm moment.
+	var quota_left: int = int(snap.get("green_need", 0)) - int(snap.get("greened", 0))
+	if quota_left > -4 and by.has("cleanse") and not threat.has(ppos):
+		return by["cleanse"][0]
+	if quota_left > 0:
 		if _enemies_within(snap, 2) == 0:
 			var cg := _nearest_corruption(snap)
 			if cg != Vector2i(-1, -1) and by.has("move"):
