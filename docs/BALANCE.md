@@ -534,6 +534,32 @@ timeouts. Tier ladder: heuristic 7/7/7/7/8/7 through tier 5, tiers
 (58-62%) - these mechanics primarily target human hands: punching
 now has a price where it should, and casting has a visible reward.
 
+## 2026-08-11f - upcycling round (green combining vs evil assimilation)
+
+User direction: creative recycling for the player, an evil mirror for
+the combine.
+
+- Shrine press (1 bloom): two held consumables become the + form of
+  the kept one - Solar Battery (+6 charge), Orchard Feast (full
+  heal), Spore Storm (stun r4 x2), Storm Seed (smog -12), Ironheart
+  (+3 shield, +1 max HP).
+- Shrine forge (3 bloom): one kit ability becomes its + variant, a
+  second is scrapped for parts - power for breadth, frees a slot.
+  Only abilities with + forms qualify (package abilities have none).
+  Gummed slots remap on the scrap. Two-tap flow in the shell.
+- Assimilation: drill bots carry "fuses". With 3+ enemies alive, an
+  adjacent pair telegraphs WELD one turn ahead (orange arc drawn
+  between them), then merges into a Welded Hulk: hp min(sum, 7),
+  dmg 2, slow, spiked. Counterplay: kill or displace either partner
+  (stagger clears the intent). Boss-phase spawns unaffected.
+
+Personas after: optimizer 14/30, sprout floor 3.8, magpie 2/30,
+fanatic 6/30, deeproot 27/30, zero timeouts - fusion trades attack
+count for chunkier hits and measures roughly neutral. Bots do not
+yet upcycle (deeproot's eval has no term for + forms, so search
+declines the bloom cost); recorded as a known gap - upcycling is
+currently human expression, not bot-measured power.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from

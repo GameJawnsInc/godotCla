@@ -135,6 +135,26 @@ func _init() -> void:
 		shell2._draft_key(KEY_1)
 		_check(shell2.game.player["kit"].size() >= kit0 or shell2.mode == "draft_drop",
 			"draft key picks or prompts for a drop")
+	# 5. upcycling flows through the shell (shrine press + ability forge)
+	var shell3 = Shell.new()
+	shell3._ready()
+	shell3._tap("play")
+	shell3._key(KEY_SPACE)
+	shell3.game.player["pos"] = shell3.game.map["shrine"]
+	shell3.game.player["items"] = ["sun_capsule", "balm_fruit"]
+	shell3.game.bloom = 10
+	shell3._tap("upcycle:0")
+	_check(shell3.game.player["items"] == ["sun_capsule+"], "shrine press upcycles an item")
+	shell3._tap("forge")
+	_check(shell3.mode == "up_keep", "forge card enters keep-select")
+	shell3._ability_press(0)
+	_check(shell3.mode == "up_scrap", "keep picked, scrap-select next")
+	var ksz: int = shell3.game.player["kit"].size()
+	shell3._ability_press(2)
+	_check(shell3.game.player["kit"].size() == ksz - 1 and String(shell3.game.player["kit"][0]).ends_with("+"),
+		"forge upgrades one ability and scraps another")
+	shell3.free()
+
 	shell.free()
 	shell2.free()
 	print("FAILURES: %d" % fails if fails > 0 else "shell smoke: OK")

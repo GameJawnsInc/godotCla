@@ -191,8 +191,16 @@ const ITEMS := {
 	"spore_vial": {"name": "Spore Vial", "desc": "Burst: stun every enemy within 2 tiles"},
 	"clearair_pod": {"name": "Clear-Air Pod", "desc": "Pop: smog falls by 5"},
 	"iron_seed": {"name": "Iron Seed", "desc": "Crack open: +3 shield"},
+	# Upcycled forms: two consumables pressed into one at a shrine.
+	"sun_capsule+": {"name": "Solar Battery", "desc": "Drink deep: +6 charge, right now"},
+	"balm_fruit+": {"name": "Orchard Feast", "desc": "Eat well: heal to full"},
+	"spore_vial+": {"name": "Spore Storm", "desc": "Burst: stun every enemy within 4 for 2 turns"},
+	"clearair_pod+": {"name": "Storm Seed", "desc": "Pop: smog falls by 12"},
+	"iron_seed+": {"name": "Ironheart", "desc": "Crack: +3 shield and +1 max HP"},
 }
 const ITEM_CAP := 2  # satchel slots
+const UPCYCLE_ITEM_COST := 1  # shrine press: two items -> one + item
+const UPCYCLE_ABILITY_COST := 3  # forge one ability to +, scrap another
 const ROOM_BLOOM_BONUS := 2  # extra bloom when a room's last corruption falls
 
 const GRAFTS := {
@@ -300,11 +308,13 @@ const ELITE_DMG_BONUS := 0
 const ELITE_BOUNTY := 4
 
 const ENEMIES := {
-	"drill_bot": {"name": "Drill Bot", "hp": 3, "dmg": 2, "slow": false, "traits": []},
+	"drill_bot": {"name": "Drill Bot", "hp": 3, "dmg": 2, "slow": false, "traits": ["fuses"]},
 	"oil_sludge": {"name": "Oil Sludge", "hp": 4, "dmg": 1, "slow": true, "traits": ["splits", "oil_trail"]},
 	"sludgeling": {"name": "Sludgeling", "hp": 1, "dmg": 1, "slow": false, "traits": []},
 	"leech_drone": {"name": "Leech Drone", "hp": 2, "dmg": 0, "slow": false, "traits": ["drains"], "drain": 2, "drain_range": 2},
 	"tar_spitter": {"name": "Tar Spitter", "hp": 2, "dmg": 0, "slow": false, "traits": ["gums"], "gum_range": 3, "gum_turns": 2},
+	# Two drill bots welded into one by the combine's assimilation.
+	"welded_hulk": {"name": "Welded Hulk", "hp": 7, "dmg": 2, "slow": true, "traits": ["spiked"]},
 	# Spiked: melee strikes hurt the attacker - reach for a tool instead.
 	"coal_golem": {"name": "Coal Golem", "hp": 4, "dmg": 2, "slow": true, "traits": ["smoke_burst", "spiked"]},
 	"extractor_engine": {"name": "Extractor Engine", "hp": 5, "dmg": 0, "slow": false, "traits": ["summons"], "summon_cycle": 3},

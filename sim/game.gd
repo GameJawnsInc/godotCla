@@ -160,6 +160,10 @@ func step(action: Dictionary) -> Array:
 			_act_descend()
 		"use_item":
 			_act_use_item(action)
+		"upcycle":
+			_act_upcycle(action)
+		"upcycle_ability":
+			_act_upcycle_ability(action)
 		"buy":
 			_act_buy(action)
 		"end_turn":
@@ -216,6 +220,17 @@ func legal_actions() -> Array:
 			acts.append({"type": "buy", "item": "graft"})
 		if shop.has("item") and bloom >= shop_cost("item") and player["items"].size() < Content.ITEM_CAP:
 			acts.append({"type": "buy", "item": "item"})
+		if player["items"].size() == 2 and bloom >= Content.UPCYCLE_ITEM_COST:
+			for k in 2:
+				if not String(player["items"][k]).ends_with("+"):
+					acts.append({"type": "upcycle", "keep": k})
+		if bloom >= Content.UPCYCLE_ABILITY_COST and player["kit"].size() >= 2:
+			for i in player["kit"].size():
+				var kid := String(player["kit"][i])
+				if not kid.ends_with("+") and Content.ABILITIES.has(kid + "+"):
+					for j in player["kit"].size():
+						if j != i:
+							acts.append({"type": "upcycle_ability", "keep": i, "scrap": j})
 	acts.append({"type": "end_turn"})
 	return acts
 
@@ -405,7 +420,27 @@ func _resolve_turn() -> void:
 
 
 func _compute_intents() -> void:
+	# assimilation: when the swarm is thick, adjacent fuse-capable machines
+	# telegraph a WELD one full turn ahead. Kill or displace either partner
+	# to break it (stagger clears the intent like any other wind-up).
+	var fused_ids := {}
+	if enemies.size() >= 3:
+		for i in enemies.size():
+			var a: Dictionary = enemies[i]
+			if not Content.ENEMIES[a["kind"]]["traits"].has("fuses") or fused_ids.has(a["id"]):
+				continue
+			for j in range(i + 1, enemies.size()):
+				var b: Dictionary = enemies[j]
+				if not Content.ENEMIES[b["kind"]]["traits"].has("fuses") or fused_ids.has(b["id"]):
+					continue
+				if _manhattan(a["pos"], b["pos"]) == 1:
+					a["intent"] = {"type": "fuse", "with": b["id"]}
+					fused_ids[a["id"]] = true
+					fused_ids[b["id"]] = true
+					break
 	for e in enemies:
+		if fused_ids.has(e["id"]) and String(e["intent"].get("type", "")) == "fuse":
+			continue
 		var edef: Dictionary = Content.ENEMIES[e["kind"]]
 		if bool(edef["slow"]) and turn % 2 == 1:
 			e["intent"] = {"type": "idle"}
@@ -536,6 +571,17 @@ func _execute_intent(e: Dictionary) -> void:
 		_emit({"t": "rooted", "id": e["id"]})
 		return
 	match String(it.get("type", "idle")):
+		"fuse":
+			var partner = null
+			for o in enemies:
+				if o["id"] == it.get("with", -1):
+					partner = o
+			if partner != null and _manhattan(e["pos"], partner["pos"]) == 1:
+				enemies.erase(partner)
+				e["kind"] = "welded_hulk"
+				e["hp"] = mini(e["hp"] + partner["hp"], int(Content.ENEMIES["welded_hulk"]["hp"]))
+				e["status"] = {}
+				_emit({"t": "assimilate", "id": e["id"], "eaten": partner["id"]})
 		"attack":
 			if player["pos"] == it["tile"]:
 				_damage_player(int(it["dmg"]), e["kind"])
@@ -925,17 +971,75 @@ func _act_use_item(action: Dictionary) -> void:
 	match iid:
 		"sun_capsule":
 			player["charge"] += 3
+		"sun_capsule+":
+			player["charge"] += 6
 		"balm_fruit":
 			player["hp"] = mini(player["hp"] + 4, player["max_hp"])
+		"balm_fruit+":
+			player["hp"] = player["max_hp"]
 		"spore_vial":
 			for e in enemies:
 				if _manhattan(e["pos"], player["pos"]) <= 2 and not Content.ENEMIES[e["kind"]]["traits"].has("boss"):
 					e["status"]["stun"] = maxi(int(e["status"].get("stun", 0)), 1)
+		"spore_vial+":
+			for e in enemies:
+				if _manhattan(e["pos"], player["pos"]) <= 4 and not Content.ENEMIES[e["kind"]]["traits"].has("boss"):
+					e["status"]["stun"] = maxi(int(e["status"].get("stun", 0)), 2)
 		"clearair_pod":
 			smog = maxi(smog - 5, 0)
+		"clearair_pod+":
+			smog = maxi(smog - 12, 0)
 		"iron_seed":
 			player["shield"] = mini(player["shield"] + 3, _shield_cap())
+		"iron_seed+":
+			player["max_hp"] += 1
+			player["hp"] += 1
+			player["shield"] = mini(player["shield"] + 3, _shield_cap())
 	_emit({"t": "item_use", "id": iid})
+
+
+## Shrine press: two held consumables become the + form of the kept one.
+func _act_upcycle(action: Dictionary) -> void:
+	var keep := int(action.get("keep", -1))
+	var on_shrine: bool = player["pos"] == map["shrine"]
+	if not on_shrine or player["items"].size() != 2 or keep < 0 or keep > 1 \
+			or bloom < Content.UPCYCLE_ITEM_COST or String(player["items"][keep]).ends_with("+"):
+		_emit({"t": "illegal", "action": "upcycle"})
+		return
+	bloom -= Content.UPCYCLE_ITEM_COST
+	var plus := String(player["items"][keep]) + "+"
+	player["items"] = [plus]
+	_emit({"t": "upcycle", "id": plus})
+
+
+## Shrine forge: one kit ability becomes its + form; another is scrapped.
+func _act_upcycle_ability(action: Dictionary) -> void:
+	var keep := int(action.get("keep", -1))
+	var scrap := int(action.get("scrap", -1))
+	var kmax: int = player["kit"].size()
+	var ok: bool = player["pos"] == map["shrine"] and bloom >= Content.UPCYCLE_ABILITY_COST \
+		and keep >= 0 and keep < kmax and scrap >= 0 and scrap < kmax and keep != scrap
+	if ok:
+		var kid := String(player["kit"][keep])
+		ok = not kid.ends_with("+") and Content.ABILITIES.has(kid + "+")
+	if not ok:
+		_emit({"t": "illegal", "action": "upcycle_ability"})
+		return
+	bloom -= Content.UPCYCLE_ABILITY_COST
+	var kid2 := String(player["kit"][keep])
+	_emit({"t": "upcycle_scrap", "id": player["kit"][scrap]})
+	player["kit"][keep] = kid2 + "+"
+	player["uses"][kid2 + "+"] = int(player["uses"].get(kid2, 0))
+	player["kit"].remove_at(scrap)
+	# gummed is keyed by slot: drop the scrapped slot, shift the ones above
+	var ng := {}
+	for k in player["gummed"]:
+		var ki := int(k)
+		if ki == scrap:
+			continue
+		ng[ki - 1 if ki > scrap else ki] = player["gummed"][k]
+	player["gummed"] = ng
+	_emit({"t": "upcycle_ability", "id": kid2 + "+"})
 
 
 func _room_of(p: Vector2i) -> int:

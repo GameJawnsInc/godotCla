@@ -72,6 +72,7 @@ const LEGEND := [
 	["leech_drone", "Leech Drone", "drains your banked charge from range"],
 	["tar_spitter", "Tar Spitter", "gums up one of your abilities"],
 	["coal_golem", "Coal Golem", "SPIKED (melee hurts you back); bursts into smoke"],
+	["welded_hulk", "Welded Hulk", "two drill bots ASSIMILATED; spiked and heavy"],
 	["extractor_engine", "Extractor", "summons sludgelings - kill it first"],
 	["rust_hound", "Rust Hound", "fast - moves twice; SPIKED"],
 	["cinder_mite", "Cinder Mite", "ignites oil"],
@@ -319,6 +320,8 @@ func _play_events(evs: Array) -> void:
 			"seal_burst": id = "vent"
 			"floor_restored": id = "heal"
 			"item_use": id = "cast"
+			"assimilate": id = "drag"
+			"upcycle", "upcycle_ability": id = "sparkle"
 			"drag": id = "drag"
 			"reinforcement", "summon": id = "vent"
 			"smog_dim", "choke", "stoke": id = "dim"
@@ -751,6 +754,21 @@ func _buy(item: String) -> void:
 
 
 func _ability_press(slot: int) -> void:
+	if mode == "up_keep":
+		var kid := String(game.player["kit"][slot])
+		if kid.ends_with("+") or not Content.ABILITIES.has(kid + "+"):
+			_flash("that one cannot be forged further")
+			return
+		mode_pick = slot
+		mode = "up_scrap"
+		queue_redraw()
+		return
+	if mode == "up_scrap":
+		if slot == mode_pick:
+			_flash("pick a DIFFERENT ability to scrap")
+			return
+		_act({"type": "upcycle_ability", "keep": mode_pick, "scrap": slot})
+		return
 	if slot >= game.player["kit"].size():
 		return
 	var acts: Array = []
@@ -859,6 +877,12 @@ func _tap(tag: String) -> void:
 			_act({"type": "use_item", "slot": islot})
 	elif tag.begins_with("buy:"):
 		_buy(tag.get_slice(":", 1))
+	elif tag.begins_with("upcycle:"):
+		_act({"type": "upcycle", "keep": int(tag.get_slice(":", 1))})
+	elif tag == "forge":
+		mode = "up_keep"
+		flash = ""
+		queue_redraw()
 	elif tag.begins_with("draft:"):
 		_draft_pick(int(tag.get_slice(":", 1)))
 	elif tag.begins_with("drop:"):
@@ -1019,6 +1043,14 @@ func _ev_text(ev: Dictionary) -> String:
 			return "FLOOR RESTORED - the skies clear (+%d bloom)" % ev.get("bonus", 5)
 		"verdant":
 			return "Verdant surge - the growth fuels your cast (-1)"
+		"assimilate":
+			return "The machines WELD into a hulk"
+		"upcycle":
+			return "Upcycled: %s" % Content.ITEMS[ev["id"]]["name"]
+		"upcycle_ability":
+			return "Forged %s" % Content.ABILITIES[ev["id"]]["name"]
+		"upcycle_scrap":
+			return "Scrapped %s for parts" % Content.ABILITIES[ev["id"]]["name"]
 		"choke":
 			return "The smog chokes you"
 		"smog_dim":
@@ -1093,6 +1125,8 @@ func _intent_words(e: Dictionary) -> String:
 			return "will drain %d banked charge" % it["amount"]
 		"gum":
 			return "will gum an ability"
+		"fuse":
+			return "WELDING with a neighbour - kill or shove one to stop it"
 		"summon":
 			return "summons in %d" % it["in"]
 		"ooze":
@@ -1711,6 +1745,14 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	for t in _threat_tiles(snap):
 		if _vis(t):
 			draw_rect(_tile_rect(t), thc)
+	for e0 in snap["enemies"]:
+		if String(e0["intent"].get("type", "")) != "fuse":
+			continue
+		for e1 in snap["enemies"]:
+			if e1["id"] == e0["intent"].get("with", -1) and (_vis(e0["pos"]) or _vis(e1["pos"])):
+				var wa := 0.5 + 0.4 * absf(sin(Time.get_ticks_msec() / 180.0))
+				draw_line(_tile_rect(e0["pos"]).get_center(), _tile_rect(e1["pos"]).get_center(),
+					Color(0.91, 0.45, 0.16, wa), 3.0)
 
 	for e in snap["enemies"]:
 		if not _vis(e["pos"]):
@@ -1963,6 +2005,12 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 	var msg := ""
 	var col := COL_DIM_TEXT
 	match mode:
+		"up_keep":
+			msg = "FORGE: tap the ability to upgrade to + (ESC cancels)"
+			col = COL_GOLD
+		"up_scrap":
+			msg = "Now tap the ability to SCRAP for parts (ESC cancels)"
+			col = COL_GOLD
 		"cleanse":
 			msg = "CLEANSE: tap corruption beside you (or D-pad)"
 			col = COL_TARGET
@@ -2009,7 +2057,9 @@ func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
 	for i in 2:
 		var ir := Rect2(dx + (b + gap) * 2 * i, dy + (b + gap) * 2, b, b)
 		if i < items.size():
-			_icon_button(ir, "it_" + String(items[i]), "item:%d" % i, false)
+			_icon_button(ir, "it_" + String(items[i]).trim_suffix("+"), "item:%d" % i, false)
+			if String(items[i]).ends_with("+"):
+				_txt(Vector2(ir.position.x + ir.size.x * 0.74, ir.position.y + ir.size.y * 0.3), "+", COL_GOLD, int(ir.size.y * 0.3))
 		else:
 			draw_rect(ir.grow(-b * 0.06), Color(1, 1, 1, 0.04))
 			draw_rect(ir.grow(-b * 0.06), Color(0.35, 0.44, 0.36, 0.45), false, 1.5)
@@ -2124,6 +2174,28 @@ func _draw_shop(snap: Dictionary, vw: float, vh: float) -> void:
 		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "it_" + iid,
 			"%s  —  %d bloom" % [Content.ITEMS[iid]["name"], game.shop_cost("item")],
 			"Consumable: %s" % Content.ITEMS[iid]["desc"], "buy:item", vh)
+		y += ch + vh * 0.022
+	var pits: Array = snap["player"]["items"]
+	if pits.size() == 2 and int(snap["bloom"]) >= Content.UPCYCLE_ITEM_COST:
+		for k in 2:
+			var kid := String(pits[k])
+			if kid.ends_with("+"):
+				continue
+			var mat := String(pits[1 - k])
+			_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "it_" + kid,
+				"Upcycle %s  —  %d bloom" % [Content.ITEMS[kid]["name"], Content.UPCYCLE_ITEM_COST],
+				"Press %s into it: makes %s" % [Content.ITEMS[mat]["name"], Content.ITEMS[kid + "+"]["name"]],
+				"upcycle:%d" % k, vh)
+			y += ch + vh * 0.022
+	var can_forge := false
+	for kk in snap["player"]["kit"]:
+		var kks := String(kk)
+		if not kks.ends_with("+") and Content.ABILITIES.has(kks + "+"):
+			can_forge = true
+	if can_forge and snap["player"]["kit"].size() >= 2 and int(snap["bloom"]) >= Content.UPCYCLE_ABILITY_COST:
+		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "ab_default",
+			"Upcycle an ability  —  %d bloom" % Content.UPCYCLE_ABILITY_COST,
+			"Forge one kit ability into its + form; scrap another for parts", "forge", vh)
 		y += ch + vh * 0.022
 	y += vh * 0.04
 	_button(Rect2(vw * 0.25, y, vw * 0.5, vh * 0.07), "CLOSE", "close", int(vh * 0.026))
@@ -2249,6 +2321,8 @@ func _draw_intro(vw: float, vh: float) -> void:
 		["The stairs are DORMANT until you green the floor's quota.", COL_GOLD],
 		["Cast FROM growth: it fuels the ability (-1 charge, tile spent).", COL_TEXT],
 		["SPIKED enemies (golems, elites) hurt to punch - use abilities.", COL_TEXT],
+		["Shrines UPCYCLE: press 2 items into one, forge abilities to +.", COL_TEXT],
+		["Swarming drill bots WELD into hulks - break the pair up first.", COL_RED],
 		["Green growth heals you while you stand on it.", COL_TEXT],
 		["", COL_TEXT],
 		["HOLD your finger on anything to see what it is.", COL_GOLD],
