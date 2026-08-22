@@ -1339,7 +1339,7 @@ func _draw_menu(vw: float, vh: float) -> void:
 	for i in 3:
 		var wob := sin(tsec * 0.8 + float(i) * 1.9)
 		draw_circle(Vector2(vw * (0.196 + 0.012 * wob), sh * (0.17 - 0.045 * float(i))),
-			vw * (0.010 + 0.006 * float(i)), Color(0.62, 0.64, 0.66, 0.10))
+			vw * (0.010 + 0.006 * float(i)), Color(0.52, 0.46, 0.4, 0.12))
 	for spec2 in [[0.12, 0.86, 0.30, Color("2e4632")], [0.46, 0.92, 0.34, Color("3a5a3c")],
 			[0.82, 0.88, 0.28, Color("476b44")], [0.30, 1.02, 0.40, Color("31502f")],
 			[0.68, 1.04, 0.42, Color("3c5f38")]]:
@@ -1502,14 +1502,14 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	var sw := mw * frac
 	if sw > 0.5:
 		var tsec := Time.get_ticks_msec() / 1000.0
-		var scol := Color("3d3a41")
+		var scol := Color("453b33")
 		draw_rect(Rect2(mx, y2, sw, mh), scol)
 		for i in 3:
 			var br := mh * (0.42 + 0.16 * float(i % 2))
 			var bx := sw + mx + sin(tsec * (1.1 + float(i) * 0.7) + float(i) * 2.1) * mh * 0.22
 			var by := y2 + mh * (0.22 + 0.28 * float(i))
 			draw_circle(Vector2(bx, by), br, scol)
-			draw_circle(Vector2(bx - br * 0.7, by - mh * 0.1), br * 0.7, Color("4a4650"))
+			draw_circle(Vector2(bx - br * 0.7, by - mh * 0.1), br * 0.7, Color("564839"))
 	for dv in fdef.get("smog_dim", []):
 		var tick := mx + mw * clampf(float(dv) / span, 0.0, 1.0)
 		var dsz := int(mh * 1.5)
@@ -1578,6 +1578,14 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	var brects: Array = []
 	for ri in m.get("bloomed", []):
 		brects.append(m["rooms"][ri])
+	# the ground takes sides: corruption stains its neighbours dark
+	var blight := {}
+	for bt in snap["terrain"].keys():
+		var bk := String(snap["terrain"][bt]["kind"])
+		if bk == "oil" or bk == "goo" or bk == "rich_goo":
+			blight[bt] = true
+			for d in DIRS4.values():
+				blight[bt + d] = true
 	for y in range(_vy0, _vy1 + 1):
 		for x in range(_vx0, _vx1 + 1):
 			var p := Vector2i(x, y)
@@ -1592,6 +1600,11 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 					draw_circle(r.position + Vector2(_ts * (ox + 0.11), _ts * (oy + 0.07)), _ts * 0.035, pal["s1"])
 				elif hsh % 11 == 3:
 					draw_circle(r.position + Vector2(_ts * 0.7, _ts * 0.6), _ts * 0.04, pal["s2"])
+				if blight.has(p):
+					var bx0 := 0.25 + float(hsh % 5) * 0.11
+					var by0 := 0.3 + float(hsh % 3) * 0.18
+					draw_circle(r.position + Vector2(_ts * bx0, _ts * by0), _ts * 0.16, Color(0.1, 0.08, 0.07, 0.22))
+					draw_circle(r.position + Vector2(_ts * (bx0 + 0.3), _ts * (by0 + 0.2)), _ts * 0.10, Color(0.12, 0.08, 0.1, 0.20))
 				for br in brects:
 					if br.has_point(p):
 						draw_rect(r, Color(0.45, 0.75, 0.38, 0.10))
@@ -1651,7 +1664,19 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			if tk == "oil" or tk == "goo" or tk == "rich_goo":
 				var shm := 0.04 + 0.04 * sin(Time.get_ticks_msec() / 600.0 + float(t.x * 5 + t.y * 3))
 				draw_circle(_tile_rect(t).get_center() + Vector2(-_ts * 0.15, -_ts * 0.1),
-					_ts * 0.10, Color(0.75, 0.82, 0.9, shm))
+					_ts * 0.10, Color(0.62, 0.55, 0.68, shm))
+				# filth exhales: a slow dark wisp curls up from the corruption
+				var wph := fposmod(Time.get_ticks_msec() / 3000.0 + float(t.x * 11 + t.y * 5) * 0.23, 1.0)
+				if wph < 0.45:
+					draw_circle(_tile_rect(t).get_center() + Vector2(_ts * 0.12 * sin(wph * 11.0), -_ts * (0.15 + wph * 0.9)),
+						_ts * (0.05 + wph * 0.09), Color(0.16, 0.12, 0.14, 0.4 * (1.0 - wph / 0.45)))
+			elif tk == "growth":
+				# life breathes: a warm mote drifts up from some plants
+				if ((t.x * 40503) ^ (t.y * 76261)) % 3 == 0:
+					var mph := fposmod(Time.get_ticks_msec() / 2600.0 + float(t.x * 3 + t.y * 13) * 0.37, 1.0)
+					if mph < 0.6:
+						draw_circle(_tile_rect(t).get_center() + Vector2(_ts * 0.14 * sin(mph * 8.0), -_ts * (0.1 + mph * 0.8)),
+							_ts * 0.035, Color(0.95, 0.92, 0.65, 0.7 * (1.0 - mph / 0.6)))
 	for v in m["vents"]:
 		if _vis(v):
 			_sprite("vent", v)
@@ -1663,7 +1688,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			var vph := fposmod(Time.get_ticks_msec() / 2000.0 + float(v.x * 7 + v.y * 13) * 0.31, 1.0)
 			if vph < 0.55:
 				draw_circle(_tile_rect(v).get_center() + Vector2(_ts * 0.1 * sin(vph * 9.0), -_ts * (0.2 + vph * 0.8)),
-					_ts * (0.06 + vph * 0.10), Color(0.7, 0.72, 0.74, 0.35 * (1.0 - vph / 0.55)))
+					_ts * (0.06 + vph * 0.10), Color(0.58, 0.52, 0.46, 0.35 * (1.0 - vph / 0.55)))
 	if m["stairs"] != Vector2i(-1, -1) and _vis(m["stairs"]):
 		_sprite("stairs", m["stairs"])
 		if int(snap["greened"]) < int(snap["green_need"]):
@@ -1730,7 +1755,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			var spd := 8.0 + 3.5 * float(i % 4)
 			var hx := hz.position.x - hr + fposmod(float(i) * hz.size.x * 0.37 + hsec * spd, hz.size.x + hr * 2.0)
 			var hy := hz.position.y + hz.size.y * (0.12 + 0.15 * float(i)) + sin(hsec * 0.5 + float(i) * 1.7) * _ts * 0.4
-			var hcol := Color(0.55, 0.55, 0.58, minf(0.035 * float(dimlvl), 0.11))
+			var hcol := Color(0.44, 0.38, 0.33, minf(0.035 * float(dimlvl), 0.11))
 			if choked:
 				hcol = Color(0.62, 0.42, 0.38, minf(0.045 * float(dimlvl), 0.13))
 			draw_circle(Vector2(hx, hy), hr, hcol)
@@ -2165,7 +2190,7 @@ func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 	else:
 		for i in 5:  # the smog closes over the screen
 			var drift := fposmod(tsec * (0.02 + 0.01 * float(i % 2)) + float(i) * 0.23, 1.2) - 0.1
-			draw_circle(Vector2(vw * drift, vh * (0.08 + 0.06 * float(i))), vw * 0.16, Color(0.5, 0.5, 0.54, 0.07))
+			draw_circle(Vector2(vw * drift, vh * (0.08 + 0.06 * float(i))), vw * 0.16, Color(0.42, 0.36, 0.32, 0.08))
 		var skt := Art.tex("ic_choke", int(vh * 0.055))
 		if skt != null:
 			draw_texture(skt, Vector2(vw / 2.0 - vh * 0.0275, vh * 0.165))
