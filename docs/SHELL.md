@@ -122,3 +122,14 @@ the floor's green quota is met - the status row shows "green x/y" and
 the objective line tracks it. Overgrown vents (growth planted on the
 grate) absorb their next reinforcement. Cleansing every last corruption
 tile restores the floor: banner, skies clear, bonus bloom.
+
+## Run persistence
+
+Live runs survive the OS killing the app: every action is appended to
+`user://tender_run.save` (header = seed/config/tier + RUN_SAVE_VERSION,
+then one action per line, flushed immediately). On boot the shell
+replays the log through the pure sim - determinism makes the restore
+byte-exact. The save is deleted when the run ends; RESUME can also
+recover the run from disk after the tutorial displaces it. Bump
+RUN_SAVE_VERSION in shell/main.gd whenever a sim change alters replay
+behaviour, or stale saves would replay into divergence.

@@ -155,6 +155,29 @@ func _init() -> void:
 		"forge upgrades one ability and scraps another")
 	shell3.free()
 
+	# 6. a killed app resumes byte-exact: replay from the on-disk action log
+	var shell4 = Shell.new()
+	shell4._ready()
+	shell4._tap("play")
+	shell4._key(KEY_SPACE)
+	for i in 6:
+		shell4._key(KEY_SPACE)  # end turns
+	for a in shell4._legal_of("move"):
+		shell4._act(a)
+		break
+	var saved_hash: String = shell4.game.state_hash()
+	var saved_turns: int = shell4.game.total_turns
+	shell4.free()  # simulate Android reclaiming the app (no clean shutdown)
+	var shell5 = Shell.new()
+	shell5._ready()
+	_check(shell5.game != null and shell5._game_is_run, "killed run auto-restores on boot")
+	_check(shell5.game.total_turns == saved_turns, "restored run is at the same turn")
+	_check(shell5.game.state_hash() == saved_hash, "restored run is byte-exact (replay determinism)")
+	shell5._tap("resume")
+	_check(shell5.screen == "game", "RESUME enters the restored run")
+	shell5.free()
+	DirAccess.remove_absolute("user://tender_run.save")
+
 	shell.free()
 	shell2.free()
 	print("FAILURES: %d" % fails if fails > 0 else "shell smoke: OK")

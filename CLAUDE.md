@@ -114,6 +114,9 @@ architecture below is designed to bend rather than block.
   "watch" any death a sweep or playtest flags. `AUTOPSY_TIER`/`AUTOPSY_MUTATORS`/
   `AUTOPSY_KIT` set the config; `AUTOPSY_JSON=<path>` dumps the run as a
   (seed, config, actions) regression pair and `AUTOPSY_REPLAY=<path>` replays one.
+- Sim changes that alter replay behaviour must bump RUN_SAVE_VERSION in
+  `shell/main.gd` - live phone runs persist as replayable action logs and a
+  stale log replayed across sim changes diverges silently.
 - Human shell (`shell/`): SVG-sprite Godot scene over the sim — see
   `docs/SHELL.md` for controls. `tests/test_shell.gd` smoke-tests it
   headless; `tests/render_frame.gd` renders any game state as a standalone

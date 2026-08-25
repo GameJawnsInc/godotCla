@@ -16,6 +16,10 @@ const Tutorial := preload("res://shell/tutorial.gd")
 const AudioKit := preload("res://shell/audio.gd")
 const Profile := preload("res://meta/profile.gd")
 const PROFILE_PATH := "user://tender_profile.json"
+const RUN_SAVE_PATH := "user://tender_run.save"
+# Bump whenever a sim change alters replay behaviour - stale saves are
+# discarded rather than replayed into divergence.
+const RUN_SAVE_VERSION := 1
 
 const CFG_PATH := "user://tender.cfg"
 
@@ -153,6 +157,7 @@ var _shake_ms := -99999
 var _shake_mag := 0.0
 var _banner: Array = []
 var _banner_ms := -99999
+var _run_save: FileAccess = null  # open append handle for the live run's log
 
 
 func _ready() -> void:
@@ -170,6 +175,8 @@ func _ready() -> void:
 		seed_v = int(env)
 		screen = "game"
 		_new_game()
+	elif FileAccess.file_exists(RUN_SAVE_PATH):
+		_load_run()  # Android reclaimed the app mid-run: replay it back
 	queue_redraw()
 
 
@@ -183,10 +190,17 @@ func _roll_seed() -> void:
 func _new_game() -> void:
 	sel_tier = clampi(sel_tier, 0, int(profile.unlocked_tier))
 	run_tier = sel_tier
-	game = Game.new(seed_v, profile.game_config(sel_tier))
+	var cfg: Dictionary = profile.game_config(sel_tier)
+	game = Game.new(seed_v, cfg)
 	_game_is_run = true
 	_run_recorded = false
 	_run_unlocks = []
+	if _run_save != null:
+		_run_save.close()
+	_run_save = FileAccess.open(RUN_SAVE_PATH, FileAccess.WRITE)
+	if _run_save != null:
+		_run_save.store_line(var_to_str({"v": RUN_SAVE_VERSION, "seed": seed_v, "tier": run_tier, "config": cfg}).replace("\n", " "))
+		_run_save.flush()
 	mode = "normal"
 	if intro_mode == "always" or (intro_mode == "once" and not seen_intro):
 		seen_intro = true
@@ -208,6 +222,48 @@ func _start_tutorial() -> void:
 	tooltip = []
 	log_lines = []
 	queue_redraw()
+
+
+## Restore the interrupted run: rebuild the game from its seed + config and
+## replay the recorded actions. Determinism makes this byte-exact; a version
+## mismatch or finished run just clears the save.
+func _load_run() -> void:
+	var f := FileAccess.open(RUN_SAVE_PATH, FileAccess.READ)
+	if f == null:
+		return
+	var head = str_to_var(f.get_line())
+	if not (head is Dictionary) or int(head.get("v", -1)) != RUN_SAVE_VERSION:
+		f.close()
+		DirAccess.remove_absolute(RUN_SAVE_PATH)
+		return
+	var g = Game.new(int(head["seed"]), Dictionary(head["config"]))
+	while not f.eof_reached() and not g.over:
+		var line := f.get_line()
+		if line.strip_edges() == "":
+			continue
+		var act = str_to_var(line)
+		if act is Dictionary:
+			g.step(act)
+	f.close()
+	if g.over:
+		DirAccess.remove_absolute(RUN_SAVE_PATH)
+		return
+	game = g
+	seed_v = int(head["seed"])
+	run_tier = int(head.get("tier", 0))
+	sel_tier = run_tier
+	_game_is_run = true
+	_run_recorded = false
+	_run_unlocks = []
+	mode = "normal"
+	log_lines = []
+	for ev in game.snapshot()["events"]:
+		var s := _ev_text(ev)
+		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
+			log_lines.append(s)
+	_run_save = FileAccess.open(RUN_SAVE_PATH, FileAccess.READ_WRITE)
+	if _run_save != null:
+		_run_save.seek_end()
 
 
 func _load_settings() -> void:
@@ -271,6 +327,9 @@ func _act(a: Dictionary) -> void:
 		return
 	var keep_shop := mode == "shop" and String(a.get("type", "")) == "buy"
 	var evs: Array = game.step(a)
+	if _game_is_run and _run_save != null:
+		_run_save.store_line(var_to_str(a).replace("\n", " "))
+		_run_save.flush()
 	_arm_anim(prev, prev_floor)
 	_spawn_fx(evs, prev)
 	if game.over and _game_is_run and not _run_recorded:
@@ -280,6 +339,10 @@ func _act(a: Dictionary) -> void:
 		if int(profile.unlocked_tier) > prev_ut:
 			_run_unlocks.push_front("tier:%d" % int(profile.unlocked_tier))
 		profile.save(PROFILE_PATH)
+		if _run_save != null:
+			_run_save.close()
+			_run_save = null
+		DirAccess.remove_absolute(RUN_SAVE_PATH)
 	for ev in evs:
 		var s := _ev_text(ev)
 		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
@@ -937,7 +1000,9 @@ func _tap(tag: String) -> void:
 		screen = "game"
 		_new_game()
 	elif tag == "resume":
-		if game != null and not game.over and screen != "tutorial":
+		if (game == null or not _game_is_run or game.over) and FileAccess.file_exists(RUN_SAVE_PATH):
+			_load_run()  # the live run was displaced (e.g. by the tutorial)
+		if game != null and not game.over and _game_is_run:
 			screen = "game"
 			queue_redraw()
 	elif tag == "tutorial":
@@ -1408,7 +1473,8 @@ func _draw_menu(vw: float, vh: float) -> void:
 
 	var bw := vw * 0.62
 	var bx := (vw - bw) / 2.0
-	var has_resume: bool = game != null and not game.over and _game_is_run
+	var has_resume: bool = (game != null and not game.over and _game_is_run) \
+		or FileAccess.file_exists(RUN_SAVE_PATH)
 	var has_tier: bool = int(profile.unlocked_tier) > 0
 	sel_tier = clampi(sel_tier, 0, int(profile.unlocked_tier))
 	# build the row list first, then size the stack to the space above the footer
