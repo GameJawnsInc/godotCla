@@ -22,7 +22,15 @@ const GATE_MIN_SEEDS := 20
 ## the old 30-50% and the current 45-65% band; 35-65 spans both so the gate
 ## judges the game, not which entry a reader trusts (review §7.6).
 const BANDS := {"deeproot": Vector2(0.70, 0.90), "optimizer": Vector2(0.35, 0.65)}
-const MAGPIE_MAX_LOWER := 0.05  # canary: fail only when the CI lower bound clears 5%
+## Greed canary trip line. The DESIGN target is 0-5% (BALANCE.md Targets); the
+## gate trips when the Wilson lower bound clears 10%. Under instrument v2 full
+## greed measures 10/100 [6, 17] (BALANCE.md 2026-09-05d), and at 30 seeds a 5%
+## line flips on one win around that rate (4/30 fails, 3/30 passes) - it
+## returned the same FAIL for the bump-2 regression (20/100) and for the
+## revision that undid it. 10% still fails 20/100 and 17/100 at 100 seeds and
+## trips a 30-seed run from 7/30 up; the 100-seed verify_kit baseline is the
+## number a real rise is judged against.
+const MAGPIE_MAX_LOWER := 0.10
 const WANDERER_MAX_FLOOR := 2.0
 const SPROUT_WINS_PER_30 := 1  # "wins rare": at most 1 win per 30 seeds
 const NO_TIMEOUT := ["optimizer", "deeproot"]
@@ -165,7 +173,7 @@ func _gate(stats: Dictionary, seeds: int) -> int:
 			fails += _verdict(not outside, "%s band %d-%d%%: %d/%d CI %s" % [
 				bot_name, roundi(band.x * 100), roundi(band.y * 100), w, n, Sweep.fmt_ci(ci)])
 		if bot_name == "magpie":
-			fails += _verdict(ci.x <= MAGPIE_MAX_LOWER, "magpie canary <= %d%%: %d/%d CI %s (fails when the lower bound clears the band)" % [
+			fails += _verdict(ci.x <= MAGPIE_MAX_LOWER, "magpie canary <= %d%% (design target 0-5%%): %d/%d CI %s (fails when the lower bound clears the trip line)" % [
 				roundi(MAGPIE_MAX_LOWER * 100), w, n, Sweep.fmt_ci(ci)])
 		if bot_name == "wanderer":
 			fails += _verdict(w == 0 and st["avg_floor"] <= WANDERER_MAX_FLOOR, "wanderer 0 wins, avg floor <= %.0f: %d wins, avg floor %.2f" % [

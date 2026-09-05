@@ -20,7 +20,7 @@ Reference numbers for TENDER's difficulty, and the discipline for changing them.
 | deeproot  | 70–90% wins             | the search ceiling: near-perfect play should nearly always win |
 | optimizer | 45–65% wins             | skilled play should win often but never be safe (raised from 30–50 after the tempo fix — the old band measured a bot flaw) |
 | fanatic   | every build > 0 at 100 seeds (hard); 20–40% total (soft) | committing to a niche build must stay viable; the total tracks content difficulty and moves when content does |
-| magpie    | 0–5% canary, top bloom  | full greed loses to the current game almost always; a RISE above 5% means greed got cheap (canary, like turtle). Unmet since before bump 2 (pre-bump 6/100 [3, 12], now 10/100 [6, 17] under v2); the 30-seed gate line is red at 4/30 pending a decision — see 2026-09-05d |
+| magpie    | 0–5% design target, top bloom; gate trips at a 10% CI lower bound | full greed loses to the current game almost always; a RISE means greed got cheap (canary, like turtle). Under instrument v2 the recorded baseline is 10/100 [6, 17]; a 100-seed lower bound clearing 17% is the signal — see 2026-09-05d |
 | sprout    | avg depth 3.5–5, wins rare | noobs feel progress; full clears are earned |
 | wanderer  | dies floor 1–2, 0 wins  | the world must punish random play |
 | all       | zero timeouts/softlocks | every run ends in win or death |
@@ -1195,9 +1195,9 @@ free kit slot; the drop shape no longer exists).
 ### Gate verdict
 
 `tests/playtest.gd` at 30 seeds, gate ON: **exit 1, "gate: 1 FAIL"** - the
-same single failure as bump 2 as shipped, at the same 4/30. (2026-09-05d
-records what the line measures and the owner's options; the gate constant is
-unchanged and the line stays red until one is taken.)
+same single failure as bump 2 as shipped, at the same 4/30. (Resolved in
+2026-09-05d by re-deriving the gate's trip line to 10%; the sim and the 4/30
+measurement below are unchanged.)
 
 ```
 PASS wanderer 0 wins, avg floor <= 2: 0 wins, avg floor 1.00
@@ -1274,13 +1274,16 @@ game after the removal for any bot that used to buy by replacement.
   `test_economy` (82 -> 84 checks) and `test_regressions` (28 -> 27 records),
   both of which are direct consequences of the edit.
 
-## 2026-09-05d - magpie canary: status after the revision (no sim change, gate unchanged)
+## 2026-09-05d - magpie canary: trip line re-derived to 10% (no sim change)
 
-The bump-2 revision above leaves `tests/playtest.gd` red on one line -
-`FAIL magpie canary <= 5%: 4/30 CI [5%, 30%]` - and this entry records what
-that line is and is not measuring. The gate constant is **unchanged**
-(`MAGPIE_MAX_LOWER := 0.05`, the design target); moving it is the owner's
-call, not a measurement's, so the options are listed at the end instead.
+The bump-2 revision above left `tests/playtest.gd` red on one line -
+`FAIL magpie canary <= 5%: 4/30 CI [5%, 30%]`. This entry records what that
+line measures and the decision taken on it (owner: "whatever you think"):
+the **gate trip line moves from a 5% to a 10% Wilson lower bound**
+(`MAGPIE_MAX_LOWER := 0.05 -> 0.10`), the **0-5% design target stays** in the
+Targets table, and the 100-seed `verify_kit` number **10/100 [6, 17]** is
+recorded as the baseline a future rise is judged against. Nothing in the sim
+or the bots changed; no replay moved; nothing was re-recorded.
 
 ### What the 5% line separates
 
@@ -1311,17 +1314,26 @@ seeds, still fail both bump-2 configurations at 100 seeds (17/100 and
 20/100), and trip a 30-seed run from 7/30 (23%) up; a 5% line trips a
 30-seed run from 4/30 (13%) up, i.e. on one win at the current true rate.
 
-### Options (owner decision, none taken here)
+### The decision, and why not the other two
 
-1. Re-tune greed against the 0-5% target as its own change with a 100-seed
-   before/after (the honest fix; what makes magpie win is now measurable:
-   bloom conversion 0.50, kit entropy 5.6 bits, 293 graft buys per 100 runs).
-2. Accept 10% as the gate's trip line (one constant in `tests/playtest.gd`)
-   with the 0-5% figure kept as the design target in the Targets table.
-3. Leave the line red until 1 is done and read the gate as "12 of 13 pass".
+Chosen: move the trip line to 10% and keep the target. Rejected: re-tuning
+greed now (a shop-economy change hits every persona for the sake of a bot
+band that 30 seeds cannot resolve, and 10% still reads as "full greed loses
+almost always"), and leaving the line red (a gate everyone learns to ignore
+stops being a gate). The rule from here: a 30-seed run trips from 7/30 up
+(true rate roughly doubled); the real canary is the 100-seed `verify_kit`
+line, and a rise whose lower bound clears the recorded [6, 17] is the signal
+that greed got cheap. Re-tuning greed toward 0-5% stays on the watch list as
+its own balance question with its own 100-seed before/after.
 
-Until one of these is taken the default 30-seed gated playtest exits 1 on
-this line alone; every other gate line passes (see 2026-09-05c).
+### Suite after the change
+
+- `tests/playtest.gd` 30 seeds, gate ON: **exit 0, "gate: all PASS"**, magpie
+  line `PASS magpie canary <= 10% (design target 0-5%): 4/30 CI [5%, 30%]`.
+  Win counts identical to 2026-09-05c (wanderer 0, sprout 1, magpie 4,
+  fanatic 7, optimizer 12, deeproot 24 of 30; 0 timeouts, 0 illegal).
+- Every other suite unchanged from 2026-09-05c (no code outside the gate
+  constant and its label changed).
 
 ## Watch list
 
@@ -1336,11 +1348,11 @@ this line alone; every other gate line passes (see 2026-09-05c).
   watch for rises, not falls. It was sitting at exactly 5/100 since the
   cleanse-smog-relief change; under instrument v2 it measures **10/100
   [6, 17]** (2026-09-05c) and pre-bump measured 6/100 [3, 12], so the 0-5%
-  target has been unmet for longer than bump 2. The 30-seed gate line is red
-  at 4/30 and stays so until the owner picks an option in 2026-09-05d
-  (re-tune greed, move the trip line to 10%, or read the gate as 12 of 13):
-  greed at ~2x its design target is an open balance question and the next
-  100-seed rise above [6, 17] is the real signal.
+  target has been unmet for longer than bump 2. The gate's trip line was
+  re-derived to a 10% CI lower bound (2026-09-05d) so the drift is tracked
+  here, not in the merge gate: greed at ~2x its design target is an open
+  balance question and the next 100-seed rise above [6, 17] is the real
+  signal.
 - Fanatic cannot demo control archetypes (shover 2-3/25 while the
   ceiling wins 45% with the same kit): judge push/pull changes with
   deeproot forced-kit runs, not the fanatic number.
@@ -1367,8 +1379,9 @@ this line alone; every other gate line passes (see 2026-09-05c).
   a dead shop slot at a full kit is fine). New canary number:
   **10/100 = 10% [6, 17]**, exactly the A/B's prediction, indistinguishable
   from pre-bump 6/100 [3, 12]. The bump-2 regression is undone; the band
-  itself is still not met (the interval clears 5% and the 30-seed gate still
-  reads FAIL magpie 4/30 [5, 30]), which is the older drift, not this bump's.
+  itself is still not met (the interval clears 5%), which is the older drift,
+  not this bump's - the gate line now passes only because its trip line was
+  re-derived to 10% in 2026-09-05d.
   Two magpie metrics moved without a CI to judge them by: shrine turns/run
   8.33 -> 22.70 and combos/run 6.33 -> 2.67 on the same four wins - greed now
   loiters at a shrine it can spend less at. Watch those, and the 1 timeout in

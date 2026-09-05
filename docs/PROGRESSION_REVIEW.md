@@ -65,10 +65,10 @@ and statistically indistinguishable from the pre-bump 6/100 [3, 12]. The band
 is still not met (the interval clears 5%), but that is the older drift, not
 the bump: pre-bump measured 6/100 [3, 12], whose point estimate was already
 over target. The 5% gate line at 30 seeds returned the same FAIL for the
-shipped bump and for the revision that undid it, so it is reporting seed
-noise around a true rate near 10%; the gate constant is unchanged and the line
-stays red until the owner picks between re-tuning greed and moving the trip
-line to 10% (BALANCE.md 2026-09-05d lists the trip points). The graft sweep's first
+shipped bump and for the revision that undid it, so it was reporting seed
+noise around a true rate near 10%; the gate's trip line was re-derived to a
+10% CI lower bound with 0-5% kept as the design target and 10/100 [6, 17]
+recorded as the rise baseline (BALANCE.md 2026-09-05d). The graft sweep's first
 out-of-sample number is also in: solar_core 25/30 vs 10/30 (16:1, p=0.00),
 the other five grafts within noise.
 
