@@ -6,6 +6,25 @@ batch AI runners that are supposed to measure them. The question asked was:
 *why does the game not yet have build depth or combo potential, and what would
 give it both?*
 
+**Status (2026-09-05).** Block A harness and bot work has landed (no sim
+behaviour change, no `RUN_SAVE_VERSION` bump); the v2 re-baseline is the
+"instrument v2 re-baseline" entry in `docs/BALANCE.md`. Landed: `bots/roster.gd`
+as the single bot registry (plus the `deeproot_rollout` persona), `tests/tally.gd`
+and the shared `Sweep.run_loop` with Wilson CIs and the paired sign test (7.1);
+the deeproot round-robin candidates, pickable unlisted offers, table-driven
+fanatic with `set_build`, the `sap_snare` dodge fix, and the sprout repair (7.2);
+the locked-kit `sweep_combos` lift rewrite with `SWEEP_MODE=drift`, sharding,
+and the permanent reference kits in `sweep_tiers` (7.3); `tests/draft_oracle.gd`
+and rollout drafting (7.4); the regression corpus, `tests/test_regressions.gd`,
+playtest bands as CI gates, the `test_meta` structural asserts, and `floor_def`
+coverage in `test_invariants` (7.6); `measure_bosses` per-kit rows with
+`BOSS_KIT` (7.7); and from 6.1 only the sim-ignored data: ability `tags`/`role`,
+`Content.ARCHETYPES`, `Content.base_id`, `archetypes_for`, and the read-only
+`snapshot()` fields `pool`/`packages`/`loadout`. NOT done: `Content.LOADOUTS`,
+one package per run via `profile.game_config`, the mutator picker and
+`Profile.daily_config` (6.1); `deeproot_plan` (7.5); the Block B sim patch
+(6.2) and everything after it.
+
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
 180 bot runs; a synergy-lift sweep of 7 hypothesised pairs at 24 seeds per

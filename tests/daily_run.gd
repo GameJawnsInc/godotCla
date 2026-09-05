@@ -6,14 +6,8 @@ extends SceneTree
 
 const Content := preload("res://sim/content.gd")
 const Game := preload("res://sim/game.gd")
-const BOTS := {
-	"wanderer": preload("res://bots/wanderer.gd"),
-	"sprout": preload("res://bots/sprout.gd"),
-	"magpie": preload("res://bots/magpie.gd"),
-	"fanatic": preload("res://bots/fanatic.gd"),
-	"optimizer": preload("res://bots/optimizer.gd"),
-	"deeproot": preload("res://bots/deeproot.gd"),
-}
+const Sweep := preload("res://tests/sweep_lib.gd")
+const Roster := preload("res://bots/roster.gd")
 
 
 func _init() -> void:
@@ -24,18 +18,12 @@ func _init() -> void:
 	var config := {"mutators": [mut], "packages": Content.PACKAGES.keys()}
 	print("TENDER daily %s — seed %d, mutator: %s (%s)" % [
 		date, seed_v, mut, Content.MUTATORS[mut]["desc"]])
-	for bot_name in BOTS:
+	print(Sweep.header("daily_run", ",".join(Roster.names()), config, [seed_v]))
+	for bot_name in Roster.names():
 		var game = Game.new(seed_v, config)
-		var bot = BOTS[bot_name].new()
-		bot.reset(seed_v * 7919 + 17)
-		if bot.has_method("set_sim"):
-			bot.set_sim(game)
-		var actions := 0
-		while not game.over and actions < 4000 and game.total_turns < 400:
-			game.step(bot.choose_action(game.snapshot(), game.legal_actions()))
-			actions += 1
+		Sweep.run_loop(game, Roster.make(bot_name, seed_v))
 		var outcome := "WON" if game.won else ("died floor %d (%s)" % [game.floor_num, game.death_cause])
-		print("  %-10s %s — turns %d, bloom %d" % [bot_name, outcome, game.total_turns, game.bloom])
+		print("  %-16s %s — turns %d, bloom %d" % [bot_name, outcome, game.total_turns, game.bloom])
 		if bot_name == "optimizer":
 			print("  verification hash: %s" % game.state_hash().substr(0, 16))
 	quit(0)

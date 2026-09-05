@@ -560,6 +560,198 @@ yet upcycle (deeproot's eval has no term for + forms, so search
 declines the bloom cost); recorded as a known gap - upcycling is
 currently human expression, not bot-measured power.
 
+## 2026-09-05 - instrument v2 re-baseline (Block A harness fixes)
+
+Block A of docs/PROGRESSION_REVIEW.md: harness and bot repairs only, no
+sim behaviour change, no RUN_SAVE_VERSION bump. **Every number above
+this entry was produced by the v1 instruments and is NOT comparable to
+anything below it**; comparisons are made within one instrument
+version only (the CLAUDE.md practical notes carry the rule).
+
+What changed in the instruments:
+- One run loop (`Sweep.run_loop`) and one bot registry
+  (`bots/roster.gd`) behind every runner; `tests/tally.gd` counts casts
+  by base id, drafts/picks/skips/drops, buys, combos, damage by source,
+  stall floors, quota-unmet deaths and illegal actions, and every runner
+  prints a header (bot, config, seed range), a Wilson CI and the KPI
+  block (strike share, signature share, terrain share, combos/run,
+  bloom conversion, kit entropy).
+- deeproot: candidate set is round-robin across kit slots with
+  nearest-enemy-first targets (per-slot truncation 13-22% -> 0%).
+- optimizer/magpie/deeproot drafting: an unlisted offer is taken over
+  skip (rank after the list, not 500); `mycelium_dash` joins the list
+  last. sap_snare counts as a dodge only against a `move` intent.
+- sprout: uses items (balm_fruit at hp <= 4, sun_capsule at 0 charge)
+  and casts seed_bomb / grow_spike; every sprout seed re-baselines.
+- fanatic: builds come from `Content.ARCHETYPES` (`set_build(id)`),
+  off-build ability purchases no longer leak through the parent, and
+  measure_fanatic runs every build on every seed (N per build =
+  FANATIC_SEEDS, so the old per-build rows are not comparable either).
+- sweep_combos measures locked-kit lift (`{kit: K, pool: K}`) instead
+  of open-pool drift; sweep_tiers gates on the Wilson upper bound;
+  playtest gates each persona's band; tests/test_regressions.gd replays
+  a 24-record corpus; tests/draft_oracle.gd is new.
+
+Before (review telemetry, v1 loop, seeds as noted) / after (v2, seeds
+1..30, tier 0 unless noted, Wilson 95%):
+
+| persona | before | after | band |
+|---|---|---|---|
+| optimizer | 17/40 = 42% [29, 58] | 14/30 = 47% [30, 64] | 45-65 ok (35-65 in the playtest gate) |
+| magpie | 3/40 = 8% [3, 20] | 2/30 = 7% [2, 21] | 0-5 canary, CI covers it |
+| sprout | 0/40 = 0% [0, 9] | 1/30 = 3% [1, 17], avg floor 3.9 | wins rare, depth 3.5-5 ok |
+| fanatic (legacy 4 builds by seed) | 10/40 = 25% [14, 40] | 5/30 = 17% [7, 34] | 20-40 soft; see the archetype table |
+| deeproot tier 0 | 18/20 = 90% [70, 97] | 27/30 = 90% [74, 97] | 70-90 ok |
+| deeproot tier 6 (locked base3+anchor_roots, lift table) | 16/24 = 67% [47, 82] | 18/30 = 60% [42, 75] (open pool, avg floor 6.0) | - |
+| deeproot_rollout tier 0 | no prior baseline | 26/30 = 87% [70, 95] | new column |
+| wanderer | - | 0/30, floor 1.0 | ok |
+
+Zero timeouts and zero illegal actions for all seven personas; the
+playtest gate is all-PASS at 30 seeds; suite green (invariants 1400 +
+floor_def 1540 / 0, determinism 45 checks / 7 personas, content OK,
+regressions 24/24, meta OK).
+
+KPI block per persona (30 seeds, tier 0; strike = strike share of
+enemy damage, sig = signature share, terr = terrain share, cmb =
+combos/run, conv = bloom spent/earned, ent = kit entropy bits, shrine =
+shrine turns/run, stall = stall floors over 30 runs, qu = quota-unmet
+deaths):
+
+| persona | strike | sig | terr | cmb | conv | ent | shrine | unspent charge/end_turn | stall | qu | dmg taken/run |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| optimizer | 0.39 | 0.17 | 0.02 | 3.3 | 0.23 | 3.83 | 1.2 | 0.59 | 4 | 2 | 17.6 |
+| magpie | 0.30 | 0.37 | 0.02 | 3.4 | 0.40 | 4.23 | 26.5 | 0.67 | 18 | 0 | 37.3 |
+| sprout | 0.33 | 0.11 | 0.04 | 7.5 | 0.03 | 4.51 | 0.4 | 0.37 | 10 | 2 | 28.9 |
+| fanatic | 0.26 | 0.16 | 0.05 | 12.8 | 0.21 | 3.74 | 0.8 | 0.28 | 7 | 5 | 34.2 |
+| deeproot | 0.09 | 0.30 | 0.14 | 10.9 | 0.01 | 3.76 | 0.5 | 0.71 | 3 | 0 | 4.2 |
+| deeproot tier 6 | 0.05 | 0.44 | 0.22 | 20.4 | 0.01 | 3.86 | 0.5 | 1.19 | 10 | 1 | 24.0 |
+| deeproot_rollout | 0.07 | 0.26 | 0.16 | 11.3 | 0.01 | 4.08 | 0.5 | 1.02 | 5 | 0 | 15.8 |
+
+Readouts worth keeping: optimizer spikes are 136 of 528 player damage
+(the spiked filter engages too late); deeproot casts thorn_shield 9.2
+times per run (509 hp absorbed by shield against 126 damage taken
+over 30 runs; the shield-spam bias is still there) and spends 0.3 of 47 bloom per run;
+magpie sits 26 turns per run on shrines and stalls 18 of ~105 floors;
+mycelium_dash+ is offered 30 times and picked 0 for both optimizer and
+deeproot in the open pool (the unlisted-offer fix only bites in
+locked/tiny pools); sprout's combos/run 7.5 is verdant surges from
+seed_bomb on growth, not skill.
+
+Fanatic archetypes (measure_fanatic, FANATIC_SEEDS=30, every build on
+every seed, base pool; core-complete = floor by which every core id
+was held, never = share of runs that never completed the core):
+
+| build | wins | CI | avg floor | core-complete | sig | strike |
+|---|---|---|---|---|---|---|
+| pyro | 8/30 | [14, 44] | 5.7 | 3.5 (never 37%) | 0.05 | 0.11 |
+| pyro_nolance | 8/30 | [14, 44] | 5.3 | 4.7 (never 63%) | 0.34 | 0.29 |
+| ember | 9/30 | [17, 48] | 5.4 | 6.8 (never 87%) | 0.49 | 0.17 |
+| gardener | 11/30 | [22, 54] | 5.4 | 4.8 (never 63%) | 0.40 | 0.29 |
+| shover | 5/30 | [7, 34] | 5.5 | 5.2 (never 70%) | 0.19 | 0.04 |
+| shover_nolance | 5/30 | [7, 34] | 4.7 | 5.5 (never 87%) | 0.64 | 0.13 |
+| anchor | 6/30 | [10, 37] | 4.7 | 5.0 (never 90%) | 0.00 | 0.57 |
+| turtle | 1/30 | [1, 17] | 4.5 | never (100%) | 0.05 | 0.60 |
+
+pyro vs pyro_nolance 8 vs 8 and shover vs shover_nolance 5 vs 5: at 30
+seeds the lance adds nothing to either archetype's win count; what it
+changes is the signature share (0.05 -> 0.34 fire, 0.19 -> 0.64
+control). turtle's core (5 ids + protected mycelium_dash) cannot fit
+the kit, so its core-complete is 100% never by construction. Total
+53/240 = 22%.
+
+Locked-kit lift (sweep_combos, `{kit: K, pool: K}`, base3 = starters;
+lift = pair - max(single); flag needs the pair CI to exclude the best
+single AND sign_p < 0.05):
+
+optimizer, tier 0, 30 seeds - baseline 13/30 [27, 61]; singles
+grow_spike 9, overgrowth 11, root_wall 11, sun_flare 12, vine_whip 13,
+water_jet 12:
+
+| pair | sx | sy | pair | lift | pair - additive | discordant | sign_p | cmb/run |
+|---|---|---|---|---|---|---|---|---|
+| root_wall + sun_flare | 11 | 12 | 16/30 [36, 70] | +4 | +6 | 9:5 | 0.42 | 3.6 |
+| grow_spike + overgrowth | 9 | 11 | 14/30 [30, 64] | +3 | +7 | 10:7 | 0.63 | 2.6 |
+| vine_whip + water_jet | 13 | 12 | 15/30 [33, 67] | +2 | +3 | 8:6 | 0.79 | 5.4 |
+
+0/3 flagged. The optimizer casts neither overgrowth nor root_wall in
+a locked kit (30-seed probe: casts are the three starters only, and
+identical for both), so those rows measure a 4th/5th slot of nothing;
+the lift table is deeproot's.
+
+deeproot, tier 6, 16 seeds (a tier-6 lift is lift in a different
+economy; compare within the tier only):
+
+baseline (base3 locked) 10/16 [39, 82] (the review's 16/24 was base3 +
+anchor_roots, v1 loop - not the same row); singles grow_spike 14,
+overgrowth 7, root_wall 11, sun_flare 10, vine_whip 14, water_jet 15:
+
+| pair | sx | sy | pair | lift | pair - additive | discordant | sign_p | cmb/run | sig | terr | dmg |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| root_wall + sun_flare | 11 | 10 | 13/16 [57, 93] | +2 | +2 | 5:3 | 0.73 | 13.1 | 0.18 | 0.05 | 22.5 |
+| vine_whip + water_jet | 14 | 15 | 14/16 [64, 97] | -1 | -5 | 1:2 | 1.00 | 28.8 | 0.67 | 0.21 | 5.9 |
+| grow_spike + overgrowth | 14 | 7 | 13/16 [57, 93] | -1 | +2 | 2:3 | 1.00 | 8.3 | 0.30 | 0.03 | 21.2 |
+
+0/3 flagged. Same shape as the review's v1 table (lift 0 to -1 on
+every pair, no pair worth more than its solo gains) with one new
+reading the v1 instruments could not give: the shove pair fires 28.8
+combos per run at 0.67 signature share and 5.9 damage taken (the
+best continuous secondaries of any row) while its win count is capped
+by water_jet alone at 15/16. Single-ability value at tier 6 is real
+(water_jet +5, grow_spike +4, vine_whip +4 over the 10/16 base;
+overgrowth -3). N=16 is a pilot; the 30-seed grid is SWEEP_SHARD
+work.
+
+Draft oracle (tests/draft_oracle.gd, optimizer, 30 seeds, 138 drafts,
+552 forks, 80 s; chosen-fork rollout agreed with the real outcome at
+138/138):
+- Stakes: 44/138 drafts decisive (some fork wins and some loses), 56
+  all-won, 38 all-lost; mean stakes 0.32 wins. Floor 2 is the only
+  draft that matters much (14/30 decisive, turn spread 24); floor 7 is
+  1/15.
+- Regret: best fork 100 wins, bot pick 84, always-skip 77 -> regret 16
+  (0.12 per draft); the pick matched the best fork at 122/138 drafts
+  and skip matched it at 115/138. Skip was strictly best (every pick
+  lost) at exactly 1 draft, so skipping is not already the best pick.
+- Per offer (P(win|pick) - P(win|skip), paired): grow_spike +28%
+  (5:0, p=0.06), moss_filter +24% (5:1), sun_flare +5%, thorn_shield
+  +7%; mycelium_dash+ -14% (2:6), water_jet -9%, solar_lance+ -3%;
+  overgrowth, anchor_roots, bramble_coat, vine_whip, seed_bomb+ exactly
+  0 (never cast, never matter). Kit-conditional: solar_lance+|grow_spike
+  -27% (n=11), pollen_burst|grow_spike -20% (n=10). Nothing clears
+  p < 0.05 at 30 seeds; the caveat stands (a rollout values an offer by
+  what this persona does with it).
+
+Watch list additions (post-v2 bands):
+- optimizer 47% sits inside both bands but the CI [30, 64] straddles
+  the BALANCE.md 45% floor; the playtest gate uses the review's 35-65
+  until the next 100-seed run settles which band is right.
+- magpie 2/30: the CI upper bound (21%) is above the 5% canary at any
+  30-seed run; the gate only fires when the lower bound clears 5%.
+  Judge magpie at 100 seeds.
+- sprout 1/30 is exactly on the "<= 1 win per 30 seeds" gate; any
+  further sprout skill change must re-check it (the metric we care
+  about is avg depth 3.9, in band).
+- fanatic 5/30 (17%) is under the 20-40 soft band as the legacy
+  seed-split roster; the per-build table (22% total) is the number to
+  track from now on.
+- deeproot thorn_shield 9.2 casts/run and bloom conversion 0.01: the
+  shield-spam bias and the unspent-bloom ceiling the review named are
+  both confirmed by the tally; deeproot_plan (7.5) is the fix, not a
+  content change.
+- deeproot_rollout 26/30 is within CI of deeproot (27/30) but wins in
+  85.7 turns against 71.3, takes 15.8 damage per run against 4.2 (295
+  of it smog), casts thorn_shield 16.7/run and mycelium_dash 14.9/run,
+  and drafts solar_lance+ 16/33 (list deeproot 7/37): the 60-turn
+  rollout horizon cannot see the stalls its upgrade picks cause
+  (review 7.4 caveat, WP5 note). Not a ceiling column yet - keep
+  deeproot as the ceiling reference; a turn-cost term or a longer
+  horizon before publishing rollout numbers as "the" ceiling.
+- Locked-kit lift stays flat at tier 6 with the repaired deeproot
+  (0/3 pairs flagged, lift +2/-1/-1 at n=16): "combos do not fire" was
+  not only the candidate-truncation artifact; the review's Block C
+  case still stands. Re-run the three rows at 30 seeds
+  (SWEEP_SEEDS=30, ~1 h) before any content decision quotes them.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from

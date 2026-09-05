@@ -8,23 +8,19 @@ extends SceneTree
 ##   AUTOPSY_BOT=optimizer AUTOPSY_SEED=42 godot --headless --path . --script tests/autopsy.gd
 ## Knobs: AUTOPSY_LAST (frames to print, default 12), AUTOPSY_TIER,
 ##   AUTOPSY_MUTATORS (comma list), AUTOPSY_KIT (comma list),
-##   AUTOPSY_JSON (path: also dump the recorded run as JSON)
+##   AUTOPSY_JSON (path: also dump the recorded run as JSON with the outcome
+##   under "expect" and the sim version, the tests/regressions schema)
 ## Replay mode:
 ##   AUTOPSY_REPLAY=<path.json> godot --headless --path . --script tests/autopsy.gd
 
 const Game := preload("res://sim/game.gd")
 const AsciiView := preload("res://sim/ascii_view.gd")
-const BOTS := {
-	"wanderer": preload("res://bots/wanderer.gd"),
-	"sprout": preload("res://bots/sprout.gd"),
-	"magpie": preload("res://bots/magpie.gd"),
-	"fanatic": preload("res://bots/fanatic.gd"),
-	"optimizer": preload("res://bots/optimizer.gd"),
-	"deeproot": preload("res://bots/deeproot.gd"),
-}
+const Sweep := preload("res://tests/sweep_lib.gd")
+const Roster := preload("res://bots/roster.gd")
 
-const MAX_ACTIONS := 4000
-const MAX_TURNS := 400
+## Mirrors shell/main.gd RUN_SAVE_VERSION: a record replayed across a sim
+## change diverges silently, so the version travels with the action log.
+const SIM_VERSION := 1
 
 
 func _init() -> void:
@@ -36,23 +32,17 @@ func _init() -> void:
 		return
 
 	var bot_name := _env("AUTOPSY_BOT", "optimizer")
-	if not BOTS.has(bot_name):
-		push_error("unknown bot '%s' (have: %s)" % [bot_name, ", ".join(BOTS.keys())])
+	if not Roster.has(bot_name):
+		push_error("unknown bot '%s' (have: %s)" % [bot_name, ", ".join(Roster.names())])
 		quit(1)
 		return
 	var seed_v := int(_env("AUTOPSY_SEED", "1"))
 	var cfg := _config_from_env()
+	print(Sweep.header("autopsy", bot_name, cfg, [seed_v]))
 
 	var game = Game.new(seed_v, cfg)
-	var bot = BOTS[bot_name].new()
-	bot.reset(seed_v * 7919 + 17)
-	if bot.has_method("set_sim"):
-		bot.set_sim(game)
 	var actions: Array = []
-	while not game.over and actions.size() < MAX_ACTIONS and game.total_turns < MAX_TURNS:
-		var act: Dictionary = bot.choose_action(game.snapshot(), game.legal_actions())
-		actions.append(act)
-		game.step(act)
+	Sweep.run_loop(game, Roster.make(bot_name, seed_v), null, actions)
 
 	var outcome := "TIMEOUT"
 	if game.won:
@@ -65,7 +55,8 @@ func _init() -> void:
 
 	var json_path := OS.get_environment("AUTOPSY_JSON")
 	if json_path != "":
-		_save_record(json_path, seed_v, cfg, actions)
+		var expect := {"won": game.won, "floor": game.floor_num, "turns": game.total_turns}
+		_save_record(json_path, seed_v, cfg, actions, expect)
 		print("record written to %s" % json_path)
 
 	_dump_frames(seed_v, cfg, actions, last)
@@ -117,12 +108,18 @@ func _config_from_env() -> Dictionary:
 	return cfg
 
 
-func _save_record(path: String, seed_v: int, cfg: Dictionary, actions: Array) -> void:
+func _save_record(path: String, seed_v: int, cfg: Dictionary, actions: Array, expect: Dictionary) -> void:
 	var acts: Array = []
 	for a in actions:
 		acts.append(_act_to_json(a))
 	var f := FileAccess.open(path, FileAccess.WRITE)
-	f.store_string(JSON.stringify({"seed": seed_v, "config": cfg, "actions": acts}))
+	if f == null:
+		push_error("cannot write %s" % path)
+		return
+	f.store_string(JSON.stringify({
+		"seed": seed_v, "config": cfg, "actions": acts,
+		"expect": expect, "sim_version": SIM_VERSION,
+	}))
 	f.close()
 
 

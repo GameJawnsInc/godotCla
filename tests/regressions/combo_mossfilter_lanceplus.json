@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0.0,"smog_choke":999.0,"smog_dim":[1.0,2.0],"smog_spawn":[999.0],"smog_spawn_every":0.0},"room":["#########","#......>#","#@...k..#","#.......#","#########"]},"kit":["solar_lance+","moss_filter","mycelium_dash"],"pool":["solar_lance+","moss_filter","mycelium_dash"]},
+"actions": [{"type":"end_turn"},{"slot":1.0,"target":[1.0,2.0],"type":"ability"},{"slot":0.0,"target":[1.0,0.0],"type":"ability"}],
+"expect": {"events":[{"dim":1,"t":"smog_dim"},{"dim":0,"t":"undim"},{"amt":4,"src":"solar_lance","t":"damage"},{"t":"death","who":"smokestack"}],"floor":1,"timeout":true,"turns":1,"won":false},
+"note": "combo demo: the sky dims after one turn (smog_dim [1, 2]); moss_filter clears the dim and solar_lance+ regains its clear-sky bonus, dealing 4",
+"sim_version": 1,
+"hash": "2da8c544b5e3f545c04a7ee6aa4d462635988b31e2ba3e282aa5ff1a662639a7"
+}

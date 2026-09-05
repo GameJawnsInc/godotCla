@@ -1,7 +1,8 @@
 extends "res://bots/bot_base.gd"
 ## Sprout persona: cautious noob. Greedy for Bloom even when unsafe, panics at
 ## low HP, hazard-blind movement, wastes charge, and only uses the obvious
-## buttons (strike, lance). Measures teaching-curve fairness.
+## buttons (strike, lance, plus the tutorial's seed bomb / grow spike and the
+## two self-explanatory consumables). Measures teaching-curve fairness.
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -20,6 +21,19 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		if not by.has(k):
 			by[k] = []
 		by[k].append(a)
+
+	# the two consumables whose use is obvious: eat when hurting, drink when
+	# out of juice with something close. Free actions, no rng draw here.
+	if by.has("use_item"):
+		var pl0: Dictionary = snap["player"]
+		for a in by["use_item"]:
+			match String(pl0["items"][a["slot"]]).trim_suffix("+"):
+				"balm_fruit":
+					if int(pl0["hp"]) <= 4:
+						return a
+				"sun_capsule":
+					if int(pl0["charge"]) == 0 and _nearest_enemy_dist(snap) <= 3:
+						return a
 
 	# impulse shopping: heal first, then whatever is shiny
 	if by.has("buy") and rng.randf() < 0.5:
@@ -57,6 +71,22 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		for a in by["ability"]:
 			if _kit_id(snap, a["slot"]) == "solar_lance" and _lance_hits(snap, a["target"]):
 				return a
+		# the tutorial's other two buttons, pressed without any threat reading:
+		# a spike whenever it lights up; a bomb under its own feet when hurt
+		# and nothing is in the face (first legal tile if home is occupied)
+		for a in by["ability"]:
+			if _kit_id(snap, a["slot"]) == "grow_spike":
+				return a
+		if int(snap["player"]["hp"]) <= int(snap["player"]["max_hp"]) - 3 and not _enemy_adjacent(snap):
+			var first_bomb: Dictionary = {}
+			for a in by["ability"]:
+				if _kit_id(snap, a["slot"]) == "seed_bomb":
+					if a["target"] == ppos:
+						return a
+					if first_bomb.is_empty():
+						first_bomb = a
+			if not first_bomb.is_empty():
+				return first_bomb
 
 	# noob inefficiency: sometimes just stops with charge left over
 	if rng.randf() < 0.1:
@@ -87,11 +117,13 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 	]
 	var offers: Array = snap["draft_offers"]
 	var best_pick := -1
-	var best_rank := 999
+	# unlisted offers rank after every listed id; the huge sentinel means an
+	# offer is always taken over skipping when nothing listed is on the table
+	var best_rank := 1 << 30
 	for i in offers.size():
 		var r: int = pref.find(String(offers[i]).trim_suffix("+"))
 		if r == -1:
-			r = 500
+			r = pref.size()
 		r = r * 2 - (1 if String(offers[i]).ends_with("+") else 0)
 		if r < best_rank:
 			best_rank = r

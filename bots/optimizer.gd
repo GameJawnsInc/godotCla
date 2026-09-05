@@ -247,14 +247,18 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 		"tide", "sap_snare", "moss_filter", "spore_cloud", "gust", "vine_whip",
 		"pollen_burst", "solar_lance", "seed_bomb", "updraft", "overgrowth",
 		"anchor_roots", "burrow", "fungal_ring", "clear_air", "steam_vent", "root_wall",
+		"mycelium_dash",
 	]
 	var offers: Array = snap["draft_offers"]
 	var best_pick := -1
-	var best_rank := 999
+	# unlisted offers rank after every listed id (still pickable when nothing
+	# listed is on the table); the sentinel is huge so some offer always wins
+	# over skipping - a "+" of anything beats its plain form (r * 2 - 1)
+	var best_rank := 1 << 30
 	for i in offers.size():
 		var r: int = pref.find(String(offers[i]).trim_suffix("+"))
 		if r == -1:
-			r = 500
+			r = pref.size()
 		r = r * 2 - (1 if String(offers[i]).ends_with("+") else 0)
 		if r < best_rank:
 			best_rank = r
@@ -324,9 +328,13 @@ func _dodge(snap: Dictionary, by: Dictionary, threat: Dictionary) -> Dictionary:
 					best_dash = a
 		if not best_dash.is_empty():
 			return best_dash
+		# rooting only stops movement (the sim's root gate is on "move"
+		# intents), so a snare on an attacker mid-wind-up dodges nothing
 		for a in by["ability"]:
 			if _kit_id(snap, a["slot"]) == "sap_snare":
-				return a
+				var se = _enemy_at(snap, a["target"])
+				if se != null and String(se["intent"].get("type", "")) == "move":
+					return a
 		for a in by["ability"]:
 			if _kit_id(snap, a["slot"]) == "gust" and _enemy_at(snap, ppos + a["target"]) != null:
 				return a

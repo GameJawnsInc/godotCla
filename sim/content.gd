@@ -18,159 +18,198 @@ const ABILITIES := {
 	"solar_lance": {
 		"name": "Solar Lance", "cost": 2, "target": "dir", "range": 3,
 		"effects": [{"op": "lance", "dmg": 2, "clear_smog_bonus": 0, "ignite": true}],
+		"tags": ["sun", "fire"], "role": "damage",
 	},
 	"seed_bomb": {
 		"name": "Seed Bomb", "cost": 2, "target": "tile", "range": 3,
 		"effects": [{"op": "grow_radius", "radius": 1}],
+		"tags": ["growth"], "role": "setup",
 	},
 	"vine_whip": {
 		"name": "Vine Whip", "cost": 1, "target": "enemy_line", "range": 3,
 		"effects": [{"op": "pull", "dist": 2, "dmg": 2}],
+		"tags": ["displace"], "role": "damage",
 	},
 	"water_jet": {
 		"name": "Water Jet", "cost": 1, "target": "dir", "range": 2,
 		"effects": [{"op": "wash_push", "push": 2, "collision_dmg": 2}],
+		"tags": ["water", "displace"], "role": "damage",
 	},
 	"mycelium_dash": {
 		"name": "Mycelium Dash", "cost": 1, "target": "growth", "range": 4,
 		"effects": [{"op": "teleport"}],
+		"tags": ["mobility"], "role": "mobility",
 	},
 	"root_wall": {
 		"name": "Root Wall", "cost": 2, "target": "tile", "range": 2,
 		"effects": [{"op": "grow_wall", "ttl": 4}],
+		"tags": ["growth", "bark"], "role": "setup",
 	},
 	"pollen_burst": {
 		"name": "Pollen Burst", "cost": 2, "target": "self", "range": 2,
 		"effects": [{"op": "aoe_status", "status": "stun", "turns": 1, "radius": 2}],
+		"tags": ["control"], "role": "control",
 	},
 	"sun_flare": {
 		"name": "Sun Flare", "cost": 2, "target": "self", "range": 2,
 		"effects": [{"op": "aoe_damage", "dmg": 1, "radius": 2, "ignite": true}],
+		"tags": ["sun", "fire"], "role": "damage",
 	},
 	"thorn_shield": {
 		"name": "Thorn Shield", "cost": 1, "target": "self", "range": 0,
 		"effects": [{"op": "shield", "amount": 2}],
+		"tags": ["bark"], "role": "defense",
 	},
 	"overgrowth": {
 		"name": "Overgrowth", "cost": 1, "target": "tile_any", "range": 2,
 		"effects": [{"op": "convert_radius", "radius": 1}],
+		"tags": ["growth"], "role": "setup",
 	},
 	"sap_snare": {
 		"name": "Sap Snare", "cost": 1, "target": "enemy", "range": 3,
 		"effects": [{"op": "apply_status", "status": "root", "turns": 2}],
+		"tags": ["control"], "role": "control",
 	},
 	"grow_spike": {
 		"name": "Grow Spike", "cost": 1, "target": "enemy_near_growth", "range": 3,
 		"effects": [{"op": "damage", "dmg": 3}],
+		"tags": ["growth"], "role": "payoff",
 	},
 	"spore_cloud": {
 		"name": "Spore Cloud", "cost": 2, "target": "self", "range": 2,
 		"effects": [{"op": "aoe_status", "status": "spore", "turns": 3, "radius": 2}],
+		"tags": ["control"], "role": "control",
 	},
 	"fungal_ring": {
 		"name": "Fungal Ring", "cost": 1, "target": "self", "range": 1,
 		"effects": [{"op": "grow_radius", "radius": 1}],
+		"tags": ["growth"], "role": "setup",
 	},
 	"burrow": {
 		"name": "Burrow", "cost": 2, "target": "tile", "range": 3,
 		"effects": [{"op": "teleport"}],
+		"tags": ["mobility"], "role": "mobility",
 	},
 	"tide": {
 		"name": "Tide", "cost": 2, "target": "self", "range": 2,
 		"effects": [{"op": "wash_all", "push": 2, "collision_dmg": 1}],
+		"tags": ["water", "displace"], "role": "damage",
 	},
 	"steam_vent": {
 		"name": "Steam Vent", "cost": 1, "target": "tile_any", "range": 3,
 		"effects": [{"op": "create_terrain", "kind": "smoke", "ttl": 3}],
+		"tags": ["smoke"], "role": "setup",
 	},
 	"geyser": {
 		"name": "Geyser", "cost": 2, "target": "self", "range": 1,
 		"effects": [{"op": "aoe_damage", "dmg": 1, "radius": 1}, {"op": "push_all", "dist": 2}],
+		"tags": ["water", "displace"], "role": "damage",
 	},
 	"gust": {
 		"name": "Gust", "cost": 1, "target": "dir", "range": 3,
 		"effects": [{"op": "push_line", "dist": 3, "clear_smoke": true}],
+		"tags": ["wind", "displace", "smoke"], "role": "control",
 	},
 	"updraft": {
 		"name": "Updraft", "cost": 1, "target": "dir", "range": 3,
 		"effects": [{"op": "dash_dir"}],
+		"tags": ["wind", "mobility"], "role": "mobility",
 	},
 	"clear_air": {
 		"name": "Clear Air", "cost": 2, "target": "self", "range": 3,
 		"effects": [{"op": "clear_smoke", "radius": 3}, {"op": "push_all", "dist": 1}],
+		"tags": ["wind", "smoke", "displace"], "role": "utility",
 	},
 	"bramble_coat": {
 		"name": "Bramble Coat", "cost": 1, "target": "self", "range": 0,
 		"effects": [{"op": "thorns", "dmg": 2, "turns": 4}],
+		"tags": ["bark"], "role": "defense",
 	},
 	"anchor_roots": {
 		"name": "Anchor Roots", "cost": 1, "target": "self", "range": 0,
 		"effects": [{"op": "anchor", "turns": 4}],
+		"tags": ["bark"], "role": "defense",
 	},
 	"moss_filter": {
 		"name": "Moss Filter", "cost": 2, "target": "self", "range": 0,
 		"effects": [{"op": "undim", "amount": 1}],
+		"tags": ["sun"], "role": "utility",
 	},
 	# Upgraded variants: offered in drafts when the base is owned; replace in place.
 	"solar_lance+": {
 		"name": "Solar Lance+", "cost": 2, "target": "dir", "range": 4,
 		"effects": [{"op": "lance", "dmg": 3, "clear_smog_bonus": 1, "ignite": true}],
+		"tags": ["sun", "fire"], "role": "damage",
 	},
 	"seed_bomb+": {
 		"name": "Seed Bomb+", "cost": 1, "target": "tile", "range": 3,
 		"effects": [{"op": "grow_radius", "radius": 1}],
+		"tags": ["growth"], "role": "setup",
 	},
 	"vine_whip+": {
 		"name": "Vine Whip+", "cost": 1, "target": "enemy_line", "range": 4,
 		"effects": [{"op": "pull", "dist": 3, "dmg": 3}],
+		"tags": ["displace"], "role": "damage",
 	},
 	"water_jet+": {
 		"name": "Water Jet+", "cost": 1, "target": "dir", "range": 3,
 		"effects": [{"op": "wash_push", "push": 3, "collision_dmg": 3}],
+		"tags": ["water", "displace"], "role": "damage",
 	},
 	"mycelium_dash+": {
 		"name": "Mycelium Dash+", "cost": 1, "target": "growth", "range": 7,
 		"effects": [{"op": "teleport"}],
+		"tags": ["mobility"], "role": "mobility",
 	},
 	"root_wall+": {
 		"name": "Root Wall+", "cost": 1, "target": "tile", "range": 2,
 		"effects": [{"op": "grow_wall", "ttl": 6}],
+		"tags": ["growth", "bark"], "role": "setup",
 	},
 	"pollen_burst+": {
 		"name": "Pollen Burst+", "cost": 2, "target": "self", "range": 2,
 		"effects": [{"op": "aoe_status", "status": "stun", "turns": 2, "radius": 2}],
+		"tags": ["control"], "role": "control",
 	},
 	"sun_flare+": {
 		"name": "Sun Flare+", "cost": 2, "target": "self", "range": 2,
 		"effects": [{"op": "aoe_damage", "dmg": 2, "radius": 2, "ignite": true}],
+		"tags": ["sun", "fire"], "role": "damage",
 	},
 	"thorn_shield+": {
 		"name": "Thorn Shield+", "cost": 1, "target": "self", "range": 0,
 		"effects": [{"op": "shield", "amount": 3}],
+		"tags": ["bark"], "role": "defense",
 	},
 	"overgrowth+": {
 		"name": "Overgrowth+", "cost": 1, "target": "tile_any", "range": 3,
 		"effects": [{"op": "convert_radius", "radius": 2}],
+		"tags": ["growth"], "role": "setup",
 	},
 	"sap_snare+": {
 		"name": "Sap Snare+", "cost": 1, "target": "enemy", "range": 4,
 		"effects": [{"op": "apply_status", "status": "root", "turns": 3}],
+		"tags": ["control"], "role": "control",
 	},
 	"grow_spike+": {
 		"name": "Grow Spike+", "cost": 1, "target": "enemy_near_growth", "range": 4,
 		"effects": [{"op": "damage", "dmg": 4}],
+		"tags": ["growth"], "role": "payoff",
 	},
 	"bramble_coat+": {
 		"name": "Bramble Coat+", "cost": 1, "target": "self", "range": 0,
 		"effects": [{"op": "thorns", "dmg": 3, "turns": 5}],
+		"tags": ["bark"], "role": "defense",
 	},
 	"anchor_roots+": {
 		"name": "Anchor Roots+", "cost": 1, "target": "self", "range": 0,
 		"effects": [{"op": "anchor", "turns": 7}],
+		"tags": ["bark"], "role": "defense",
 	},
 	"moss_filter+": {
 		"name": "Moss Filter+", "cost": 1, "target": "self", "range": 0,
 		"effects": [{"op": "undim", "amount": 1}],
+		"tags": ["sun"], "role": "utility",
 	},
 }
 
@@ -180,6 +219,62 @@ const DRAFT_POOL := [
 	"pollen_burst", "sun_flare", "thorn_shield", "overgrowth", "sap_snare",
 	"grow_spike", "bramble_coat", "anchor_roots", "moss_filter",
 ]
+
+## --- Sim-ignored ability metadata ------------------------------------------
+## The sim never reads "tags", "role", TAGS, ROLES, ARCHETYPES or the helpers
+## below: step() outcomes and rng draws are unaffected by any value here. They
+## are shared data (style guide §6) for bots (persona build commitments, drop
+## guards), the shell (kit labels, build hints) and tests (coverage asserts),
+## so all three agree on one vocabulary instead of each hardcoding ids.
+## Every "+" form carries the same tags/role as its base; use base_id() to
+## fold upgrades back onto the base entry.
+
+## Closed tag vocabulary. Adding a tag means adding it here first.
+const TAGS := ["sun", "fire", "water", "wind", "growth", "bark", "control", "displace", "smoke", "mobility"]
+## Closed role vocabulary: what an ability does for a turn plan.
+const ROLES := ["setup", "payoff", "damage", "defense", "control", "mobility", "utility"]
+
+## Build archetypes: a named core of ability ids plus the packages the core
+## needs in the pool. The first four match bots/fanatic.gd's BUILDS exactly so
+## BALANCE.md per-build numbers stay comparable; never redefine them, add rows.
+const ARCHETYPES := {
+	"pyro": {"name": "Pyro", "core": ["solar_lance", "sun_flare"], "requires": {"packages": []}},
+	"gardener": {"name": "Gardener", "core": ["seed_bomb", "overgrowth", "grow_spike"], "requires": {"packages": []}},
+	"turtle": {"name": "Turtle", "core": ["thorn_shield", "bramble_coat", "seed_bomb", "sap_snare", "root_wall"], "requires": {"packages": []}},
+	"shover": {"name": "Shover", "core": ["water_jet", "vine_whip", "pollen_burst", "solar_lance"], "requires": {"packages": []}},
+	"pyro_nolance": {"name": "Pyro (lance-free)", "core": ["sun_flare", "moss_filter"], "requires": {"packages": []}},
+	"shover_nolance": {"name": "Shover (lance-free)", "core": ["water_jet", "vine_whip", "pollen_burst"], "requires": {"packages": []}},
+	"ember": {"name": "Ember", "core": ["sun_flare", "water_jet", "moss_filter"], "requires": {"packages": []}},
+	"anchor": {"name": "Anchor", "core": ["anchor_roots", "root_wall", "thorn_shield"], "requires": {"packages": []}},
+	"tidecaller": {"name": "Tidecaller", "core": ["tide", "geyser", "steam_vent", "water_jet"], "requires": {"packages": ["hydraulics"]}},
+	"skyrunner": {"name": "Skyrunner", "core": ["gust", "updraft", "solar_lance"], "requires": {"packages": ["aeolian"]}},
+	"sporewright": {"name": "Sporewright", "core": ["spore_cloud", "fungal_ring", "burrow"], "requires": {"packages": ["mycology"]}},
+}
+
+
+## Strip the upgrade suffix: "solar_lance+" -> "solar_lance". Ids without a
+## "+" come back unchanged.
+static func base_id(aid: String) -> String:
+	var cut: int = aid.find("+")
+	if cut < 0:
+		return aid
+	return aid.substr(0, cut)
+
+
+## Archetype ids whose whole core can be assembled from `pool` plus the
+## starting kit (mycelium_dash and the other STARTING_KIT ids count as always
+## available). Preserves ARCHETYPES key order, so the result is deterministic.
+static func archetypes_for(pool: Array) -> Array:
+	var out: Array = []
+	for arch_id in ARCHETYPES.keys():
+		var ok := true
+		for aid in ARCHETYPES[arch_id]["core"]:
+			if not pool.has(aid) and not STARTING_KIT.has(aid):
+				ok = false
+				break
+		if ok:
+			out.append(arch_id)
+	return out
 
 ## Grafts: passive run-long modifiers (the relic analog). Pure data; the sim
 ## consults owned grafts at the relevant decision points.

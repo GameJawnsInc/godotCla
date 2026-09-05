@@ -39,6 +39,8 @@ var shop := {}
 var tier := 0
 var mutators: Array = []
 var draft_pool: Array = []
+var packages: Array = []  # run-scoped tech packages (config "packages"); read-only metadata
+var loadout := "tender"  # starting loadout id (config "loadout"); read-only metadata
 var stoked := 0
 var greened := 0  # corruption cleansed this floor
 var green_need := 0  # dormant-stairs quota (clamped to generated corruption)  # pending extra smog ticks from live smokestacks
@@ -58,6 +60,8 @@ func _init(seed_v: int, config: Dictionary = {}) -> void:
 	mutators = config.get("mutators", []).duplicate()
 	_fixed_floor = config.get("fixed_floor", {}).duplicate(true)
 	draft_pool = config.get("pool", Content.DRAFT_POOL).duplicate()
+	packages = config.get("packages", []).duplicate()
+	loadout = config.get("loadout", "tender")
 	for pkg in config.get("packages", []):
 		for aid in Content.PACKAGES[pkg]:
 			if not draft_pool.has(aid):
@@ -259,6 +263,7 @@ func snapshot() -> Dictionary:
 		"greened": greened, "green_need": green_need,
 		"over": over, "won": won, "death_cause": death_cause,
 		"phase": phase, "draft_offers": draft_offers.duplicate(),
+		"pool": draft_pool.duplicate(), "packages": packages.duplicate(), "loadout": loadout,
 		"player": {
 			"pos": player["pos"], "hp": player["hp"], "max_hp": player["max_hp"],
 			"charge": player["charge"], "bank": player["bank"], "shield": player["shield"],
@@ -297,6 +302,8 @@ func clone():
 	g.green_need = green_need
 	g._fixed_floor = _fixed_floor.duplicate(true)
 	g.draft_pool = draft_pool.duplicate()
+	g.packages = packages.duplicate()
+	g.loadout = loadout
 	g.floor_num = floor_num
 	g.turn = turn
 	g.total_turns = total_turns
@@ -1187,6 +1194,12 @@ func ability_cost(aid: String) -> int:
 	if base >= 2 and _terrain_kind(player["pos"]) == "growth":
 		return base - 1
 	return base
+
+
+## Public read-only view of the legal target list for an ability the player
+## could cast from the current position. Pure query: no state or rng change.
+func ability_targets(aid: String) -> Array:
+	return _ability_targets(aid)
 
 
 func _ability_targets(aid: String) -> Array:

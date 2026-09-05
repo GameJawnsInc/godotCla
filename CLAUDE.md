@@ -89,16 +89,56 @@ architecture below is designed to bend rather than block.
 - Run headless: `godot --headless --path . --script <script.gd>`.
 - No display in this environment: never rely on rendering, input events, or
   visual inspection to verify behavior — assert on sim state instead.
-- Verification suite (run all three before committing sim changes):
+- Verification suite (run all of it before committing sim or bot changes):
   - `godot --headless --path . --script tests/test_invariants.gd` — procgen sweep
+    (raw `Content.FLOORS` plus `Game.floor_def` for every tier and mutator)
   - `godot --headless --path . --script tests/test_determinism.gd` — rerun + replay hashes
-  - `godot --headless --path . --script tests/playtest.gd` — bot personas, balance metrics
-  - `godot --headless --path . --script tests/test_meta.gd` — career unlocks, profile io, mutators
+  - `godot --headless --path . --script tests/test_content.gd` — ability tags/roles,
+    `Content.ARCHETYPES` cores, `base_id`, `archetypes_for`
+  - `godot --headless --path . --script tests/test_regressions.gd` — replays every
+    `tests/regressions/*.json` (seed, config, actions) pair: illegal/error events,
+    outcome, expected event patterns; `REGRESS_STRICT=1` also checks the state
+    hash, `REGEN=1` re-stamps outcomes/hashes after a deliberate sim change
+    (check the printed diffs by hand first), `REGRESS_DIR` points at another corpus
+  - `godot --headless --path . --script tests/playtest.gd` — bot personas, balance
+    metrics, and the BALANCE.md band gates (exit 1 when a persona's whole Wilson
+    interval sits outside its band; `PLAYTEST_GATE=0` disables, `PLAYTEST_SEEDS`
+    and `PLAYTEST_BOTS=a,b,c` narrow a run)
+  - `godot --headless --path . --script tests/test_meta.gd` — career unlocks, profile io,
+    mutator invariants, package pools
+- Bots live in one registry, `bots/roster.gd` (`Roster.names()/make(name, seed)`);
+  every runner resolves persona names through it, and an unknown name fails
+  loudly. `deeproot_rollout` is deeproot with rollout drafting (a separate
+  persona so the legacy ceiling column survives).
 - Balance sweeps (on demand; run before shipping new content, and verify any
-  outlier at 30+ seeds before patching — 10-seed spreads are noisy):
-  - `tests/sweep_combos.gd` — pairwise ability win rates vs baseline
+  outlier at 30+ seeds before patching — 10-seed spreads are noisy). Shared env:
+  `SWEEP_BOT=<roster name>` (default optimizer), `SWEEP_SEEDS` (default 30),
+  `SWEEP_SEED_FROM` (out-of-sample checks), `SWEEP_TIER`:
+  - `tests/sweep_combos.gd` — locked-kit lift: every config is `{kit: K, pool: K}`,
+    `lift = pair - max(single_x, single_y)` with Wilson CIs and a paired sign
+    test; `SWEEP_PAIRS=a+b,c+d` selects pairs, `SWEEP_SHARD=i/n` slices the
+    66-pair grid (deeproot grid is hours), `SWEEP_MODE=drift` keeps the old
+    open-pool "start with the pair" question as a labelled second table
   - `tests/sweep_packages.gd` — each tech package added to the pool
-  - `tests/sweep_tiers.gd` — every difficulty tier must stay bot-winnable
+  - `tests/sweep_tiers.gd` — every difficulty tier must stay bot-winnable (fails
+    when the Wilson upper bound is under 10%; binds only at SWEEP_SEEDS >= 35);
+    `SWEEP_REFERENCE_ROWS=1` adds the permanent locked reference kits
+    (starter5, lance_free_A, lance_free_B)
+  - `tests/verify_kit.gd` — one config at N seeds (`VERIFY_BOT`, `VERIFY_SEEDS`,
+    `VERIFY_TIER`, `VERIFY_EXTRAS`), prints wins, CI and the Tally KPI block
+  - `tests/measure_fanatic.gd` — every `Content.ARCHETYPES` build on every seed
+    (`FANATIC_SEEDS`, `FANATIC_SEED_FROM`, `FANATIC_BUILDS`, `FANATIC_PACKAGES`,
+    `FANATIC_TIER`, `FANATIC_MUTATORS`, `FANATIC_VERBOSE=1`)
+  - `tests/measure_bosses.gd` — arrivals/conversions per boss and per kit
+    signature; `BOSS_KIT=a,b,c` locks an archetype kit against each boss
+  - `tests/draft_oracle.gd` — forks every draft the policy faces (each offer +
+    skip), rolls out with a fresh persona: P(win|pick) - P(win|skip), stakes
+    per draft, policy regret (`ORACLE_BOT`, `ORACLE_SEEDS`, `ORACLE_SEED_FROM`,
+    `ORACLE_TIER`, `ORACLE_SHARD=i/n`, `ORACLE_JSON=<path>`)
+- Measurement discipline: the harness changed on 2026-09-05 ("instrument v2",
+  see BALANCE.md). Numbers recorded before that entry and numbers recorded
+  after it are never mixed in one comparison; every runner prints a header
+  (bot, config, seed range) and a Wilson CI — quote both.
 - Side-channel rng: incidental draws (shop flavor, supply drops) use
   `_side_rng(tag)` (hash of seed+floor+tag), NEVER the main `rng` stream -
   one stray main-stream draw reshuffles every seed's downstream rolls and
