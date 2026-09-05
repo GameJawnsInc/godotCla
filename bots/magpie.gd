@@ -22,10 +22,9 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 
 	# buy everything affordable, always
 	if by.has("buy"):
-		for item in ["heal", "graft", "ability"]:
-			for a in by["buy"]:
-				if a["item"] == item:
-					return a
+		var deal := _magpie_buy(snap, by["buy"])
+		if not deal.is_empty():
+			return deal
 
 	var threat := _threat_tiles(snap)
 
@@ -50,7 +49,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 	if by.has("move") and snap["dim"] < 2:
 		var shrine: Vector2i = snap["map"]["shrine"]
 		if shrine != Vector2i(-1, -1) and ppos != shrine:
-			var worth: bool = snap["shop"].has("graft") and snap["bloom"] >= 5
+			var worth: bool = snap["shop"].has("grafts") and snap["bloom"] >= 5
 			if snap["shop"].has("ability") and snap["bloom"] >= 4:
 				worth = true
 			if snap["shop"].get("heal", false) and snap["bloom"] >= 3 and snap["player"]["hp"] < snap["player"]["max_hp"]:
@@ -66,6 +65,52 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 
 	# otherwise: the optimizer's full ladder (fight, dodge, heal, stairs)
 	return super.choose_action(snap, legal)
+
+
+## Greedy shrine: heal, then a graft, then an ability. Unlike the optimizer a
+## magpie buys the ability even on a full kit, where the purchase costs a
+## slot - but the trade stays deterministic and documented: the slot with the
+## fewest recorded uses goes, ties to the highest slot index. The sim keeps
+## the mobility slot off the drop list, so even greed never sells the escape
+## button. Empty dict when nothing affordable is on the counter.
+func _magpie_buy(snap: Dictionary, buys: Array) -> Dictionary:
+	for a in buys:
+		if a["item"] == "heal":
+			return a
+	# graft offer 0: no bot ranks grafts yet - the progression review holds
+	# any graft weighting until tests/sweep_grafts.gd has run at 30+ seeds
+	var graft := _first_graft(buys)
+	if not graft.is_empty():
+		return graft
+	var plain: Dictionary = {}
+	var drops: Array = []
+	for a in buys:
+		if a["item"] != "ability":
+			continue
+		if a.has("drop"):
+			drops.append(a)
+		elif plain.is_empty():
+			plain = a
+	if not plain.is_empty():
+		return plain
+	var kit: Array = snap["player"]["kit"]
+	var uses: Dictionary = snap["player"]["uses"]
+	var cheapest: Dictionary = {}
+	var cheapest_uses := 0
+	for a in drops:
+		var slot: int = int(a["drop"])
+		var u: int = int(uses.get(kit[slot], 0))
+		var take := false
+		if cheapest.is_empty():
+			take = true
+		elif u != cheapest_uses:
+			take = u < cheapest_uses
+		else:
+			take = slot > int(cheapest["drop"])
+		if take:
+			cheapest = a
+			cheapest_uses = u
+	return cheapest
 
 
 func _nearest_corruption(snap: Dictionary) -> Vector2i:

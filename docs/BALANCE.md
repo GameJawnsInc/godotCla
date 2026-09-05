@@ -752,6 +752,322 @@ Watch list additions (post-v2 bands):
   case still stands. Re-run the three rows at 30 seeds
   (SWEEP_SEEDS=30, ~1 h) before any content decision quotes them.
 
+## 2026-09-05b - bump 2: side-rng shop, attribution, quota re-clamp, choice sinks
+
+Block B of docs/PROGRESSION_REVIEW.md 6.2, shipped as one batched sim patch.
+The instruments did not change (still v2), so this entry's numbers compare
+with the "instrument v2 re-baseline" entry above it and with nothing older.
+
+What changed:
+
+- **Version.** `sim/game.gd` gained `const SIM_VERSION := 2`, the single
+  replay-version source; `shell/main.gd` RUN_SAVE_VERSION,
+  `tests/regress_lib.gd` and `tests/autopsy.gd` now reference it.
+- **Side-rng shop stock.** `_stock_shop` returns `{}` on a shrineless floor
+  and otherwise draws the ability from `_side_rng("shop_ability")`, two
+  distinct grafts from one `_side_rng("shop_graft")` generator and the item
+  from `_side_rng("shop_item")`; shop and supply pods offer base item ids
+  only. Map generation is now the only kit/graft/pool/bloom-dependent
+  main-rng consumer at floor entry (`test_economy`: "rng independence: 50
+  seeds x 5 configs, 0 mismatches").
+- **Damage attribution.** Fire tiles carry `by`; enemy-side sources are
+  `fire:<by>` and `collision:<aid>`, and the four hardcoded ability strings
+  became the casting ability id. Player-side sources are untouched, so
+  `death_cause` and the death tables are unchanged.
+- **Quota re-clamp.** `_reclamp_quota()` runs at the end of every playing
+  `step()`, lowering `green_need` to `greened + _count_corruption()` and
+  emitting `quota_reclamp` (plus `stairs_awaken` when the stairs were
+  dormant). Enemy-made oil is written `{bloom: 0}`: cleansing it pays no
+  bloom but still counts toward `greened`. This is the only intended balance
+  change of the bump.
+- **Config keys and choice sinks.** `Game.new(seed, {grafts, bloom, ...})`;
+  the graft offer is two ids and buying one discards the other; an ability
+  bought on a full kit names a drop slot and may never drop a mobility
+  ability; press (1) and forge (3) are priced through `Content.SHOP_COSTS`
+  so Gouging Prices marks them up and Boarded boards them, and the forge is
+  capped at one use per floor.
+
+What this invalidates: **every pre-bump replay hash**. All 28
+`tests/regressions/*.json` records carry a new hash and `sim_version: 2`;
+seed-to-seed pairing across the bump is void, because removing the two
+per-floor main-rng shop draws re-phases every downstream main-rng roll from
+floor 1 on. Aggregate win rates still compare (same instruments, same seeds
+1..30), and only within this entry's before/after.
+
+### Suite
+
+All green except the playtest gate (below):
+
+- `tests/test_invariants.gd`: "invariants: 1400 generations, 0 violations",
+  "floor_def invariants: 11 configs, 1540 generations, 0 violations"
+- `tests/test_determinism.gd`: "determinism: OK (55 checks, 7 personas)"
+- `tests/test_content.gd`: "shop costs: { heal: 3, ability: 4, graft: 4,
+  item: 2, press: 1, forge: 3 }; items: 5 base, 10 total", "content: OK"
+- `tests/test_meta.gd`: "meta: OK"
+- `tests/test_economy.gd`: "economy: OK (82 checks)" - new suite member
+- `tests/test_regressions.gd`: "regressions: 28 ok, 0 failed", and
+  `REGRESS_STRICT=1` "regressions: 28 ok, 0 failed"
+- `tests/test_shell.gd`: "shell smoke: OK"
+
+### Persona before/after
+
+Before = the instrument-v2 re-baseline entry above (seeds 1..30, tier 0).
+After = `=== playtest | bot wanderer,sprout,magpie,fanatic,optimizer,deeproot
+| config {  } | seeds 1..30 (30) ===` and
+`=== playtest | bot deeproot_rollout | config {  } | seeds 1..30 (30) ===`.
+Wilson 95% as printed.
+
+| persona | before | after | moved outside CI? |
+|---|---|---|---|
+| optimizer | 14/30 = 47% [30, 64] | 12/30 = 40% [25, 58], avg floor 5.8 | no |
+| magpie | 2/30 = 7% [2, 21] | 4/30 = 13% [5, 30], avg floor 4.9 | no (but see the 100-seed row) |
+| sprout | 1/30 = 3% [1, 17], avg floor 3.9 | 0/30 = 0% [0, 11], avg floor 3.5 | no |
+| fanatic (legacy seed-split) | 5/30 = 17% [7, 34] | 7/30 = 23% [12, 41], avg floor 5.4 | no |
+| deeproot | 27/30 = 90% [74, 97] | 24/30 = 80% [63, 90], avg floor 6.9 | no |
+| deeproot_rollout | 26/30 = 87% [70, 95] | 27/30 = 90% [74, 97], avg floor 7.0 | no |
+| wanderer | 0/30, floor 1.0 | 0/30 = 0% [0, 11], floor 1.0 | no |
+| deeproot tier 6 | 18/30 = 60% [42, 75] | not re-measured (deferred with the grafted-ceiling re-judgement) | - |
+
+Zero timeouts and zero illegal actions for all seven personas. No persona's
+point estimate left the other run's interval; the bump is win-rate neutral at
+30 seeds by that test.
+
+### KPI block (playtest, 30 seeds, tier 0)
+
+strike/sig/terr = shares of enemy damage, cmb = combos/run, conv = bloom
+spent/earned, ent = kit entropy bits, shrine = shrine turns/run, unspent =
+unspent charge per end_turn, stall = stall floors over 30 runs, qu =
+quota-unmet deaths, dmg = player damage per run.
+
+| persona | strike | sig | terr | cmb | conv | ent | shrine | unspent | stall | qu | dmg |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| wanderer | 0.31 | 0.00 | 0.02 | 30.67 | 0.00 | 0.00 | 0.53 | 0.10 | 24 | 29 | 43.4 |
+| sprout | 0.35 | 0.21 | 0.02 | 6.77 | 0.15 | 4.45 | 1.47 | 0.36 | 14 | 3 | 34.4 |
+| magpie | 0.35 | 0.27 | 0.01 | 6.33 | 0.47 | 4.22 | 8.33 | 0.89 | 20 | 4 | 33.7 |
+| fanatic | 0.20 | 0.24 | 0.05 | 11.37 | 0.26 | 3.65 | 0.57 | 0.74 | 6 | 3 | 26.8 |
+| optimizer | 0.48 | 0.13 | 0.02 | 3.47 | 0.32 | 4.57 | 1.10 | 0.56 | 2 | 4 | 21.9 |
+| deeproot | 0.09 | 0.37 | 0.15 | 14.07 | 0.01 | 3.83 | 0.20 | 0.53 | 7 | 0 | 7.5 |
+| deeproot_rollout | 0.07 | 0.22 | 0.13 | 10.47 | 0.01 | 4.08 | 0.27 | 0.63 | 4 | 0 | 4.4 |
+
+New bump-2 counters, over 30 runs each:
+
+| persona | graft offers discarded | full-kit ability buys | quota reclamps | upcycles (press/forge) |
+|---|---|---|---|---|
+| wanderer | 0 | 0 | 0 | 0/0 |
+| sprout | 11 | 5 | 0 | 0/0 |
+| magpie | 107 | 75 | 0 | 0/0 |
+| fanatic | 40 | 2 | 0 | 0/0 |
+| optimizer | 46 | 13 | 0 | 0/0 |
+| deeproot | 0 | 0 | 0 | 0/0 |
+| deeproot_rollout | 0 | 0 | 0 | 0/0 |
+
+**`quota_reclamp` fired 0 times in 550 bot runs** (7 personas x 30 in the
+playtest, 8 x 30 optimizer graft-sweep rows, 100 magpie seeds). The only
+intended balance change of the bump is therefore unexercised by every bot;
+its only coverage is synthetic (`tests/test_economy.gd` section g and
+`tests/regressions/blockb_quota_reclamp.json`). Nothing here says the
+strandable green gate is closed *in play* - it says the code path exists and
+no bot has ever walked into the case. **No press or forge use either**, so
+the two new bloom sinks are unmeasured.
+
+Attribution now resolves every fire and collision hit (the `env` fallback
+never appeared, and enemy igniters name themselves):
+
+| persona | fire damage by igniter | collision damage by ability |
+|---|---|---|
+| wanderer | solar_lance 5 | - |
+| sprout | solar_lance 15, solar_lance+ 8, cinder_mite 3 | - |
+| magpie | solar_lance 17, cinder_mite 10, sun_flare 5, solar_lance+ 4, furnace_core 2 | water_jet 10 |
+| fanatic | solar_lance 31, cinder_mite 26, solar_lance+ 2, sun_flare 1 | water_jet 30 |
+| optimizer | cinder_mite 29, solar_lance 13, sun_flare 1 | water_jet 6 |
+| deeproot | solar_lance 51, cinder_mite 33, sun_flare 12, solar_lance+ 11, furnace_core 6, sun_flare+ 3 | water_jet 228, water_jet+ 30 |
+| deeproot_rollout | solar_lance 53, cinder_mite 33, solar_lance+ 19, sun_flare 11, furnace_core 5, sun_flare+ 3 | water_jet+ 132, water_jet 78 |
+
+`tally.kpis()` derives families through `base_id(src_family(src))`, so
+signature/terrain shares keep their pre-bump meaning across the rename; the
+raw `by src` line is where the new detail lives.
+
+### Fanatic archetypes
+
+Before = the v2 re-baseline table (FANATIC_SEEDS=30). After =
+`=== measure_fanatic | bot fanatic | config {  } | seeds 1..30 (30) ===`,
+"builds: pyro, gardener, turtle, shover, pyro_nolance, shover_nolance, ember,
+anchor  (pool 14 ids)".
+
+| build | before | after | avg floor | core-complete (never) | sig | strike |
+|---|---|---|---|---|---|---|
+| pyro | 8/30 [14, 44] | 5/30 [7, 34] | 5.7 | 3.4 (40%) | 0.03 | 0.10 |
+| pyro_nolance | 8/30 [14, 44] | **15/30 [33, 67]** | 6.3 | 4.4 (47%) | 0.35 | 0.29 |
+| ember | 9/30 [17, 48] | 9/30 [17, 48] | 5.8 | 5.4 (73%) | 0.49 | 0.15 |
+| gardener | 11/30 [22, 54] | 6/30 [10, 37] | 5.5 | 4.8 (67%) | 0.40 | 0.32 |
+| shover | 5/30 [7, 34] | 6/30 [10, 37] | 5.6 | 5.2 (87%) | 0.20 | 0.03 |
+| shover_nolance | 5/30 [7, 34] | 5/30 [7, 34] | 4.6 | 4.2 (83%) | 0.64 | 0.13 |
+| anchor | 6/30 [10, 37] | 3/30 [3, 26] | 4.3 | 7.0 (97%) | 0.00 | 0.56 |
+| turtle | 1/30 [1, 17] | 1/30 [1, 17] | 4.3 | never (100%) | 0.06 | 0.60 |
+| total | 53/240 = 22% | 50/240 = 21% | - | - | - | - |
+
+One timeout: shover_nolance seed 1 floor 4 (the Block A table recorded no
+timeout column, so this is not a comparison).
+Every build stays above zero, so the hard fanatic target holds. The only row
+that moved outside both intervals is **pyro_nolance 8/30 -> 15/30**: 50% is
+above the old [14, 44] and 27% is below the new [33, 67]. Its core-complete
+floor improved 4.7 -> 4.4 and never-completed 63% -> 47%, which is the shape
+you would expect if the two-graft shrine and the full-kit replacement buy let
+a lance-free fire build assemble itself faster; unverified, and 30 seeds is
+one sample. gardener 11/30 -> 6/30 is borderline (20% sits just under the old
+[22, 54]). Watch both.
+
+### Graft sweep (new runner)
+
+`=== sweep_grafts | bot optimizer | config {  } | seeds 1..30 (30) ===`,
+"grafts: deep_cells, verdant_pulse, thick_bark, bloom_surge, solar_core,
+carapace". Each row pre-installs its graft(s) before floor 1 on the same
+seeds as the base row; delta is against the base row and the sign test is
+paired.
+
+| row | wins | CI | avg floor | delta | discordant | sign_p | cmb/run | conv | dmg | turns(w) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| (no graft) | 12/30 | [25, 58] | 5.8 | +0 | 0:0 | 1.00 | 3.47 | 0.32 | 21.9 | 89 |
+| deep_cells | 14/30 | [30, 64] | 6.0 | +2 | 5:3 | 0.73 | 3.57 | 0.39 | 21.4 | 85 |
+| verdant_pulse | 16/30 | [36, 70] | 6.2 | +4 | 6:2 | 0.29 | 3.53 | 0.33 | 31.8 | 88 |
+| thick_bark | 14/30 | [30, 64] | 5.9 | +2 | 5:3 | 0.73 | 3.63 | 0.35 | 21.1 | 88 |
+| bloom_surge | 15/30 | [33, 67] | 6.2 | +3 | 5:2 | 0.45 | 3.53 | 0.27 | 20.5 | 85 |
+| solar_core | 19/30 | [46, 78] | 6.3 | +7 | 10:3 | 0.09 | 3.90 | 0.40 | 17.3 | 73 |
+| carapace | 13/30 | [27, 61] | 5.7 | +1 | 5:4 | 1.00 | 3.43 | 0.36 | 29.5 | 91 |
+| all 6 | 19/30 | [46, 78] | 6.3 | +7 | 10:3 | 0.09 | 4.13 | 0.05 | 34.1 | 76 |
+
+No row clears p < 0.05, so nothing is flagged. `solar_core` is the only
+candidate signal (+7, 10:3 discordant, p=0.09, damage taken 21.9 -> 17.3 and
+turns-on-wins 89 -> 73); per the Method rule it needs an out-of-sample
+30-seed re-check (`SWEEP_SEED_FROM=101`) before anyone acts on it. The "all
+6" row is *not* six grafts' worth of power: owning six drives
+`shop_cost("graft")` to 16, so the run buys nothing (bloom conversion 0.05,
+grafts bought {}) and lands exactly on solar_core's number while taking the
+most damage of any row (34.1).
+
+Bot graft demand is now visible: the optimizer buys 46 grafts and discards 46
+offers over 30 runs, magpie 110/107. No bot chooses *between* the two offers
+on merit - every persona takes pick 0.
+
+### Tier ladder
+
+`=== sweep_tiers | bot optimizer | config {  } | seeds 1..35 (35) ===`,
+35 seeds so the 10% Wilson-upper gate binds. Exit 0, no tier flagged
+unwinnable.
+
+| tier | wins | CI | avg floor |
+|---|---|---|---|
+| 0 (base) | 13/35 | [23, 54] | 5.9 |
+| 1 (Thicker Smog) | 13/35 | [23, 54] | 5.9 |
+| 2 (Busy Vents) | 13/35 | [23, 54] | 5.9 |
+| 3 (Rich Veins) | 16/35 | [30, 62] | 6.1 |
+| 4 (Dim Skies) | 13/35 | [23, 54] | 5.8 |
+| 5 (Gouging Prices) | 13/35 | [23, 54] | 5.8 |
+| 6 (Hardened Plating) | 5/35 | [6, 29] | 4.5 |
+| 7 (Sharpened Drills) | 4/35 | [5, 26] | 4.5 |
+| 8 (Overcharged Core) | 6/35 | [8, 33] | 4.8 |
+
+Zero timeouts on every tier. Tiers 0-5 are one noise band, the stat tiers 6-8
+still bind heuristic play, and Gouging Prices now also marks up the press and
+the forge (no bot exercises either, so that markup is untested in play).
+
+### The critic's base-only-pods check (review 6.2, last paragraph)
+
+Before (Block A): deeproot 27/30 = 90% [74, 97], 17 item uses per 30 runs
+with `clearair_pod+` 5 of them. After
+(`=== items_probe | bot deeproot | config {  } | seeds 1..30 (30) ===`,
+the same seeds and config as the playtest deeproot row):
+
+- deeproot 24/30 = 80% [63, 90], avg floor 6.9, 0 timeouts.
+- item uses by id: `{clearair_pod: 14, iron_seed: 6, balm_fruit: 10,
+  spore_vial: 5, sun_capsule: 3}` = 38 uses, **zero `+` items**; pickups 72,
+  satchel_full 44.
+
+**Verdict: not a measured nerf.** 80% lies inside the Block A interval
+[74, 97] and the two intervals overlap over [74, 90]. Losing `+` items from
+pods did not cost deeproot wins at 30 seeds; it more than doubled item use
+(17 -> 38), because base pods stock things deeproot will actually spend
+(`clearair_pod` 14) instead of an occasional strong upgrade. The satchel now
+overflows 44 times per 30 runs, which is the real cost - the press is the
+only route to `+` items and deeproot never buys one. A 100-seed check is the
+only thing that would tighten this; not run.
+
+### Regression corpus regen
+
+28 records (24 pre-existing + 4 new `blockb_*`: quota_reclamp, graft_buy,
+ability_drop_buy, forge_once). Every one of the 28 carries a new top-level
+hash and `sim_version: 2`; 0 hashes survived the bump. Of the 24 pre-existing
+records, **17 changed floor/turns and 7 did not** (the three `det_wanderer_*`,
+which never reach a shrine or any main-rng consumer past mapgen, and the four
+hand-scripted `combo_*` demos). Six flipped outcome:
+
+- win -> loss: `canary_fanatic_s1` (7/66 -> floor 5/101),
+  `det_deeproot_s42` (7/61 -> floor 5/107), `det_sprout_s42` (7/64 -> floor
+  5/184)
+- loss -> win: `det_magpie_s3` (floor 3 -> 7), `det_magpie_s42` (floor 6 ->
+  7), `det_optimizer_s11` (floor 4 -> 7)
+
+Win count across the 24 is 6 before and 6 after. Cause is not a difficulty
+change: removing the two per-floor main-rng shop draws re-phases every
+downstream main-rng roll, so a seed is a different game after the bump. These
+outcomes are corpus assertions, never a balance argument.
+
+### Gate verdict
+
+`tests/playtest.gd` at 30 seeds, gate ON: **exit 1, "gate: 1 FAIL"**.
+
+```
+PASS wanderer 0 wins, avg floor <= 2: 0 wins, avg floor 1.00
+PASS sprout wins rare (<= 1 per 30 seeds): 0/30
+FAIL magpie canary <= 5%: 4/30 CI [5%, 30%] (fails when the lower bound clears the band)
+PASS optimizer band 35-65%: 12/30 CI [25%, 58%]
+PASS optimizer timeouts == 0: 0
+PASS deeproot band 70-90%: 24/30 CI [63%, 90%]
+PASS deeproot timeouts == 0: 0
+```
+(plus "illegal actions == 0: 0" for all six personas, and all-PASS for
+deeproot_rollout in its own run.)
+
+The magpie canary is followed up at 100 seeds as the watch list demands:
+`=== verify_kit | bot magpie | config {  } | seeds 1..100 (100) ===`,
+**20/100 = 20% wins, win CI [13%, 29%]**, avg floor 5.0, turns on wins 178.2,
+0 timeouts, 0 illegal. That interval excludes the 0-5% canary band outright.
+It does still overlap the Block A magpie interval (2/30 = 7% [2, 21]) over
+[13, 21], so this is not formally a change from the last v2 measurement - it
+is a decisive break of the *band*, on the largest sample the canary has had
+under v2. Full greed is no longer losing almost always.
+
+The mechanism is not proven, but the tally names two suspects, both from item
+5 of this bump and both magpie-shaped: over 100 runs magpie makes **262
+full-kit ability replacement buys** (an action that did not exist before -
+with a full kit an ability purchase used to be illegal, so magpie's surplus
+bloom had nowhere to go) and **discards 364 graft offers**, i.e. it sees two
+grafts a shrine instead of one. Bloom conversion is 0.50 and kit entropy 5.59
+bits, both the highest ever recorded for the persona. "Choice sinks, no new
+power" appears to be new power for the one persona that always had spare
+bloom.
+
+**A/B, run after the measurement pass (sim variants as probe subclasses over
+`legal_actions()`/`_act_buy`, bots untouched, seeds 1..100 for magpie and
+1..30 for optimizer, every row on the bump-2 sim unless marked):**
+
+| variant | magpie 100 seeds | optimizer 30 seeds |
+|---|---|---|
+| pre-bump HEAD (`b07d284`, clean worktree) | 6/100 = 6% [3, 12], ability buys 93 | 14/30 (Block A entry) |
+| bump 2 as shipped | 20/100 = 20% [13, 29], ability buys 364 (262 with a drop) | 12/30 [25, 58], 27 buys (13 drops) |
+| bump 2, full-kit ability purchase never legal | 10/100 = 10% [6, 17], ability buys 102 (0 drops) | 12/30 [25, 58], 14 buys |
+| bump 2, full-kit purchase priced at 2x (8 bloom) | 17/100 = 17% [11, 26], ability buys 330 (228 drops) | 11/30 [22, 54], 25 buys (11 drops) |
+
+The lever is the full-kit ability purchase itself: removing it takes magpie
+from 20/100 to 10/100, whose interval overlaps the pre-bump 6/100, while
+doubling its price only trims it to 17/100 (magpie earns about 65 bloom a
+run, so 8 bloom a floor is still cheap). The optimizer does not react to any
+variant. The two-graft offer is exonerated as the main cause: it stays in the
+no-drop row and the win rate still halves. Decision pending: the mechanic
+fixed defect 8 (a dead shop slot at a full kit) but is measured power for
+greed; either it goes back out, or it is gated on something other than bloom
+(the canary band is the target, not the thing to move).
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from
@@ -777,3 +1093,53 @@ Watch list additions (post-v2 bands):
   stalling safest. Revisit if it grows.
 - Magpie deaths cluster on floor 2 (harvest greed vs first real roster) -
   watch after any floor 2 tuning.
+
+### Bump-2 additions (2026-09-05b)
+
+- **Magpie broke the canary.** 4/30 in the gated playtest (FAIL) and 20/100
+  = 20% [13, 29] at `verify_kit`, against a 0-5% band. This is the one thing
+  in bump 2 that moved a target. Prime suspect is the full-kit ability
+  replacement buy (262 of them over 100 runs) plus the two-graft offer (364
+  discards): greed finally has somewhere to put its surplus bloom. The A/B
+  in the gate verdict above settles the attribution: no-drop 10/100 [6, 17]
+  vs shipped 20/100 [13, 29] vs pre-bump 6/100 [3, 12]; a 2x price does not
+  fix it (17/100). The full-kit ability purchase is the one bump-2 item that
+  is measured power. Decide before any further shop content.
+- **The quota re-clamp is unexercised.** 0 `quota_reclamp` events over 550
+  bot runs. Every claim that the strandable green gate is closed rests on
+  `tests/test_economy.gd` and `tests/regressions/blockb_quota_reclamp.json`,
+  not on play. A first deliberate probe - optimizer with a locked
+  lance/sun_flare/water_jet kit (`VERIFY_EXTRAS=sun_flare,water_jet`, 30
+  seeds, 6/30 wins) - still fired it 0 times: bots cleanse the quota before
+  they burn or wash the rest. A persona that burns oil first, or a
+  fixed_floor pump-jack map driven to the strand case, is still the missing
+  measurement.
+- **Press and forge are dead sinks so far.** 0/0 upcycles for every persona
+  in every run of this entry, so `shop_cost("press")`/`shop_cost("forge")`,
+  the one-forge-per-floor cap and the Gouging Prices markup on both are all
+  untested in play. No bot scores a purchase against keeping the bloom.
+- **fanatic pyro_nolance 8/30 -> 15/30** was the only archetype row outside
+  both intervals; gardener 11/30 -> 6/30 was borderline. Out-of-sample
+  re-check (`FANATIC_SEEDS=30 FANATIC_SEED_FROM=101`): pyro_nolance 12/30
+  [25, 58], gardener 15/30 [33, 67] - both back inside every earlier
+  interval, so noise, not a shift.
+- **solar_core replicates, hard.** In-sample +7 wins (10:3, p=0.09); the
+  out-of-sample run (`SWEEP_SEEDS=30 SWEEP_SEED_FROM=101 SWEEP_GRAFTS=solar_core`,
+  optimizer) gives **25/30 [66, 93] vs base 10/30 [19, 51], +15, discordant
+  16:1, sign p=0.00**, damage taken 27.6 -> 13.6, turns-on-wins 90 -> 70.
+  A pre-installed +1 regen is worth about +50 points of win rate to the
+  heuristic bot; the other five grafts sit within noise. This is the first
+  graft number that survives the Method rule and it says the graft table is
+  one lever plus five fillers. Not patched here (Block C owns graft values).
+- **Deeproot's satchel overflows 44 times per 30 runs** with base-only pods
+  (item uses 17 -> 38, wins unchanged within CI). Consumable supply now
+  exceeds demand at the ceiling; the press is the only `+`-item route and no
+  bot uses it.
+- **deeproot tier 6 was not re-measured.** The Block A row (18/30 = 60%
+  [42, 75]) is the last number for it, and review 6.2 defers the tier 6-8
+  re-judgement to a grafted ceiling. Do not quote the old row next to bump-2
+  tier-0 numbers without saying so.
+- **`sweep_lib.CAVEAT_LOCKED` changed meaning.** Locked `{kit: K, pool: K}`
+  configs now start a seed from the same map and rng state as any open-pool
+  config, so locked and open rows pair again; any older text saying the shop
+  consumes a main-rng draw is wrong from bump 2 on.

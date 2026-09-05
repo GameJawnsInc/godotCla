@@ -25,6 +25,37 @@ one package per run via `profile.game_config`, the mutator picker and
 `Profile.daily_config` (6.1); `deeproot_plan` (7.5); the Block B sim patch
 (6.2) and everything after it.
 
+**Status (2026-09-05b).** Block B (6.2) has landed as one batched sim patch;
+the re-baseline is the "bump 2" entry in `docs/BALANCE.md`. Shipped:
+`Game.SIM_VERSION := 2` as the single replay-version source (the shell, the
+regression library and the autopsy runner reference it); side-rng shop stock
+with a shrineless floor stocking nothing and mapgen as the only
+config-dependent main-rng consumer at floor entry (1); `by` on fire tiles with
+`fire:<by>` / `collision:<aid>` enemy-side sources and player-side sources
+left alone (2); `_reclamp_quota()` at the end of every playing `step()` with
+`quota_reclamp` / `stairs_awaken` events and bloom-0 enemy oil that still
+counts toward `greened` (3); the `grafts` and `bloom` config keys (4); and the
+choice sinks - two graft offers with one discarded, a drop slot on a full-kit
+ability purchase that can never take a mobility ability, and press/forge
+priced through `Content.SHOP_COSTS` with the forge capped at one use per floor
+(5). Alongside it: the two-graft shrine sheet and the run-lost notice in the
+shell, `tests/test_economy.gd`, `tests/sweep_grafts.gd`, `tests/import_run.gd`,
+a regenerated 28-record regression corpus, and attribution counters in
+`tests/tally.gd`. NOT done and still open: `deeproot_plan` (7.5); the
+re-judgement of tiers 6-8 on a grafted ceiling that 6.2 makes a precondition
+for economy content; protecting mobility abilities on *draft* drops (only the
+purchase and forge paths are protected); and defects 4 (fuse bounty) and 6
+(draft-drop gummed transfer), together with the 6.5 deferrals - reroll, per-HP
+heal, and the prune-versus-forge split. Two measurement gaps the bump left
+behind: `quota_reclamp` fired 0 times in 550 bot runs, so the strandable-gate
+fix is verified only synthetically, and no bot ever used the press or the
+forge. One target moved: magpie broke the 0-5% greed canary at 20/100, and
+the A/B in the bump-2 entry attributes it to the full-kit ability purchase
+(10/100 with that path removed, 6/100 pre-bump, 17/100 at double price) -
+the one bump-2 item that is measured power, awaiting a decision. The graft
+sweep's first out-of-sample number is also in: solar_core 25/30 vs 10/30
+(16:1, p=0.00), the other five grafts within noise.
+
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
 180 bot runs; a synergy-lift sweep of 7 hypothesised pairs at 24 seeds per

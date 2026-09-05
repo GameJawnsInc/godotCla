@@ -95,6 +95,9 @@ architecture below is designed to bend rather than block.
   - `godot --headless --path . --script tests/test_determinism.gd` — rerun + replay hashes
   - `godot --headless --path . --script tests/test_content.gd` — ability tags/roles,
     `Content.ARCHETYPES` cores, `base_id`, `archetypes_for`
+  - `godot --headless --path . --script tests/test_economy.gd` — shrine economy
+    and quota: config-independent main rng, shop stock filters, graft/ability/
+    press/forge purchase rules, quota re-clamp, damage attribution
   - `godot --headless --path . --script tests/test_regressions.gd` — replays every
     `tests/regressions/*.json` (seed, config, actions) pair: illegal/error events,
     outcome, expected event patterns; `REGRESS_STRICT=1` also checks the state
@@ -106,6 +109,8 @@ architecture below is designed to bend rather than block.
     and `PLAYTEST_BOTS=a,b,c` narrow a run)
   - `godot --headless --path . --script tests/test_meta.gd` — career unlocks, profile io,
     mutator invariants, package pools
+  - `godot --headless --path . --script tests/test_shell.gd` — shell smoke test
+    (the shell reads the sim, so a sim change can break it)
 - Bots live in one registry, `bots/roster.gd` (`Roster.names()/make(name, seed)`);
   every runner resolves persona names through it, and an unknown name fails
   loudly. `deeproot_rollout` is deeproot with rollout drafting (a separate
@@ -120,6 +125,10 @@ architecture below is designed to bend rather than block.
     66-pair grid (deeproot grid is hours), `SWEEP_MODE=drift` keeps the old
     open-pool "start with the pair" question as a labelled second table
   - `tests/sweep_packages.gd` — each tech package added to the pool
+  - `tests/sweep_grafts.gd` — each `Content.GRAFTS` entry pre-installed
+    (`{grafts: [g]}`) against the same seeds with none, plus an all-grafts row;
+    `SWEEP_GRAFTS=a,b` narrows, `SWEEP_BLOOM=<n>` gives every config, base
+    included, that much starting bloom
   - `tests/sweep_tiers.gd` — every difficulty tier must stay bot-winnable (fails
     when the Wilson upper bound is under 10%; binds only at SWEEP_SEEDS >= 35);
     `SWEEP_REFERENCE_ROWS=1` adds the permanent locked reference kits
@@ -143,8 +152,11 @@ architecture below is designed to bend rather than block.
   `_side_rng(tag)` (hash of seed+floor+tag), NEVER the main `rng` stream -
   one stray main-stream draw reshuffles every seed's downstream rolls and
   invalidates cross-version win-rate comparisons.
-- Sim run config: `Game.new(seed, {kit, pool, packages, tier, mutators})` for
-  sweeps, meta-unlocks, and post-win difficulty tiers.
+- Sim run config: `Game.new(seed, {kit, pool, packages, tier, mutators, grafts,
+  bloom})` for sweeps, meta-unlocks, and post-win difficulty tiers. `grafts` is
+  a list of `Content.GRAFTS` ids installed before floor 1 (unknown ids are
+  skipped with a warning; owned grafts raise the shrine's graft price) and
+  `bloom` is the starting balance — neither touches the main rng.
 - Meta layer: `meta/profile.gd` records runs against `Content.MILESTONES` and
   hands back the next run's config; the sim itself stays career-agnostic.
 - Balance targets and the measurement discipline live in `docs/BALANCE.md`;
@@ -154,9 +166,16 @@ architecture below is designed to bend rather than block.
   "watch" any death a sweep or playtest flags. `AUTOPSY_TIER`/`AUTOPSY_MUTATORS`/
   `AUTOPSY_KIT` set the config; `AUTOPSY_JSON=<path>` dumps the run as a
   (seed, config, actions) regression pair and `AUTOPSY_REPLAY=<path>` replays one.
-- Sim changes that alter replay behaviour must bump RUN_SAVE_VERSION in
-  `shell/main.gd` - live phone runs persist as replayable action logs and a
-  stale log replayed across sim changes diverges silently.
+- Live-run import (`tests/import_run.gd`): `IMPORT_RUN=<run.save>
+  IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
+  log through the pure sim and writes the regression record it proves; a save
+  whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source: bump
+  it whenever a sim change alters replay behaviour. `shell/main.gd`
+  RUN_SAVE_VERSION, `tests/regress_lib.gd` and `tests/autopsy.gd` all read it -
+  live phone runs persist as replayable action logs and a stale log replayed
+  across sim changes diverges silently. After a bump, re-stamp the corpus
+  (`REGEN=1`) and re-record any bot log whose actions no longer replay.
 - Human shell (`shell/`): SVG-sprite Godot scene over the sim — see
   `docs/SHELL.md` for controls. `tests/test_shell.gd` smoke-tests it
   headless; `tests/render_frame.gd` renders any game state as a standalone

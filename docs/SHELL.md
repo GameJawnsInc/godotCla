@@ -5,8 +5,9 @@
 The shell boots to a main menu: PLAY (fresh run), RESUME (when a run is
 live), TUTORIAL, SETTINGS, QUIT. Settings persist to `user://tender.cfg`:
 hold-to-inspect delay, run seed mode (random / daily — everyone playing a
-daily gets the same run), and intro-tips frequency. The `=` button in the
-status strip returns to the menu mid-run without losing the run.
+daily gets the same run), and intro-tips frequency. The sheet also prints
+where finished run logs are kept. The `=` button in the status strip returns
+to the menu mid-run without losing the run.
 
 The tutorial is **entirely data** in `shell/tutorial.gd`: an ASCII-drawn
 room, a fixed kit, and a step list (guide text + the action pattern that
@@ -40,7 +41,9 @@ scene.
 | 1–5 | cast that kit slot — direction abilities then take an arrow key, tile abilities highlight legal tiles to click |
 | C + direction | cleanse an adjacent corrupted tile |
 | E | descend (on the stairs) |
-| H / B / G | buy heal / ability / graft (standing on a shrine) |
+| H / B | buy heal / ability (standing on a shrine) |
+| G / J | buy the first / second graft on offer |
+| 1–5 (picker) | with a full kit, B asks which slot to give up; ESC cancels |
 | SPACE / ENTER | end turn |
 | ESC | cancel targeting |
 | R | restart the same seed |
@@ -64,7 +67,9 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
 - tap a kit line to cast — aim with the D-pad / adjacent tap for
   directional abilities, or tap a highlighted tile for tile abilities
 - CLEANSE / DESCEND / HELP buttons bottom-right
-- tap shop lines at a shrine, draft options between floors
+- tap shop cards at a shrine, draft options between floors
+- with a full kit the ability card starts a picker: tap the kit slot to give
+  up (your mobility ability is never droppable), or ESC to back out
 - after a run: tap anywhere for the next seed
 
 ## Building the APK
@@ -91,7 +96,10 @@ FRAME_SEED=3 FRAME_BOT=deeproot FRAME_ACTIONS=215 FRAME_OUT=/tmp/frame.svg \
 ```
 
 `tests/test_shell.gd` is the shell's headless smoke test (sprite
-rasterization + input handlers driving the sim), part of the suite.
+rasterization, input handlers driving the sim, the whole tutorial script,
+the shrine sheet's choice sinks, run restore, log retention and import),
+part of the suite. `SHELL_EXPORT_SAVE=<path>` also drops a real run log
+there, which is how you get a save to feed `tests/import_run.gd`.
 
 ## Art
 
@@ -113,7 +121,32 @@ shows runs / wins / best floor.
 The two free D-pad corner slots are the satchel: tap a stocked item to
 use it (free action - the turn does not advance), hold it to read what
 it does. Supply pods drop when a room blooms and shrines always stock
-one consumable.
+one consumable. Pods and shrines only ever hand out **base** items: the
+upgraded `+` forms exist solely through the shrine press.
+
+## The shrine
+
+Standing on the shrine opens the sheet. Every card resolves to one action
+out of `legal_actions()` - the shell never sends a purchase the sim would
+refuse. A card that is spent or boarded is not drawn; the press and forge
+rows appear only while they are legal; an unaffordable heal, ability, graft
+or item card is still shown with its price and flashes when tapped:
+
+- **heal** - 4 HP, once per shrine
+- **ability** - one draw from the run's pool. With a full kit the card
+  becomes a two-step choice: pick the kit slot it replaces. Your mobility
+  ability is never a legal drop (the picker flashes and refuses).
+- **two grafts** - the shrine offers two and sells **one**; taking either
+  closes the counter and the other offer is lost. Prices rise as you stack
+  grafts, so the pair is a choice, not a shopping list.
+- **item** - one base consumable
+- **press** - two held items become the `+` form of the one you keep
+- **forge** - one kit ability becomes its `+` form and another is scrapped
+  for parts. Once per floor: using it closes the forge until the next
+  shrine, and a mobility ability can never be the scrap.
+
+The Boarded mutator (and floor 7, which has no shrine) closes the whole
+sheet - press and forge included.
 
 ## The green gate
 
@@ -129,7 +162,39 @@ Live runs survive the OS killing the app: every action is appended to
 `user://tender_run.save` (header = seed/config/tier + RUN_SAVE_VERSION,
 then one action per line, flushed immediately). On boot the shell
 replays the log through the pure sim - determinism makes the restore
-byte-exact. The save is deleted when the run ends; RESUME can also
-recover the run from disk after the tutorial displaces it. Bump
-RUN_SAVE_VERSION in shell/main.gd whenever a sim change alters replay
-behaviour, or stale saves would replay into divergence.
+byte-exact. RESUME can also recover the run from disk after the tutorial
+displaces it.
+
+`RUN_SAVE_VERSION` is not a number the shell owns any more: it *is*
+`Game.SIM_VERSION`, the sim's single source of truth (regression records
+and autopsy dumps stamp the same value). Bump it in `sim/game.gd` whenever
+a sim change alters replay behaviour, or stale logs replay into divergence.
+When the shell finds a save from another version it discards it - and says
+so: the title screen carries one line, *"your saved run was lost to an
+update"*, until the next new run.
+
+### Finished runs are kept
+
+A finished log is a replayable `(seed, config, actions)` pair, so it is
+archived instead of deleted: it moves to
+`user://runs/run_<seed>_<yyyymmdd>_<won|died>.save`, and only the newest 10
+are kept (oldest by modified time go first). The settings sheet prints the
+folder's real path. In-flight saves are still deleted, exactly as before.
+
+### Importing a run as a regression pair
+
+`tests/import_run.gd` replays one of those logs through the pure sim and
+writes the `tests/regressions/*.json` record it proves - the way a bug that
+only happened on the phone becomes a test:
+
+```
+IMPORT_RUN=~/.local/share/godot/app_userdata/TENDER/runs/run_708906_20260905_died.save \
+  IMPORT_OUT=tests/regressions/phone_death.json \
+  IMPORT_NOTE="floor 3 death: the gate never re-clamped" \
+  godot --headless --path . --script tests/import_run.gd
+```
+
+It prints the replayed outcome (`won / floor / turns / timeout / illegal /
+errors / hash`) and refuses a save whose header version is not the current
+`Game.SIM_VERSION` - importing one would mint a record of a game that never
+happened.

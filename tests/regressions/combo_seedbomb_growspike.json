@@ -4,6 +4,6 @@
 "actions": [{"slot":0.0,"target":[4.0,2.0],"type":"ability"},{"slot":1.0,"target":[5.0,2.0],"type":"ability"}],
 "expect": {"events":[{"t":"growth"},{"amt":3,"src":"grow_spike","t":"damage","who":"drill_bot"},{"t":"death","who":"drill_bot"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "combo demo: seed_bomb grows a cross under the drill bot, grow_spike pays off the same turn (2+1 charge)",
-"sim_version": 1,
-"hash": "cf1bccfac5c3633e68406fc81b1526072765656365c0eba3efb46ce0229d3918"
+"sim_version": 2,
+"hash": "248d888b3d4085c6828b516c7c14073ed8d0b48bf7b6721cec4991eeeff85119"
 }

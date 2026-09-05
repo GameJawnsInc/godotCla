@@ -221,9 +221,11 @@ const DRAFT_POOL := [
 ]
 
 ## --- Sim-ignored ability metadata ------------------------------------------
-## The sim never reads "tags", "role", TAGS, ROLES, ARCHETYPES or the helpers
-## below: step() outcomes and rng draws are unaffected by any value here. They
-## are shared data (style guide §6) for bots (persona build commitments, drop
+## The sim never reads "tags", TAGS, ROLES, ARCHETYPES or the helpers below,
+## and reads "role" for exactly one rule: a shrine purchase or forge may never
+## drop/scrap a role == "mobility" ability (Game._is_mobility). Otherwise
+## step() outcomes and rng draws are unaffected by any value here. They are
+## shared data (style guide §6) for bots (persona build commitments, drop
 ## guards), the shell (kit labels, build hints) and tests (coverage asserts),
 ## so all three agree on one vocabulary instead of each hardcoding ids.
 ## Every "+" form carries the same tags/role as its base; use base_id() to
@@ -294,8 +296,6 @@ const ITEMS := {
 	"iron_seed+": {"name": "Ironheart", "desc": "Crack: +3 shield and +1 max HP"},
 }
 const ITEM_CAP := 2  # satchel slots
-const UPCYCLE_ITEM_COST := 1  # shrine press: two items -> one + item
-const UPCYCLE_ABILITY_COST := 3  # forge one ability to +, scrap another
 const ROOM_BLOOM_BONUS := 2  # extra bloom when a room's last corruption falls
 
 const GRAFTS := {
@@ -336,7 +336,10 @@ const ABILITY_DESC := {
 	"moss_filter": "Filter the air: restore a stage of dimmed regen",
 }
 
-const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 4, "item": 2}
+## Shrine price list. "press" (two items -> one + item) and "forge" (one
+## ability -> its + form, another scrapped) are shrine services priced here so
+## the tier markup (Game.shop_cost) applies to them like every other purchase.
+const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 4, "item": 2, "press": 1, "forge": 3}
 const GRAFT_PRICE_STEP := 2  # each owned graft raises the next graft's price
 const CLEANSE_SMOG_RELIEF := 1  # a cleanse pauses the smog clock, never rewinds it
 

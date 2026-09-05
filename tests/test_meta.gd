@@ -172,11 +172,28 @@ func _mutator_invariant_problem(mut: String) -> String:
 			if Game.new(1)._kit_max() != Content.KIT_MAX:
 				return "base game _kit_max() != KIT_MAX"
 		"boarded":
-			var g = Game.new(1, cfg)
+			var g = Game.new(1, cfg.merged({"bloom": 20}))
 			if not g.shop.is_empty():
 				return "floor-1 shop is %s, expected {}" % str(g.shop)
 			if Game.new(1).shop.is_empty():
 				return "base game floor-1 shop is empty too (check proves nothing)"
+			# a boarded shrine boards the press and the forge too: nothing to
+			# buy, upcycle or upcycle_ability even with bloom, items and a kit
+			g.player["pos"] = g.map["shrine"]
+			g.player["items"] = ["balm_fruit", "sun_capsule"]
+			g.player["hp"] = 5
+			for a in g.legal_actions():
+				var t := String(a.get("type", ""))
+				if t == "buy" or t == "upcycle" or t == "upcycle_ability":
+					return "boarded shrine still offers %s" % str(a)
+			var open_g = Game.new(1, {"bloom": 20})
+			open_g.player["pos"] = open_g.map["shrine"]
+			open_g.player["items"] = ["balm_fruit", "sun_capsule"]
+			var kinds := {}
+			for a in open_g.legal_actions():
+				kinds[String(a.get("type", ""))] = true
+			if not (kinds.has("buy") and kinds.has("upcycle") and kinds.has("upcycle_ability")):
+				return "open shrine offers %s (check proves nothing)" % str(kinds.keys())
 		"parched":
 			# end a turn with the full 3 charge left: nothing may carry over
 			var g = Game.new(1, cfg)

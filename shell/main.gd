@@ -17,9 +17,13 @@ const AudioKit := preload("res://shell/audio.gd")
 const Profile := preload("res://meta/profile.gd")
 const PROFILE_PATH := "user://tender_profile.json"
 const RUN_SAVE_PATH := "user://tender_run.save"
-# Bump whenever a sim change alters replay behaviour - stale saves are
-# discarded rather than replayed into divergence.
-const RUN_SAVE_VERSION := 1
+# Replay compatibility rides on the sim's own version: a stale log replayed
+# across a sim change diverges silently, so bump Game.SIM_VERSION there and
+# every stamp (this save, regression records, autopsy dumps) follows.
+const RUN_SAVE_VERSION := Game.SIM_VERSION
+## Finished run logs are kept, not deleted: a real death is a replayable
+## (seed, config, actions) pair - see tests/import_run.gd. This many survive.
+const RUNS_KEEP := 10
 
 const CFG_PATH := "user://tender.cfg"
 
@@ -96,7 +100,7 @@ const DIRS4 := {
 var game
 var seed_v := 0
 var screen := "menu"  # menu | game | tutorial
-var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | intro | help | shop | log | settings
+var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | buy_drop | up_keep | up_scrap | intro | help | shop | log | settings
 var mode_slot := -1
 var mode_targets: Array = []
 var mode_pick := -1
@@ -111,6 +115,10 @@ var help_page := 0
 var zoom_room := false     # camera toggle: fit the current room, not the floor
 var inspect_live := false  # magnifier toggle: hover/drag shows tooltips instantly
 var _game_is_run := false  # current `game` is a real run (RESUME-able)
+var save_lost := false     # a saved run was discarded by a version bump (menu notice)
+## Where finished run logs are archived. A var, not a const, so a test can
+## point the archive at scratch space instead of the player's own runs.
+var runs_dir := "user://runs"
 
 # settings (persisted to user://tender.cfg)
 var hold_ms := 420
@@ -195,6 +203,7 @@ func _new_game() -> void:
 	_game_is_run = true
 	_run_recorded = false
 	_run_unlocks = []
+	save_lost = false  # the notice stands until the player starts a fresh run
 	if _run_save != null:
 		_run_save.close()
 	_run_save = FileAccess.open(RUN_SAVE_PATH, FileAccess.WRITE)
@@ -233,8 +242,11 @@ func _load_run() -> void:
 		return
 	var head = str_to_var(f.get_line())
 	if not (head is Dictionary) or int(head.get("v", -1)) != RUN_SAVE_VERSION:
+		# the sim moved under the log: replaying it would diverge silently, so
+		# the save goes - but the player is told why their run vanished
 		f.close()
 		DirAccess.remove_absolute(RUN_SAVE_PATH)
+		save_lost = true
 		return
 	var g = Game.new(int(head["seed"]), Dictionary(head["config"]))
 	while not f.eof_reached() and not g.over:
@@ -264,6 +276,45 @@ func _load_run() -> void:
 	_run_save = FileAccess.open(RUN_SAVE_PATH, FileAccess.READ_WRITE)
 	if _run_save != null:
 		_run_save.seek_end()
+
+
+## A finished run's action log is a replayable record, not litter: move it to
+## runs_dir as run_<seed>_<yyyymmdd>_<won|died>.save and keep the newest
+## RUNS_KEEP. tests/import_run.gd turns one into a regression pair.
+func _archive_run() -> void:
+	if not FileAccess.file_exists(RUN_SAVE_PATH):
+		return
+	var d := Time.get_date_dict_from_system()
+	var outcome := "won" if (game != null and game.won) else "died"
+	var dest := "%s/run_%d_%04d%02d%02d_%s.save" % [
+		runs_dir, seed_v, int(d["year"]), int(d["month"]), int(d["day"]), outcome]
+	DirAccess.make_dir_recursive_absolute(runs_dir)
+	if FileAccess.file_exists(dest):
+		DirAccess.remove_absolute(dest)  # same seed, same day: the newer log wins
+	if DirAccess.rename_absolute(RUN_SAVE_PATH, dest) != OK:
+		DirAccess.copy_absolute(RUN_SAVE_PATH, dest)
+	DirAccess.remove_absolute(RUN_SAVE_PATH)  # no-op after a successful rename
+	_prune_runs()
+
+
+## Keep the newest RUNS_KEEP logs. Ordered by (modified time, name) so the
+## sweep is deterministic even when several land in the same second.
+func _prune_runs() -> void:
+	var dir := DirAccess.open(runs_dir)
+	if dir == null:
+		return
+	var keys: Array = []
+	dir.list_dir_begin()
+	var name := dir.get_next()
+	while name != "":
+		if not dir.current_is_dir() and name.ends_with(".save"):
+			keys.append("%020d|%s" % [FileAccess.get_modified_time(runs_dir + "/" + name), name])
+		name = dir.get_next()
+	dir.list_dir_end()
+	keys.sort()  # oldest first
+	while keys.size() > RUNS_KEEP:
+		var k := String(keys.pop_front())
+		DirAccess.remove_absolute(runs_dir + "/" + k.substr(k.find("|") + 1))
 
 
 func _load_settings() -> void:
@@ -325,7 +376,8 @@ func _act(a: Dictionary) -> void:
 		tooltip = []
 		queue_redraw()
 		return
-	var keep_shop := mode == "shop" and String(a.get("type", "")) == "buy"
+	# a purchase made from the sheet (or from its drop picker) reopens it
+	var keep_shop := (mode == "shop" or mode == "buy_drop") and String(a.get("type", "")) == "buy"
 	var evs: Array = game.step(a)
 	if _game_is_run and _run_save != null:
 		_run_save.store_line(var_to_str(a).replace("\n", " "))
@@ -342,7 +394,7 @@ func _act(a: Dictionary) -> void:
 		if _run_save != null:
 			_run_save.close()
 			_run_save = null
-		DirAccess.remove_absolute(RUN_SAVE_PATH)
+		_archive_run()
 	for ev in evs:
 		var s := _ev_text(ev)
 		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
@@ -680,10 +732,13 @@ func _key(k: int) -> void:
 			_buy("heal")
 			return
 		if mode == "shop" and k == KEY_B:
-			_buy("ability")
+			_buy("ability")  # full kit: enters the drop picker
 			return
 		if mode == "shop" and k == KEY_G:
-			_buy("graft")
+			_buy_graft(0)
+			return
+		if mode == "shop" and k == KEY_J:
+			_buy_graft(1)  # the shrine offers two grafts; J takes the second
 			return
 		mode = "normal"
 		queue_redraw()
@@ -808,18 +863,58 @@ func _move_or_strike(d: Vector2i) -> void:
 	_flash("blocked")
 
 
+## Buy heal / ability / item. A full kit turns the ability purchase into a
+## two-step choice: the drop picker (mode "buy_drop") replaces a kit slot.
 func _buy(item: String) -> void:
 	for a in _legal_of("buy"):
-		if a["item"] == item:
+		if String(a.get("item", "")) != item:
+			continue
+		if item == "ability" and a.has("drop"):
+			mode = "buy_drop"
+			flash = ""
+			queue_redraw()
+			return
+		_act(a)
+		return
+	_flash("can't buy that")
+
+
+## The shrine offers two grafts and sells one; `pick` indexes shop.grafts.
+func _buy_graft(pick: int) -> void:
+	for a in _legal_of("buy"):
+		if String(a.get("item", "")) == "graft" and int(a.get("pick", -1)) == pick:
 			_act(a)
 			return
 	_flash("can't buy that")
 
 
+## The one bit of ability metadata the shell reads, mirroring the sim rule:
+## a mobility ability is never a legal drop or scrap (sim/game.gd _is_mobility).
+func _is_mobility(aid: String) -> bool:
+	return String(Content.ABILITIES.get(aid, {}).get("role", "")) == "mobility"
+
+
 func _ability_press(slot: int) -> void:
+	if slot >= game.player["kit"].size():
+		return
+	if mode == "buy_drop":
+		# the shrine's replacement purchase: this slot goes, the bought one lands
+		for a in _legal_of("buy"):
+			if String(a.get("item", "")) == "ability" and int(a.get("drop", -1)) == slot:
+				_act(a)
+				return
+		if _is_mobility(String(game.player["kit"][slot])):
+			_flash("cannot drop your mobility ability")
+		else:
+			_flash("can't replace that slot")
+		return
 	if mode == "up_keep":
-		var kid := String(game.player["kit"][slot])
-		if kid.ends_with("+") or not Content.ABILITIES.has(kid + "+"):
+		var can_keep := false
+		for a in _legal_of("upcycle_ability"):
+			if int(a.get("keep", -1)) == slot:
+				can_keep = true
+				break
+		if not can_keep:
 			_flash("that one cannot be forged further")
 			return
 		mode_pick = slot
@@ -830,9 +925,14 @@ func _ability_press(slot: int) -> void:
 		if slot == mode_pick:
 			_flash("pick a DIFFERENT ability to scrap")
 			return
-		_act({"type": "upcycle_ability", "keep": mode_pick, "scrap": slot})
-		return
-	if slot >= game.player["kit"].size():
+		for a in _legal_of("upcycle_ability"):
+			if int(a.get("keep", -1)) == mode_pick and int(a.get("scrap", -1)) == slot:
+				_act(a)
+				return
+		if _is_mobility(String(game.player["kit"][slot])):
+			_flash("cannot scrap your mobility ability")
+		else:
+			_flash("can't scrap that")
 		return
 	var acts: Array = []
 	for a in _legal_of("ability"):
@@ -938,14 +1038,27 @@ func _tap(tag: String) -> void:
 		var islot := int(tag.get_slice(":", 1))
 		if islot < game.player["items"].size():
 			_act({"type": "use_item", "slot": islot})
+	elif tag.begins_with("buy:graft:"):
+		_buy_graft(int(tag.get_slice(":", 2)))
 	elif tag.begins_with("buy:"):
 		_buy(tag.get_slice(":", 1))
 	elif tag.begins_with("upcycle:"):
-		_act({"type": "upcycle", "keep": int(tag.get_slice(":", 1))})
+		var keep := int(tag.get_slice(":", 1))
+		var pressed := false
+		for a in _legal_of("upcycle"):
+			if int(a.get("keep", -1)) == keep:
+				_act(a)
+				pressed = true
+				break
+		if not pressed:
+			_flash("the press is closed")
 	elif tag == "forge":
-		mode = "up_keep"
-		flash = ""
-		queue_redraw()
+		if _legal_of("upcycle_ability").is_empty():
+			_flash("the forge is cold")
+		else:
+			mode = "up_keep"
+			flash = ""
+			queue_redraw()
 	elif tag.begins_with("draft:"):
 		_draft_pick(int(tag.get_slice(":", 1)))
 	elif tag.begins_with("drop:"):
@@ -1076,11 +1189,28 @@ func _ename(kind: String) -> String:
 	return Content.ENEMIES[kind]["name"] if Content.ENEMIES.has(kind) else kind
 
 
+## Purchase ids in words for the log ("bloom_surge" -> "Bloom Surge").
+func _shop_name(item: String, id: String) -> String:
+	match item:
+		"heal":
+			return "a heal"
+		"graft":
+			return String(Content.GRAFTS.get(id, {}).get("name", id))
+		"ability":
+			return String(Content.ABILITIES.get(id, {}).get("name", id))
+		"item":
+			return String(Content.ITEMS.get(id, {}).get("name", id))
+	return id if id != "" else item
+
+
 func _ev_text(ev: Dictionary) -> String:
 	match String(ev.get("t", "")):
 		"damage":
 			if ev.get("who", "") == "player":
-				return "You take %d damage (%s)" % [ev["amt"], ev.get("src", "?")]
+				# defensive: qualified sources ("fire:solar_lance") read as "fire"
+				var src := String(ev.get("src", "?"))
+				var ci := src.find(":")
+				return "You take %d damage (%s)" % [ev["amt"], src.substr(0, ci) if ci >= 0 else src]
 			return "%s takes %d" % [_ename(ev["who"]), ev["amt"]]
 		"death":
 			return "%s destroyed" % _ename(ev["who"])
@@ -1102,6 +1232,8 @@ func _ev_text(ev: Dictionary) -> String:
 			return "The stairs are dormant - green the floor (%d/%d)" % [ev.get("have", 0), ev.get("need", 0)]
 		"stairs_awaken":
 			return "The floor greens - THE STAIRS AWAKEN"
+		"quota_reclamp":
+			return "Corruption burned away - the gate needs only %d" % ev.get("need", 0)
 		"seal_burst":
 			return "An overgrown vent chokes - spawn absorbed"
 		"floor_restored":
@@ -1149,7 +1281,12 @@ func _ev_text(ev: Dictionary) -> String:
 		"smoke_burst":
 			return "The golem bursts into smoke"
 		"buy":
-			return "Bought %s" % str(ev.get("id", ev.get("item", "")))
+			var what := _shop_name(String(ev.get("item", "")), String(ev.get("id", "")))
+			if String(ev.get("discarded", "")) != "":
+				return "Bought %s (discarded %s)" % [what, _shop_name("graft", String(ev["discarded"]))]
+			if String(ev.get("dropped", "")) != "":
+				return "Bought %s, dropped %s" % [what, _shop_name("ability", String(ev["dropped"]))]
+			return "Bought %s" % what
 		"draft_upgrade":
 			return "Upgraded to %s" % str(ev["id"])
 		"shield":
@@ -1470,6 +1607,10 @@ func _draw_menu(vw: float, vh: float) -> void:
 	_txt_c(vw / 2.0 + 2, vh * 0.155 + 2, "T E N D E R", Color(0, 0, 0, 0.55), int(vh * 0.065))
 	_txt_c(vw / 2.0, vh * 0.155, "T E N D E R", COL_GOLD, int(vh * 0.065))
 	_txt_c(vw / 2.0, vh * 0.195, "a solarpunk roguelike", COL_CREAM, int(vh * 0.021))
+	if save_lost:
+		# review §6.0: a version bump used to eat the run without a word
+		_txt_c_fit(vw / 2.0, vh * 0.228, "your saved run was lost to an update",
+			COL_GOLD, int(vh * 0.019), vw * 0.9)
 
 	var bw := vw * 0.62
 	var bx := (vw - bw) / 2.0
@@ -1518,7 +1659,11 @@ func _draw_settings(vw: float, vh: float) -> void:
 	_button(Rect2(vw * 0.06, y, bw, bh), "Sound effects:  %s" % ("on" if sfx_on else "off"), "set:sfx", int(bh * 0.3))
 	y += bh + vh * 0.025
 	_button(Rect2(vw * 0.06, y, bw, bh), "Music:  %s" % ("on" if music_on else "off"), "set:music", int(bh * 0.3))
-	y += bh + vh * 0.05
+	y += bh + vh * 0.03
+	_txt_fit(Vector2(vw * 0.06, y + vh * 0.02),
+		"finished runs: %s" % ProjectSettings.globalize_path(runs_dir),
+		COL_DIM_TEXT, int(vh * 0.018), bw)
+	y += vh * 0.05
 	_button(Rect2(vw * 0.06, y, bw, bh), "BACK", "close", int(bh * 0.34))
 
 
@@ -2071,6 +2216,11 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 	var msg := ""
 	var col := COL_DIM_TEXT
 	match mode:
+		"buy_drop":
+			msg = "REPLACE: tap the kit ability to give up (ESC cancels)"
+			col = COL_GOLD
+			if flash != "":
+				msg = flash
 		"up_keep":
 			msg = "FORGE: tap the ability to upgrade to + (ESC cancels)"
 			col = COL_GOLD
@@ -2210,61 +2360,79 @@ func _card(r: Rect2, icon: String, title: String, desc: String, tag: String, vh:
 	_hot(r, tag)
 
 
-func _draw_shop(snap: Dictionary, vw: float, vh: float) -> void:
-	hotspots.clear()
-	var y := _sheet(vw, vh, "SHRINE SHOP")
-	_txt(Vector2(vw * 0.06, y), "your bloom: %d" % snap["bloom"], COL_GOLD, int(vh * 0.026)); y += vh * 0.055
-	var ch := vh * 0.105
-	if snap["shop"].get("heal", false):
-		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "ic_hp",
-			"Heal  —  %d bloom" % game.shop_cost("heal"),
-			"Restore 4 HP (up to your maximum)", "buy:heal", vh)
-		y += ch + vh * 0.022
-	if snap["shop"].has("ability"):
-		var aid: String = snap["shop"]["ability"]
+## The shrine sheet as data: one [icon, title, desc, tag] row per offer, in
+## sheet order. Split out of the drawing so the headless test can assert what
+## a shrine offers (and what it stops offering). Every row's tag resolves
+## through game.legal_actions() when tapped - the shell never hand-builds a
+## purchase the sim would reject.
+func _shop_cards(snap: Dictionary) -> Array:
+	var shop: Dictionary = snap["shop"]
+	var pl: Dictionary = snap["player"]
+	# mirrors the sim's kit cap (kit_of_3 shrinks it) without reaching into it
+	var kit_cap: int = 3 if snap["mutators"].has("kit_of_3") else Content.KIT_MAX
+	var kit_full: bool = pl["kit"].size() >= kit_cap
+	var cards: Array = []
+	if shop.get("heal", false):
+		cards.append(["ic_hp", "Heal  -  %d bloom" % game.shop_cost("heal"),
+			"Restore 4 HP (up to your maximum)", "buy:heal"])
+	if shop.has("ability"):
+		var aid: String = shop["ability"]
 		var icon := "ab_" + aid.trim_suffix("+")
 		if not Art.ART.has(icon):
 			icon = "ab_default"
-		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), icon,
-			"%s  —  %d bloom" % [Content.ABILITIES[aid]["name"], game.shop_cost("ability")],
-			_ability_desc(aid), "buy:ability", vh)
-		y += ch + vh * 0.022
-	if snap["shop"].has("graft"):
-		var gid: String = snap["shop"]["graft"]
-		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "shrine",
-			"%s  —  %d bloom" % [Content.GRAFTS[gid]["name"], game.shop_cost("graft")],
-			"Graft (permanent): %s" % Content.GRAFTS[gid]["desc"], "buy:graft", vh)
-		y += ch + vh * 0.022
-	if snap["shop"].has("item") and snap["player"]["items"].size() < Content.ITEM_CAP:
-		var iid: String = snap["shop"]["item"]
-		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "it_" + iid,
-			"%s  —  %d bloom" % [Content.ITEMS[iid]["name"], game.shop_cost("item")],
-			"Consumable: %s" % Content.ITEMS[iid]["desc"], "buy:item", vh)
-		y += ch + vh * 0.022
-	var pits: Array = snap["player"]["items"]
-	if pits.size() == 2 and int(snap["bloom"]) >= Content.UPCYCLE_ITEM_COST:
-		for k in 2:
-			var kid := String(pits[k])
-			if kid.ends_with("+"):
-				continue
-			var mat := String(pits[1 - k])
-			_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "it_" + kid,
-				"Upcycle %s  —  %d bloom" % [Content.ITEMS[kid]["name"], Content.UPCYCLE_ITEM_COST],
-				"Press %s into it: makes %s" % [Content.ITEMS[mat]["name"], Content.ITEMS[kid + "+"]["name"]],
-				"upcycle:%d" % k, vh)
-			y += ch + vh * 0.022
-	var can_forge := false
-	for kk in snap["player"]["kit"]:
-		var kks := String(kk)
-		if not kks.ends_with("+") and Content.ABILITIES.has(kks + "+"):
-			can_forge = true
-	if can_forge and snap["player"]["kit"].size() >= 2 and int(snap["bloom"]) >= Content.UPCYCLE_ABILITY_COST:
-		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "ab_default",
-			"Upcycle an ability  —  %d bloom" % Content.UPCYCLE_ABILITY_COST,
-			"Forge one kit ability into its + form; scrap another for parts", "forge", vh)
-		y += ch + vh * 0.022
-	y += vh * 0.04
-	_button(Rect2(vw * 0.25, y, vw * 0.5, vh * 0.07), "CLOSE", "close", int(vh * 0.026))
+		var adesc := _ability_desc(aid)
+		if kit_full:
+			adesc = "REPLACES a kit slot (never your mobility) - " + adesc
+		cards.append([icon, "%s  -  %d bloom" % [Content.ABILITIES[aid]["name"], game.shop_cost("ability")],
+			adesc, "buy:ability"])
+	var offers: Array = shop.get("grafts", [])
+	for i in offers.size():
+		var gid: String = offers[i]
+		var gdesc: String = "Graft (permanent): %s" % Content.GRAFTS[gid]["desc"]
+		if offers.size() > 1:
+			gdesc += "  ·  take one, the other is lost"
+		cards.append(["shrine", "%s  -  %d bloom" % [Content.GRAFTS[gid]["name"], game.shop_cost("graft")],
+			gdesc, "buy:graft:%d" % i])
+	if shop.has("item") and pl["items"].size() < Content.ITEM_CAP:
+		var iid: String = shop["item"]
+		cards.append(["it_" + iid, "%s  -  %d bloom" % [Content.ITEMS[iid]["name"], game.shop_cost("item")],
+			"Consumable: %s" % Content.ITEMS[iid]["desc"], "buy:item"])
+	# the two shrine services come straight out of legal_actions(): a boarded
+	# shrine, a forge already spent this floor or a thin purse yields nothing,
+	# and the card list follows without repeating a single sim rule
+	var pits: Array = pl["items"]
+	for a in _legal_of("upcycle"):
+		var k := int(a.get("keep", -1))
+		if k < 0 or k >= pits.size():
+			continue
+		var kid := String(pits[k])
+		var mat := String(pits[1 - k])
+		cards.append(["it_" + kid, "Press %s  -  %d bloom" % [Content.ITEMS[kid]["name"], game.shop_cost("press")],
+			"Press %s into it: makes %s" % [Content.ITEMS[mat]["name"], Content.ITEMS[kid + "+"]["name"]],
+			"upcycle:%d" % k])
+	if not _legal_of("upcycle_ability").is_empty():
+		cards.append(["ab_default", "Forge an ability  -  %d bloom" % game.shop_cost("forge"),
+			"One kit ability becomes its + form; scrap another (never mobility) - once per floor", "forge"])
+	return cards
+
+
+func _draw_shop(snap: Dictionary, vw: float, vh: float) -> void:
+	hotspots.clear()
+	var y := _sheet(vw, vh, "SHRINE SHOP")
+	_txt(Vector2(vw * 0.06, y), "your bloom: %d" % snap["bloom"], COL_GOLD, int(vh * 0.026))
+	y += vh * 0.05
+	var cards := _shop_cards(snap)
+	var bot := vh * 0.86  # the CLOSE button lives below this
+	var gap := vh * 0.02
+	var ch := vh * 0.105
+	if not cards.is_empty():
+		ch = minf(ch, maxf(vh * 0.06, (bot - y - gap * (cards.size() - 1)) / cards.size()))
+	for c in cards:
+		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), String(c[0]), String(c[1]), String(c[2]), String(c[3]), vh)
+		y += ch + gap
+	if cards.is_empty():
+		_txt(Vector2(vw * 0.06, y + vh * 0.04), "The shrine is boarded up.", COL_DIM_TEXT, int(vh * 0.024))
+	_button(Rect2(vw * 0.25, vh * 0.885, vw * 0.5, vh * 0.07), "CLOSE", "close", int(vh * 0.026))
 
 
 func _draw_logsheet(vw: float, vh: float) -> void:
@@ -2382,12 +2550,12 @@ func _draw_intro(vw: float, vh: float) -> void:
 		["Move fast: smog rises every turn, and deep smog kills.", COL_GOLD],
 		["", COL_TEXT],
 		["CLEANSE oil and goo: earn bloom AND thin the smog.", COL_TEXT],
-		["Spend bloom at shrines - graft prices rise as you stack them.", COL_TEXT],
+		["Shrines offer TWO grafts - take one, the other is lost.", COL_TEXT],
 		["Cleanse a WHOLE room and it blooms: bonus + a supply pod.", COL_TEXT],
 		["The stairs are DORMANT until you green the floor's quota.", COL_GOLD],
 		["Cast FROM growth: it fuels the ability (-1 charge, tile spent).", COL_TEXT],
 		["SPIKED enemies (golems, elites) hurt to punch - use abilities.", COL_TEXT],
-		["Shrines UPCYCLE: press 2 items into one, forge abilities to +.", COL_TEXT],
+		["Shrines UPCYCLE: press 2 items into one, forge an ability to +.", COL_TEXT],
 		["Swarming drill bots WELD into hulks - break the pair up first.", COL_RED],
 		["Green growth heals you while you stand on it.", COL_TEXT],
 		["", COL_TEXT],

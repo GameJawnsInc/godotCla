@@ -18,9 +18,10 @@ const AsciiView := preload("res://sim/ascii_view.gd")
 const Sweep := preload("res://tests/sweep_lib.gd")
 const Roster := preload("res://bots/roster.gd")
 
-## Mirrors shell/main.gd RUN_SAVE_VERSION: a record replayed across a sim
-## change diverges silently, so the version travels with the action log.
-const SIM_VERSION := 1
+## Game.SIM_VERSION is the single version source (shell/main.gd
+## RUN_SAVE_VERSION reads it too): a record replayed across a sim change
+## diverges silently, so the version travels with the action log.
+const SIM_VERSION := Game.SIM_VERSION
 
 
 func _init() -> void:

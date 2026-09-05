@@ -97,13 +97,22 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		return _fanatic_draft(snap, legal)
 	# off-build purchase leak (review §7.2 item 3): the parent buys any
 	# ability it is offered, so an unwanted shop ability is removed from
-	# `legal` before the parent ever sees it. end_turn stays last.
+	# `legal` before the parent ever sees it. A full kit opens a second leak -
+	# a replacement buy could trade a core ability away for another core
+	# ability - so those drops are stripped too, which also keeps the parent's
+	# rank rule from selling a build piece behind the fanatic's back.
+	# end_turn stays last.
 	var shop_aid := String(snap.get("shop", {}).get("ability", ""))
-	if shop_aid != "" and not _wants(shop_aid):
+	if shop_aid != "":
+		var kit0: Array = snap["player"]["kit"]
 		var kept: Array = []
 		for a in legal:
 			if a["type"] == "buy" and a["item"] == "ability":
-				continue
+				if not _wants(shop_aid):
+					continue
+				var drop0 := int(a.get("drop", -1))
+				if drop0 >= 0 and _wants(String(kit0[drop0])):
+					continue
 			kept.append(a)
 		legal = kept
 	var by := {}
@@ -118,12 +127,15 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		for a in by["buy"]:
 			if a["item"] == "heal":
 				return a
-		for a in by["buy"]:
-			if a["item"] == "graft":
-				return a
-		for a in by["buy"]:
-			if a["item"] == "ability" and _wants(shop_aid):
-				return a
+		# graft offer 0: the fanatic has no graft opinion either - the
+		# progression review holds any graft weighting until
+		# tests/sweep_grafts.gd has run at 30+ seeds
+		var graft := _first_graft(by["buy"])
+		if not graft.is_empty():
+			return graft
+		var abuy := _fanatic_ability_buy(snap, by["buy"])
+		if not abuy.is_empty():
+			return abuy
 
 	# fanatic about the build, not suicidal: standing in lethal telegraphed
 	# damage routes to the parent's survival gate before any build cast
@@ -146,6 +158,49 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 			return lead
 
 	return super.choose_action(snap, legal)
+
+
+## Ability purchase, fanatically. Only a core ability is ever bought, and on
+## a full kit only by dropping something the build does not want: never a
+## wanted slot (the filter in choose_action already removed those drops, and
+## this walk skips them again), least-used off-build slot first, ties to the
+## highest slot index. Nothing droppable means no purchase - the build keeps
+## what it has rather than eating its own core.
+func _fanatic_ability_buy(snap: Dictionary, buys: Array) -> Dictionary:
+	var shop_aid := String(snap.get("shop", {}).get("ability", ""))
+	if shop_aid == "" or not _wants(shop_aid):
+		return {}
+	var plain: Dictionary = {}
+	var drops: Array = []
+	for a in buys:
+		if a["item"] != "ability":
+			continue
+		if a.has("drop"):
+			drops.append(a)
+		elif plain.is_empty():
+			plain = a
+	if not plain.is_empty():
+		return plain
+	var kit: Array = snap["player"]["kit"]
+	var uses: Dictionary = snap["player"]["uses"]
+	var best: Dictionary = {}
+	var best_uses := 0
+	for a in drops:
+		var slot: int = int(a["drop"])
+		if _wants(String(kit[slot])):
+			continue
+		var u: int = int(uses.get(kit[slot], 0))
+		var take := false
+		if best.is_empty():
+			take = true
+		elif u != best_uses:
+			take = u < best_uses
+		else:
+			take = slot > int(best["drop"])
+		if take:
+			best = a
+			best_uses = u
+	return best
 
 
 func _build_cast(snap: Dictionary, by: Dictionary) -> Variant:

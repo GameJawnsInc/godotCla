@@ -10,9 +10,26 @@ extends RefCounted
 ##   {"type": "descend"}
 ##   {"type": "end_turn"}
 ##   {"type": "draft", "pick": int, "drop": int}  (draft phase only; pick -1 skips, drop when kit is full)
+##   {"type": "use_item", "slot": int}  (free action)
+##   Shrine actions (player standing on map.shrine; shop keys gate each one):
+##   {"type": "buy", "item": "heal"}
+##   {"type": "buy", "item": "ability"}             (kit not full)
+##   {"type": "buy", "item": "ability", "drop": j}  (kit full: replaces slot j; j may never hold a mobility ability)
+##   {"type": "buy", "item": "graft", "pick": i}    (i indexes shop.grafts; the other offer is discarded)
+##   {"type": "buy", "item": "item"}
+##   {"type": "upcycle", "keep": k}                  (press: two held items -> the + form of item k; shop.press)
+##   {"type": "upcycle_ability", "keep": i, "scrap": j}  (forge: kit[i] -> +, kit[j] scrapped, never mobility; once per floor, shop.forge)
+##
+## Shop snapshot shape: {heal?, press?, forge?: true, ability?: id, grafts?: [id, id?], item?: id}
+## or {} (Boarded mutator / floor without a shrine).
 
 const Content := preload("res://sim/content.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+
+## Single source of truth for replay compatibility: bump whenever a sim change
+## alters replay behaviour (shell run saves, regression records and autopsy
+## dumps all stamp this value).
+const SIM_VERSION := 2
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -76,6 +93,15 @@ func _init(seed_v: int, config: Dictionary = {}) -> void:
 	if mutators.has("brittle"):
 		player["max_hp"] -= 3
 		player["hp"] = player["max_hp"]
+	# sweep hooks: pre-installed grafts (before floor entry so carapace
+	# applies) and a starting bloom balance. Neither touches the main rng.
+	for gid in config.get("grafts", []):
+		if Content.GRAFTS.has(gid):
+			if not player["grafts"].has(gid):
+				player["grafts"].append(gid)
+		else:
+			push_warning("Game: unknown graft id '%s' in config, skipped" % str(gid))
+	bloom = int(config.get("bloom", 0))
 	_enter_floor(1)
 	_begin_player_turn()
 
@@ -174,6 +200,11 @@ func step(action: Dictionary) -> Array:
 			_resolve_turn()
 		_:
 			_emit({"t": "error", "msg": "unknown action"})
+	# one place covers every bloomless corruption removal (wash, convert,
+	# ignite, burnout, dredge, enemy-made changes): the gate can never demand
+	# more than what is still standing
+	if not over and phase == "play":
+		_reclamp_quota()
 	return _step_events
 
 
@@ -218,25 +249,40 @@ func legal_actions() -> Array:
 	if player["pos"] == map["shrine"]:
 		if shop.get("heal", false) and bloom >= shop_cost("heal") and player["hp"] < player["max_hp"]:
 			acts.append({"type": "buy", "item": "heal"})
-		if shop.has("ability") and bloom >= shop_cost("ability") and player["kit"].size() < _kit_max():
-			acts.append({"type": "buy", "item": "ability"})
-		if shop.has("graft") and bloom >= shop_cost("graft"):
-			acts.append({"type": "buy", "item": "graft"})
+		if shop.has("ability") and bloom >= shop_cost("ability"):
+			if player["kit"].size() < _kit_max():
+				acts.append({"type": "buy", "item": "ability"})
+			else:
+				# a full kit buys by replacement, like the draft - but the
+				# purchase path never lets the only mobility ability go
+				for j in player["kit"].size():
+					if not _is_mobility(String(player["kit"][j])):
+						acts.append({"type": "buy", "item": "ability", "drop": j})
+		if shop.has("grafts") and bloom >= shop_cost("graft"):
+			for i in shop["grafts"].size():
+				acts.append({"type": "buy", "item": "graft", "pick": i})
 		if shop.has("item") and bloom >= shop_cost("item") and player["items"].size() < Content.ITEM_CAP:
 			acts.append({"type": "buy", "item": "item"})
-		if player["items"].size() == 2 and bloom >= Content.UPCYCLE_ITEM_COST:
+		if shop.get("press", false) and player["items"].size() == 2 and bloom >= shop_cost("press"):
 			for k in 2:
 				if not String(player["items"][k]).ends_with("+"):
 					acts.append({"type": "upcycle", "keep": k})
-		if bloom >= Content.UPCYCLE_ABILITY_COST and player["kit"].size() >= 2:
+		if shop.get("forge", false) and bloom >= shop_cost("forge") and player["kit"].size() >= 2:
 			for i in player["kit"].size():
 				var kid := String(player["kit"][i])
 				if not kid.ends_with("+") and Content.ABILITIES.has(kid + "+"):
 					for j in player["kit"].size():
-						if j != i:
+						if j != i and not _is_mobility(String(player["kit"][j])):
 							acts.append({"type": "upcycle_ability", "keep": i, "scrap": j})
 	acts.append({"type": "end_turn"})
 	return acts
+
+
+## The one piece of ability metadata the sim reads: mobility abilities (and
+## their + forms, which share the base's role) can never be dropped by a
+## shrine purchase or scrapped by the forge.
+func _is_mobility(aid: String) -> bool:
+	return String(Content.ABILITIES.get(aid, {}).get("role", "")) == "mobility"
 
 
 func snapshot() -> Dictionary:
@@ -280,7 +326,7 @@ func snapshot() -> Dictionary:
 			"bloomed": map.get("bloomed", []).duplicate(),
 			"restored": map.get("restored", false),
 		},
-		"shop": shop.duplicate(),
+		"shop": shop.duplicate(true),
 		"terrain": terr,
 		"events": recent_events.duplicate(true),
 	}
@@ -369,24 +415,67 @@ func _side_rng(tag: String) -> RandomNumberGenerator:
 	return r
 
 
+## Shrine stock for the floor just entered. Every draw is a side-stream
+## draw (one generator per slot so list sizes never couple), so the main rng
+## after _enter_floor depends on map generation and the floor-entry intents
+## alone - never on the kit, grafts, pool or bloom the run arrived with
+## (tests/test_economy.gd asserts rng.state equality across configs).
 func _stock_shop() -> Dictionary:
-	var stock := {"heal": true}
+	if map["shrine"] == Vector2i(-1, -1):
+		return {}
+	var stock := {"heal": true, "press": true, "forge": true}
 	var aids: Array = []
 	for aid in draft_pool:
-		if not player["kit"].has(aid):
+		# owning the + form excludes the base: never X and X+ in one kit
+		if not player["kit"].has(aid) and not player["kit"].has(aid + "+"):
 			aids.append(aid)
 	if not aids.is_empty():
-		stock["ability"] = aids[rng.randi_range(0, aids.size() - 1)]
+		var arng := _side_rng("shop_ability")
+		stock["ability"] = aids[arng.randi_range(0, aids.size() - 1)]
 	var gids: Array = []
 	for gid in Content.GRAFTS:
 		if not player["grafts"].has(gid):
 			gids.append(gid)
 	if not gids.is_empty():
-		stock["graft"] = gids[rng.randi_range(0, gids.size() - 1)]
-	var iids: Array = Content.ITEMS.keys()
+		# two distinct offers from one generator: pick one, the other is discarded
+		var grng := _side_rng("shop_graft")
+		var picks: Array = []
+		var gi := grng.randi_range(0, gids.size() - 1)
+		picks.append(gids[gi])
+		gids.remove_at(gi)
+		if not gids.is_empty():
+			gi = grng.randi_range(0, gids.size() - 1)
+			picks.append(gids[gi])
+		stock["grafts"] = picks
+	var iids := _base_item_ids()
 	var srng := _side_rng("shop_item")
 	stock["item"] = iids[srng.randi_range(0, iids.size() - 1)]
 	return stock
+
+
+## Consumable ids the world hands out (shop, supply pods): base forms only.
+## The + forms exist only through the shrine press.
+func _base_item_ids() -> Array:
+	var out: Array = []
+	for iid in Content.ITEMS:
+		if not String(iid).ends_with("+"):
+			out.append(iid)
+	return out
+
+
+## The dormant-stairs quota can never demand more than what is still
+## standing: greened plus the corruption left on the floor. Bloomless
+## removals (wash, ignite, burnout, convert, dredge, enemy churn) lower it.
+func _reclamp_quota() -> void:
+	var need: int = mini(green_need, greened + _count_corruption())
+	if need < green_need:
+		var was: int = green_need
+		green_need = need
+		# quota_reclamp: the gate shrank because corruption vanished without a cleanse
+		_emit({"t": "quota_reclamp", "need": need, "was": was})
+		if greened >= green_need:
+			# stairs were dormant a moment ago and the shrunken quota is now met
+			_emit({"t": "stairs_awaken", "tile": map["stairs"]})
 
 
 func _begin_player_turn() -> void:
@@ -600,7 +689,8 @@ func _execute_intent(e: Dictionary) -> void:
 			for x in range(1, int(map["w"]) - 1):
 				var p := Vector2i(x, row)
 				if _tile(p) == MapGen.T_FLOOR and not terrain.has(p) and _enemy_at(p) == null and p != player["pos"]:
-					terrain[p] = {"kind": "oil"}
+					# enemy-made oil: cleansing it counts for the quota but pays no bloom
+					terrain[p] = {"kind": "oil", "bloom": 0}
 			_emit({"t": "flood", "row": row})
 		"slam":
 			e["cycle"] = int(e.get("cycle", 0)) + 1
@@ -617,7 +707,7 @@ func _execute_intent(e: Dictionary) -> void:
 			e["cycle"] = int(e.get("cycle", 0)) + 1
 			for t in terrain.keys().duplicate():
 				if terrain[t]["kind"] == "oil":
-					terrain[t] = {"kind": "fire", "ttl": 2}
+					terrain[t] = {"kind": "fire", "ttl": 2, "by": e["kind"]}
 			_emit({"t": "ignite_all"})
 		"gather":
 			e["cycle"] = int(e.get("cycle", 0)) + 1
@@ -646,7 +736,7 @@ func _execute_intent(e: Dictionary) -> void:
 				for d in DIRS:
 					var p: Vector2i = e["pos"] + d
 					if _tile(p) == MapGen.T_FLOOR and not terrain.has(p) and _enemy_at(p) == null and p != player["pos"]:
-						terrain[p] = {"kind": "oil"}
+						terrain[p] = {"kind": "oil", "bloom": 0}
 						_emit({"t": "ooze", "id": e["id"], "tile": p})
 						break
 				otimer = int(odef["ooze_cycle"])
@@ -731,7 +821,7 @@ func _execute_intent(e: Dictionary) -> void:
 				if Content.ENEMIES[e["kind"]]["traits"].has("oil_trail"):
 					var old: Vector2i = e["pos"]
 					if not terrain.has(old) and old != map["stairs"]:
-						terrain[old] = {"kind": "oil"}
+						terrain[old] = {"kind": "oil", "bloom": 0}
 				e["pos"] = dest
 				_enemy_enter_tile(e)
 		"idle":
@@ -750,13 +840,15 @@ func _environment_phase() -> void:
 				return
 		var e = _enemy_at(t)
 		if e != null:
-			_damage_enemy(e, 1, "fire")
-	var spreads: Array = []
+			_damage_enemy(e, 1, "fire:" + _fire_by(t))
+	# spread keeps the igniter's attribution: the first adjacent fire in the
+	# deterministic fires order signs the new tile
+	var spreads := {}
 	for t in fires:
 		for d in DIRS:
 			var p: Vector2i = t + d
 			if _terrain_kind(p) == "oil" and not spreads.has(p):
-				spreads.append(p)
+				spreads[p] = _fire_by(t)
 	for t in fires:
 		if terrain.has(t):
 			terrain[t]["ttl"] -= 1
@@ -768,7 +860,7 @@ func _environment_phase() -> void:
 			if terrain[t]["ttl"] <= 0:
 				terrain.erase(t)
 	for p in spreads:
-		terrain[p] = {"kind": "fire", "ttl": 2}
+		terrain[p] = {"kind": "fire", "ttl": 2, "by": spreads[p]}
 		_emit({"t": "ignite", "tile": p})
 	for e in enemies.duplicate():
 		if int(e["status"].get("spore", 0)) > 0:
@@ -862,10 +954,13 @@ func _act_cleanse(action: Dictionary) -> void:
 		_emit({"t": "illegal", "action": "cleanse"})
 		return
 	player["charge"] -= Content.CLEANSE_COST
-	# tending leaves life behind: the cleansed tile sprouts growth
+	# tending leaves life behind: the cleansed tile sprouts growth. Mapgen
+	# corruption pays 1 (rich goo more); enemy-made oil carries bloom 0 and
+	# pays nothing (surge included) - it still counts toward the quota.
+	var yield_: int = Content.RICH_GOO_BLOOM if k == "rich_goo" else int(terrain[target].get("bloom", 1))
 	terrain[target] = {"kind": "growth"}
-	var yield_: int = Content.RICH_GOO_BLOOM if k == "rich_goo" else 1
-	bloom += yield_ + (1 if _has_graft("bloom_surge") else 0)
+	if yield_ > 0:
+		bloom += yield_ + (1 if _has_graft("bloom_surge") else 0)
 	# tending the world buys time, but the sky can only mend so fast per
 	# floor: quota cleanses thin the smog by 2 (funds the gate's detour),
 	# the next few thin it by 1, and beyond that cleansing still pays
@@ -1006,33 +1101,40 @@ func _act_use_item(action: Dictionary) -> void:
 
 
 ## Shrine press: two held consumables become the + form of the kept one.
+## A shrine service like any purchase: priced through shop_cost (tier markup
+## applies) and gated on shop.press, so a Boarded shrine boards it too.
 func _act_upcycle(action: Dictionary) -> void:
 	var keep := int(action.get("keep", -1))
 	var on_shrine: bool = player["pos"] == map["shrine"]
-	if not on_shrine or player["items"].size() != 2 or keep < 0 or keep > 1 \
-			or bloom < Content.UPCYCLE_ITEM_COST or String(player["items"][keep]).ends_with("+"):
+	var cost := shop_cost("press")
+	if not on_shrine or not shop.get("press", false) or player["items"].size() != 2 or keep < 0 or keep > 1 \
+			or bloom < cost or String(player["items"][keep]).ends_with("+"):
 		_emit({"t": "illegal", "action": "upcycle"})
 		return
-	bloom -= Content.UPCYCLE_ITEM_COST
+	bloom -= cost
 	var plus := String(player["items"][keep]) + "+"
 	player["items"] = [plus]
 	_emit({"t": "upcycle", "id": plus})
 
 
 ## Shrine forge: one kit ability becomes its + form; another is scrapped.
+## Once per floor (the use erases shop.forge), never scraps a mobility ability.
 func _act_upcycle_ability(action: Dictionary) -> void:
 	var keep := int(action.get("keep", -1))
 	var scrap := int(action.get("scrap", -1))
 	var kmax: int = player["kit"].size()
-	var ok: bool = player["pos"] == map["shrine"] and bloom >= Content.UPCYCLE_ABILITY_COST \
+	var cost := shop_cost("forge")
+	var ok: bool = player["pos"] == map["shrine"] and shop.get("forge", false) and bloom >= cost \
 		and keep >= 0 and keep < kmax and scrap >= 0 and scrap < kmax and keep != scrap
 	if ok:
 		var kid := String(player["kit"][keep])
-		ok = not kid.ends_with("+") and Content.ABILITIES.has(kid + "+")
+		ok = not kid.ends_with("+") and Content.ABILITIES.has(kid + "+") \
+			and not _is_mobility(String(player["kit"][scrap]))
 	if not ok:
 		_emit({"t": "illegal", "action": "upcycle_ability"})
 		return
-	bloom -= Content.UPCYCLE_ABILITY_COST
+	bloom -= cost
+	shop.erase("forge")
 	var kid2 := String(player["kit"][keep])
 	_emit({"t": "upcycle_scrap", "id": player["kit"][scrap]})
 	player["kit"][keep] = kid2 + "+"
@@ -1098,7 +1200,7 @@ func _check_room_bloom(p: Vector2i) -> void:
 			if _manhattan(t3, player["pos"]) < _manhattan(t2, player["pos"]):
 				t2 = t3
 		var srng := _side_rng("supply%d" % ri)
-		var ids: Array = Content.ITEMS.keys()
+		var ids := _base_item_ids()
 		terrain[t2] = {"kind": "supply", "item": ids[srng.randi_range(0, ids.size() - 1)]}
 	_emit({"t": "room_bloom", "room": ri, "bonus": Content.ROOM_BLOOM_BONUS})
 
@@ -1120,23 +1222,46 @@ func _act_buy(action: Dictionary) -> void:
 			player["hp"] = mini(player["hp"] + Content.SHOP_HEAL_AMOUNT, player["max_hp"])
 			_emit({"t": "buy", "item": "heal", "hp": player["hp"]})
 		"ability":
-			if not shop.has("ability") or player["kit"].size() >= _kit_max():
+			if not shop.has("ability"):
 				_emit({"t": "illegal", "action": "buy"})
 				return
-			bloom -= cost
 			var aid: String = shop["ability"]
-			shop.erase("ability")
-			player["kit"].append(aid)
-			_emit({"t": "buy", "item": "ability", "id": aid})
+			if player["kit"].size() >= _kit_max():
+				# full kit: the purchase replaces a slot, like a draft drop,
+				# but the mobility slot is never a legal drop
+				var drop := int(action.get("drop", -1))
+				if drop < 0 or drop >= player["kit"].size() or _is_mobility(String(player["kit"][drop])):
+					_emit({"t": "illegal", "action": "buy"})
+					return
+				bloom -= cost
+				shop.erase("ability")
+				var old_id: String = player["kit"][drop]
+				player["kit"][drop] = aid
+				player["gummed"].erase(drop)
+				# buy/ability with "dropped": the replaced ability's id
+				_emit({"t": "buy", "item": "ability", "id": aid, "dropped": old_id})
+			else:
+				bloom -= cost
+				shop.erase("ability")
+				player["kit"].append(aid)
+				_emit({"t": "buy", "item": "ability", "id": aid})
 		"graft":
-			if not shop.has("graft"):
+			var pick := int(action.get("pick", -1))
+			if not shop.has("grafts") or pick < 0 or pick >= shop["grafts"].size():
 				_emit({"t": "illegal", "action": "buy"})
 				return
 			bloom -= cost
-			var gid: String = shop["graft"]
-			shop.erase("graft")
+			var offers: Array = shop["grafts"]
+			var gid: String = offers[pick]
+			var other := ""
+			for g in offers:
+				if g != gid:
+					other = g
+			# one pick closes the graft counter: the other offer is discarded
+			shop.erase("grafts")
 			player["grafts"].append(gid)
-			_emit({"t": "buy", "item": "graft", "id": gid})
+			# buy/graft with "discarded": the offer left behind ("" when there was one offer)
+			_emit({"t": "buy", "item": "graft", "id": gid, "discarded": other})
 		"item":
 			if not shop.has("item") or player["items"].size() >= Content.ITEM_CAP:
 				_emit({"t": "illegal", "action": "buy"})
@@ -1184,7 +1309,7 @@ func _act_ability(action: Dictionary) -> void:
 	player["uses"][aid] = int(player["uses"].get(aid, 0)) + 1
 	_emit({"t": "ability", "id": aid, "target": target})
 	for eff in adef["effects"]:
-		_apply_effect(eff, adef, target)
+		_apply_effect(eff, adef, target, aid)
 
 
 ## Live cost of an ability right now: standing on growth discounts a
@@ -1260,7 +1385,9 @@ func _ability_targets(aid: String) -> Array:
 	return out
 
 
-func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
+## `aid` is the casting ability: every damage, ignition and collision the
+## effect causes is attributed to it (events, autopsy, death tables).
+func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String) -> void:
 	match String(eff["op"]):
 		"lance":
 			var dmg: int = eff["dmg"] + (int(eff["clear_smog_bonus"]) if dim == 0 else 0)
@@ -1270,11 +1397,11 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 				if _tile(p) == MapGen.T_WALL or _terrain_kind(p) == "smoke":
 					break
 				if _terrain_kind(p) == "oil" and bool(eff["ignite"]):
-					terrain[p] = {"kind": "fire", "ttl": 2}
+					terrain[p] = {"kind": "fire", "ttl": 2, "by": aid}
 					_emit({"t": "ignite", "tile": p})
 				var e = _enemy_at(p)
 				if e != null:
-					_damage_enemy(e, dmg, "solar_lance")
+					_damage_enemy(e, dmg, aid)
 					break
 		"grow_radius":
 			var tiles_: Array = [target]
@@ -1305,12 +1432,12 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 						return
 				if pulled > 0:
 					_stagger(e)
-			_damage_enemy(e, int(eff["dmg"]), "vine_whip")
+			_damage_enemy(e, int(eff["dmg"]), aid)
 		"wash_push":
-			_wash_dir(target, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]))
+			_wash_dir(target, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]), aid)
 		"wash_all":
 			for d in DIRS:
-				_wash_dir(d, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]))
+				_wash_dir(d, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]), aid)
 		"push_line":
 			var p: Vector2i = player["pos"]
 			for i in range(int(adef["range"])):
@@ -1322,13 +1449,13 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 					_emit({"t": "smoke_cleared", "tile": p})
 				var e = _enemy_at(p)
 				if e != null:
-					_push_enemy(e, target, int(eff["dist"]), 1)
+					_push_enemy(e, target, int(eff["dist"]), 1, aid)
 					break
 		"push_all":
 			for d in DIRS:
 				var e = _enemy_at(player["pos"] + d)
 				if e != null:
-					_push_enemy(e, d, int(eff["dist"]), 1)
+					_push_enemy(e, d, int(eff["dist"]), 1, aid)
 		"dash_dir":
 			for i in range(int(adef["range"])):
 				var nxt: Vector2i = player["pos"] + target
@@ -1342,6 +1469,8 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 		"create_terrain":
 			if _tile(target) == MapGen.T_FLOOR and not terrain.has(target):
 				terrain[target] = {"kind": String(eff["kind"]), "ttl": int(eff["ttl"])}
+				if String(eff["kind"]) == "fire":
+					terrain[target]["by"] = aid
 				_emit({"t": "terrain", "kind": eff["kind"], "tile": target})
 		"clear_smoke":
 			for t in terrain.keys().duplicate():
@@ -1382,11 +1511,11 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 		"aoe_damage":
 			for t in terrain.keys().duplicate():
 				if bool(eff.get("ignite", false)) and terrain[t]["kind"] == "oil" and _manhattan(t, player["pos"]) <= int(eff["radius"]):
-					terrain[t] = {"kind": "fire", "ttl": 2}
+					terrain[t] = {"kind": "fire", "ttl": 2, "by": aid}
 					_emit({"t": "ignite", "tile": t})
 			for e in enemies.duplicate():
 				if _manhattan(e["pos"], player["pos"]) <= int(eff["radius"]):
-					_damage_enemy(e, int(eff["dmg"]), "sun_flare")
+					_damage_enemy(e, int(eff["dmg"]), aid)
 		"convert_radius":
 			for dy in range(-int(eff["radius"]), int(eff["radius"]) + 1):
 				for dx in range(-int(eff["radius"]), int(eff["radius"]) + 1):
@@ -1404,7 +1533,7 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 		"damage":
 			var e = _enemy_at(target)
 			if e != null:
-				_damage_enemy(e, int(eff["dmg"]), "grow_spike")
+				_damage_enemy(e, int(eff["dmg"]), aid)
 
 
 # --- entities and damage ------------------------------------------------------
@@ -1497,7 +1626,8 @@ func _damage_player(amt: int, src: String) -> void:
 		_emit({"t": "player_death", "cause": src})
 
 
-func _push_enemy(e: Dictionary, dir: Vector2i, dist: int, collision_dmg: int) -> void:
+## `src` is the casting ability id; collision damage is signed "collision:<src>".
+func _push_enemy(e: Dictionary, dir: Vector2i, dist: int, collision_dmg: int, src: String) -> void:
 	if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
 		return
 	var moved := 0
@@ -1505,10 +1635,10 @@ func _push_enemy(e: Dictionary, dir: Vector2i, dist: int, collision_dmg: int) ->
 		var nxt: Vector2i = e["pos"] + dir
 		if not _open(nxt):
 			if collision_dmg > 0:
-				_damage_enemy(e, collision_dmg, "collision")
+				_damage_enemy(e, collision_dmg, "collision:" + src)
 				var hit = _enemy_at(nxt)
 				if hit != null:
-					_damage_enemy(hit, collision_dmg, "collision")
+					_damage_enemy(hit, collision_dmg, "collision:" + src)
 			if moved > 0 and enemies.has(e):
 				_stagger(e)
 			return
@@ -1521,7 +1651,7 @@ func _push_enemy(e: Dictionary, dir: Vector2i, dist: int, collision_dmg: int) ->
 		_stagger(e)
 
 
-func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int) -> void:
+func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int, src: String) -> void:
 	var line: Array = []
 	var p: Vector2i = player["pos"]
 	for i in range(rng_):
@@ -1541,11 +1671,11 @@ func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int) -> void:
 				if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
 					# too heavy to shove; the jet's pressure still hits
 					if collision_dmg > 0:
-						_damage_enemy(e, collision_dmg, "collision")
+						_damage_enemy(e, collision_dmg, "collision:" + src)
 					return
 				pushed = e
 	if pushed != null:
-		_push_enemy(pushed, dir, push, collision_dmg)
+		_push_enemy(pushed, dir, push, collision_dmg, src)
 
 
 func _player_enter_tile() -> void:
@@ -1589,10 +1719,10 @@ func _growth_adjacent(p: Vector2i) -> bool:
 
 func _enemy_enter_tile(e: Dictionary) -> void:
 	if Content.ENEMIES[e["kind"]]["traits"].has("igniter") and _terrain_kind(e["pos"]) == "oil":
-		terrain[e["pos"]] = {"kind": "fire", "ttl": 2}
+		terrain[e["pos"]] = {"kind": "fire", "ttl": 2, "by": e["kind"]}
 		_emit({"t": "ignite", "tile": e["pos"]})
 	if _terrain_kind(e["pos"]) == "fire":
-		_damage_enemy(e, 1, "fire")
+		_damage_enemy(e, 1, "fire:" + _fire_by(e["pos"]))
 
 
 func _chase_step(e: Dictionary) -> Vector2i:
@@ -1637,6 +1767,14 @@ func _terrain_kind(p: Vector2i) -> String:
 	if terrain.has(p):
 		return terrain[p]["kind"]
 	return ""
+
+
+## Who lit the fire at p: the casting ability id, the igniting enemy kind,
+## or "env" for a tile that carries no attribution.
+func _fire_by(p: Vector2i) -> String:
+	if terrain.has(p):
+		return String(terrain[p].get("by", "env"))
+	return "env"
 
 
 func _enemy_at(p: Vector2i):

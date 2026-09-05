@@ -122,13 +122,27 @@ tests a different build muscle so no single draft strategy trivializes it.
 
 ### Shops and Grafts
 
-- Shrines/shops are Slay-the-Spire-style stores spending Bloom: 2–3 abilities,
-  1–2 upgrades for the current kit, a heal, a draft reroll, and one **Graft**.
+- Shrines are Bloom stores, one per floor (the Furnace floor has none, and the
+  Boarded mutator boards the shop for the whole run). Stock is fixed in shape:
+  a **heal**, **one ability** drawn from the draft pool (never one already in
+  the kit, in either its base or `+` form), **two Grafts of which you buy
+  one** (the other is discarded), **one base item**, the **press** (upcycle a
+  held item to its `+` form) and the **forge** (scrap a kit ability to upgrade
+  another, at most once per floor). Every price runs through
+  `Content.SHOP_COSTS`, so the Gouging Prices tier marks the whole sheet up.
+- Buying an ability with a full kit names the slot it replaces, exactly as a
+  draft does, and neither that purchase nor the forge may ever take the
+  mobility ability - a run can always still move. A draft reroll is not in the
+  game yet.
+- `+` items exist only through the press: the shrine and supply pods stock base
+  items only, so item upgrades are a spend, never a drop.
 - **Grafts** are the relic analog: passive run-long modifiers, data-driven like
   everything else (e.g. "+2 bank cap", "growth tiles heal +1", "first ability
   each turn that targets oil is free"). Kit stays 4+1; Grafts are where
-  long-tail build identity accumulates.
-- Grafts enter the combo-sweep harness the same as abilities.
+  long-tail build identity accumulates. Each graft owned raises the price of
+  the next.
+- Grafts enter the combo-sweep harness the same as abilities, and can be
+  pre-installed for a sweep via the run config (`tests/sweep_grafts.gd`).
 
 ### Meta-progression
 

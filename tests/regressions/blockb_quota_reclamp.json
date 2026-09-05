@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":2,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#......>#","#@~.~...#","#.......#","#########"]},"kit":["solar_lance","seed_bomb","mycelium_dash"],"pool":["solar_lance","seed_bomb","mycelium_dash"]},
+"actions": [{"target":[2,2],"type":"cleanse"},{"slot":0,"target":[1,0],"type":"ability"},{"type":"end_turn"},{"dir":[0,1],"type":"move"},{"dir":[1,0],"type":"move"},{"dir":[1,0],"type":"move"},{"type":"end_turn"},{"dir":[1,0],"type":"move"},{"dir":[1,0],"type":"move"},{"dir":[1,0],"type":"move"},{"type":"end_turn"},{"dir":[1,0],"type":"move"},{"dir":[0,-1],"type":"move"},{"dir":[0,-1],"type":"move"},{"type":"descend"}],
+"expect": {"events":[{"t":"cleanse"},{"t":"ignite"},{"need":1,"t":"quota_reclamp","was":2},{"t":"stairs_awaken"},{"t":"descend","to_floor":2}],"floor":1,"timeout":true,"turns":3,"won":false},
+"note": "strandable green gate: quota 2 with two oil tiles, one cleansed and the other burnt away by solar_lance - _reclamp_quota shrinks the need to 1, wakes the stairs and the descend is legal",
+"sim_version": 2,
+"hash": "e1997db1dc9015faca0e0f5e2f2b00a4a5d166e95c6baa4979b29fc50b7e35a0"
+}

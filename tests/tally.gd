@@ -33,6 +33,8 @@ var upcycle_abilities := 0
 var item_uses_by_id := {}
 var item_pickups := 0
 var satchel_full := 0
+var graft_discards := 0  # graft buys that threw the second offer away
+var ability_drop_buys := 0  # ability buys into a full kit (a slot was replaced)
 
 # --- economy ------------------------------------------------------------------
 var bloom_earned := 0
@@ -62,6 +64,10 @@ var shield_absorb_hp := 0
 var enemy_dmg_by_src := {}
 var player_dmg_by_src := {}
 var kills_by_kind := {}  # enemy death events by kind
+## Bump-2 attribution: enemy fire damage by igniter ("fire:x" -> x, "env" when
+## unattributed) and enemy collision damage by the casting ability id.
+var fire_dmg_by_by := {}
+var collision_by_aid := {}
 
 # --- errors and clock ---------------------------------------------------------
 var illegal := 0  # {"t": "illegal"} plus {"t": "error"} events
@@ -70,6 +76,7 @@ var turns_per_floor: Array = []
 var stall_floors := 0  # floors with turn > 60 or smog > choke + 30 at any point
 var quota_unmet_at_death := false  # this run (or any merged run) died with greened < green_need
 var quota_unmet_deaths := 0
+var quota_reclamps := 0  # green gates that shrank because corruption vanished uncleansed
 var runs := 0  # runs finished into this tally (finish() increments, merge() sums)
 
 # step-scoped state from begin_step
@@ -86,11 +93,19 @@ static func base_id(aid: String) -> String:
 	return aid.trim_suffix("+")
 
 
-## Damage-source family: the part before ":" (sources carry no suffix today;
-## the split is future-proofing for the bump-2 "src:detail" format).
+## Damage-source family: the part before ":". Since bump 2 the enemy-side
+## sources carry attribution as "family:detail" - "fire:<igniter>" (the
+## casting ability id, the enemy kind, or "env") and "collision:<ability id>".
 static func src_family(src: String) -> String:
 	var i := src.find(":")
 	return src if i < 0 else src.substr(0, i)
+
+
+## The attribution half of a bump-2 source string; "env" when it carries none
+## (a fire tile with no igniter, or a pre-bump source string).
+static func src_detail(src: String) -> String:
+	var i := src.find(":")
+	return "env" if i < 0 else src.substr(i + 1)
 
 
 static func _inc(d: Dictionary, k, amt: int = 1) -> void:
@@ -142,8 +157,12 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 			_inc(buys_by_kind, kind)
 			if kind == "graft":
 				_inc(grafts_by_id, String(ev.get("id", "")))
+				if String(ev.get("discarded", "")) != "":
+					graft_discards += 1
 			elif kind == "ability":
 				_inc(ability_buys_by_id, String(ev.get("id", "")))
+				if ev.has("dropped"):
+					ability_drop_buys += 1
 		"upcycle":
 			upcycles += 1
 		"upcycle_ability":
@@ -181,6 +200,8 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 			_add_damage(ev)
 		"death":
 			_inc(kills_by_kind, String(ev.get("who", "")))
+		"quota_reclamp":
+			quota_reclamps += 1
 		"illegal", "error":
 			illegal += 1
 		"descend":
@@ -201,10 +222,12 @@ func _add_damage(ev: Dictionary) -> void:
 	match fam:
 		"collision":
 			collision_hits += 1
+			_inc(collision_by_aid, src_detail(src), amt)
 		"thorns":
 			thorns_hits += 1
 		"fire":
 			fire_hits_enemy += 1
+			_inc(fire_dmg_by_by, src_detail(src), amt)
 		"spore":
 			spore_ticks += 1
 
@@ -266,6 +289,8 @@ func merge(other) -> void:
 	_merge_dict(item_uses_by_id, other.item_uses_by_id)
 	item_pickups += other.item_pickups
 	satchel_full += other.satchel_full
+	graft_discards += other.graft_discards
+	ability_drop_buys += other.ability_drop_buys
 	bloom_earned += other.bloom_earned
 	bloom_spent += other.bloom_spent
 	shrine_turns += other.shrine_turns
@@ -289,12 +314,15 @@ func merge(other) -> void:
 	_merge_dict(enemy_dmg_by_src, other.enemy_dmg_by_src)
 	_merge_dict(player_dmg_by_src, other.player_dmg_by_src)
 	_merge_dict(kills_by_kind, other.kills_by_kind)
+	_merge_dict(fire_dmg_by_by, other.fire_dmg_by_by)
+	_merge_dict(collision_by_aid, other.collision_by_aid)
 	illegal += other.illegal
 	smog_at_descend.append_array(other.smog_at_descend)
 	turns_per_floor.append_array(other.turns_per_floor)
 	stall_floors += other.stall_floors
 	quota_unmet_at_death = quota_unmet_at_death or other.quota_unmet_at_death
 	quota_unmet_deaths += other.quota_unmet_deaths
+	quota_reclamps += other.quota_reclamps
 	runs += other.runs
 
 
@@ -362,17 +390,26 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 	var total := float(_sum(t.enemy_dmg_by_src))
 	var strike := 0.0
 	var lance := 0.0
-	var fire_unattr := float(t.enemy_dmg_by_src.get("fire", 0))
+	# Families are read through base_id and never through the raw source key:
+	# bump 2 renamed the enemy-side sources ("fire" -> "fire:<igniter>",
+	# "solar_lance" -> the casting id, so "solar_lance+" for the upgrade), and
+	# every share below keeps the meaning it had before that rename.
+	var fire_dmg := 0.0
 	var terrain := 0.0
+	var by_family := {}
 	for src in t.enemy_dmg_by_src:
 		var amt := float(t.enemy_dmg_by_src[src])
-		var fam := src_family(String(src))
+		var fam := base_id(src_family(String(src)))
+		_inc(by_family, fam, int(t.enemy_dmg_by_src[src]))
 		match fam:
 			"strike":
 				strike += amt
 			"solar_lance":
 				lance += amt
-			"fire", "collision", "thorns", "spore":
+			"fire":
+				terrain += amt
+				fire_dmg += amt
+			"collision", "thorns", "spore":
 				terrain += amt
 	var combos: int = t.ignite_ability + t.verdant + t.staggered + t.collision_hits + t.convert + t.thorns_hits
 	var pick_rate := {}
@@ -380,7 +417,7 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 		pick_rate[aid] = _safe_div(float(t.picks_by_id.get(aid, 0)), float(t.offers_by_id[aid]))
 	return {
 		"strike_share": _safe_div(strike, total),
-		"signature_share": 0.0 if total == 0.0 else 1.0 - (strike + lance + fire_unattr) / total,
+		"signature_share": 0.0 if total == 0.0 else 1.0 - (strike + lance + fire_dmg) / total,
 		"terrain_share": _safe_div(terrain, total),
 		"combo_rate": _safe_div(float(combos), float(n_runs)),
 		"bloom_conversion": _safe_div(float(t.bloom_spent), float(t.bloom_earned)),
@@ -388,6 +425,13 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 		"pick_rate_by_id": pick_rate,
 		"enemy_dmg_total": int(total),
 		"combos": combos,
+		"enemy_dmg_by_family": by_family,  # keys are base-id families
+		# bump-2 attribution: which igniter/ability the terrain damage came from
+		"fire_dmg_by_by": t.fire_dmg_by_by.duplicate(),
+		"collision_by_aid": t.collision_by_aid.duplicate(),
+		"quota_reclamps": t.quota_reclamps,
+		"graft_discards": t.graft_discards,
+		"ability_drop_buys": t.ability_drop_buys,
 	}
 
 
@@ -409,8 +453,11 @@ func print_block(n_runs: int, kits: Array) -> void:
 	print("           pick rate (picks/offers): %s" % (", ".join(prs) if not prs.is_empty() else "no drafts"))
 	print("           drafts %d  upgrades %d  skips %d  drops %s  P(plus offered|draft) %.2f" % [
 		drafts, upgrades, skips, str(drops_by_id), _safe_div(float(drafts_with_plus), float(drafts))])
-	print("           enemy dmg %d: strike share %.2f  signature share %.2f  terrain share %.2f  by src %s" % [
-		k["enemy_dmg_total"], k["strike_share"], k["signature_share"], k["terrain_share"], str(enemy_dmg_by_src)])
+	print("           enemy dmg %d: strike share %.2f  signature share %.2f  terrain share %.2f  by family %s" % [
+		k["enemy_dmg_total"], k["strike_share"], k["signature_share"], k["terrain_share"], str(k["enemy_dmg_by_family"])])
+	print("             by src %s" % str(enemy_dmg_by_src))
+	print("             fire dmg by igniter %s  collision dmg by ability %s" % [
+		str(fire_dmg_by_by), str(collision_by_aid)])
 	print("           player dmg %d by src %s  (fire %d, shield absorbed %d, growth heal %d)" % [
 		dmg_taken(), str(player_dmg_by_src), fire_dmg_player, shield_absorb_hp, growth_heal_hp])
 	print("           combos/run %.2f: ignite(ability) %.2f ignite(env) %.2f verdant %.2f staggered %.2f collision %.2f thorns %.2f fire-hits %.2f spore %.2f convert %.2f wash %.2f room_bloom %.2f restored %.2f seal_burst %.2f" % [
@@ -422,6 +469,8 @@ func print_block(n_runs: int, kits: Array) -> void:
 		str(ability_buys_by_id), upcycles, upcycle_abilities, item_pickups, satchel_full])
 	print("           shrine turns/run %.2f  unspent charge/end_turn %.2f  kit entropy %.2f bits" % [
 		shrine_turns / n, _safe_div(float(unspent_charge_total), float(end_turns)), k["kit_entropy_bits"]])
+	print("           choice sinks: graft offers discarded %d  full-kit ability buys %d  quota reclamps %d" % [
+		graft_discards, ability_drop_buys, quota_reclamps])
 	var smog_avg := 0.0
 	for s in smog_at_descend:
 		smog_avg += float(s)

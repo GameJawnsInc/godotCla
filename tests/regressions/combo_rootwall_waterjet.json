@@ -2,8 +2,8 @@
 "seed": 1,
 "config": {"fixed_floor":{"fdef":{"green_need":0.0,"smog_choke":999.0,"smog_dim":[900.0,950.0],"smog_spawn":[999.0],"smog_spawn_every":0.0},"room":["#########","#......>#","#.k@....#","#.......#","#########"],"terrain":[{"kind":"growth","pos":[3.0,2.0]}]},"kit":["root_wall","water_jet","mycelium_dash"],"pool":["root_wall","water_jet","mycelium_dash"]},
 "actions": [{"slot":0.0,"target":[4.0,2.0],"type":"ability"},{"dir":[0.0,1.0],"type":"move"},{"dir":[-1.0,0.0],"type":"move"},{"type":"end_turn"},{"dir":[-1.0,0.0],"type":"move"},{"dir":[0.0,-1.0],"type":"move"},{"slot":1.0,"target":[1.0,0.0],"type":"ability"}],
-"expect": {"events":[{"t":"verdant"},{"t":"roots"},{"amt":2,"src":"collision","t":"damage","who":"smokestack"},{"t":"staggered"}],"floor":1,"timeout":true,"turns":1,"won":false},
+"expect": {"events":[{"t":"verdant"},{"t":"roots"},{"amt":2,"src":"collision:water_jet","t":"damage","who":"smokestack"},{"t":"staggered"}],"floor":1,"timeout":true,"turns":1,"won":false},
 "note": "combo demo: root_wall (verdant-discounted) walls off x=4, the player circles to the far side and water_jet shoves the smokestack one tile into the roots: collision damage plus stagger",
-"sim_version": 1,
-"hash": "5962e057525ad732cc00b901ed50aafc37a38a7e8e1836e446d26ed65ecdc637"
+"sim_version": 2,
+"hash": "5b9099ef1fec4a7c91692143ee3f8c6dd1e544540633b4fbc713ef7a99ffbd3a"
 }

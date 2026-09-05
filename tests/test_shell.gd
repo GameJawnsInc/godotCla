@@ -10,6 +10,15 @@ const Shell := preload("res://shell/main.gd")
 const Content := preload("res://sim/content.gd")
 const Tutorial := preload("res://shell/tutorial.gd")
 const AudioKit := preload("res://shell/audio.gd")
+const Game := preload("res://sim/game.gd")
+const ImportRun := preload("res://tests/import_run.gd")
+const Regress := preload("res://tests/regress_lib.gd")
+
+## A kit that fills every slot with slot 0 held by a mobility ability - the one
+## the shrine may never take away (sim/game.gd _is_mobility).
+const FULL_KIT := ["mycelium_dash", "solar_lance", "seed_bomb", "vine_whip", "thorn_shield"]
+const TMP_SAVE := "user://test_import_run.save"
+const TMP_JSON := "user://test_import_record.json"
 
 var fails := 0
 
@@ -150,9 +159,18 @@ func _init() -> void:
 	shell3._ability_press(0)
 	_check(shell3.mode == "up_scrap", "keep picked, scrap-select next")
 	var ksz: int = shell3.game.player["kit"].size()
-	shell3._ability_press(2)
+	shell3._ability_press(2)  # mycelium_dash: the mobility slot is never scrap
+	_check(shell3.game.player["kit"].size() == ksz and shell3.mode == "up_scrap",
+		"the forge refuses to scrap the mobility ability")
+	_check(shell3.flash == "cannot scrap your mobility ability", "...and says why")
+	shell3._ability_press(1)
 	_check(shell3.game.player["kit"].size() == ksz - 1 and String(shell3.game.player["kit"][0]).ends_with("+"),
 		"forge upgrades one ability and scraps another")
+	_check(not shell3.game.shop.has("forge"), "one forge per floor: the card is spent")
+	_check(not _tags(shell3).has("forge"), "the forge card disappears after one forge")
+	shell3._tap("forge")
+	_check(shell3.mode == "normal" and shell3.flash == "the forge is cold",
+		"a spent forge cannot be entered again")
 	shell3.free()
 
 	# 6. a killed app resumes byte-exact: replay from the on-disk action log
@@ -176,12 +194,214 @@ func _init() -> void:
 	shell5._tap("resume")
 	_check(shell5.screen == "game", "RESUME enters the restored run")
 	shell5.free()
+
+	# 6b. that same log is a regression pair: tests/import_run.gd replays it
+	_check(Shell.RUN_SAVE_VERSION == Game.SIM_VERSION, "the shell stamps Game.SIM_VERSION")
+	var export_path := OS.get_environment("SHELL_EXPORT_SAVE")
+	if export_path != "":
+		DirAccess.copy_absolute("user://tender_run.save", export_path)
+	var parsed := ImportRun.parse_save("user://tender_run.save")
+	_check(bool(parsed.get("ok", false)), "import_run parses a real shell save (%s)" % parsed.get("err", ""))
+	if bool(parsed.get("ok", false)):
+		_check(parsed["actions"].size() == 7, "every action reached the log (%d)" % parsed["actions"].size())
+		var rec := ImportRun.build_record(parsed, "shell smoke import")
+		_check(int(rec["expect"]["turns"]) == saved_turns, "the imported record replays to the same turn")
+		_check(String(rec["hash"]) == saved_hash, "the imported record replays byte-exact")
+		_check(int(rec["sim_version"]) == Game.SIM_VERSION, "the record stamps the sim version")
+		_check(int(rec["_illegal"]) == 0 and int(rec["_errors"]) == 0, "a shell log replays without illegals")
+		_check(Regress.save_record(TMP_JSON, rec), "the record writes as JSON")
+		var back := Regress.load_record(TMP_JSON)
+		_check(int(back.get("seed", -1)) == int(rec["seed"])
+			and back.get("game_actions", []).size() == rec["actions"].size(),
+			"the record round-trips through the regression codec")
+		_check(not back.has("_illegal"), "reporting-only keys stay out of the record")
+		DirAccess.remove_absolute(TMP_JSON)
 	DirAccess.remove_absolute("user://tender_run.save")
+
+	# 6c. a log from an older sim is refused, and the loss is announced once
+	var sf := FileAccess.open(TMP_SAVE, FileAccess.WRITE)
+	sf.store_line(var_to_str({"v": Game.SIM_VERSION + 1, "seed": 5, "tier": 0, "config": {}}).replace("\n", " "))
+	sf.store_line(var_to_str({"type": "end_turn"}).replace("\n", " "))
+	sf.close()
+	var stale := ImportRun.parse_save(TMP_SAVE)
+	_check(not bool(stale.get("ok", true)) and String(stale.get("err", "")).contains("sim_version"),
+		"import_run refuses a save from another sim version")
+	DirAccess.copy_absolute(TMP_SAVE, "user://tender_run.save")
+	var shell6 = Shell.new()
+	shell6._ready()
+	_check(shell6.save_lost, "a version-mismatched save raises the lost-run notice")
+	_check(not FileAccess.file_exists("user://tender_run.save"), "the stale save is discarded")
+	shell6._tap("play")
+	_check(not shell6.save_lost, "a new run clears the notice")
+	if shell6._run_save != null:
+		shell6._run_save.close()
+		shell6._run_save = null
+	shell6.free()
+	DirAccess.remove_absolute(TMP_SAVE)
+	DirAccess.remove_absolute("user://tender_run.save")
+
+	# 7. the shrine sheet: two graft offers, exactly one pick
+	var shop1 = _bare_shell()
+	shop1.game = Game.new(4242, {"bloom": 30})
+	_check(shop1.game.map["shrine"] != Vector2i(-1, -1), "floor 1 has a shrine")
+	shop1.game.player["pos"] = shop1.game.map["shrine"]
+	var offers: Array = shop1.game.shop.get("grafts", [])
+	_check(offers.size() == 2, "the shrine offers two grafts (got %d)" % offers.size())
+	shop1._tap("shop")
+	_check(shop1.mode == "shop", "standing on the shrine opens the sheet")
+	var tags := _tags(shop1)
+	_check(tags.has("buy:graft:0") and tags.has("buy:graft:1"), "both grafts get a card")
+	_check(tags.has("buy:heal") and tags.has("buy:ability") and tags.has("buy:item"),
+		"heal / ability / item cards are on the sheet")
+	var want := String(offers[1]) if offers.size() > 1 else ""
+	shop1._tap("buy:graft:1")
+	_check(shop1.game.player["grafts"].has(want), "the second graft card buys that graft")
+	_check(not shop1.game.shop.has("grafts"), "one pick closes the graft counter")
+	_check(shop1.mode == "shop", "the sheet stays open after a purchase")
+	var tags2 := _tags(shop1)
+	_check(not tags2.has("buy:graft:0") and not tags2.has("buy:graft:1"),
+		"both graft cards leave with the pick")
+	shop1.game.shop = {}
+	_check(_tags(shop1).is_empty(), "a boarded shrine draws no cards at all")
+	shop1.free()
+
+	# 7b. the graft keys: G takes the first offer, J the second
+	var shop2 = _bare_shell()
+	shop2.game = Game.new(99, {"bloom": 30})
+	shop2.game.player["pos"] = shop2.game.map["shrine"]
+	var j_offers: Array = shop2.game.shop.get("grafts", [])
+	shop2.mode = "shop"
+	shop2._key(KEY_J)
+	_check(j_offers.size() > 1 and shop2.game.player["grafts"].has(String(j_offers[1])),
+		"J buys the second graft")
+	shop2.game = Game.new(100, {"bloom": 30})
+	shop2.game.player["pos"] = shop2.game.map["shrine"]
+	var g_offers: Array = shop2.game.shop.get("grafts", [])
+	shop2.mode = "shop"
+	shop2._key(KEY_G)
+	_check(not g_offers.is_empty() and shop2.game.player["grafts"].has(String(g_offers[0])),
+		"G buys the first graft")
+	shop2.free()
+
+	# 8. a full kit buys an ability by replacement - never the mobility slot
+	var shop3 = _bare_shell()
+	shop3.game = Game.new(4242, {"bloom": 30, "kit": FULL_KIT})
+	shop3.game.player["pos"] = shop3.game.map["shrine"]
+	var offer_aid := String(shop3.game.shop.get("ability", ""))
+	_check(offer_aid != "", "the shrine stocks an ability")
+	shop3._tap("shop")
+	shop3._tap("buy:ability")
+	_check(shop3.mode == "buy_drop", "a full kit turns the ability card into a drop picker")
+	shop3._ability_press(0)  # mycelium_dash
+	_check(shop3.game.player["kit"][0] == FULL_KIT[0] and shop3.mode == "buy_drop",
+		"the drop picker refuses the mobility slot")
+	_check(shop3.flash == "cannot drop your mobility ability", "...with the mobility flash")
+	shop3._ability_press(3)
+	_check(String(shop3.game.player["kit"][3]) == offer_aid,
+		"the picked slot is replaced by the bought ability")
+	_check(shop3.game.player["kit"].size() == FULL_KIT.size(), "the kit stays full")
+	_check(not shop3.game.shop.has("ability"), "the ability card is spent")
+	shop3.free()
+
+	# 8b. the full-kit ability card says so on the card itself
+	var shop4 = _bare_shell()
+	shop4.game = Game.new(4242, {"bloom": 30, "kit": FULL_KIT})
+	shop4.game.player["pos"] = shop4.game.map["shrine"]
+	var acard := ""
+	for c in shop4._shop_cards(shop4.game.snapshot()):
+		if String(c[3]) == "buy:ability":
+			acard = String(c[2])
+	_check(acard.begins_with("REPLACES a kit slot"), "the full-kit ability card warns it replaces a slot")
+	shop4.free()
+
+	# 8c. the log speaks the new event shapes
+	var evsh = _bare_shell()
+	evsh.game = Game.new(1, {})
+	_check(evsh._ev_text({"t": "damage", "who": "player", "amt": 2, "src": "fire:solar_lance"})
+		== "You take 2 damage (fire)", "a qualified damage source reads as the bare source")
+	_check(evsh._ev_text({"t": "damage", "who": "player", "amt": 1, "src": "goo"})
+		== "You take 1 damage (goo)", "an unqualified source is untouched")
+	_check(evsh._ev_text({"t": "damage", "who": "drill_bot", "amt": 3}) == "Drill Bot takes 3",
+		"enemy damage lines never show a source")
+	_check(evsh._ev_text({"t": "buy", "item": "graft", "id": "bloom_surge", "discarded": "carapace"})
+		== "Bought Bloom Surge (discarded Carapace)", "a graft buy names the discarded offer")
+	_check(evsh._ev_text({"t": "buy", "item": "ability", "id": "sun_flare", "dropped": "seed_bomb"})
+		== "Bought Sun Flare, dropped Seed Bomb", "an ability buy names the dropped slot")
+	_check(evsh._ev_text({"t": "buy", "item": "graft", "id": "carapace", "discarded": ""})
+		== "Bought Carapace", "a lone graft offer has nothing to discard")
+	_check(evsh._ev_text({"t": "quota_reclamp", "need": 3, "was": 5}).contains("3"),
+		"the re-clamped quota reaches the log")
+	evsh.free()
+
+	# 9. finished logs are archived, and the folder keeps only the newest few
+	var arch = _bare_shell()
+	arch.runs_dir = "user://test_runs"
+	arch.seed_v = 987654
+	arch.game = Game.new(1, {})
+	var lf := FileAccess.open("user://tender_run.save", FileAccess.WRITE)
+	lf.store_line("stand-in log")
+	lf.close()
+	arch._archive_run()
+	_check(not FileAccess.file_exists("user://tender_run.save"), "the finished log leaves the live slot")
+	var archived := ""
+	for n in _dir_files(arch.runs_dir):
+		if n.begins_with("run_987654_"):
+			archived = n
+	_check(archived.ends_with("_died.save"), "the log is archived as %s" % archived)
+	for i in 12:
+		var pf := FileAccess.open("%s/run_%d_20200101_died.save" % [arch.runs_dir, 700 + i], FileAccess.WRITE)
+		pf.store_line("filler")
+		pf.close()
+	arch._prune_runs()
+	_check(_dir_files(arch.runs_dir).size() == Shell.RUNS_KEEP,
+		"retention keeps %d logs (got %d)" % [Shell.RUNS_KEEP, _dir_files(arch.runs_dir).size()])
+	for n in _dir_files(arch.runs_dir):
+		DirAccess.remove_absolute(arch.runs_dir + "/" + n)
+	DirAccess.remove_absolute(arch.runs_dir)
+	arch.free()
 
 	shell.free()
 	shell2.free()
 	print("FAILURES: %d" % fails if fails > 0 else "shell smoke: OK")
 	quit(1 if fails > 0 else 0)
+
+
+## A shell with no live run attached: these tests drive `game` directly, so
+## nothing may be appended to (or restored from) the on-disk run log.
+func _bare_shell():
+	var sh = Shell.new()
+	sh._ready()
+	if sh._run_save != null:
+		sh._run_save.close()
+		sh._run_save = null
+	sh._game_is_run = false
+	sh.screen = "game"
+	sh.mode = "normal"
+	return sh
+
+
+## The shrine sheet's tap tags, in sheet order.
+func _tags(sh) -> Array:
+	var out: Array = []
+	for c in sh._shop_cards(sh.game.snapshot()):
+		out.append(String(c[3]))
+	return out
+
+
+func _dir_files(path: String) -> Array:
+	var out: Array = []
+	var d := DirAccess.open(path)
+	if d == null:
+		return out
+	d.list_dir_begin()
+	var n := d.get_next()
+	while n != "":
+		if not d.current_is_dir():
+			out.append(n)
+		n = d.get_next()
+	d.list_dir_end()
+	out.sort()
+	return out
 
 
 ## Pick the action that makes progress on the tutorial's current step.

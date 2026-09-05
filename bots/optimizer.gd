@@ -5,6 +5,24 @@ extends "res://bots/bot_base.gd"
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
+## Ability preference, best first. It ranks draft offers and - since the
+## shrine now sells replacements for a full kit - also decides whether a shop
+## ability is worth trading a slot away for. Base ids only; a "+" form
+## inherits its base's place and ranks just above it (see _pref_rank).
+const DRAFT_PREF := [
+	"sun_flare", "grow_spike", "geyser", "thorn_shield", "water_jet",
+	"tide", "sap_snare", "moss_filter", "spore_cloud", "gust", "vine_whip",
+	"pollen_burst", "solar_lance", "seed_bomb", "updraft", "overgrowth",
+	"anchor_roots", "burrow", "fungal_ring", "clear_air", "steam_vent", "root_wall",
+	"mycelium_dash",
+]
+
+## Kit slots the heuristic refuses to trade away at the shrine, mirroring the
+## draft's drop rule: mobility is the escape button (the sim already keeps it
+## off the drop list) and seed_bomb is the growth engine that makes the
+## Furnace core killable.
+const NEVER_DROP := ["mycelium_dash", "seed_bomb"]
+
 
 func get_bot_name() -> String:
 	return "optimizer"
@@ -44,10 +62,9 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 						return a
 
 	if by.has("buy"):
-		for item in ["graft", "heal", "ability", "item"]:
-			for a in by["buy"]:
-				if a["item"] == item:
-					return a
+		var deal := _shop_choice(snap, by["buy"])
+		if not deal.is_empty():
+			return deal
 
 	if by.has("descend"):
 		return by["descend"][0]
@@ -242,13 +259,6 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 
 
 func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
-	var pref := [
-		"sun_flare", "grow_spike", "geyser", "thorn_shield", "water_jet",
-		"tide", "sap_snare", "moss_filter", "spore_cloud", "gust", "vine_whip",
-		"pollen_burst", "solar_lance", "seed_bomb", "updraft", "overgrowth",
-		"anchor_roots", "burrow", "fungal_ring", "clear_air", "steam_vent", "root_wall",
-		"mycelium_dash",
-	]
 	var offers: Array = snap["draft_offers"]
 	var best_pick := -1
 	# unlisted offers rank after every listed id (still pickable when nothing
@@ -256,10 +266,7 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 	# over skipping - a "+" of anything beats its plain form (r * 2 - 1)
 	var best_rank := 1 << 30
 	for i in offers.size():
-		var r: int = pref.find(String(offers[i]).trim_suffix("+"))
-		if r == -1:
-			r = pref.size()
-		r = r * 2 - (1 if String(offers[i]).ends_with("+") else 0)
+		var r: int = _pref_rank(String(offers[i]))
 		if r < best_rank:
 			best_rank = r
 			best_pick = i
@@ -279,13 +286,105 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 	var best_u := 999999
 	for a in candidates:
 		var slot: int = a["drop"]
-		if String(kit[slot]).trim_suffix("+") == "mycelium_dash" or String(kit[slot]).trim_suffix("+") == "seed_bomb":
+		if NEVER_DROP.has(String(kit[slot]).trim_suffix("+")):
 			continue
 		var u: int = uses.get(kit[slot], 0)
 		if u < best_u:
 			best_u = u
 			best_a = a
 	return best_a
+
+
+## Rank of an ability id in DRAFT_PREF; lower is better. Unlisted ids rank
+## after everything listed. The doubled scale leaves each base one step of
+## room so its "+" form ranks strictly better than the plain one.
+func _pref_rank(aid: String) -> int:
+	var r: int = DRAFT_PREF.find(String(aid).trim_suffix("+"))
+	if r == -1:
+		r = DRAFT_PREF.size()
+	return r * 2 - (1 if String(aid).ends_with("+") else 0)
+
+
+## Shrine purchase, in the old order (graft, heal, ability, item), from the
+## legal list only. Empty dict when nothing on the counter is worth taking.
+func _shop_choice(snap: Dictionary, buys: Array) -> Dictionary:
+	var graft := _first_graft(buys)
+	if not graft.is_empty():
+		return graft
+	for a in buys:
+		if a["item"] == "heal":
+			return a
+	var abuy := _ability_buy(snap, buys)
+	if not abuy.is_empty():
+		return abuy
+	for a in buys:
+		if a["item"] == "item":
+			return a
+	return {}
+
+
+## The shop offers two grafts and one pick closes the counter. Every heuristic
+## bot takes offer 0: no graft preference table exists anywhere yet, and the
+## progression review holds any graft weighting until tests/sweep_grafts.gd
+## has measured them at 30+ seeds. Empty dict when no graft is affordable.
+func _first_graft(buys: Array) -> Dictionary:
+	var best: Dictionary = {}
+	for a in buys:
+		if a["item"] != "graft":
+			continue
+		if best.is_empty() or int(a.get("pick", 0)) < int(best.get("pick", 0)):
+			best = a
+	return best
+
+
+## Ability purchase. An empty kit slot is a free upgrade, but a full kit buys
+## by replacement now, so the trade has to pay: take it only when the shop
+## ability ranks strictly better than the worst droppable slot, and drop
+## exactly that slot. Worst = lowest DRAFT_PREF rank, ties to the least-used
+## slot, then to the highest slot index (stable, no rng). The sim keeps
+## mobility off the drop list; NEVER_DROP keeps the growth engine too.
+func _ability_buy(snap: Dictionary, buys: Array) -> Dictionary:
+	var plain: Dictionary = {}
+	var drops: Array = []
+	for a in buys:
+		if a["item"] != "ability":
+			continue
+		if a.has("drop"):
+			drops.append(a)
+		elif plain.is_empty():
+			plain = a
+	if not plain.is_empty():
+		return plain
+	var shop_aid := String(snap.get("shop", {}).get("ability", ""))
+	if drops.is_empty() or shop_aid == "":
+		return {}
+	var kit: Array = snap["player"]["kit"]
+	var uses: Dictionary = snap["player"]["uses"]
+	var worst: Dictionary = {}
+	var worst_rank := -1
+	var worst_uses := 0
+	for a in drops:
+		var slot: int = int(a["drop"])
+		if NEVER_DROP.has(String(kit[slot]).trim_suffix("+")):
+			continue
+		var rank: int = _pref_rank(String(kit[slot]))
+		var u: int = int(uses.get(kit[slot], 0))
+		var take := false
+		if worst.is_empty():
+			take = true
+		elif rank != worst_rank:
+			take = rank > worst_rank
+		elif u != worst_uses:
+			take = u < worst_uses
+		else:
+			take = slot > int(worst["drop"])
+		if take:
+			worst = a
+			worst_rank = rank
+			worst_uses = u
+	if worst.is_empty() or _pref_rank(shop_aid) >= worst_rank:
+		return {}
+	return worst
 
 
 ## Step out of telegraphed damage; when cornered, shove an adjacent attacker
@@ -491,7 +590,7 @@ func _path_step(snap: Dictionary, threat: Dictionary) -> Vector2i:
 	# accidentally beating the un-mutated baseline)
 	var shrine: Vector2i = snap["map"]["shrine"]
 	if shrine != Vector2i(-1, -1) and snap["player"]["pos"] != shrine and int(snap["dim"]) == 0:
-		var worth: bool = snap["shop"].has("graft") and snap["bloom"] >= 5
+		var worth: bool = snap["shop"].has("grafts") and snap["bloom"] >= 5
 		if snap["shop"].get("heal", false) and snap["bloom"] >= 3 and snap["player"]["hp"] <= snap["player"]["max_hp"] - 4:
 			worth = true
 		if worth:

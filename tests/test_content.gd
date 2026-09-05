@@ -5,6 +5,8 @@ extends SceneTree
 ## 3) ARCHETYPES cores and package requirements reference real ids
 ## 4) every draftable ability is in some archetype core, or is mobility/utility
 ## 5) base_id() round-trips; archetypes_for(DRAFT_POOL) = the package-free set
+## 7) SHOP_COSTS prices every shrine service (press, forge); every base ITEMS
+##    id has a "+" form (the press can upcycle anything the world hands out)
 ## Run: godot --headless --path . --script tests/test_content.gd
 
 const Content := preload("res://sim/content.gd")
@@ -110,6 +112,21 @@ func _init() -> void:
 		if not Content.archetypes_for(pool).has(arch_id):
 			failures.append("archetypes_for(pool + %s) lacks %s" % [str(pkgs), arch_id])
 	print("archetypes_for(DRAFT_POOL): %s" % str(got))
+
+	# 7) shop price list and item upcycle coverage
+	for svc in ["heal", "ability", "graft", "item", "press", "forge"]:
+		if not Content.SHOP_COSTS.has(svc) or int(Content.SHOP_COSTS[svc]) <= 0:
+			failures.append("SHOP_COSTS lacks a positive price for '%s'" % svc)
+	var base_items := 0
+	for iid in Content.ITEMS.keys():
+		if String(iid).ends_with("+"):
+			if not Content.ITEMS.has(String(iid).trim_suffix("+")):
+				failures.append("item '%s' has no base form" % iid)
+			continue
+		base_items += 1
+		if not Content.ITEMS.has(iid + "+"):
+			failures.append("item '%s' has no '+' form for the press" % iid)
+	print("shop costs: %s; items: %d base, %d total" % [str(Content.SHOP_COSTS), base_items, Content.ITEMS.size()])
 
 	if failures.is_empty():
 		print("content: OK")

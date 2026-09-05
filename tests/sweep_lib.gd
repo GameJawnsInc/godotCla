@@ -15,11 +15,12 @@ const Tally := preload("res://tests/tally.gd")
 const MAX_ACTIONS := 4000
 const MAX_TURNS := 400
 
-## Locked-kit configs ({kit: K, pool: K}) are only comparable with other
-## locked configs: with the pool equal to the kit the shop has nothing to
-## stock, so _stock_shop skips a main-rng draw per floor and every downstream
-## roll shifts against an open-pool run on the same seed.
-const CAVEAT_LOCKED := "locked configs {kit: K, pool: K} are comparable locked-vs-locked only: pool == kit skips the shop's main-rng ability draw, so seeds do not pair against open-pool runs"
+## Locked-kit configs ({kit: K, pool: K}) pair with open-pool runs again since
+## bump 2: the shrine's ability and graft draws moved to _side_rng, so mapgen
+## is the only main-rng consumer at floor entry and any kit/pool/graft/bloom
+## config starts a seed from the same map and rng state. Rows still diverge
+## downstream through play, and numbers from either side of the bump never mix.
+const CAVEAT_LOCKED := "locked configs {kit: K, pool: K} start a seed from the same floor-1 map and rng state as any other config (bump 2 moved the shop draws to _side_rng); rows diverge downstream through play, and pre-bump-2 numbers never pair with post-bump-2 ones"
 
 
 # --- bot selection ------------------------------------------------------------
@@ -223,7 +224,8 @@ static func wilson(w: int, n: int, z := 1.96) -> Vector2:
 
 ## Paired outcome table for two same-seed win arrays plus the two-sided exact
 ## sign-test p-value on the discordant pairs (1.0 when there are none).
-## Pairing is exact only for the floor-1 map until the bump-2 rng split.
+## Pairing is exact for the floor-1 map (bump 2 left mapgen as the only
+## main-rng consumer at floor entry); later floors diverge through play.
 static func paired(a: Array, b: Array) -> Dictionary:
 	var both := 0
 	var only_a := 0

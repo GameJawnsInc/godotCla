@@ -13,7 +13,8 @@ extends RefCounted
 ##   expect       {won, floor, turns?, timeout?, events?: [pattern, ...]}
 ##                where every pattern is a subset match on the given keys
 ##   note         free text: what the record proves
-##   sim_version  int, mirrors shell/main.gd RUN_SAVE_VERSION
+##   sim_version  int, mirrors Game.SIM_VERSION (shell/main.gd
+##                RUN_SAVE_VERSION reads the same constant)
 ##   hash         optional final Game.state_hash() (REGRESS_STRICT=1 only)
 ##
 ## The action codec is the same logic as tests/autopsy.gd (_act_to_json /
@@ -24,8 +25,9 @@ const Sweep := preload("res://tests/sweep_lib.gd")
 const Roster := preload("res://bots/roster.gd")
 const Tutorial := preload("res://shell/tutorial.gd")
 
-## Mirrors shell/main.gd RUN_SAVE_VERSION and tests/autopsy.gd SIM_VERSION.
-const SIM_VERSION := 1
+## The one version constant lives in sim/game.gd; shell/main.gd
+## RUN_SAVE_VERSION and tests/autopsy.gd SIM_VERSION read the same value.
+const SIM_VERSION := Game.SIM_VERSION
 const DIR := "res://tests/regressions"
 
 ## Top-level record keys in the order they are written.

@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"bloom":6,"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#######","#..>..#","#@+...#","#.....#","#######"]},"kit":["solar_lance","seed_bomb","mycelium_dash"],"pool":["solar_lance","seed_bomb","mycelium_dash"]},
+"actions": [{"dir":[1,0],"type":"move"},{"keep":0,"scrap":1,"type":"upcycle_ability"},{"item":"item","type":"buy"}],
+"expect": {"events":[{"id":"seed_bomb","t":"upcycle_scrap"},{"id":"solar_lance+","t":"upcycle_ability"},{"id":"spore_vial","item":"item","t":"buy"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "the forge closes after one use (shop.forge erased) while the rest of the shrine stays open: upcycle_ability then a normal item buy",
+"sim_version": 2,
+"hash": "00cf24ab538df3bc53432116c50bb66c7341494b6a77c5249b714a72dae2acd5"
+}
