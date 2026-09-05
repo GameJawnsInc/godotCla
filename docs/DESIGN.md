@@ -130,10 +130,10 @@ tests a different build muscle so no single draft strategy trivializes it.
   held item to its `+` form) and the **forge** (scrap a kit ability to upgrade
   another, at most once per floor). Every price runs through
   `Content.SHOP_COSTS`, so the Gouging Prices tier marks the whole sheet up.
-- Buying an ability with a full kit names the slot it replaces, exactly as a
-  draft does, and neither that purchase nor the forge may ever take the
-  mobility ability - a run can always still move. A draft reroll is not in the
-  game yet.
+- With a full kit the shrine's ability card is simply not buyable: that shop
+  slot goes dead once you are kitted out (accepted), and the forge is the only
+  way to free a kit slot - it may never scrap the mobility ability, so a run
+  can always still move. A draft reroll is not in the game yet.
 - `+` items exist only through the press: the shrine and supply pods stock base
   items only, so item upgrades are a spend, never a drop.
 - **Grafts** are the relic analog: passive run-long modifiers, data-driven like

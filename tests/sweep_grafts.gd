@@ -88,6 +88,6 @@ func _kpi_line(m: Dictionary) -> void:
 	print("    combos/run %.2f  signature %.2f  terrain %.2f  bloom conv %.2f  dmg taken %.1f  turns(w) %.0f" % [
 		k["combo_rate"], k["signature_share"], k["terrain_share"], k["bloom_conversion"],
 		m["mean_dmg_taken"], m["mean_turns_on_wins"]])
-	print("    shrine: buys %s  grafts bought %s  discarded %d  full-kit ability buys %d  quota reclamps %d  shrine turns/run %.2f" % [
-		str(t.buys_by_kind), str(t.grafts_by_id), t.graft_discards, t.ability_drop_buys,
+	print("    shrine: buys %s  grafts bought %s  discarded %d  quota reclamps %d  shrine turns/run %.2f" % [
+		str(t.buys_by_kind), str(t.grafts_by_id), t.graft_discards,
 		t.quota_reclamps, float(t.shrine_turns) / n])

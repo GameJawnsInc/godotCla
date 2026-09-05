@@ -6,7 +6,7 @@ extends SceneTree
 ##     two distinct unowned grafts (one when one remains, none when all owned)
 ##  c) supply pods hand out base item ids only
 ##  d) two-graft stock: buying one discards the other
-##  e) full-kit ability purchase replaces a slot, never the mobility slot
+##  e) the shrine ability card is only buyable with a free kit slot
 ##  f) press/forge: shop-gated, tier markup, forge once per floor, never
 ##     scraps mobility; Boarded shrines board every purchase and service
 ##  g) quota re-clamp after bloomless corruption removal; enemy oil pays 0
@@ -34,7 +34,7 @@ func _init() -> void:
 	_check_stock_filter()
 	_check_pods_and_shops_in_play()
 	_check_graft_buy()
-	_check_ability_buy_with_drop()
+	_check_ability_buy_kit_slot()
 	_check_press_forge_boarded()
 	_check_quota_reclamp()
 	_check_config_keys()
@@ -262,45 +262,42 @@ func _check_graft_buy() -> void:
 	print("graft buy: offers %s, bought %s, discarded %s" % [str(offers), offers[1], offers[0]])
 
 
-# --- e) ability buy with drop -------------------------------------------------
+# --- e) ability buy needs a free kit slot -------------------------------------
 
-func _check_ability_buy_with_drop() -> void:
+func _check_ability_buy_kit_slot() -> void:
 	var kit := ["solar_lance", "seed_bomb", "mycelium_dash", "vine_whip", "water_jet"]
 	var g = Game.new(1, {"bloom": 20, "kit": kit})
 	g.player["pos"] = g.map["shrine"]
-	g.player["gummed"] = {0: 2}
 	_ok(g.shop.has("ability"), "ability buy: no ability stocked with kit %s" % str(kit))
 	var aid: String = g.shop.get("ability", "")
-	var acts: Array = g.legal_actions()
-	var drops: Array = []
-	var plain := 0
-	for a in acts:
+	# a full kit simply cannot buy: no ability buy action of any shape
+	var buy_acts := 0
+	for a in g.legal_actions():
 		if a.get("type", "") == "buy" and a.get("item", "") == "ability":
-			if a.has("drop"):
-				drops.append(a["drop"])
-			else:
-				plain += 1
-	drops.sort()
-	_ok(plain == 0, "ability buy: %d plain buy actions with a full kit" % plain)
-	_ok(drops == [0, 1, 3, 4], "ability buy: drop slots %s, expected [0, 1, 3, 4] (2 is mycelium_dash)" % str(drops))
-	# dropping the mobility slot is illegal even when requested directly
-	var evs_bad: Array = g.step({"type": "buy", "item": "ability", "drop": 2})
-	_ok(not _events_of(evs_bad, "illegal").is_empty() and g.player["kit"][2] == "mycelium_dash", "ability buy: mobility drop accepted")
-	var evs: Array = g.step({"type": "buy", "item": "ability", "drop": 0})
-	var buys := _events_of(evs, "buy")
-	_ok(g.player["kit"][0] == aid and g.player["kit"].size() == 5, "ability buy: kit %s" % str(g.player["kit"]))
-	_ok(not g.player["gummed"].has(0), "ability buy: gummed %s still holds slot 0" % str(g.player["gummed"]))
-	_ok(buys.size() == 1 and buys[0].get("id", "") == aid and buys[0].get("dropped", "") == "solar_lance",
-		"ability buy: event %s" % str(buys))
-	_ok(not g.shop.has("ability"), "ability buy: shop still stocks ability")
+			buy_acts += 1
+	_ok(buy_acts == 0, "ability buy: %d ability buy actions with a full kit" % buy_acts)
+	# a hand-built drop purchase is illegal and changes nothing
+	var kit_before: Array = g.player["kit"].duplicate()
+	var bloom_before: int = g.bloom
+	var evs_bad: Array = g.step({"type": "buy", "item": "ability", "drop": 0})
+	_ok(not _events_of(evs_bad, "illegal").is_empty(), "ability buy: full-kit drop buy emitted no illegal")
+	_ok(_events_of(evs_bad, "buy").is_empty(), "ability buy: full-kit drop buy emitted a buy event")
+	_ok(g.player["kit"] == kit_before, "ability buy: kit changed to %s" % str(g.player["kit"]))
+	_ok(g.bloom == bloom_before, "ability buy: bloom %d -> %d" % [bloom_before, g.bloom])
+	_ok(g.shop.has("ability"), "ability buy: illegal buy still cleared the shop stock")
 	# kit not full: plain buy appends
 	var g2 = Game.new(1, {"bloom": 20})
 	g2.player["pos"] = g2.map["shrine"]
 	var aid2: String = g2.shop.get("ability", "")
+	_ok(g2.player["kit"].size() == 3, "ability buy: starting kit %s is not size 3" % str(g2.player["kit"]))
 	_ok(_has_action(g2.legal_actions(), "buy", {"item": "ability"}), "ability buy: plain buy missing with 3-kit")
-	g2.step({"type": "buy", "item": "ability"})
+	var evs2: Array = g2.step({"type": "buy", "item": "ability"})
+	var buys := _events_of(evs2, "buy")
 	_ok(g2.player["kit"].size() == 4 and g2.player["kit"][3] == aid2, "ability buy: 3-kit append -> %s" % str(g2.player["kit"]))
-	print("ability buy: full kit drop slots %s, bought %s over solar_lance" % [str(drops), aid])
+	_ok(buys.size() == 1 and buys[0].get("id", "") == aid2 and not buys[0].has("dropped"),
+		"ability buy: event %s" % str(buys))
+	_ok(not g2.shop.has("ability"), "ability buy: shop still stocks ability after the buy")
+	print("ability buy: full kit offers %d ability buys, 3-kit bought %s (shop stocked %s)" % [buy_acts, aid2, aid])
 
 
 # --- f) press / forge / boarded ---------------------------------------------

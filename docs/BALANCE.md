@@ -20,7 +20,7 @@ Reference numbers for TENDER's difficulty, and the discipline for changing them.
 | deeproot  | 70–90% wins             | the search ceiling: near-perfect play should nearly always win |
 | optimizer | 45–65% wins             | skilled play should win often but never be safe (raised from 30–50 after the tempo fix — the old band measured a bot flaw) |
 | fanatic   | every build > 0 at 100 seeds (hard); 20–40% total (soft) | committing to a niche build must stay viable; the total tracks content difficulty and moves when content does |
-| magpie    | 0–5% canary, top bloom  | full greed loses to the current game almost always; a RISE above 5% means greed got cheap (canary, like turtle) |
+| magpie    | 0–5% canary, top bloom  | full greed loses to the current game almost always; a RISE above 5% means greed got cheap (canary, like turtle). Unmet since before bump 2 (pre-bump 6/100 [3, 12], now 10/100 [6, 17] under v2); the 30-seed gate line is red at 4/30 pending a decision — see 2026-09-05d |
 | sprout    | avg depth 3.5–5, wins rare | noobs feel progress; full clears are earned |
 | wanderer  | dies floor 1–2, 0 wins  | the world must punish random play |
 | all       | zero timeouts/softlocks | every run ends in win or death |
@@ -1068,6 +1068,261 @@ fixed defect 8 (a dead shop slot at a full kit) but is measured power for
 greed; either it goes back out, or it is gated on something other than bloom
 (the canary band is the target, not the thing to move).
 
+## 2026-09-05c - bump 2 revision: full-kit ability purchase removed
+
+The project owner ruled on the decision left pending in the entry above: the
+full-kit drop-slot ability purchase goes back out and review defect 8 (a dead
+shop slot once you are kitted out) is accepted as-is - "a dead shop doesn't
+feel bad when you're already kitted out, seems like an acceptable defect".
+With a full kit the shrine's ability card is simply not for sale:
+`legal_actions` offers `{"type": "buy", "item": "ability"}` only while
+`kit.size() < _kit_max()`, exactly as before bump 2.
+
+Everything else from bump 2 stays: the graft pick, press/forge pricing and
+gating, one forge per floor, mobility never scrapped by the forge, the
+side-rng shop, damage attribution, the quota re-clamp, base-only shop/pod
+items, and the `grafts`/`bloom` config keys.
+
+**`Game.SIM_VERSION` stays 2.** Bump 2 never reached a phone, so no saved run
+log exists that was written against the drop-slot purchase; this is a
+revision of the same bump, not a second one. `shell/main.gd`
+RUN_SAVE_VERSION reads the same constant and is unchanged.
+
+Instruments are still v2, so this entry's numbers compare with the bump-2
+entry above it and with the instrument-v2 re-baseline, and with nothing older.
+
+### Suite
+
+All green except the playtest gate (below), which fails exactly as it did in
+bump 2 as shipped:
+
+- `tests/test_invariants.gd`: "invariants: 1400 generations, 0 violations",
+  "floor_def invariants: 11 configs, 1540 generations, 0 violations"
+- `tests/test_determinism.gd`: "determinism: OK (55 checks, 7 personas)"
+- `tests/test_content.gd`: "shop costs: { heal: 3, ability: 4, graft: 4,
+  item: 2, press: 1, forge: 3 }; items: 5 base, 10 total", "content: OK"
+- `tests/test_meta.gd`: "meta: OK"
+- `tests/test_economy.gd`: "economy: OK (84 checks)" (82 -> 84; the drop-slot
+  section became "ability buy: full kit offers 0 ability buys, 3-kit bought
+  root_wall (shop stocked grow_spike)")
+- `tests/test_regressions.gd`: "regressions: 27 ok, 0 failed", and
+  `REGRESS_STRICT=1` "regressions: 27 ok, 0 failed" (28 -> 27: the
+  `blockb_ability_drop_buy.json` record was deleted with the mechanic)
+- `tests/test_shell.gd`: "shell smoke: OK"
+
+### Persona table
+
+Block A v2 = the instrument-v2 re-baseline entry; bump 2 as shipped = the
+entry directly above; this revision =
+`=== playtest | bot wanderer,sprout,magpie,fanatic,optimizer,deeproot |
+config {  } | seeds 1..30 (30) ===` and
+`=== playtest | bot deeproot_rollout | config {  } | seeds 1..30 (30) ===`.
+All three columns are seeds 1..30, tier 0, Wilson 95% as printed.
+
+| persona | Block A v2 | bump 2 as shipped | this revision |
+|---|---|---|---|
+| wanderer | 0/30, floor 1.0 | 0/30 = 0% [0, 11], floor 1.0 | 0/30 = 0% [0, 11], floor 1.0 |
+| sprout | 1/30 = 3% [1, 17], floor 3.9 | 0/30 = 0% [0, 11], floor 3.5 | 1/30 = 3% [1, 17], floor 3.5 |
+| magpie | 2/30 = 7% [2, 21] | 4/30 = 13% [5, 30], floor 4.9 | 4/30 = 13% [5, 30], floor 3.8 |
+| fanatic (legacy seed-split) | 5/30 = 17% [7, 34] | 7/30 = 23% [12, 41], floor 5.4 | 7/30 = 23% [12, 41], floor 5.4 |
+| optimizer | 14/30 = 47% [30, 64] | 12/30 = 40% [25, 58], floor 5.8 | 12/30 = 40% [25, 58], floor 5.9 |
+| deeproot | 27/30 = 90% [74, 97] | 24/30 = 80% [63, 90], floor 6.9 | 24/30 = 80% [63, 90], floor 6.9 |
+| deeproot_rollout | 26/30 = 87% [70, 95] | 27/30 = 90% [74, 97], floor 7.0 | 28/30 = 93% [79, 98], floor 7.0 |
+
+Zero timeouts and zero illegal actions for all seven personas. Five of the
+seven win counts are byte-identical to the shipped column; the two that moved
+are one win each (sprout 0 -> 1, deeproot_rollout 27 -> 28) and both point
+estimates sit inside the other column's interval, except sprout's shipped 0%
+which falls one point under the new [1, 17] - a one-win difference, not a
+signal. At 30 seeds the removal is win-rate neutral by that test, which is
+the expected result: the A/B said the lever only bites on the greed persona
+at 100 seeds.
+
+### KPI block (playtest, 30 seeds, tier 0)
+
+Same derivation and columns as the bump-2 KPI table: strike/sig/terr = shares
+of enemy damage, cmb = combos/run, conv = bloom spent/earned, ent = kit
+entropy bits, shrine = shrine turns/run, unspent = unspent charge per
+end_turn, stall = stall floors over 30 runs, qu = quota-unmet deaths, dmg =
+player damage per run.
+
+| persona | strike | sig | terr | cmb | conv | ent | shrine | unspent | stall | qu | dmg |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| wanderer | 0.31 | 0.00 | 0.02 | 30.67 | 0.00 | 0.00 | 0.53 | 0.10 | 24 | 29 | 43.4 |
+| sprout | 0.35 | 0.21 | 0.01 | 7.00 | 0.13 | 4.45 | 1.00 | 0.36 | 14 | 3 | 34.6 |
+| magpie | 0.42 | 0.24 | 0.01 | 2.67 | 0.49 | 4.28 | 22.70 | 0.74 | 18 | 4 | 31.8 |
+| fanatic | 0.20 | 0.24 | 0.05 | 11.37 | 0.25 | 3.59 | 0.57 | 0.75 | 6 | 3 | 26.5 |
+| optimizer | 0.44 | 0.12 | 0.02 | 3.77 | 0.27 | 4.23 | 1.33 | 0.54 | 2 | 4 | 22.6 |
+| deeproot | 0.09 | 0.35 | 0.15 | 14.10 | 0.01 | 3.83 | 0.23 | 0.55 | 7 | 0 | 7.5 |
+| deeproot_rollout | 0.07 | 0.24 | 0.13 | 10.97 | 0.01 | 4.32 | 0.23 | 0.39 | 1 | 0 | 2.8 |
+
+The `full-kit ability buys` column of the bump-2 counter table is gone with
+the counter (`tests/tally.gd` no longer has `ability_drop_buys`, and the
+choice-sinks line now prints "graft offers discarded N  quota reclamps N").
+The remaining two sinks over 30 runs each: graft offers discarded - wanderer
+0, sprout 12, magpie 83, fanatic 40, optimizer 44, deeproot 0,
+deeproot_rollout 0; **`quota_reclamp` still fired 0 times in every run of
+this entry**, so the one intended balance change of bump 2 remains unexercised
+by every bot. Upcycles are still 0/0 for every persona: press and forge stay
+dead sinks.
+
+### Magpie canary at 100 seeds
+
+`=== verify_kit | bot magpie | config {  } | seeds 1..100 (100) ===`:
+**10/100 = 10% wins, win CI [6%, 17%]**, avg floor 3.7, turns on wins 196.7,
+damage taken 31.5/run, 1 timeout, 0 illegal, ability buys 102 (all into a
+free kit slot; the drop shape no longer exists).
+
+- **Against the A/B prediction: exact.** The bump-2 A/B row "full-kit ability
+  purchase never legal" predicted 10/100 = 10% [6, 17] with 102 ability buys.
+  The shipped revision measures 10/100 = 10% [6, 17] with 102 ability buys.
+  The probe-subclass A/B and the real removal agree to the win, the interval
+  and the buy count, so the attribution in the entry above is confirmed on
+  the shipped code.
+- **Against bump 2 as shipped: a real drop.** 20/100 = 20% [13, 29] ->
+  10/100 = 10% [6, 17]. Each point estimate lies outside the other's
+  interval, so this is a move by the Method rule, on the largest sample the
+  canary has under v2.
+- **Against pre-bump: back inside noise.** Pre-bump HEAD was 6/100 = 6%
+  [3, 12]; [6, 17] and [3, 12] overlap over [6, 12], so the revision is not
+  distinguishable from the pre-bump canary at 100 seeds.
+- **Against the 0-5% band: still out.** [6, 17] sits wholly above 5%, so the
+  canary target is not met and the gate still fails. It was not met pre-bump
+  either (6/100 = 6% [3, 12] also clears 5%). Removing the purchase undid the
+  bump's damage; it did not fix the older drift, which is a separate question
+  and not this revision's job.
+
+### Gate verdict
+
+`tests/playtest.gd` at 30 seeds, gate ON: **exit 1, "gate: 1 FAIL"** - the
+same single failure as bump 2 as shipped, at the same 4/30. (2026-09-05d
+records what the line measures and the owner's options; the gate constant is
+unchanged and the line stays red until one is taken.)
+
+```
+PASS wanderer 0 wins, avg floor <= 2: 0 wins, avg floor 1.00
+PASS wanderer illegal actions == 0: 0
+PASS sprout wins rare (<= 1 per 30 seeds): 1/30
+PASS sprout illegal actions == 0: 0
+FAIL magpie canary <= 5%: 4/30 CI [5%, 30%] (fails when the lower bound clears the band)
+PASS magpie illegal actions == 0: 0
+PASS fanatic illegal actions == 0: 0
+PASS optimizer band 35-65%: 12/30 CI [25%, 58%]
+PASS optimizer timeouts == 0: 0
+PASS optimizer illegal actions == 0: 0
+PASS deeproot band 70-90%: 24/30 CI [63%, 90%]
+PASS deeproot timeouts == 0: 0
+PASS deeproot illegal actions == 0: 0
+gate: 1 FAIL
+```
+
+`PLAYTEST_BOTS=deeproot_rollout PLAYTEST_SEEDS=30`: exit 0.
+
+```
+PASS deeproot_rollout illegal actions == 0: 0
+gate: all PASS
+```
+
+### Regression corpus re-record
+
+The 20 bot-derived records (`det_*`, `canary_*`) were re-played on the final
+sim **and** the final bots and re-stamped with `regress_lib.record_run`
+(expect + hash); the hand-scripted `combo_*` and the remaining three
+`blockb_*` records were not touched. `blockb_ability_drop_buy.json` was
+deleted with the mechanic, so the corpus is **28 -> 27 records**.
+
+15 of the 20 came out byte-identical - the bots only differ where a full kit
+met a stocked, affordable shrine ability, which never happened on these seeds
+for wanderer, sprout, fanatic, deeproot or optimizer seed 11. Five changed:
+
+| record | before (bump 2) | after (this revision) | cause |
+|---|---|---|---|
+| det_magpie_s11 | died floor 4, 224 turns, 551 acts | died floor 2, 134 turns, 344 acts | drop buys gone |
+| det_magpie_s3 | WON floor 7, 185 turns, 789 acts | WON floor 7, 244 turns, 974 acts | drop buys gone |
+| det_magpie_s42 | WON floor 7, 103 turns, 523 acts | WON floor 7, 133 turns, 635 acts | drop buys gone |
+| det_optimizer_s3 | WON floor 7, 94 turns, 445 acts | WON floor 7, 100 turns, 419 acts | drop buys gone |
+| det_optimizer_s42 | died floor 7, 93 turns, 466 acts | WON floor 7, 77 turns, 372 acts | drop buys gone |
+| det_magpie_s11 hash | 3312c0834de6701d... | c29cc04df667a9b7... | changed |
+| det_magpie_s3 hash | e2faee8af7b10a17... | b057818aa18d5810... | changed |
+| det_magpie_s42 hash | 7e83e12f19e3fb73... | a59f79e186a0cd2f... | changed |
+| det_optimizer_s3 hash | 835adeb1103d91b7... | 1ed42eb6859e6a1f... | changed |
+| det_optimizer_s42 hash | 7deff2605d6932e6... | d5e6c416d88a4d81... | changed |
+| the other 15 det_*/canary_* | - | byte-identical | bot never hit the case |
+
+One outcome flip, `det_optimizer_s42` loss -> win. That is a corpus assertion,
+never a balance argument: the removed action re-phases the persona's own
+choice sequence from the first full-kit shrine on, so a seed is a different
+game after the removal for any bot that used to buy by replacement.
+
+### Anything else that moved
+
+- **magpie shrine turns/run 8.33 -> 22.70** (30 seeds). Greed now stands on
+  the shrine far longer per run while buying strictly less: combos/run
+  6.33 -> 2.67 and avg floor 4.9 -> 3.8 on the same four wins. With no
+  replacement buy to spend on, magpie's shrine loop reduces to grafts, heals
+  and items and it burns clock doing it. No CI attaches to these; flagged for
+  the watch list, not patched.
+- **deeproot_rollout 27/30 -> 28/30** with zero purchases in either run
+  (`buys { item: 4 }`). The searcher plans over `legal_actions`, so removing
+  a legal action changes its plan even where it never bought; one win, inside
+  both intervals.
+- **magpie logged 1 timeout in 100 seeds** (`verify_kit`). The shipped bump-2
+  100-seed row recorded 0. One run in a hundred against an "all runs end"
+  target is worth a re-check if it grows; not investigated here.
+- Nothing else left a CI. The optimizer, fanatic, deeproot and wanderer rows
+  are unchanged at 30 seeds, and no suite member changed a count except
+  `test_economy` (82 -> 84 checks) and `test_regressions` (28 -> 27 records),
+  both of which are direct consequences of the edit.
+
+## 2026-09-05d - magpie canary: status after the revision (no sim change, gate unchanged)
+
+The bump-2 revision above leaves `tests/playtest.gd` red on one line -
+`FAIL magpie canary <= 5%: 4/30 CI [5%, 30%]` - and this entry records what
+that line is and is not measuring. The gate constant is **unchanged**
+(`MAGPIE_MAX_LOWER := 0.05`, the design target); moving it is the owner's
+call, not a measurement's, so the options are listed at the end instead.
+
+### What the 5% line separates
+
+Every number below is instrument v2, tier 0, base pool, Wilson 95%.
+
+| tree | 30 seeds | 5% line | 100 seeds | 5% line |
+|---|---|---|---|---|
+| pre-bump HEAD (`b07d284`) | 2/30 [2, 21] | PASS | 6/100 [3, 12] | PASS |
+| bump 2 as shipped | 4/30 [5, 30] | FAIL | 20/100 [13, 29] | FAIL |
+| bump 2 revision (this tree) | 4/30 [5, 30] | FAIL | 10/100 [6, 17] | FAIL |
+
+At 30 seeds the line separates 2/30 from 4/30 - a two-win gap - and returns
+the same verdict for the shipped bump and for the revision that undid it,
+whose 100-seed intervals ([13, 29] vs [6, 17]) do not overlap. The two trees
+it cannot tell apart at 100 seeds, pre-bump 6/100 [3, 12] and this tree's
+10/100 [6, 17], overlap over [6, 12]. So the 30-seed line reports seed noise
+around a true rate near 10%, and the 100-seed line says greed sits at about
+twice its 0-5% design target. That is older drift: the pre-bump point
+estimate was already 6%, over target, with only the interval covering 5%.
+The bump-2 regression (20%) is undone; the drift is not.
+
+### Trip points, for whoever decides
+
+Wilson lower bounds, so a threshold can be argued instead of guessed:
+2/30 1.9% | 4/30 5.3% | 6/30 9.5% | 7/30 11.8% | 6/100 2.8% | 10/100 5.5% |
+17/100 10.9% | 20/100 13.3%. A 10% line would pass this tree at 30 and 100
+seeds, still fail both bump-2 configurations at 100 seeds (17/100 and
+20/100), and trip a 30-seed run from 7/30 (23%) up; a 5% line trips a
+30-seed run from 4/30 (13%) up, i.e. on one win at the current true rate.
+
+### Options (owner decision, none taken here)
+
+1. Re-tune greed against the 0-5% target as its own change with a 100-seed
+   before/after (the honest fix; what makes magpie win is now measurable:
+   bloom conversion 0.50, kit entropy 5.6 bits, 293 graft buys per 100 runs).
+2. Accept 10% as the gate's trip line (one constant in `tests/playtest.gd`)
+   with the 0-5% figure kept as the design target in the Targets table.
+3. Leave the line red until 1 is done and read the gate as "12 of 13 pass".
+
+Until one of these is taken the default 30-seed gated playtest exits 1 on
+this line alone; every other gate line passes (see 2026-09-05c).
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from
@@ -1078,8 +1333,14 @@ greed; either it goes back out, or it is gated on something other than bloom
   before shipping; thorn_shield's persistent mild underperformance in pair
   tables is probably the same bleed.
 - Magpie is now a greed canary at 0-5% (see 2026-08-08 magpie entry);
-  watch for rises, not falls. Sitting at exactly 5/100 since the
-  cleanse-smog-relief change - the next rise is a real signal.
+  watch for rises, not falls. It was sitting at exactly 5/100 since the
+  cleanse-smog-relief change; under instrument v2 it measures **10/100
+  [6, 17]** (2026-09-05c) and pre-bump measured 6/100 [3, 12], so the 0-5%
+  target has been unmet for longer than bump 2. The 30-seed gate line is red
+  at 4/30 and stays so until the owner picks an option in 2026-09-05d
+  (re-tune greed, move the trip line to 10%, or read the gate as 12 of 13):
+  greed at ~2x its design target is an open balance question and the next
+  100-seed rise above [6, 17] is the real signal.
 - Fanatic cannot demo control archetypes (shover 2-3/25 while the
   ceiling wins 45% with the same kit): judge push/pull changes with
   deeproot forced-kit runs, not the fanatic number.
@@ -1096,15 +1357,22 @@ greed; either it goes back out, or it is gated on something other than bloom
 
 ### Bump-2 additions (2026-09-05b)
 
-- **Magpie broke the canary.** 4/30 in the gated playtest (FAIL) and 20/100
-  = 20% [13, 29] at `verify_kit`, against a 0-5% band. This is the one thing
-  in bump 2 that moved a target. Prime suspect is the full-kit ability
-  replacement buy (262 of them over 100 runs) plus the two-graft offer (364
-  discards): greed finally has somewhere to put its surplus bloom. The A/B
-  in the gate verdict above settles the attribution: no-drop 10/100 [6, 17]
-  vs shipped 20/100 [13, 29] vs pre-bump 6/100 [3, 12]; a 2x price does not
-  fix it (17/100). The full-kit ability purchase is the one bump-2 item that
-  is measured power. Decide before any further shop content.
+- **Magpie broke the canary - RESOLVED by removal (2026-09-05c).** As
+  shipped, bump 2 put magpie at 4/30 in the gated playtest (FAIL) and 20/100
+  = 20% [13, 29] at `verify_kit` against a 0-5% band - the one thing in bump 2
+  that moved a target. The A/B attributed it to the full-kit ability
+  replacement buy (262 of them over 100 runs; no-drop 10/100 [6, 17] vs
+  shipped 20/100 [13, 29] vs pre-bump 6/100 [3, 12], and a 2x price did not
+  fix it at 17/100). The owner removed the purchase path (defect 8 accepted:
+  a dead shop slot at a full kit is fine). New canary number:
+  **10/100 = 10% [6, 17]**, exactly the A/B's prediction, indistinguishable
+  from pre-bump 6/100 [3, 12]. The bump-2 regression is undone; the band
+  itself is still not met (the interval clears 5% and the 30-seed gate still
+  reads FAIL magpie 4/30 [5, 30]), which is the older drift, not this bump's.
+  Two magpie metrics moved without a CI to judge them by: shrine turns/run
+  8.33 -> 22.70 and combos/run 6.33 -> 2.67 on the same four wins - greed now
+  loiters at a shrine it can spend less at. Watch those, and the 1 timeout in
+  100 magpie runs, before any further shop content.
 - **The quota re-clamp is unexercised.** 0 `quota_reclamp` events over 550
   bot runs. Every claim that the strandable green gate is closed rests on
   `tests/test_economy.gd` and `tests/regressions/blockb_quota_reclamp.json`,

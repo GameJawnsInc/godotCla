@@ -34,7 +34,6 @@ var item_uses_by_id := {}
 var item_pickups := 0
 var satchel_full := 0
 var graft_discards := 0  # graft buys that threw the second offer away
-var ability_drop_buys := 0  # ability buys into a full kit (a slot was replaced)
 
 # --- economy ------------------------------------------------------------------
 var bloom_earned := 0
@@ -161,8 +160,6 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 					graft_discards += 1
 			elif kind == "ability":
 				_inc(ability_buys_by_id, String(ev.get("id", "")))
-				if ev.has("dropped"):
-					ability_drop_buys += 1
 		"upcycle":
 			upcycles += 1
 		"upcycle_ability":
@@ -290,7 +287,6 @@ func merge(other) -> void:
 	item_pickups += other.item_pickups
 	satchel_full += other.satchel_full
 	graft_discards += other.graft_discards
-	ability_drop_buys += other.ability_drop_buys
 	bloom_earned += other.bloom_earned
 	bloom_spent += other.bloom_spent
 	shrine_turns += other.shrine_turns
@@ -431,7 +427,6 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 		"collision_by_aid": t.collision_by_aid.duplicate(),
 		"quota_reclamps": t.quota_reclamps,
 		"graft_discards": t.graft_discards,
-		"ability_drop_buys": t.ability_drop_buys,
 	}
 
 
@@ -469,8 +464,8 @@ func print_block(n_runs: int, kits: Array) -> void:
 		str(ability_buys_by_id), upcycles, upcycle_abilities, item_pickups, satchel_full])
 	print("           shrine turns/run %.2f  unspent charge/end_turn %.2f  kit entropy %.2f bits" % [
 		shrine_turns / n, _safe_div(float(unspent_charge_total), float(end_turns)), k["kit_entropy_bits"]])
-	print("           choice sinks: graft offers discarded %d  full-kit ability buys %d  quota reclamps %d" % [
-		graft_discards, ability_drop_buys, quota_reclamps])
+	print("           choice sinks: graft offers discarded %d  quota reclamps %d" % [
+		graft_discards, quota_reclamps])
 	var smog_avg := 0.0
 	for s in smog_at_descend:
 		smog_avg += float(s)

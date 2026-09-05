@@ -5,10 +5,9 @@ extends "res://bots/bot_base.gd"
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
-## Ability preference, best first. It ranks draft offers and - since the
-## shrine now sells replacements for a full kit - also decides whether a shop
-## ability is worth trading a slot away for. Base ids only; a "+" form
-## inherits its base's place and ranks just above it (see _pref_rank).
+## Ability preference, best first: this ranks the draft offers. Base ids only;
+## a "+" form inherits its base's place and ranks just above it (see
+## _pref_rank).
 const DRAFT_PREF := [
 	"sun_flare", "grow_spike", "geyser", "thorn_shield", "water_jet",
 	"tide", "sap_snare", "moss_filter", "spore_cloud", "gust", "vine_whip",
@@ -17,10 +16,9 @@ const DRAFT_PREF := [
 	"mycelium_dash",
 ]
 
-## Kit slots the heuristic refuses to trade away at the shrine, mirroring the
-## draft's drop rule: mobility is the escape button (the sim already keeps it
-## off the drop list) and seed_bomb is the growth engine that makes the
-## Furnace core killable.
+## Kit slots the draft refuses to drop when the kit is full: mobility is the
+## escape button and seed_bomb is the growth engine that makes the Furnace
+## core killable.
 const NEVER_DROP := ["mycelium_dash", "seed_bomb"]
 
 
@@ -62,7 +60,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 						return a
 
 	if by.has("buy"):
-		var deal := _shop_choice(snap, by["buy"])
+		var deal := _shop_choice(by["buy"])
 		if not deal.is_empty():
 			return deal
 
@@ -307,16 +305,16 @@ func _pref_rank(aid: String) -> int:
 
 ## Shrine purchase, in the old order (graft, heal, ability, item), from the
 ## legal list only. Empty dict when nothing on the counter is worth taking.
-func _shop_choice(snap: Dictionary, buys: Array) -> Dictionary:
+func _shop_choice(buys: Array) -> Dictionary:
 	var graft := _first_graft(buys)
 	if not graft.is_empty():
 		return graft
 	for a in buys:
 		if a["item"] == "heal":
 			return a
-	var abuy := _ability_buy(snap, buys)
-	if not abuy.is_empty():
-		return abuy
+	for a in buys:
+		if a["item"] == "ability":
+			return a
 	for a in buys:
 		if a["item"] == "item":
 			return a
@@ -335,56 +333,6 @@ func _first_graft(buys: Array) -> Dictionary:
 		if best.is_empty() or int(a.get("pick", 0)) < int(best.get("pick", 0)):
 			best = a
 	return best
-
-
-## Ability purchase. An empty kit slot is a free upgrade, but a full kit buys
-## by replacement now, so the trade has to pay: take it only when the shop
-## ability ranks strictly better than the worst droppable slot, and drop
-## exactly that slot. Worst = lowest DRAFT_PREF rank, ties to the least-used
-## slot, then to the highest slot index (stable, no rng). The sim keeps
-## mobility off the drop list; NEVER_DROP keeps the growth engine too.
-func _ability_buy(snap: Dictionary, buys: Array) -> Dictionary:
-	var plain: Dictionary = {}
-	var drops: Array = []
-	for a in buys:
-		if a["item"] != "ability":
-			continue
-		if a.has("drop"):
-			drops.append(a)
-		elif plain.is_empty():
-			plain = a
-	if not plain.is_empty():
-		return plain
-	var shop_aid := String(snap.get("shop", {}).get("ability", ""))
-	if drops.is_empty() or shop_aid == "":
-		return {}
-	var kit: Array = snap["player"]["kit"]
-	var uses: Dictionary = snap["player"]["uses"]
-	var worst: Dictionary = {}
-	var worst_rank := -1
-	var worst_uses := 0
-	for a in drops:
-		var slot: int = int(a["drop"])
-		if NEVER_DROP.has(String(kit[slot]).trim_suffix("+")):
-			continue
-		var rank: int = _pref_rank(String(kit[slot]))
-		var u: int = int(uses.get(kit[slot], 0))
-		var take := false
-		if worst.is_empty():
-			take = true
-		elif rank != worst_rank:
-			take = rank > worst_rank
-		elif u != worst_uses:
-			take = u < worst_uses
-		else:
-			take = slot > int(worst["drop"])
-		if take:
-			worst = a
-			worst_rank = rank
-			worst_uses = u
-	if worst.is_empty() or _pref_rank(shop_aid) >= worst_rank:
-		return {}
-	return worst
 
 
 ## Step out of telegraphed damage; when cornered, shove an adjacent attacker

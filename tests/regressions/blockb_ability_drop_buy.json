@@ -1,9 +1,0 @@
-{
-"seed": 1,
-"config": {"bloom":6,"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#######","#..>..#","#@+...#","#.....#","#######"]},"kit":["solar_lance","seed_bomb","mycelium_dash","root_wall","moss_filter"],"pool":["solar_lance","seed_bomb","mycelium_dash","root_wall","moss_filter","water_jet"]},
-"actions": [{"dir":[1,0],"type":"move"},{"drop":1,"item":"ability","type":"buy"}],
-"expect": {"events":[{"dropped":"seed_bomb","id":"water_jet","item":"ability","t":"buy"}],"floor":1,"timeout":true,"turns":0,"won":false},
-"note": "full-kit ability purchase replaces slot 1; mycelium_dash (mobility) is never an offered drop",
-"sim_version": 2,
-"hash": "8a3e97144a8188b1a05012ce65f4a7ba67f2754c7d5e1234e0d74408a68e13eb"
-}

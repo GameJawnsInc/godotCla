@@ -6,9 +6,7 @@ extends "res://bots/bot_base.gd"
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
-## What a noob thinks is good, best first. Ranks draft offers and - now that
-## a full kit buys shrine abilities by replacement - decides whether the
-## thing on the counter beats the thing it would have to give up.
+## What a noob thinks is good, best first: this ranks the draft offers.
 const DRAFT_PREF := [
 	"sun_flare", "solar_lance", "grow_spike", "vine_whip", "water_jet",
 	"thorn_shield", "pollen_burst", "sap_snare", "seed_bomb", "root_wall",
@@ -46,7 +44,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 
 	# impulse shopping: heal first, then whatever is shiny
 	if by.has("buy") and rng.randf() < 0.5:
-		var deal := _shop_impulse(snap, by["buy"])
+		var deal := _shop_impulse(by["buy"])
 		if not deal.is_empty():
 			return deal
 
@@ -149,13 +147,13 @@ func _pref_rank(aid: String) -> int:
 
 ## Impulse purchase: heal, then an ability, then a graft - from the legal
 ## list only. Empty dict when nothing on the counter gets taken.
-func _shop_impulse(snap: Dictionary, buys: Array) -> Dictionary:
+func _shop_impulse(buys: Array) -> Dictionary:
 	for a in buys:
 		if a["item"] == "heal":
 			return a
-	var abuy := _ability_buy(snap, buys)
-	if not abuy.is_empty():
-		return abuy
+	for a in buys:
+		if a["item"] == "ability":
+			return a
 	# the shrine offers two grafts and one pick closes the counter: take
 	# offer 0. No bot ranks grafts yet - the progression review holds any
 	# graft weighting until tests/sweep_grafts.gd has run at 30+ seeds.
@@ -166,54 +164,6 @@ func _shop_impulse(snap: Dictionary, buys: Array) -> Dictionary:
 		if graft.is_empty() or int(a.get("pick", 0)) < int(graft.get("pick", 0)):
 			graft = a
 	return graft
-
-
-## Ability purchase. A free slot is a no-brainer; a full kit has to trade,
-## and even a noob will not hand over something it likes better than the
-## thing on the counter. Buy with a drop only when the shop ability ranks
-## strictly better than the worst droppable slot, and drop exactly that slot:
-## lowest DRAFT_PREF rank first, ties to the least-used slot, then to the
-## highest slot index. (The sim never offers the mobility slot as a drop.)
-func _ability_buy(snap: Dictionary, buys: Array) -> Dictionary:
-	var plain: Dictionary = {}
-	var drops: Array = []
-	for a in buys:
-		if a["item"] != "ability":
-			continue
-		if a.has("drop"):
-			drops.append(a)
-		elif plain.is_empty():
-			plain = a
-	if not plain.is_empty():
-		return plain
-	var shop_aid := String(snap.get("shop", {}).get("ability", ""))
-	if drops.is_empty() or shop_aid == "":
-		return {}
-	var kit: Array = snap["player"]["kit"]
-	var uses: Dictionary = snap["player"]["uses"]
-	var worst: Dictionary = {}
-	var worst_rank := -1
-	var worst_uses := 0
-	for a in drops:
-		var slot: int = int(a["drop"])
-		var rank: int = _pref_rank(String(kit[slot]))
-		var u: int = int(uses.get(kit[slot], 0))
-		var take := false
-		if worst.is_empty():
-			take = true
-		elif rank != worst_rank:
-			take = rank > worst_rank
-		elif u != worst_uses:
-			take = u < worst_uses
-		else:
-			take = slot > int(worst["drop"])
-		if take:
-			worst = a
-			worst_rank = rank
-			worst_uses = u
-	if worst.is_empty() or _pref_rank(shop_aid) >= worst_rank:
-		return {}
-	return worst
 
 
 func _enemy_adjacent(snap: Dictionary) -> bool:

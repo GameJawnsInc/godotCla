@@ -15,7 +15,7 @@ const ImportRun := preload("res://tests/import_run.gd")
 const Regress := preload("res://tests/regress_lib.gd")
 
 ## A kit that fills every slot with slot 0 held by a mobility ability - the one
-## the shrine may never take away (sim/game.gd _is_mobility).
+## the forge may never scrap (sim/game.gd _is_mobility).
 const FULL_KIT := ["mycelium_dash", "solar_lance", "seed_bomb", "vine_whip", "thorn_shield"]
 const TMP_SAVE := "user://test_import_run.save"
 const TMP_JSON := "user://test_import_record.json"
@@ -283,27 +283,27 @@ func _init() -> void:
 		"G buys the first graft")
 	shop2.free()
 
-	# 8. a full kit buys an ability by replacement - never the mobility slot
+	# 8. a full kit cannot buy the ability at all - the card is simply not for sale
 	var shop3 = _bare_shell()
 	shop3.game = Game.new(4242, {"bloom": 30, "kit": FULL_KIT})
 	shop3.game.player["pos"] = shop3.game.map["shrine"]
 	var offer_aid := String(shop3.game.shop.get("ability", ""))
 	_check(offer_aid != "", "the shrine stocks an ability")
+	var kit_before: Array = shop3.game.player["kit"].duplicate()
+	var bloom_before: int = shop3.game.bloom
 	shop3._tap("shop")
 	shop3._tap("buy:ability")
-	_check(shop3.mode == "buy_drop", "a full kit turns the ability card into a drop picker")
-	shop3._ability_press(0)  # mycelium_dash
-	_check(shop3.game.player["kit"][0] == FULL_KIT[0] and shop3.mode == "buy_drop",
-		"the drop picker refuses the mobility slot")
-	_check(shop3.flash == "cannot drop your mobility ability", "...with the mobility flash")
-	shop3._ability_press(3)
-	_check(String(shop3.game.player["kit"][3]) == offer_aid,
-		"the picked slot is replaced by the bought ability")
-	_check(shop3.game.player["kit"].size() == FULL_KIT.size(), "the kit stays full")
-	_check(not shop3.game.shop.has("ability"), "the ability card is spent")
+	_check(shop3.mode == "shop", "a full kit leaves the sheet open on the ability card")
+	_check(shop3.flash == "can't buy that", "...and says the card is not for sale")
+	_check(shop3.game.player["kit"] == kit_before, "the full kit is untouched")
+	_check(shop3.game.bloom == bloom_before, "no bloom is spent")
+	_check(shop3.game.shop.has("ability"), "the ability card stays stocked")
+	shop3._key(KEY_B)
+	_check(shop3.game.player["kit"] == kit_before and shop3.game.bloom == bloom_before,
+		"the B key buys nothing either")
 	shop3.free()
 
-	# 8b. the full-kit ability card says so on the card itself
+	# 8b. the full-kit ability card is still drawn, with its plain description
 	var shop4 = _bare_shell()
 	shop4.game = Game.new(4242, {"bloom": 30, "kit": FULL_KIT})
 	shop4.game.player["pos"] = shop4.game.map["shrine"]
@@ -311,8 +311,21 @@ func _init() -> void:
 	for c in shop4._shop_cards(shop4.game.snapshot()):
 		if String(c[3]) == "buy:ability":
 			acard = String(c[2])
-	_check(acard.begins_with("REPLACES a kit slot"), "the full-kit ability card warns it replaces a slot")
+	_check(acard != "", "the shop sheet still draws the ability card at a full kit")
+	_check(not acard.to_lower().contains("replaces"), "...with no slot-replacement promise")
 	shop4.free()
+
+	# 8b2. a free slot still buys the ability outright
+	var shop5 = _bare_shell()
+	shop5.game = Game.new(4242, {"bloom": 30, "kit": ["mycelium_dash", "solar_lance"]})
+	shop5.game.player["pos"] = shop5.game.map["shrine"]
+	var free_aid := String(shop5.game.shop.get("ability", ""))
+	shop5._tap("shop")
+	shop5._tap("buy:ability")
+	_check(shop5.game.player["kit"].size() == 3 and String(shop5.game.player["kit"][2]) == free_aid,
+		"a free kit slot buys the ability outright")
+	_check(not shop5.game.shop.has("ability"), "the ability card is spent")
+	shop5.free()
 
 	# 8c. the log speaks the new event shapes
 	var evsh = _bare_shell()
@@ -325,8 +338,8 @@ func _init() -> void:
 		"enemy damage lines never show a source")
 	_check(evsh._ev_text({"t": "buy", "item": "graft", "id": "bloom_surge", "discarded": "carapace"})
 		== "Bought Bloom Surge (discarded Carapace)", "a graft buy names the discarded offer")
-	_check(evsh._ev_text({"t": "buy", "item": "ability", "id": "sun_flare", "dropped": "seed_bomb"})
-		== "Bought Sun Flare, dropped Seed Bomb", "an ability buy names the dropped slot")
+	_check(evsh._ev_text({"t": "buy", "item": "ability", "id": "sun_flare"})
+		== "Bought Sun Flare", "an ability buy names what was bought")
 	_check(evsh._ev_text({"t": "buy", "item": "graft", "id": "carapace", "discarded": ""})
 		== "Bought Carapace", "a lone graft offer has nothing to discard")
 	_check(evsh._ev_text({"t": "quota_reclamp", "need": 3, "was": 5}).contains("3"),

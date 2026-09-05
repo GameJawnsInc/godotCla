@@ -35,26 +35,42 @@ config-dependent main-rng consumer at floor entry (1); `by` on fire tiles with
 left alone (2); `_reclamp_quota()` at the end of every playing `step()` with
 `quota_reclamp` / `stairs_awaken` events and bloom-0 enemy oil that still
 counts toward `greened` (3); the `grafts` and `bloom` config keys (4); and the
-choice sinks - two graft offers with one discarded, a drop slot on a full-kit
-ability purchase that can never take a mobility ability, and press/forge
-priced through `Content.SHOP_COSTS` with the forge capped at one use per floor
-(5). Alongside it: the two-graft shrine sheet and the run-lost notice in the
+choice sinks - two graft offers with one discarded, and press/forge priced
+through `Content.SHOP_COSTS` with the forge capped at one use per floor (5).
+Shipped and then withdrawn inside the same bump: the third choice sink, a
+drop slot on a full-kit ability purchase that could never take a mobility
+ability. It fixed defect 8 (a dead shop slot at a full kit) but measured as
+straight power for greed, so the owner removed it and accepted defect 8 as-is
+- with a full kit the shrine's ability card is simply not for sale, exactly as
+before the bump (see the "bump 2 revision" entry in `docs/BALANCE.md`).
+Alongside it: the two-graft shrine sheet and the run-lost notice in the
 shell, `tests/test_economy.gd`, `tests/sweep_grafts.gd`, `tests/import_run.gd`,
-a regenerated 28-record regression corpus, and attribution counters in
+a regenerated 27-record regression corpus, and attribution counters in
 `tests/tally.gd`. NOT done and still open: `deeproot_plan` (7.5); the
 re-judgement of tiers 6-8 on a grafted ceiling that 6.2 makes a precondition
 for economy content; protecting mobility abilities on *draft* drops (only the
-purchase and forge paths are protected); and defects 4 (fuse bounty) and 6
+forge path is protected, the purchase path no longer existing); defect 8 (a
+full kit has nothing to buy at the ability card), which the owner has now
+accepted rather than fixed; and defects 4 (fuse bounty) and 6
 (draft-drop gummed transfer), together with the 6.5 deferrals - reroll, per-HP
 heal, and the prune-versus-forge split. Two measurement gaps the bump left
 behind: `quota_reclamp` fired 0 times in 550 bot runs, so the strandable-gate
 fix is verified only synthetically, and no bot ever used the press or the
-forge. One target moved: magpie broke the 0-5% greed canary at 20/100, and
-the A/B in the bump-2 entry attributes it to the full-kit ability purchase
-(10/100 with that path removed, 6/100 pre-bump, 17/100 at double price) -
-the one bump-2 item that is measured power, awaiting a decision. The graft
-sweep's first out-of-sample number is also in: solar_core 25/30 vs 10/30
-(16:1, p=0.00), the other five grafts within noise.
+forge. One target moved and was then moved back: magpie broke the 0-5% greed
+canary at 20/100 [13, 29] as shipped, the A/B attributed it to the full-kit
+ability purchase (10/100 with that path removed, 6/100 pre-bump, 17/100 at
+double price), and removing the path lands the canary at **10/100 = 10%
+[6, 17]** - the A/B's prediction to the win, the interval and the buy count,
+and statistically indistinguishable from the pre-bump 6/100 [3, 12]. The band
+is still not met (the interval clears 5%), but that is the older drift, not
+the bump: pre-bump measured 6/100 [3, 12], whose point estimate was already
+over target. The 5% gate line at 30 seeds returned the same FAIL for the
+shipped bump and for the revision that undid it, so it is reporting seed
+noise around a true rate near 10%; the gate constant is unchanged and the line
+stays red until the owner picks between re-tuning greed and moving the trip
+line to 10% (BALANCE.md 2026-09-05d lists the trip points). The graft sweep's first
+out-of-sample number is also in: solar_core 25/30 vs 10/30 (16:1, p=0.00),
+the other five grafts within noise.
 
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
@@ -901,13 +917,15 @@ closing the strandable gate:
    sweeps, so graft combos become sweepable as DESIGN.md promised.
 5. **Choice sinks, no new power.** Two-graft stock, pick one (the other is
    discarded); ability purchase takes a drop slot like the draft does and can
-   never drop a mobility ability; press and forge priced through `shop_cost`
-   and gated on `not shop.is_empty()` so Boarded boards them and Gouging
-   Prices marks them up; forge capped at one per floor and forbidden from
-   scrapping the mobility ability; shop and pods draw from base item ids only
-   so `+` items exist only via the press. Deferred to 6.5: reroll, per-HP
-   heal, prune-versus-forge split, because stacking nine economy levers in one
-   bump makes any canary movement unattributable.
+   never drop a mobility ability *(withdrawn: the drop-slot purchase shipped
+   in bump 2 and was removed again in the 2026-09-05c revision; defect 8, a
+   dead shop slot at a full kit, accepted as-is)*; press and forge priced
+   through `shop_cost` and gated on `not shop.is_empty()` so Boarded boards
+   them and Gouging Prices marks them up; forge capped at one per floor and
+   forbidden from scrapping the mobility ability; shop and pods draw from
+   base item ids only so `+` items exist only via the press. Deferred to
+   6.5: reroll, per-HP heal, prune-versus-forge split, because stacking nine
+   economy levers in one bump makes any canary movement unattributable.
 
 Shell work: two-graft shop UI, source display strip, version notice. Then
 `deeproot_plan` (6.6) and `tests/sweep_grafts.gd` on the six existing grafts

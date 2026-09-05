@@ -222,12 +222,12 @@ const DRAFT_POOL := [
 
 ## --- Sim-ignored ability metadata ------------------------------------------
 ## The sim never reads "tags", TAGS, ROLES, ARCHETYPES or the helpers below,
-## and reads "role" for exactly one rule: a shrine purchase or forge may never
-## drop/scrap a role == "mobility" ability (Game._is_mobility). Otherwise
-## step() outcomes and rng draws are unaffected by any value here. They are
-## shared data (style guide §6) for bots (persona build commitments, drop
-## guards), the shell (kit labels, build hints) and tests (coverage asserts),
-## so all three agree on one vocabulary instead of each hardcoding ids.
+## and reads "role" for exactly one rule: the shrine forge may never scrap a
+## role == "mobility" ability (Game._is_mobility). Otherwise step() outcomes
+## and rng draws are unaffected by any value here. They are shared data (style
+## guide §6) for bots (persona build commitments, drop guards), the shell
+## (kit labels, build hints) and tests (coverage asserts), so all three agree
+## on one vocabulary instead of each hardcoding ids.
 ## Every "+" form carries the same tags/role as its base; use base_id() to
 ## fold upgrades back onto the base entry.
 

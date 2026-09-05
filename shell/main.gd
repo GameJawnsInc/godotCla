@@ -100,7 +100,7 @@ const DIRS4 := {
 var game
 var seed_v := 0
 var screen := "menu"  # menu | game | tutorial
-var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | buy_drop | up_keep | up_scrap | intro | help | shop | log | settings
+var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | up_keep | up_scrap | intro | help | shop | log | settings
 var mode_slot := -1
 var mode_targets: Array = []
 var mode_pick := -1
@@ -376,8 +376,8 @@ func _act(a: Dictionary) -> void:
 		tooltip = []
 		queue_redraw()
 		return
-	# a purchase made from the sheet (or from its drop picker) reopens it
-	var keep_shop := (mode == "shop" or mode == "buy_drop") and String(a.get("type", "")) == "buy"
+	# a purchase made from the sheet reopens it
+	var keep_shop := mode == "shop" and String(a.get("type", "")) == "buy"
 	var evs: Array = game.step(a)
 	if _game_is_run and _run_save != null:
 		_run_save.store_line(var_to_str(a).replace("\n", " "))
@@ -732,7 +732,7 @@ func _key(k: int) -> void:
 			_buy("heal")
 			return
 		if mode == "shop" and k == KEY_B:
-			_buy("ability")  # full kit: enters the drop picker
+			_buy("ability")  # full kit: nothing to buy, just a flash
 			return
 		if mode == "shop" and k == KEY_G:
 			_buy_graft(0)
@@ -863,17 +863,12 @@ func _move_or_strike(d: Vector2i) -> void:
 	_flash("blocked")
 
 
-## Buy heal / ability / item. A full kit turns the ability purchase into a
-## two-step choice: the drop picker (mode "buy_drop") replaces a kit slot.
+## Buy heal / ability / item. A full kit has no room for the ability card:
+## the sim stops offering it, so the tap just says so.
 func _buy(item: String) -> void:
 	for a in _legal_of("buy"):
 		if String(a.get("item", "")) != item:
 			continue
-		if item == "ability" and a.has("drop"):
-			mode = "buy_drop"
-			flash = ""
-			queue_redraw()
-			return
 		_act(a)
 		return
 	_flash("can't buy that")
@@ -889,24 +884,13 @@ func _buy_graft(pick: int) -> void:
 
 
 ## The one bit of ability metadata the shell reads, mirroring the sim rule:
-## a mobility ability is never a legal drop or scrap (sim/game.gd _is_mobility).
+## a mobility ability is never a legal forge scrap (sim/game.gd _is_mobility).
 func _is_mobility(aid: String) -> bool:
 	return String(Content.ABILITIES.get(aid, {}).get("role", "")) == "mobility"
 
 
 func _ability_press(slot: int) -> void:
 	if slot >= game.player["kit"].size():
-		return
-	if mode == "buy_drop":
-		# the shrine's replacement purchase: this slot goes, the bought one lands
-		for a in _legal_of("buy"):
-			if String(a.get("item", "")) == "ability" and int(a.get("drop", -1)) == slot:
-				_act(a)
-				return
-		if _is_mobility(String(game.player["kit"][slot])):
-			_flash("cannot drop your mobility ability")
-		else:
-			_flash("can't replace that slot")
 		return
 	if mode == "up_keep":
 		var can_keep := false
@@ -1284,8 +1268,6 @@ func _ev_text(ev: Dictionary) -> String:
 			var what := _shop_name(String(ev.get("item", "")), String(ev.get("id", "")))
 			if String(ev.get("discarded", "")) != "":
 				return "Bought %s (discarded %s)" % [what, _shop_name("graft", String(ev["discarded"]))]
-			if String(ev.get("dropped", "")) != "":
-				return "Bought %s, dropped %s" % [what, _shop_name("ability", String(ev["dropped"]))]
 			return "Bought %s" % what
 		"draft_upgrade":
 			return "Upgraded to %s" % str(ev["id"])
@@ -2216,11 +2198,6 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 	var msg := ""
 	var col := COL_DIM_TEXT
 	match mode:
-		"buy_drop":
-			msg = "REPLACE: tap the kit ability to give up (ESC cancels)"
-			col = COL_GOLD
-			if flash != "":
-				msg = flash
 		"up_keep":
 			msg = "FORGE: tap the ability to upgrade to + (ESC cancels)"
 			col = COL_GOLD
@@ -2368,9 +2345,6 @@ func _card(r: Rect2, icon: String, title: String, desc: String, tag: String, vh:
 func _shop_cards(snap: Dictionary) -> Array:
 	var shop: Dictionary = snap["shop"]
 	var pl: Dictionary = snap["player"]
-	# mirrors the sim's kit cap (kit_of_3 shrinks it) without reaching into it
-	var kit_cap: int = 3 if snap["mutators"].has("kit_of_3") else Content.KIT_MAX
-	var kit_full: bool = pl["kit"].size() >= kit_cap
 	var cards: Array = []
 	if shop.get("heal", false):
 		cards.append(["ic_hp", "Heal  -  %d bloom" % game.shop_cost("heal"),
@@ -2381,8 +2355,6 @@ func _shop_cards(snap: Dictionary) -> Array:
 		if not Art.ART.has(icon):
 			icon = "ab_default"
 		var adesc := _ability_desc(aid)
-		if kit_full:
-			adesc = "REPLACES a kit slot (never your mobility) - " + adesc
 		cards.append([icon, "%s  -  %d bloom" % [Content.ABILITIES[aid]["name"], game.shop_cost("ability")],
 			adesc, "buy:ability"])
 	var offers: Array = shop.get("grafts", [])

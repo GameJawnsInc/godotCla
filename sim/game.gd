@@ -14,7 +14,6 @@ extends RefCounted
 ##   Shrine actions (player standing on map.shrine; shop keys gate each one):
 ##   {"type": "buy", "item": "heal"}
 ##   {"type": "buy", "item": "ability"}             (kit not full)
-##   {"type": "buy", "item": "ability", "drop": j}  (kit full: replaces slot j; j may never hold a mobility ability)
 ##   {"type": "buy", "item": "graft", "pick": i}    (i indexes shop.grafts; the other offer is discarded)
 ##   {"type": "buy", "item": "item"}
 ##   {"type": "upcycle", "keep": k}                  (press: two held items -> the + form of item k; shop.press)
@@ -249,15 +248,8 @@ func legal_actions() -> Array:
 	if player["pos"] == map["shrine"]:
 		if shop.get("heal", false) and bloom >= shop_cost("heal") and player["hp"] < player["max_hp"]:
 			acts.append({"type": "buy", "item": "heal"})
-		if shop.has("ability") and bloom >= shop_cost("ability"):
-			if player["kit"].size() < _kit_max():
-				acts.append({"type": "buy", "item": "ability"})
-			else:
-				# a full kit buys by replacement, like the draft - but the
-				# purchase path never lets the only mobility ability go
-				for j in player["kit"].size():
-					if not _is_mobility(String(player["kit"][j])):
-						acts.append({"type": "buy", "item": "ability", "drop": j})
+		if shop.has("ability") and bloom >= shop_cost("ability") and player["kit"].size() < _kit_max():
+			acts.append({"type": "buy", "item": "ability"})
 		if shop.has("grafts") and bloom >= shop_cost("graft"):
 			for i in shop["grafts"].size():
 				acts.append({"type": "buy", "item": "graft", "pick": i})
@@ -279,8 +271,8 @@ func legal_actions() -> Array:
 
 
 ## The one piece of ability metadata the sim reads: mobility abilities (and
-## their + forms, which share the base's role) can never be dropped by a
-## shrine purchase or scrapped by the forge.
+## their + forms, which share the base's role) can never be scrapped by the
+## forge.
 func _is_mobility(aid: String) -> bool:
 	return String(Content.ABILITIES.get(aid, {}).get("role", "")) == "mobility"
 
@@ -1222,29 +1214,15 @@ func _act_buy(action: Dictionary) -> void:
 			player["hp"] = mini(player["hp"] + Content.SHOP_HEAL_AMOUNT, player["max_hp"])
 			_emit({"t": "buy", "item": "heal", "hp": player["hp"]})
 		"ability":
-			if not shop.has("ability"):
+			# a full kit cannot buy: the ability card is simply not for sale
+			if not shop.has("ability") or player["kit"].size() >= _kit_max():
 				_emit({"t": "illegal", "action": "buy"})
 				return
+			bloom -= cost
 			var aid: String = shop["ability"]
-			if player["kit"].size() >= _kit_max():
-				# full kit: the purchase replaces a slot, like a draft drop,
-				# but the mobility slot is never a legal drop
-				var drop := int(action.get("drop", -1))
-				if drop < 0 or drop >= player["kit"].size() or _is_mobility(String(player["kit"][drop])):
-					_emit({"t": "illegal", "action": "buy"})
-					return
-				bloom -= cost
-				shop.erase("ability")
-				var old_id: String = player["kit"][drop]
-				player["kit"][drop] = aid
-				player["gummed"].erase(drop)
-				# buy/ability with "dropped": the replaced ability's id
-				_emit({"t": "buy", "item": "ability", "id": aid, "dropped": old_id})
-			else:
-				bloom -= cost
-				shop.erase("ability")
-				player["kit"].append(aid)
-				_emit({"t": "buy", "item": "ability", "id": aid})
+			shop.erase("ability")
+			player["kit"].append(aid)
+			_emit({"t": "buy", "item": "ability", "id": aid})
 		"graft":
 			var pick := int(action.get("pick", -1))
 			if not shop.has("grafts") or pick < 0 or pick >= shop["grafts"].size():

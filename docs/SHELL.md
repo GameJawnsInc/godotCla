@@ -43,7 +43,6 @@ scene.
 | E | descend (on the stairs) |
 | H / B | buy heal / ability (standing on a shrine) |
 | G / J | buy the first / second graft on offer |
-| 1–5 (picker) | with a full kit, B asks which slot to give up; ESC cancels |
 | SPACE / ENTER | end turn |
 | ESC | cancel targeting |
 | R | restart the same seed |
@@ -68,8 +67,6 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
   directional abilities, or tap a highlighted tile for tile abilities
 - CLEANSE / DESCEND / HELP buttons bottom-right
 - tap shop cards at a shrine, draft options between floors
-- with a full kit the ability card starts a picker: tap the kit slot to give
-  up (your mobility ability is never droppable), or ESC to back out
 - after a run: tap anywhere for the next seed
 
 ## Building the APK
@@ -133,9 +130,9 @@ rows appear only while they are legal; an unaffordable heal, ability, graft
 or item card is still shown with its price and flashes when tapped:
 
 - **heal** - 4 HP, once per shrine
-- **ability** - one draw from the run's pool. With a full kit the card
-  becomes a two-step choice: pick the kit slot it replaces. Your mobility
-  ability is never a legal drop (the picker flashes and refuses).
+- **ability** - one draw from the run's pool, buyable only while you have a
+  free kit slot. With a full kit the card is not for sale: the sim stops
+  offering the action and the card flashes when tapped.
 - **two grafts** - the shrine offers two and sells **one**; taking either
   closes the counter and the other offer is lost. Prices rise as you stack
   grafts, so the pair is a choice, not a shopping list.
