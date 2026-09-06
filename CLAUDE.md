@@ -94,7 +94,12 @@ architecture below is designed to bend rather than block.
     (raw `Content.FLOORS` plus `Game.floor_def` for every tier and mutator)
   - `godot --headless --path . --script tests/test_determinism.gd` — rerun + replay hashes
   - `godot --headless --path . --script tests/test_content.gd` — ability tags/roles,
-    `Content.ARCHETYPES` cores, `base_id`, `archetypes_for`
+    `Content.ARCHETYPES` cores, `base_id`, `archetypes_for`, and the effect-grammar
+    lint (closed op/rider vocabulary, TERRAIN/REACTIONS/STATUSES rows, plus a
+    self-test that feeds the lint deliberately bad rows and the planned rider rows)
+  - `godot --headless --path . --script tests/test_grammar.gd` — effect grammar
+    behaviour: rider evaluation, returned outcomes, and the data tables driven
+    through `Game._apply_effect` on hand-built states
   - `godot --headless --path . --script tests/test_economy.gd` — shrine economy
     and quota: config-independent main rng, shop stock filters, graft/ability/
     press/forge purchase rules, quota re-clamp, damage attribution
@@ -152,6 +157,24 @@ architecture below is designed to bend rather than block.
   `_side_rng(tag)` (hash of seed+floor+tag), NEVER the main `rng` stream -
   one stray main-stream draw reshuffles every seed's downstream rolls and
   invalidates cross-version win-rate comparisons.
+- Effect grammar and data tables (`docs/PROGRESSION_REVIEW.md` §6.3 C1):
+  terrain, terrain reactions and statuses are data — `Content.TERRAIN` (one row
+  per kind: corruption, shields_core, flammable, washable, bloom, ttl/decays,
+  enter/tick damage, blocks, blocks_beam, heal, burns_to; read through
+  `Content.terrain(kind, key, default)` and `Content.is_corruption(kind)`),
+  `Content.REACTIONS` (rows consumed by `Game._terrain_react()`; disabled rows
+  are design intent kept as data) and `Content.STATUSES` (stack rule, blocked
+  intents, blocked_event, tick damage). Any effect dict may carry the rider keys
+  `if` (closed predicate set: target_on, target_adjacent, self_on, dim,
+  casts_this_turn_min, plus outcome/outcome_crossed inside `then`), `per`
+  (growth_adjacent_target, fire_within_self, oil_in_line, enemies_adjacent_target),
+  `bonus` (per-enemy damage) and `then` (sub-effects, never nested), evaluated
+  only by `Game._rider_if` / `_rider_per` / `_bonus_dmg`; an ability row may
+  carry `surge` (default `{cost: -1}`). New ops, predicates, counts or terrain
+  keys go into the `tests/test_content.gd` vocabulary constants in the same
+  change, or the lint rejects them. Riders emit `{t: "rider", id, kind, amt}`,
+  which `tests/tally.gd` counts (`riders_by_kind` / `riders_by_aid`) and folds
+  into the combo rate.
 - Sim run config: `Game.new(seed, {kit, pool, packages, tier, mutators, grafts,
   bloom})` for sweeps, meta-unlocks, and post-win difficulty tiers. `grafts` is
   a list of `Content.GRAFTS` ids installed before floor 1 (unknown ids are

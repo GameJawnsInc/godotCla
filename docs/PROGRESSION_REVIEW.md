@@ -72,6 +72,42 @@ recorded as the rise baseline (BALANCE.md 2026-09-05d). The graft sweep's first
 out-of-sample number is also in: solar_core 25/30 vs 10/30 (16:1, p=0.00),
 the other five grafts within noise.
 
+**Status (2026-09-05c).** Block C1a (6.3, the first of C1's two commits) has
+landed: the effect grammar and the data tables, with **zero behaviour change**
+and `Game.SIM_VERSION` still 2. Shipped in `sim/game.gd`: the cast context
+`{aid, adef, target, origin, casts_before, moved}` with the per-turn counters
+`casts_this_turn` / `moved_this_turn` (Game vars copied by `clone()` and
+deliberately *not* in `snapshot()`, so `state_hash()` does not move; a later
+block exposes them with a version bump); `_apply_effect` returning an outcome
+(`hit`, `ignited`, `pushed`, `collided`, `converted`, `planted`, `washed`,
+`affected`, `crossed`, plus `tiles` for `who: on_planted`), with `_push_enemy`,
+`_wash_dir` and the pull threading displacement and crossed terrain back; and
+the four rider keys `if` / `per` / `bonus` / `then` evaluated by `_rider_if`,
+`_rider_per` and `_bonus_dmg` and nowhere else, emitting
+`{t: "rider", id, kind, amt}` whenever a rider actually changes something. In
+`sim/content.gd`: `TERRAIN` (8 kinds), `REACTIONS` (fire-spreads and
+fire-burns-out enabled; damp, roots-burn and smoke-smother present as disabled
+rows), `STATUSES` (stun / root / spore), `SURGE_DEFAULT`, and the helpers
+`Content.terrain()` / `Content.is_corruption()`, which replace every terrain,
+status and reaction literal the sim used to hardcode - the environment phase's
+spread and decay now runs through one `_terrain_react()`. No content row carries
+a rider yet, so no rider event fires today. Harness side: `tests/test_grammar.gd`
+(137 checks) exercises the grammar on hand-built effects, `tests/test_content.gd`
+gained the section-8 lint over the closed op/rider vocabulary and the tables
+(with a self-test of 19 deliberately bad rows and the C2 rider rows), and
+`tests/tally.gd` counts rider events by kind and by ability id and folds them
+into the combo rate. Proof of no behaviour change: `test_regressions` passes
+plain and with `REGRESS_STRICT=1` over all 27 stored state hashes with no
+`REGEN` and no re-recording, `test_determinism` passes, and a per-step
+event-stream + `state_hash` parity probe (optimizer / magpie / sprout / fanatic
+at 30 seeds, deeproot at 5) is byte-identical to the pre-C1a tree. One
+deviation from the spec: `fire_spreads` inherits only `by`, not the oil tile's
+bloom flag - carrying the flag moved two strict hashes, so it waits for C1b's
+version bump. What this enables: C1b (ash, root blocking `advance` / `drag`,
+spore add-stack, item stun through `_apply_status`) is now a matter of flipping
+table rows, and C2's riders on the `+` forms are data rows against a vocabulary
+the lint already enforces and the Tally already measures.
+
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
 180 bot runs; a synergy-lift sweep of 7 hypothesised pairs at 24 seeds per
@@ -184,8 +220,9 @@ Terrain is where DESIGN.md says combos live. The interaction matrix
   whip line, enemies have no line of sight anywhere; enemies never react to
   growth, oil, goo, or smoke when pathing; statuses never stack (`game.gd:489`).
 
-Fire is the only terrain with a chain reaction, and its `ttl 2` is hardcoded
-in five places (`game.gd:613, 764, 1260, 1372, 1579`). Roots are the strongest
+Fire is the only terrain with a chain reaction, and its `ttl 2` was hardcoded
+in five places (`game.gd:613, 764, 1260, 1372, 1579`; superseded by C1a, see
+Status 2026-09-05c - `Content.TERRAIN` owns it now). Roots are the strongest
 hidden combo piece (collision walls, silent vent-spawn skip, BFS blocker) but
 beams pass straight through them.
 
@@ -543,7 +580,8 @@ a charge-wasting no-op that also depresses sap_snare's measured value. Items
 write stun directly, bypassing `_apply_status`, a second write path any
 status table must route.
 
-**Terrain has no data table (major, confirmed).** Flammability, washability,
+**Terrain has no data table (major, confirmed; superseded by C1a, see Status
+2026-09-05c).** Flammability, washability,
 corruption membership, passability, enter damage, and fire ttl are each
 hardcoded in game.gd, and corruption membership is duplicated in
 `deeproot.gd:70-72`, `optimizer._nearest_corruption`, and mapgen. Fire x

@@ -812,7 +812,7 @@ func _cleanse_at(target: Vector2i) -> void:
 			return
 	var pp: Vector2i = game.player["pos"]
 	var kind: String = game.terrain.get(target, {}).get("kind", "")
-	var corrupt: bool = kind in ["oil", "goo", "rich_goo"]
+	var corrupt: bool = Content.is_corruption(kind)
 	if corrupt and absi(target.x - pp.x) + absi(target.y - pp.y) == 1:
 		if screen == "tutorial":
 			_flash("out of charge - press END to refill")
@@ -1055,7 +1055,7 @@ func _tap(tag: String) -> void:
 		var can := not _legal_of("cleanse").is_empty()
 		if not can and game != null:
 			for d in DIRS4.values():
-				if String(game.terrain.get(game.player["pos"] + d, {}).get("kind", "")) in ["oil", "goo", "rich_goo"]:
+				if Content.is_corruption(String(game.terrain.get(game.player["pos"] + d, {}).get("kind", ""))):
 					can = true
 					break
 		if can:
@@ -1809,7 +1809,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	var blight := {}
 	for bt in snap["terrain"].keys():
 		var bk := String(snap["terrain"][bt]["kind"])
-		if bk == "oil" or bk == "goo" or bk == "rich_goo":
+		if Content.is_corruption(bk):
 			blight[bt] = true
 			for d in DIRS4.values():
 				blight[bt + d] = true
@@ -1888,7 +1888,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 					draw_circle(ctr + Vector2(_ts * 0.26, -_ts * 0.18), _ts * 0.022, Color(0.95, 0.9, 0.55))
 			else:
 				_sprite(tk, t)
-			if tk == "oil" or tk == "goo" or tk == "rich_goo":
+			if Content.is_corruption(tk):
 				var shm := 0.04 + 0.04 * sin(Time.get_ticks_msec() / 600.0 + float(t.x * 5 + t.y * 3))
 				draw_circle(_tile_rect(t).get_center() + Vector2(-_ts * 0.15, -_ts * 0.1),
 					_ts * 0.10, Color(0.62, 0.55, 0.68, shm))

@@ -3,6 +3,11 @@ extends "res://bots/bot_base.gd"
 ## Priorities: descend > strike > lance > dodge telegraphed damage > cleanse
 ## when safe > path to stairs > pull a blocker into reach > end turn.
 
+## sim/content.gd under a shouting name: the subclasses (fanatic, deeproot)
+## already declare a `Content` const of their own and GDScript forbids
+## redeclaring an inherited member.
+const CONTENT := preload("res://sim/content.gd")
+
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
 ## Ability preference, best first: this ranks the draft offers. Base ids only;
@@ -470,7 +475,11 @@ func _threat_tiles(snap: Dictionary) -> Dictionary:
 			ignite_coming = true
 	for tile in snap["terrain"].keys():
 		var k: String = snap["terrain"][tile]["kind"]
-		if k == "fire" or (ignite_coming and k == "oil"):
+		# threat = terrain that burns whoever stands in it, plus anything
+		# flammable while an ignite_all is telegraphed
+		var burns: bool = int(CONTENT.terrain(k, "tick_dmg_player", 0)) > 0
+		var will_burn: bool = ignite_coming and bool(CONTENT.terrain(k, "flammable", false))
+		if burns or will_burn:
 			t[tile] = true
 	return t
 
@@ -511,7 +520,8 @@ func _nearest_enemy_dist(snap: Dictionary) -> int:
 
 func _hazard(snap: Dictionary, pos: Vector2i) -> bool:
 	var k: String = snap["terrain"].get(pos, {}).get("kind", "")
-	return k == "fire" or k == "goo" or k == "rich_goo"
+	# hazard = terrain that damages the player for stepping onto it
+	return int(CONTENT.terrain(k, "enter_dmg_player", 0)) > 0
 
 
 func _lance_hits(snap: Dictionary, dir: Vector2i) -> bool:
@@ -523,7 +533,7 @@ func _lance_hits(snap: Dictionary, dir: Vector2i) -> bool:
 			return false
 		if m["tiles"][p.y * int(m["w"]) + p.x] != 1:
 			return false
-		if snap["terrain"].get(p, {}).get("kind", "") == "smoke":
+		if bool(CONTENT.terrain(snap["terrain"].get(p, {}).get("kind", ""), "blocks_beam", false)):
 			return false
 		if _enemy_at(snap, p) != null:
 			return true
@@ -626,7 +636,9 @@ func _bfs_step(snap: Dictionary, strict: bool, threat: Dictionary, goal: Vector2
 				if threat.has(nxt):
 					continue
 				var k: String = snap["terrain"].get(nxt, {}).get("kind", "")
-				if k == "fire" or k == "goo" or k == "rich_goo" or k == "oil":
+				# bad footing: anything that hurts on entry, plus corruption
+				# (oil) - a strict route steps on neither
+				if int(CONTENT.terrain(k, "enter_dmg_player", 0)) > 0 or CONTENT.is_corruption(k):
 					continue
 			prev[nxt] = cur
 			queue.append(nxt)
@@ -639,7 +651,7 @@ func _nearest_corruption(snap: Dictionary) -> Vector2i:
 	var bd := 99999
 	for t in snap["terrain"].keys():
 		var k := String(snap["terrain"][t]["kind"])
-		if k != "oil" and k != "goo" and k != "rich_goo":
+		if not CONTENT.is_corruption(k):
 			continue
 		var d: int = absi(t.x - pp.x) + absi(t.y - pp.y)
 		if d < bd:

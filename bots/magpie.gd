@@ -90,7 +90,7 @@ func _nearest_corruption(snap: Dictionary) -> Vector2i:
 	var best_d := 9999
 	for t in snap["terrain"].keys():
 		var k: String = snap["terrain"][t]["kind"]
-		if k != "oil" and k != "goo" and k != "rich_goo":
+		if not CONTENT.is_corruption(k):
 			continue
 		var d: int = absi(t.x - ppos.x) + absi(t.y - ppos.y)
 		if k == "rich_goo":

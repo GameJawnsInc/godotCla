@@ -405,6 +405,134 @@ const ELITE_HP_BONUS := 2
 const ELITE_DMG_BONUS := 0
 const ELITE_BOUNTY := 4
 
+## --- Effect grammar data tables (docs/PROGRESSION_REVIEW.md §6.3, C1) -------
+## Every literal the sim used to hardcode about terrain, statuses and terrain
+## reactions lives here. C1a introduces the tables with zero behaviour change;
+## later blocks flip rows (ash, root blocking advance/drag, spore add-stack).
+
+## Per-ability surge rule (key "surge" on an ABILITIES row; this is the default
+## when the row has none): a cast of base cost >= 2 made while standing on
+## growth costs maxi(1, base + cost) and consumes the growth tile.
+const SURGE_DEFAULT := {"cost": -1}
+
+## Terrain kinds. Required keys (tests/test_content.gd lints them):
+##   corruption      counts for the cleanse quota / room bloom / floor restore
+##   shields_core    adjacency shields a low-hp boss core (Game._corruption_adjacent)
+##   flammable       lance / flare / igniter / ignite_all turn it into fire
+##   washable        a water wash removes it
+##   bloom           cleanse yield when the tile carries no "bloom" key of its own
+##   ttl             lifetime written when the sim creates the tile (0 = the
+##                   creator decides: roots take theirs from the ability)
+##   decays          loses one ttl per environment phase and expires at 0
+##   enter_dmg_player / enter_dmg_enemy   damage on stepping onto the tile
+##   enter_src       player-side damage source string for enter damage
+##   tick_dmg_player / tick_dmg_enemy     damage for standing on it each
+##                   environment phase (enemy source is "<kind>:<by>")
+##   blocks          impassable (Game._open)
+##   blocks_beam     stops lances and enemy_line targeting (Game._line_clear)
+##   heal            hp the player regains per environment phase standing on it
+##   burns_to        what an expiring fire leaves behind ("" = nothing; C1b: ash)
+const TERRAIN := {
+	"oil": {
+		"corruption": true, "shields_core": true, "flammable": true, "washable": true,
+		"bloom": 1, "ttl": 0, "decays": false,
+		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
+		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "",
+	},
+	"goo": {
+		"corruption": true, "shields_core": true, "flammable": false, "washable": false,
+		"bloom": 1, "ttl": 0, "decays": false,
+		"enter_dmg_player": 1, "enter_dmg_enemy": 0, "enter_src": "goo",
+		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "",
+	},
+	"rich_goo": {
+		"corruption": true, "shields_core": true, "flammable": false, "washable": false,
+		"bloom": RICH_GOO_BLOOM, "ttl": 0, "decays": false,
+		"enter_dmg_player": 1, "enter_dmg_enemy": 0, "enter_src": "goo",
+		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "",
+	},
+	"growth": {
+		"corruption": false, "shields_core": false, "flammable": false, "washable": false,
+		"bloom": 0, "ttl": 0, "decays": false,
+		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
+		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
+		"blocks": false, "blocks_beam": false, "heal": 1, "burns_to": "",
+	},
+	"fire": {
+		"corruption": false, "shields_core": false, "flammable": false, "washable": true,
+		"bloom": 0, "ttl": 2, "decays": true,
+		"enter_dmg_player": 1, "enter_dmg_enemy": 1, "enter_src": "fire",
+		"tick_dmg_player": 1, "tick_dmg_enemy": 1,
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "",
+	},
+	"smoke": {
+		"corruption": false, "shields_core": false, "flammable": false, "washable": false,
+		"bloom": 0, "ttl": 3, "decays": true,
+		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
+		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
+		"blocks": false, "blocks_beam": true, "heal": 0, "burns_to": "",
+	},
+	"roots": {
+		"corruption": false, "shields_core": false, "flammable": false, "washable": false,
+		"bloom": 0, "ttl": 0, "decays": true,
+		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
+		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
+		"blocks": true, "blocks_beam": false, "heal": 0, "burns_to": "",
+	},
+	"supply": {
+		"corruption": false, "shields_core": false, "flammable": false, "washable": false,
+		"bloom": 0, "ttl": 0, "decays": false,
+		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
+		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "",
+	},
+}
+
+## Terrain reactions, consumed by Game._terrain_react() once per environment
+## phase. Row shape: {id, from, adjacent | on_expire | on_wash, result, event,
+## enabled}. "adjacent": every enabled `from` tile turns each neighbouring
+## `adjacent` tile into `result` (the first source in map order signs the new
+## tile's "by"; the replaced tile's "bloom" flag is inherited; "" removes the
+## tile). "on_expire": a decaying `from` tile whose ttl hits 0 becomes
+## `result` ("" = removed). "on_wash" is reserved for C1b (a wash over `from`);
+## no consumer reads it yet. Disabled rows are design intent kept as data.
+const REACTIONS := [
+	{"id": "fire_spreads", "from": "fire", "adjacent": "oil", "result": "fire", "event": "ignite", "enabled": true},
+	{"id": "fire_burns_out", "from": "fire", "on_expire": true, "result": "", "event": "", "enabled": true},
+	{"id": "damp", "from": "goo", "on_wash": true, "result": "", "event": "damp", "enabled": false},
+	{"id": "roots_burn", "from": "fire", "adjacent": "roots", "result": "fire", "event": "ignite", "enabled": false},
+	{"id": "smoke_smother", "from": "smoke", "adjacent": "fire", "result": "", "event": "smothered", "enabled": false},
+]
+
+## Enemy statuses. stack: "max" keeps the longer duration, "add" sums (capped
+## at `cap` when cap > 0). blocks: intent types the status swallows ("*" =
+## every intent); a blocked intent decrements the status and emits
+## blocked_event. tick_dmg: damage per environment phase while it lasts
+## (source = the status name), decrementing the status each tick. The stagger
+## cooldown (status "stagger_cd") is an internal field, not a row here.
+const STATUSES := {
+	"stun": {"stack": "max", "blocks": ["*"], "tick_dmg": 0, "cap": 0, "blocked_event": "stunned"},
+	"root": {"stack": "max", "blocks": ["move"], "tick_dmg": 0, "cap": 0, "blocked_event": "rooted"},
+	"spore": {"stack": "max", "blocks": [], "tick_dmg": 1, "cap": 0},
+}
+
+
+## One TERRAIN attribute; `default` when the kind or key is unknown ("" is the
+## no-terrain kind and always reads as default).
+static func terrain(kind: String, key: String, default = null):
+	var row = TERRAIN.get(kind)
+	if row == null:
+		return default
+	return row.get(key, default)
+
+
+static func is_corruption(kind: String) -> bool:
+	return bool(terrain(kind, "corruption", false))
+
+
 const ENEMIES := {
 	"drill_bot": {"name": "Drill Bot", "hp": 3, "dmg": 2, "slow": false, "traits": ["fuses"]},
 	"oil_sludge": {"name": "Oil Sludge", "hp": 4, "dmg": 1, "slow": true, "traits": ["splits", "oil_trail"]},

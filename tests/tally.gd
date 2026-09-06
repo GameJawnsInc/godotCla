@@ -5,6 +5,8 @@ extends RefCounted
 ## stalls). Ability ids are normalised to their base id (trim "+"); plus-form
 ## casts are counted separately in plus_casts. Pure bookkeeping: it never
 ## touches the game, so feeding it cannot change a run.
+## Since Block C1a it also counts effect-grammar rider events (per / bonus /
+## then), which feed the combo rate alongside ignite / verdant / stagger.
 
 # --- actions ------------------------------------------------------------------
 var casts_by_base := {}
@@ -58,6 +60,11 @@ var floor_restored := 0
 var seal_burst := 0
 var growth_heal_hp := 0
 var shield_absorb_hp := 0
+## Rider events ({"t": "rider", id, kind, amt}) by kind (per / bonus / then)
+## and by casting ability id. Unlike casts_by_base these keep the raw id, so a
+## rider only the "+" form carries stays visible (as collision_by_aid does).
+var riders_by_kind := {}
+var riders_by_aid := {}
 
 # --- damage by raw source string ---------------------------------------------
 var enemy_dmg_by_src := {}
@@ -193,6 +200,9 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 			growth_heal_hp += int(ev.get("amt", 0))
 		"shield_absorb":
 			shield_absorb_hp += int(ev.get("amt", 0))
+		"rider":
+			_inc(riders_by_kind, String(ev.get("kind", "")))
+			_inc(riders_by_aid, String(ev.get("id", "")))
 		"damage":
 			_add_damage(ev)
 		"death":
@@ -307,6 +317,8 @@ func merge(other) -> void:
 	seal_burst += other.seal_burst
 	growth_heal_hp += other.growth_heal_hp
 	shield_absorb_hp += other.shield_absorb_hp
+	_merge_dict(riders_by_kind, other.riders_by_kind)
+	_merge_dict(riders_by_aid, other.riders_by_aid)
 	_merge_dict(enemy_dmg_by_src, other.enemy_dmg_by_src)
 	_merge_dict(player_dmg_by_src, other.player_dmg_by_src)
 	_merge_dict(kills_by_kind, other.kills_by_kind)
@@ -407,7 +419,11 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 				fire_dmg += amt
 			"collision", "thorns", "spore":
 				terrain += amt
-	var combos: int = t.ignite_ability + t.verdant + t.staggered + t.collision_hits + t.convert + t.thorns_hits
+	# Riders are combos too: a per / bonus / then that actually changed
+	# something is exactly the "the pieces talked to each other" event the
+	# combo rate counts (review 7.1; zero until a content row carries one).
+	var riders := _sum(t.riders_by_kind)
+	var combos: int = t.ignite_ability + t.verdant + t.staggered + t.collision_hits + t.convert + t.thorns_hits + riders
 	var pick_rate := {}
 	for aid in t.offers_by_id:
 		pick_rate[aid] = _safe_div(float(t.picks_by_id.get(aid, 0)), float(t.offers_by_id[aid]))
@@ -427,6 +443,10 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 		"collision_by_aid": t.collision_by_aid.duplicate(),
 		"quota_reclamps": t.quota_reclamps,
 		"graft_discards": t.graft_discards,
+		# effect-grammar riders (Block C1a)
+		"riders": riders,
+		"riders_by_kind": t.riders_by_kind.duplicate(),
+		"riders_by_aid": t.riders_by_aid.duplicate(),
 	}
 
 
@@ -459,6 +479,8 @@ func print_block(n_runs: int, kits: Array) -> void:
 		k["combo_rate"], ignite_ability / n, ignite_env / n, verdant / n, staggered / n, collision_hits / n,
 		thorns_hits / n, fire_hits_enemy / n, spore_ticks / n, convert / n, wash / n, room_bloom / n,
 		floor_restored / n, seal_burst / n])
+	print("           riders: %.2f/run  by kind %s  by ability %s" % [
+		float(_sum(riders_by_kind)) / n, str(riders_by_kind), str(riders_by_aid)])
 	print("           bloom earned %.1f/run  spent %.1f/run  conversion %.2f  buys %s  grafts %s  ability buys %s  upcycles %d/%d  pickups %d  satchel_full %d" % [
 		bloom_earned / n, bloom_spent / n, k["bloom_conversion"], str(buys_by_kind), str(grafts_by_id),
 		str(ability_buys_by_id), upcycles, upcycle_abilities, item_pickups, satchel_full])

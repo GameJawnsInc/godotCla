@@ -62,6 +62,13 @@ var greened := 0  # corruption cleansed this floor
 var green_need := 0  # dormant-stairs quota (clamped to generated corruption)  # pending extra smog ticks from live smokestacks
 var _fixed_floor := {}  # config "fixed_floor": scripted floor-1 layout (tutorials, tests)
 
+## Per-turn cast context counters (docs/PROGRESSION_REVIEW.md §6.3 C1): reset
+## in _begin_player_turn, copied by clone(). Deliberately NOT part of
+## snapshot() yet so state_hash() stays identical to the pre-grammar sim; a
+## later block exposes them alongside a SIM_VERSION bump.
+var casts_this_turn := 0
+var moved_this_turn := 0
+
 var _next_id := 1
 var _step_events: Array = []
 var _pending_floor := 0
@@ -231,8 +238,7 @@ func legal_actions() -> Array:
 				acts.append({"type": "strike", "dir": d})
 	if player["charge"] >= Content.CLEANSE_COST:
 		for d in DIRS:
-			var k := _terrain_kind(player["pos"] + d)
-			if k == "oil" or k == "goo" or k == "rich_goo":
+			if Content.is_corruption(_terrain_kind(player["pos"] + d)):
 				acts.append({"type": "cleanse", "target": player["pos"] + d})
 	for slot in player["kit"].size():
 		if player["gummed"].has(slot):
@@ -359,6 +365,8 @@ func clone():
 	g.phase = phase
 	g.draft_offers = draft_offers.duplicate()
 	g.shop = shop.duplicate(true)
+	g.casts_this_turn = casts_this_turn
+	g.moved_this_turn = moved_this_turn
 	g._next_id = _next_id
 	g._pending_floor = _pending_floor
 	return g
@@ -474,6 +482,8 @@ func _begin_player_turn() -> void:
 	var regen: int = maxi(1, Content.BASE_REGEN - dim) + (1 if _has_graft("solar_core") else 0)
 	player["charge"] = player["bank"] + regen
 	player["bank"] = 0
+	casts_this_turn = 0
+	moved_this_turn = 0
 	for slot in player["gummed"].keys().duplicate():
 		player["gummed"][slot] -= 1
 		if player["gummed"][slot] <= 0:
@@ -570,12 +580,22 @@ func _compute_intents() -> void:
 			e["intent"] = {"type": "move"}
 
 
-func _apply_status(e: Dictionary, status: String, turns: int) -> void:
+## Stack rule from Content.STATUSES: "max" keeps the longer duration, "add"
+## sums (capped at `cap` when cap > 0). Returns true when the status landed.
+func _apply_status(e: Dictionary, status: String, turns: int) -> bool:
 	if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
 		_emit({"t": "immune", "id": e["id"]})
-		return
-	e["status"][status] = maxi(int(e["status"].get(status, 0)), turns)
+		return false
+	var sdef: Dictionary = Content.STATUSES.get(status, {})
+	var have: int = int(e["status"].get(status, 0))
+	if String(sdef.get("stack", "max")) == "add":
+		var total: int = have + turns
+		var cap: int = int(sdef.get("cap", 0))
+		e["status"][status] = mini(total, cap) if cap > 0 else total
+	else:
+		e["status"][status] = maxi(have, turns)
 	_emit({"t": "status", "id": e["id"], "status": status, "turns": turns})
+	return true
 
 
 func _compute_boss_intent(e: Dictionary, edef: Dictionary) -> void:
@@ -649,15 +669,18 @@ func _stagger(e: Dictionary) -> void:
 func _execute_intent(e: Dictionary) -> void:
 	if int(e["status"].get("stagger_cd", 0)) > 0:
 		e["status"]["stagger_cd"] -= 1
-	if int(e["status"].get("stun", 0)) > 0:
-		e["status"]["stun"] -= 1
-		_emit({"t": "stunned", "id": e["id"]})
-		return
 	var it: Dictionary = e["intent"]
-	if String(it.get("type", "")) == "move" and int(e["status"].get("root", 0)) > 0:
-		e["status"]["root"] -= 1
-		_emit({"t": "rooted", "id": e["id"]})
-		return
+	# Content.STATUSES blocks, in table order: the first status that swallows
+	# this intent ticks down and ends the enemy's turn
+	var itype := String(it.get("type", ""))
+	for sname in Content.STATUSES:
+		if int(e["status"].get(sname, 0)) <= 0:
+			continue
+		var blocks: Array = Content.STATUSES[sname].get("blocks", [])
+		if blocks.has("*") or blocks.has(itype):
+			e["status"][sname] -= 1
+			_emit({"t": String(Content.STATUSES[sname].get("blocked_event", sname)), "id": e["id"]})
+			return
 	match String(it.get("type", "idle")):
 		"fuse":
 			var partner = null
@@ -698,8 +721,8 @@ func _execute_intent(e: Dictionary) -> void:
 		"ignite_all":
 			e["cycle"] = int(e.get("cycle", 0)) + 1
 			for t in terrain.keys().duplicate():
-				if terrain[t]["kind"] == "oil":
-					terrain[t] = {"kind": "fire", "ttl": 2, "by": e["kind"]}
+				if Content.terrain(String(terrain[t]["kind"]), "flammable", false):
+					_ignite(t, e["kind"])
 			_emit({"t": "ignite_all"})
 		"gather":
 			e["cycle"] = int(e.get("cycle", 0)) + 1
@@ -821,47 +844,100 @@ func _execute_intent(e: Dictionary) -> void:
 
 
 func _environment_phase() -> void:
-	var fires: Array = []
+	# hazard tick: every tile whose kind burns whoever stands on it
+	# (Content.TERRAIN tick_dmg_*; fire today), captured first in map order
+	var hazards: Array = []
 	for t in terrain.keys():
-		if terrain[t]["kind"] == "fire":
-			fires.append(t)
-	for t in fires:
-		if player["pos"] == t:
-			_damage_player(1, "fire")
+		var k := String(terrain[t]["kind"])
+		if int(Content.terrain(k, "tick_dmg_player", 0)) > 0 or int(Content.terrain(k, "tick_dmg_enemy", 0)) > 0:
+			hazards.append(t)
+	for t in hazards:
+		var k := _terrain_kind(t)
+		var pdmg := int(Content.terrain(k, "tick_dmg_player", 0))
+		if pdmg > 0 and player["pos"] == t:
+			_damage_player(pdmg, k)
 			if over:
 				return
+		var edmg := int(Content.terrain(k, "tick_dmg_enemy", 0))
 		var e = _enemy_at(t)
-		if e != null:
-			_damage_enemy(e, 1, "fire:" + _fire_by(t))
-	# spread keeps the igniter's attribution: the first adjacent fire in the
-	# deterministic fires order signs the new tile
-	var spreads := {}
-	for t in fires:
-		for d in DIRS:
-			var p: Vector2i = t + d
-			if _terrain_kind(p) == "oil" and not spreads.has(p):
-				spreads[p] = _fire_by(t)
-	for t in fires:
-		if terrain.has(t):
-			terrain[t]["ttl"] -= 1
-			if terrain[t]["ttl"] <= 0:
-				terrain.erase(t)
-	for t in terrain.keys().duplicate():
-		if terrain[t]["kind"] == "roots" or terrain[t]["kind"] == "smoke":
-			terrain[t]["ttl"] -= 1
-			if terrain[t]["ttl"] <= 0:
-				terrain.erase(t)
-	for p in spreads:
-		terrain[p] = {"kind": "fire", "ttl": 2, "by": spreads[p]}
-		_emit({"t": "ignite", "tile": p})
+		if edmg > 0 and e != null:
+			_damage_enemy(e, edmg, k + ":" + _fire_by(t))
+	_terrain_react()
+	# status ticks (Content.STATUSES tick_dmg): the status itself is the source
 	for e in enemies.duplicate():
-		if int(e["status"].get("spore", 0)) > 0:
-			e["status"]["spore"] -= 1
-			_damage_enemy(e, 1, "spore")
-	if _terrain_kind(player["pos"]) == "growth" and player["hp"] < player["max_hp"]:
-		var heal_amt: int = 1 + (1 if _has_graft("verdant_pulse") else 0)
+		for sname in Content.STATUSES:
+			var tick := int(Content.STATUSES[sname].get("tick_dmg", 0))
+			if tick > 0 and int(e["status"].get(sname, 0)) > 0:
+				e["status"][sname] -= 1
+				_damage_enemy(e, tick, sname)
+	var heal := int(Content.terrain(_terrain_kind(player["pos"]), "heal", 0))
+	if heal > 0 and player["hp"] < player["max_hp"]:
+		var heal_amt: int = heal + (1 if _has_graft("verdant_pulse") else 0)
 		player["hp"] = mini(player["hp"] + heal_amt, player["max_hp"])
 		_emit({"t": "heal", "amt": heal_amt})
+
+
+## Terrain reactions (Content.REACTIONS), one pass per environment phase:
+## 1) "adjacent" rows are evaluated from every enabled `from` tile in map
+##    order, before any ttl decay; the first source tile to reach a target
+##    signs it ("by"), and no target is claimed twice;
+## 2) every decaying kind (Content.TERRAIN decays) loses one ttl in map order
+##    and an expiring tile becomes its "on_expire" result, or vanishes;
+## 3) the adjacency results are written ({kind, ttl, by}) and each emits the
+##    row's event.
+## Reproduces the pre-table fire spread exactly: spreads computed from the
+## fires standing before decay, applied after it. The replaced tile's "bloom"
+## flag is NOT carried onto the new tile yet: doing so changes the terrain
+## dicts in the state hash (two strict regression records), so it lands with
+## ash and the SIM_VERSION bump in C1b (an expiring tile already hands its
+## flag to its on_expire result, which is inert while every result is "").
+func _terrain_react() -> void:
+	var adj_rows: Array = []
+	var expire := {}
+	for row in Content.REACTIONS:
+		if not bool(row.get("enabled", false)):
+			continue
+		if row.has("adjacent"):
+			adj_rows.append(row)
+		elif row.has("on_expire"):
+			expire[String(row["from"])] = String(row.get("result", ""))
+	var pending := {}
+	if not adj_rows.is_empty():
+		for t in terrain.keys():
+			var k := String(terrain[t]["kind"])
+			for row in adj_rows:
+				if String(row["from"]) != k:
+					continue
+				for d in DIRS:
+					var p: Vector2i = t + d
+					if _terrain_kind(p) == String(row["adjacent"]) and not pending.has(p):
+						pending[p] = {"row": row, "by": _fire_by(t)}
+	for t in terrain.keys().duplicate():
+		var k := String(terrain[t]["kind"])
+		if not bool(Content.terrain(k, "decays", false)):
+			continue
+		terrain[t]["ttl"] = int(terrain[t].get("ttl", 0)) - 1
+		if terrain[t]["ttl"] <= 0:
+			var result := String(expire.get(k, ""))
+			if result == "":
+				terrain.erase(t)
+			else:
+				var made := {"kind": result, "ttl": int(Content.terrain(result, "ttl", 0))}
+				if terrain[t].has("by"):
+					made["by"] = terrain[t]["by"]
+				if terrain[t].has("bloom"):
+					made["bloom"] = terrain[t]["bloom"]
+				terrain[t] = made
+	for p in pending:
+		var row: Dictionary = pending[p]["row"]
+		var result := String(row.get("result", ""))
+		if result == "":
+			terrain.erase(p)
+		else:
+			terrain[p] = {"kind": result, "ttl": int(Content.terrain(result, "ttl", 0)), "by": pending[p]["by"]}
+		var ev := String(row.get("event", ""))
+		if ev != "":
+			_emit({"t": ev, "tile": p})
 
 
 func _tick_smog() -> void:
@@ -913,6 +989,7 @@ func _act_move(action: Dictionary) -> void:
 		return
 	player["charge"] -= cost
 	player["pos"] = dest
+	moved_this_turn += 1
 	_emit({"t": "move", "who": "player", "to": dest})
 	_player_enter_tile()
 
@@ -941,7 +1018,7 @@ func _act_strike(action: Dictionary) -> void:
 func _act_cleanse(action: Dictionary) -> void:
 	var target: Vector2i = action.get("target", Vector2i(-1, -1))
 	var k := _terrain_kind(target)
-	var legal := _manhattan(target, player["pos"]) == 1 and (k == "oil" or k == "goo" or k == "rich_goo")
+	var legal := _manhattan(target, player["pos"]) == 1 and Content.is_corruption(k)
 	if not legal or player["charge"] < Content.CLEANSE_COST:
 		_emit({"t": "illegal", "action": "cleanse"})
 		return
@@ -949,7 +1026,7 @@ func _act_cleanse(action: Dictionary) -> void:
 	# tending leaves life behind: the cleansed tile sprouts growth. Mapgen
 	# corruption pays 1 (rich goo more); enemy-made oil carries bloom 0 and
 	# pays nothing (surge included) - it still counts toward the quota.
-	var yield_: int = Content.RICH_GOO_BLOOM if k == "rich_goo" else int(terrain[target].get("bloom", 1))
+	var yield_: int = int(terrain[target].get("bloom", Content.terrain(k, "bloom", 1)))
 	terrain[target] = {"kind": "growth"}
 	if yield_ > 0:
 		bloom += yield_ + (1 if _has_graft("bloom_surge") else 0)
@@ -1154,8 +1231,7 @@ func _room_of(p: Vector2i) -> int:
 func _count_corruption() -> int:
 	var cnt := 0
 	for t in terrain.keys():
-		var k := String(terrain[t]["kind"])
-		if k == "oil" or k == "goo" or k == "rich_goo":
+		if Content.is_corruption(String(terrain[t]["kind"])):
 			cnt += 1
 	return cnt
 
@@ -1163,10 +1239,8 @@ func _count_corruption() -> int:
 func _room_has_corruption(ri: int) -> bool:
 	var r: Rect2i = map["rooms"][ri]
 	for t in terrain.keys():
-		if r.has_point(t):
-			var k := String(terrain[t]["kind"])
-			if k == "oil" or k == "goo" or k == "rich_goo":
-				return true
+		if r.has_point(t) and Content.is_corruption(String(terrain[t]["kind"])):
+			return true
 	return false
 
 
@@ -1285,17 +1359,26 @@ func _act_ability(action: Dictionary) -> void:
 		_emit({"t": "verdant", "tile": player["pos"]})
 	player["charge"] -= cost
 	player["uses"][aid] = int(player["uses"].get(aid, 0)) + 1
+	# cast context: what the riders (if / per / bonus / then) may read
+	var ctx := {
+		"aid": aid, "adef": adef, "target": target, "origin": player["pos"],
+		"casts_before": casts_this_turn, "moved": moved_this_turn,
+	}
+	casts_this_turn += 1
 	_emit({"t": "ability", "id": aid, "target": target})
 	for eff in adef["effects"]:
-		_apply_effect(eff, adef, target, aid)
+		_apply_effect(eff, adef, target, aid, ctx)
 
 
-## Live cost of an ability right now: standing on growth discounts a
-## 2+ cost cast by 1, consuming the tile (verdant surge).
+## Live cost of an ability right now: standing on growth applies the
+## ability's surge rule (Content.SURGE_DEFAULT unless the row carries its own
+## "surge") to a cost-2+ cast, consuming the tile (verdant surge).
 func ability_cost(aid: String) -> int:
-	var base: int = int(Content.ABILITIES[aid]["cost"])
+	var adef: Dictionary = Content.ABILITIES[aid]
+	var base: int = int(adef["cost"])
 	if base >= 2 and _terrain_kind(player["pos"]) == "growth":
-		return base - 1
+		var surge: Dictionary = adef.get("surge", Content.SURGE_DEFAULT)
+		return maxi(1, base + int(surge.get("cost", -1)))
 	return base
 
 
@@ -1365,21 +1448,74 @@ func _ability_targets(aid: String) -> Array:
 
 ## `aid` is the casting ability: every damage, ignition and collision the
 ## effect causes is attributed to it (events, autopsy, death tables).
-func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String) -> void:
+##
+## Effect grammar (docs/PROGRESSION_REVIEW.md §6.3 C1). Any effect dict may
+## carry three optional rider keys, evaluated by _rider_if / _rider_per only:
+##   "if":    Array of predicate dicts, every key of every dict must hold;
+##            a failed `if` skips the effect (zero outcome, no event)
+##   "per":   {count, radius?, cap, add: {key: n}} - before the op runs, each
+##            add key grows by add[k] * min(count, cap) on a copy of the effect
+##   "bonus": {dmg, if: [...]} - per affected enemy inside aoe_damage, lance,
+##            damage and collision damage; its predicates read the enemy's tile
+##   "then":  Array of effects run once, in order, after the parent when the
+##            parent outcome has any counter > 0 or a non-empty crossed list;
+##            they share the parent's target and see its outcome through
+##            `outcome` / `outcome_crossed` predicates (ctx["parent"]). A then
+##            inside a then is rejected: error event, zero outcome. The
+##            {t: rider, kind: then} event fires once per then-effect whose
+##            own outcome fired, never for one that found nothing to do.
+## On `pull` the bonus rides the lash hit (pull has no collision damage) and
+## its predicates read the enemy's landing tile.
+## `ctx` is the cast context built by _act_ability: {aid, adef, target, origin,
+## casts_before, moved} plus "parent" (the parent outcome) inside a then.
+## Returns the outcome: int counters hit / ignited / pushed / collided /
+## converted / planted / washed / statused, `affected` (ids of enemies the op damaged,
+## displaced or statused), `crossed` (terrain kinds any displaced enemy
+## stepped onto) and `tiles` (tiles the op planted or converted, read by
+## status_target who = "on_planted").
+func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: Dictionary = {}) -> Dictionary:
+	var out := _zero_outcome()
+	var parent = ctx.get("parent", null)
+	if parent != null and eff.has("then"):
+		_emit({"t": "error", "msg": "nested then in %s" % aid})
+		return out
+	if eff.has("if") and not _rider_if(eff["if"], ctx, parent, null):
+		return out
+	if eff.has("per"):
+		var per: Dictionary = eff["per"]
+		var n := _rider_per(per, ctx)
+		var cap := int(per.get("cap", 0))
+		if cap > 0:
+			n = mini(n, cap)
+		if n > 0:
+			var added := 0
+			var grown := eff.duplicate()
+			for k in per.get("add", {}):
+				var delta: int = int(per["add"][k]) * n
+				grown[k] = int(eff.get(k, 0)) + delta
+				added += delta
+			if added != 0:
+				eff = grown
+				# rider/per: the scaled add (amt = total added)
+				_emit({"t": "rider", "id": aid, "kind": "per", "amt": added})
 	match String(eff["op"]):
 		"lance":
 			var dmg: int = eff["dmg"] + (int(eff["clear_smog_bonus"]) if dim == 0 else 0)
 			var p: Vector2i = player["pos"]
 			for i in range(int(adef["range"])):
 				p += target
-				if _tile(p) == MapGen.T_WALL or _terrain_kind(p) == "smoke":
+				var k := _terrain_kind(p)
+				if _tile(p) == MapGen.T_WALL or bool(Content.terrain(k, "blocks_beam", false)):
 					break
-				if _terrain_kind(p) == "oil" and bool(eff["ignite"]):
-					terrain[p] = {"kind": "fire", "ttl": 2, "by": aid}
+				if bool(Content.terrain(k, "flammable", false)) and bool(eff["ignite"]):
+					_ignite(p, aid)
 					_emit({"t": "ignite", "tile": p})
+					out["ignited"] += 1
 				var e = _enemy_at(p)
 				if e != null:
-					_damage_enemy(e, dmg, aid)
+					if _damage_enemy(e, dmg + _bonus_dmg(eff, ctx, e), aid):
+						out["hit"] += 1
+					_affect(out, e)
 					break
 		"grow_radius":
 			var tiles_: Array = [target]
@@ -1388,11 +1524,13 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String) -> vo
 			for t in tiles_:
 				if _tile(t) == MapGen.T_FLOOR and not terrain.has(t):
 					terrain[t] = {"kind": "growth"}
+					out["planted"] += 1
+					out["tiles"].append(t)
 			_emit({"t": "growth", "tile": target})
 		"pull":
 			var e = _enemy_at(target)
 			if e == null:
-				return
+				return out
 			# massive enemies cannot be dragged, but the lash still lands -
 			# no ability should be a dead button against bosses
 			if not Content.ENEMIES[e["kind"]]["traits"].has("massive"):
@@ -1405,17 +1543,23 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String) -> vo
 						break
 					e["pos"] = nxt
 					pulled += 1
+					_cross(out["crossed"], nxt)
 					_enemy_enter_tile(e)
 					if not enemies.has(e):
-						return
+						out["pushed"] += 1
+						_affect(out, e)
+						return out
 				if pulled > 0:
+					out["pushed"] += 1
 					_stagger(e)
-			_damage_enemy(e, int(eff["dmg"]), aid)
+			if _damage_enemy(e, int(eff["dmg"]) + _bonus_dmg(eff, ctx, e), aid):
+				out["hit"] += 1
+			_affect(out, e)
 		"wash_push":
-			_wash_dir(target, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]), aid)
+			_merge_wash(out, _wash_dir(target, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]), aid, eff, ctx))
 		"wash_all":
 			for d in DIRS:
-				_wash_dir(d, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]), aid)
+				_merge_wash(out, _wash_dir(d, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]), aid, eff, ctx))
 		"push_line":
 			var p: Vector2i = player["pos"]
 			for i in range(int(adef["range"])):
@@ -1427,28 +1571,31 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String) -> vo
 					_emit({"t": "smoke_cleared", "tile": p})
 				var e = _enemy_at(p)
 				if e != null:
-					_push_enemy(e, target, int(eff["dist"]), 1, aid)
+					_merge_push(out, _push_enemy(e, target, int(eff["dist"]), 1, aid, eff, ctx))
 					break
 		"push_all":
 			for d in DIRS:
 				var e = _enemy_at(player["pos"] + d)
 				if e != null:
-					_push_enemy(e, d, int(eff["dist"]), 1, aid)
+					_merge_push(out, _push_enemy(e, d, int(eff["dist"]), 1, aid, eff, ctx))
 		"dash_dir":
 			for i in range(int(adef["range"])):
 				var nxt: Vector2i = player["pos"] + target
 				if not _open(nxt):
 					break
 				player["pos"] = nxt
+				moved_this_turn += 1
 				_player_enter_tile()
 				if over:
-					return
+					return out
 			_emit({"t": "dash", "to": player["pos"]})
 		"create_terrain":
 			if _tile(target) == MapGen.T_FLOOR and not terrain.has(target):
 				terrain[target] = {"kind": String(eff["kind"]), "ttl": int(eff["ttl"])}
 				if String(eff["kind"]) == "fire":
 					terrain[target]["by"] = aid
+				out["planted"] += 1
+				out["tiles"].append(target)
 				_emit({"t": "terrain", "kind": eff["kind"], "tile": target})
 		"clear_smoke":
 			for t in terrain.keys().duplicate():
@@ -1456,6 +1603,8 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String) -> vo
 					terrain.erase(t)
 					_emit({"t": "smoke_cleared", "tile": t})
 		"teleport":
+			if target != player["pos"]:
+				moved_this_turn += 1
 			player["pos"] = target
 			_emit({"t": "teleport", "to": target})
 		"grow_wall":
@@ -1465,6 +1614,8 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String) -> vo
 			for t in walled:
 				if _tile(t) == MapGen.T_FLOOR and not terrain.has(t) and _open(t) and t != map["stairs"]:
 					terrain[t] = {"kind": "roots", "ttl": int(eff["ttl"])}
+					out["planted"] += 1
+					out["tiles"].append(t)
 			_emit({"t": "roots", "tile": target})
 		"shield":
 			player["shield"] = mini(player["shield"] + int(eff["amount"]), _shield_cap())
@@ -1485,15 +1636,21 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String) -> vo
 		"aoe_status":
 			for e in enemies.duplicate():
 				if _manhattan(e["pos"], player["pos"]) <= int(eff["radius"]):
-					_apply_status(e, String(eff["status"]), int(eff["turns"]))
+					if _apply_status(e, String(eff["status"]), int(eff["turns"])):
+						out["statused"] += 1
+						_affect(out, e)
 		"aoe_damage":
 			for t in terrain.keys().duplicate():
-				if bool(eff.get("ignite", false)) and terrain[t]["kind"] == "oil" and _manhattan(t, player["pos"]) <= int(eff["radius"]):
-					terrain[t] = {"kind": "fire", "ttl": 2, "by": aid}
+				if bool(eff.get("ignite", false)) and bool(Content.terrain(String(terrain[t]["kind"]), "flammable", false)) \
+						and _manhattan(t, player["pos"]) <= int(eff["radius"]):
+					_ignite(t, aid)
 					_emit({"t": "ignite", "tile": t})
+					out["ignited"] += 1
 			for e in enemies.duplicate():
 				if _manhattan(e["pos"], player["pos"]) <= int(eff["radius"]):
-					_damage_enemy(e, int(eff["dmg"]), aid)
+					if _damage_enemy(e, int(eff["dmg"]) + _bonus_dmg(eff, ctx, e), aid):
+						out["hit"] += 1
+					_affect(out, e)
 		"convert_radius":
 			for dy in range(-int(eff["radius"]), int(eff["radius"]) + 1):
 				for dx in range(-int(eff["radius"]), int(eff["radius"]) + 1):
@@ -1503,15 +1660,240 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String) -> vo
 					var k := _terrain_kind(t)
 					if k == "oil" or k == "goo":
 						terrain[t] = {"kind": "growth"}
+						out["converted"] += 1
+						out["tiles"].append(t)
 						_emit({"t": "convert", "tile": t})
 		"apply_status":
 			var e = _enemy_at(target)
 			if e != null:
-				_apply_status(e, String(eff["status"]), int(eff["turns"]))
+				if _apply_status(e, String(eff["status"]), int(eff["turns"])):
+					out["statused"] += 1
+					_affect(out, e)
 		"damage":
 			var e = _enemy_at(target)
 			if e != null:
-				_damage_enemy(e, int(eff["dmg"]), aid)
+				if _damage_enemy(e, int(eff["dmg"]) + _bonus_dmg(eff, ctx, e), aid):
+					out["hit"] += 1
+				_affect(out, e)
+		"status_target":
+			# then-only op: status the parent's affected enemies ("affected",
+			# default) or whoever stands on a tile the parent planted ("on_planted")
+			var par: Dictionary = parent if parent != null else _zero_outcome()
+			var ids: Array = []
+			if String(eff.get("who", "affected")) == "on_planted":
+				for t in par["tiles"]:
+					var e = _enemy_at(t)
+					if e != null:
+						ids.append(e["id"])
+			else:
+				ids = par["affected"].duplicate()
+			for id in ids:
+				var e = _enemy_by_id(int(id))
+				if e != null and _apply_status(e, String(eff["status"]), int(eff["turns"])):
+					out["statused"] += 1
+					_affect(out, e)
+		_:
+			_emit({"t": "error", "msg": "unknown effect op %s" % String(eff["op"])})
+	if eff.has("then") and _outcome_fired(out):
+		for sub in eff["then"]:
+			var c2 := ctx.duplicate()
+			c2["parent"] = out
+			var sub_out := _apply_effect(sub, adef, target, aid, c2)
+			# rider/then counts only a then-effect that changed something: its
+			# `if` held AND its own outcome fired (a then whose op found no
+			# enemy or no tile is not a combo, so the Tally never sees it)
+			if _outcome_fired(sub_out):
+				_emit({"t": "rider", "id": aid, "kind": "then", "amt": 1})
+	return out
+
+
+func _zero_outcome() -> Dictionary:
+	return {
+		"hit": 0, "ignited": 0, "pushed": 0, "collided": 0, "converted": 0, "planted": 0, "washed": 0,
+		"statused": 0, "affected": [], "crossed": [], "tiles": [],
+	}
+
+
+## True when any counter is above zero or a displaced enemy crossed terrain -
+## the condition for a "then" list to run.
+func _outcome_fired(out: Dictionary) -> bool:
+	for k in ["hit", "ignited", "pushed", "collided", "converted", "planted", "washed", "statused"]:
+		if int(out[k]) > 0:
+			return true
+	return not out["crossed"].is_empty()
+
+
+func _affect(out: Dictionary, e: Dictionary) -> void:
+	if not out["affected"].has(e["id"]):
+		out["affected"].append(e["id"])
+
+
+func _cross(crossed: Array, p: Vector2i) -> void:
+	var k := _terrain_kind(p)
+	if k != "" and not crossed.has(k):
+		crossed.append(k)
+
+
+func _merge_push(out: Dictionary, res: Dictionary) -> void:
+	if int(res["moved"]) > 0:
+		out["pushed"] += 1
+	out["collided"] += int(res["collided"])
+	for k in res["crossed"]:
+		if not out["crossed"].has(k):
+			out["crossed"].append(k)
+	for id in res["affected"]:
+		if not out["affected"].has(id):
+			out["affected"].append(id)
+
+
+func _merge_wash(out: Dictionary, res: Dictionary) -> void:
+	out["washed"] += int(res["washed"])
+	out["pushed"] += int(res["pushed"])
+	out["collided"] += int(res["collided"])
+	for k in res["crossed"]:
+		if not out["crossed"].has(k):
+			out["crossed"].append(k)
+	for id in res["affected"]:
+		if not out["affected"].has(id):
+			out["affected"].append(id)
+
+
+## The tile a rider predicate means by "target": the enemy's own tile when
+## evaluating a per-enemy bonus; for "dir" abilities the tile of the first
+## enemy the op would reach (walls stop the walk; null when none); otherwise
+## the cast target itself.
+func _rider_target_tile(ctx: Dictionary, enemy):
+	if enemy != null:
+		return enemy["pos"]
+	var adef: Dictionary = ctx.get("adef", {})
+	var target = ctx.get("target", null)
+	if target == null:
+		return null
+	if String(adef.get("target", "")) == "dir":
+		var p: Vector2i = ctx.get("origin", player["pos"])
+		for i in range(int(adef.get("range", 0))):
+			p += target
+			if _tile(p) == MapGen.T_WALL:
+				return null
+			if _enemy_at(p) != null:
+				return p
+		return null
+	return target
+
+
+## Rider predicates (closed v1 set), AND across dicts and across keys:
+##   target_on: [kinds]        terrain kind at the target tile is one of kinds
+##   target_adjacent: [kinds]  a tile orthogonally adjacent to the target holds one
+##   self_on: kind             terrain kind under the player
+##   dim: n                    exact dim stage
+##   casts_this_turn_min: n    ctx.casts_before >= n
+##   outcome: counter          (then only) parent outcome counter > 0
+##   outcome_crossed: kind     (then only) parent crossed has kind
+## `outcome` is the parent outcome inside a then, null otherwise (so outcome
+## predicates fail outside a then). Unknown keys fail closed.
+func _rider_if(preds: Array, ctx: Dictionary, outcome, enemy) -> bool:
+	for pred in preds:
+		for key in pred:
+			var v = pred[key]
+			match String(key):
+				"target_on":
+					var t = _rider_target_tile(ctx, enemy)
+					if t == null or not (v as Array).has(_terrain_kind(t)):
+						return false
+				"target_adjacent":
+					var t = _rider_target_tile(ctx, enemy)
+					if t == null:
+						return false
+					var found := false
+					for d in DIRS:
+						if (v as Array).has(_terrain_kind(t + d)):
+							found = true
+					if not found:
+						return false
+				"self_on":
+					if _terrain_kind(player["pos"]) != String(v):
+						return false
+				"dim":
+					if dim != int(v):
+						return false
+				"casts_this_turn_min":
+					if int(ctx.get("casts_before", 0)) < int(v):
+						return false
+				"outcome":
+					if outcome == null or int(outcome.get(String(v), 0)) <= 0:
+						return false
+				"outcome_crossed":
+					if outcome == null or not outcome["crossed"].has(String(v)):
+						return false
+				_:
+					return false
+	return true
+
+
+## Rider counts (closed v1 set):
+##   growth_adjacent_target    growth tiles orthogonally adjacent to the target tile
+##   fire_within_self          fire tiles within per.radius of the player
+##   oil_in_line               oil tiles along the dir target up to adef.range (walls stop)
+##   enemies_adjacent_target   enemies orthogonally adjacent to the target tile
+## Unknown counts read as 0.
+func _rider_per(per: Dictionary, ctx: Dictionary) -> int:
+	var n := 0
+	match String(per.get("count", "")):
+		"growth_adjacent_target":
+			var t = _rider_target_tile(ctx, null)
+			if t != null:
+				for d in DIRS:
+					if _terrain_kind(t + d) == "growth":
+						n += 1
+		"fire_within_self":
+			var radius := int(per.get("radius", 1))
+			for t in terrain.keys():
+				if terrain[t]["kind"] == "fire" and _manhattan(t, player["pos"]) <= radius:
+					n += 1
+		"oil_in_line":
+			var adef: Dictionary = ctx.get("adef", {})
+			var target = ctx.get("target", null)
+			if target is Vector2i:
+				var p: Vector2i = ctx.get("origin", player["pos"])
+				for i in range(int(adef.get("range", 0))):
+					p += target
+					if _tile(p) == MapGen.T_WALL:
+						break
+					if _terrain_kind(p) == "oil":
+						n += 1
+		"enemies_adjacent_target":
+			var t = _rider_target_tile(ctx, null)
+			if t != null:
+				for d in DIRS:
+					if _enemy_at(t + d) != null:
+						n += 1
+	return n
+
+
+## Per-enemy bonus damage of an effect ("bonus": {dmg, if}); the predicates
+## read `e`'s tile as the target. Emits the rider event when it adds anything.
+func _bonus_dmg(eff: Dictionary, ctx: Dictionary, e: Dictionary) -> int:
+	if not eff.has("bonus"):
+		return 0
+	var b: Dictionary = eff["bonus"]
+	if b.has("if") and not _rider_if(b["if"], ctx, null, e):
+		return 0
+	var amt := int(b.get("dmg", 0))
+	if amt != 0:
+		_emit({"t": "rider", "id": String(ctx.get("aid", "")), "kind": "bonus", "amt": amt})
+	return amt
+
+
+## Light tile p as fire signed by `by` (an ability id or an enemy kind).
+func _ignite(p: Vector2i, by: String) -> void:
+	terrain[p] = {"kind": "fire", "ttl": int(Content.terrain("fire", "ttl", 2)), "by": by}
+
+
+func _enemy_by_id(id: int):
+	for e in enemies:
+		if e["id"] == id:
+			return e
+	return null
 
 
 # --- entities and damage ------------------------------------------------------
@@ -1527,13 +1909,15 @@ func _spawn(kind: String, pos: Vector2i) -> Dictionary:
 	return e
 
 
-func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
+## Returns true when damage was applied (false: already gone, or the boss
+## core is shielded).
+func _damage_enemy(e: Dictionary, amt: int, src: String) -> bool:
 	if not enemies.has(e):
-		return
+		return false
 	var edef: Dictionary = Content.ENEMIES[e["kind"]]
 	if edef["traits"].has("boss") and e["hp"] <= int(edef.get("gate_hp", 6)) 			and not _growth_adjacent(e["pos"]) and _corruption_adjacent(e["pos"]):
 		_emit({"t": "core_shielded", "id": e["id"]})
-		return
+		return false
 	e["hp"] -= amt
 	_emit({"t": "damage", "who": e["kind"], "id": e["id"], "amt": amt, "src": src})
 	if e["hp"] <= 0:
@@ -1546,14 +1930,14 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 			won = true
 			over = true
 			_emit({"t": "win"})
-			return
+			return true
 		if Content.ENEMIES[e["kind"]]["traits"].has("smoke_burst"):
 			var tiles_: Array = [e["pos"]]
 			for d in DIRS:
 				tiles_.append(e["pos"] + d)
 			for t in tiles_:
 				if _tile(t) == MapGen.T_FLOOR and not terrain.has(t):
-					terrain[t] = {"kind": "smoke", "ttl": 3}
+					terrain[t] = {"kind": "smoke", "ttl": int(Content.terrain("smoke", "ttl", 3))}
 			_emit({"t": "smoke_burst", "tile": e["pos"]})
 	elif edef["traits"].has("boss"):
 		if edef["traits"].has("mobile_boss"):
@@ -1564,7 +1948,7 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 				e["phase3_done"] = true
 				_clog_vents(e["pos"])
 				_emit({"t": "boss_phase", "phase": 3})
-			return
+			return true
 		if e["hp"] <= 12 and not e.get("phase2_done", false):
 			e["phase2_done"] = true
 			_emit({"t": "boss_phase", "phase": 2})
@@ -1586,6 +1970,7 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 				var s := _spawn("sludgeling", p)
 				_emit({"t": "split", "id": e["id"], "child": s["id"]})
 				break
+	return true
 
 
 func _damage_player(amt: int, src: String) -> void:
@@ -1605,31 +1990,47 @@ func _damage_player(amt: int, src: String) -> void:
 
 
 ## `src` is the casting ability id; collision damage is signed "collision:<src>".
-func _push_enemy(e: Dictionary, dir: Vector2i, dist: int, collision_dmg: int, src: String) -> void:
+## `eff` / `ctx` carry the effect's "bonus" rider into the collision hits.
+## Returns {moved: tiles travelled, collided: enemies that took collision
+## damage, crossed: terrain kinds stepped onto, affected: enemy ids displaced
+## or damaged}.
+func _push_enemy(e: Dictionary, dir: Vector2i, dist: int, collision_dmg: int, src: String, eff: Dictionary = {}, ctx: Dictionary = {}) -> Dictionary:
+	var res := {"moved": 0, "collided": 0, "crossed": [], "affected": []}
 	if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
-		return
-	var moved := 0
+		return res
 	for i in range(dist):
 		var nxt: Vector2i = e["pos"] + dir
 		if not _open(nxt):
 			if collision_dmg > 0:
-				_damage_enemy(e, collision_dmg, "collision:" + src)
+				if _damage_enemy(e, collision_dmg + _bonus_dmg(eff, ctx, e), "collision:" + src):
+					res["collided"] += 1
+					if not res["affected"].has(e["id"]):
+						res["affected"].append(e["id"])
 				var hit = _enemy_at(nxt)
 				if hit != null:
-					_damage_enemy(hit, collision_dmg, "collision:" + src)
-			if moved > 0 and enemies.has(e):
+					if _damage_enemy(hit, collision_dmg + _bonus_dmg(eff, ctx, hit), "collision:" + src):
+						res["collided"] += 1
+						res["affected"].append(hit["id"])
+			if int(res["moved"]) > 0 and enemies.has(e):
 				_stagger(e)
-			return
+			return res
 		e["pos"] = nxt
-		moved += 1
+		res["moved"] += 1
+		if not res["affected"].has(e["id"]):
+			res["affected"].append(e["id"])
+		_cross(res["crossed"], nxt)
 		_enemy_enter_tile(e)
 		if not enemies.has(e):
-			return
-	if moved > 0:
+			return res
+	if int(res["moved"]) > 0:
 		_stagger(e)
+	return res
 
 
-func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int, src: String) -> void:
+## Returns {washed: tiles cleared, pushed: enemies displaced, collided,
+## crossed, affected} (the last three as in _push_enemy).
+func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int, src: String, eff: Dictionary = {}, ctx: Dictionary = {}) -> Dictionary:
+	var res := {"washed": 0, "pushed": 0, "collided": 0, "crossed": [], "affected": []}
 	var line: Array = []
 	var p: Vector2i = player["pos"]
 	for i in range(rng_):
@@ -1639,9 +2040,9 @@ func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int, src: Str
 		line.append(p)
 	var pushed = null
 	for t in line:
-		var k := _terrain_kind(t)
-		if k == "oil" or k == "fire":
+		if bool(Content.terrain(_terrain_kind(t), "washable", false)):
 			terrain.erase(t)
+			res["washed"] += 1
 			_emit({"t": "wash", "tile": t})
 		if pushed == null:
 			var e = _enemy_at(t)
@@ -1649,19 +2050,26 @@ func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int, src: Str
 				if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
 					# too heavy to shove; the jet's pressure still hits
 					if collision_dmg > 0:
-						_damage_enemy(e, collision_dmg, "collision:" + src)
-					return
+						if _damage_enemy(e, collision_dmg + _bonus_dmg(eff, ctx, e), "collision:" + src):
+							res["collided"] += 1
+							res["affected"].append(e["id"])
+					return res
 				pushed = e
 	if pushed != null:
-		_push_enemy(pushed, dir, push, collision_dmg, src)
+		var pr := _push_enemy(pushed, dir, push, collision_dmg, src, eff, ctx)
+		if int(pr["moved"]) > 0:
+			res["pushed"] += 1
+		res["collided"] += int(pr["collided"])
+		res["crossed"] = pr["crossed"]
+		res["affected"] = pr["affected"]
+	return res
 
 
 func _player_enter_tile() -> void:
 	var k := _terrain_kind(player["pos"])
-	if k == "fire":
-		_damage_player(1, "fire")
-	elif k == "goo" or k == "rich_goo":
-		_damage_player(1, "goo")
+	var dmg := int(Content.terrain(k, "enter_dmg_player", 0))
+	if dmg > 0:
+		_damage_player(dmg, String(Content.terrain(k, "enter_src", k)))
 	elif k == "supply":
 		if player["items"].size() < Content.ITEM_CAP:
 			var iid := String(terrain[player["pos"]].get("item", "balm_fruit"))
@@ -1672,10 +2080,11 @@ func _player_enter_tile() -> void:
 			_emit({"t": "satchel_full"})
 
 
+## Boss-gate shield: a core-shielding kind (Content.TERRAIN shields_core)
+## stands orthogonally adjacent.
 func _corruption_adjacent(p: Vector2i) -> bool:
 	for d in DIRS:
-		var k := _terrain_kind(p + d)
-		if k == "oil" or k == "goo" or k == "rich_goo":
+		if bool(Content.terrain(_terrain_kind(p + d), "shields_core", false)):
 			return true
 	return false
 
@@ -1696,11 +2105,14 @@ func _growth_adjacent(p: Vector2i) -> bool:
 
 
 func _enemy_enter_tile(e: Dictionary) -> void:
-	if Content.ENEMIES[e["kind"]]["traits"].has("igniter") and _terrain_kind(e["pos"]) == "oil":
-		terrain[e["pos"]] = {"kind": "fire", "ttl": 2, "by": e["kind"]}
+	var k := _terrain_kind(e["pos"])
+	if Content.ENEMIES[e["kind"]]["traits"].has("igniter") and bool(Content.terrain(k, "flammable", false)):
+		_ignite(e["pos"], e["kind"])
 		_emit({"t": "ignite", "tile": e["pos"]})
-	if _terrain_kind(e["pos"]) == "fire":
-		_damage_enemy(e, 1, "fire:" + _fire_by(e["pos"]))
+		k = _terrain_kind(e["pos"])
+	var dmg := int(Content.terrain(k, "enter_dmg_enemy", 0))
+	if dmg > 0:
+		_damage_enemy(e, dmg, k + ":" + _fire_by(e["pos"]))
 
 
 func _chase_step(e: Dictionary) -> Vector2i:
@@ -1763,7 +2175,10 @@ func _enemy_at(p: Vector2i):
 
 
 func _open(p: Vector2i) -> bool:
-	return _tile(p) == MapGen.T_FLOOR and _enemy_at(p) == null and p != player["pos"] and _terrain_kind(p) != "roots"
+	if _tile(p) != MapGen.T_FLOOR or _enemy_at(p) != null or p == player["pos"]:
+		return false
+	var k := _terrain_kind(p)
+	return k == "" or not bool(Content.terrain(k, "blocks", false))
 
 
 func _line_clear(a: Vector2i, b: Vector2i) -> bool:
@@ -1771,7 +2186,7 @@ func _line_clear(a: Vector2i, b: Vector2i) -> bool:
 	var dir := Vector2i(signi(delta.x), signi(delta.y))
 	var p := a + dir
 	while p != b:
-		if _tile(p) == MapGen.T_WALL or _enemy_at(p) != null or _terrain_kind(p) == "smoke":
+		if _tile(p) == MapGen.T_WALL or _enemy_at(p) != null or bool(Content.terrain(_terrain_kind(p), "blocks_beam", false)):
 			return false
 		p += dir
 	return true

@@ -206,7 +206,7 @@ func _refresh_field(snap: Dictionary) -> void:
 		var bd0 := 99999
 		for t in snap["terrain"].keys():
 			var k0 := String(snap["terrain"][t]["kind"])
-			if k0 != "oil" and k0 != "goo" and k0 != "rich_goo":
+			if not Content.is_corruption(k0):
 				continue
 			var d0: int = absi(t.x - pp0.x) + absi(t.y - pp0.y)
 			if d0 < bd0:

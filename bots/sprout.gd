@@ -4,6 +4,8 @@ extends "res://bots/bot_base.gd"
 ## buttons (strike, lance, plus the tutorial's seed bomb / grow spike and the
 ## two self-explanatory consumables). Measures teaching-curve fairness.
 
+const Content := preload("res://sim/content.gd")
+
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
 ## What a noob thinks is good, best first: this ranks the draft offers.
@@ -192,7 +194,7 @@ func _lance_hits(snap: Dictionary, dir: Vector2i) -> bool:
 			return false
 		if m["tiles"][p.y * int(m["w"]) + p.x] != 1:
 			return false
-		if snap["terrain"].get(p, {}).get("kind", "") == "smoke":
+		if bool(Content.terrain(snap["terrain"].get(p, {}).get("kind", ""), "blocks_beam", false)):
 			return false
 		for e in snap["enemies"]:
 			if e["pos"] == p:
@@ -212,7 +214,7 @@ func _bfs_step_blind(snap: Dictionary) -> Vector2i:
 		var bd := 99999
 		for t in snap["terrain"].keys():
 			var k := String(snap["terrain"][t]["kind"])
-			if k == "oil" or k == "goo" or k == "rich_goo":
+			if Content.is_corruption(k):
 				var d: int = absi(t.x - start.x) + absi(t.y - start.y)
 				if d < bd:
 					bd = d

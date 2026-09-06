@@ -70,12 +70,37 @@ The theme should do mechanical work, not just paint.
 - Neutral: **fire** (ignited oil; damages everyone; burns out), water, rubble,
   destructible machinery.
 - Cleansing corrupted tiles (via abilities) yields **Bloom**.
+- Terrain is **data, not code**: `Content.TERRAIN` holds one row per kind
+  (corruption, shields_core, flammable, washable, bloom yield, ttl/decays,
+  entry and per-turn damage, blocks, blocks_beam, heal, burns_to) and the sim
+  reads it through `Content.terrain(kind, key, default)`. Terrain *reactions*
+  are data too: `Content.REACTIONS` rows (fire spreads into oil, fire burns
+  out; damp, roots-burn and smoke-smother present but disabled) are consumed
+  by one `_terrain_react()` in the environment phase. Enemy statuses live in
+  `Content.STATUSES` (stack rule, which intents the status blocks, the event a
+  blocked intent emits, per-turn tick damage). Adding a kind, a reaction or a
+  status means adding a row.
 
 ### Abilities
 
 - Data-driven recipes over effect primitives: damage, push, pull, dash, swap,
   shield, apply_status, create_terrain, convert_terrain, summon, drain/grant
   charge. Targeting shapes: melee, line, cone, radius, blink, growth-network.
+- Primitives compose through **riders**, four optional keys on any effect dict
+  (evaluated only by `Game._rider_if` / `_rider_per` / `_bonus_dmg`): `if` is a
+  closed predicate set that gates the effect (`target_on`, `target_adjacent`,
+  `self_on`, `dim`, `casts_this_turn_min`, and inside a `then` the parent's
+  `outcome` / `outcome_crossed`); `per` scales a number with a board count
+  (`growth_adjacent_target`, `fire_within_self`, `oil_in_line`,
+  `enemies_adjacent_target`, capped); `bonus` adds damage per affected enemy
+  when that enemy's tile satisfies its predicates; `then` runs sub-effects once
+  when the parent actually did something, never nested. An ability row may also
+  carry `surge` (default `{cost: -1}`: casting from growth is a charge cheaper).
+  Every effect returns an outcome — hit / ignited / pushed / collided /
+  converted / planted / washed / statused, the enemies affected, the terrain they crossed
+  — which is what riders read, so "lance the oil the enemy stands on, then the
+  flare hits harder" is a data row rather than a special case in code. Riders
+  emit a `rider` event so the harness can measure how often combos fire.
 - Loadout: 4 ability slots + 1 mobility slot. Drafting while full = drop one.
 - Draft cadence: 1-of-3 at each descent; shrines/shops mid-floor spend Bloom.
 - Upgrades appear as draft options (e.g. cost reduction, bigger shape).
