@@ -4,6 +4,6 @@
 "actions": [{"type":"end_turn"},{"slot":0,"target":[1,2],"type":"ability"},{"slot":0,"target":[1,2],"type":"ability"},{"type":"end_turn"},{"slot":0,"target":[1,2],"type":"ability"},{"type":"end_turn"},{"type":"end_turn"},{"type":"end_turn"},{"type":"end_turn"}],
 "expect": {"events":[{"status":"spore","t":"status","turns":3},{"status":"spore","t":"status","turns":3},{"amt":1,"src":"spore","t":"damage","who":"extractor_engine"},{"status":"spore","t":"status","turns":3},{"amt":1,"src":"spore","t":"damage","who":"extractor_engine"},{"amt":1,"src":"spore","t":"damage","who":"extractor_engine"},{"amt":1,"src":"spore","t":"damage","who":"extractor_engine"},{"amt":1,"src":"spore","t":"damage","who":"extractor_engine"},{"t":"death","who":"extractor_engine"}],"floor":1,"timeout":true,"turns":6,"won":false},
 "note": "C1b spore stacking: two spore_cloud casts in one turn stack 3+3 to the cap of 6, a third cast is clamped there, and the 5-hp extractor dies to the stacked ticks - under the old max-stacking rule three spores were still 3 turns and it would live",
-"sim_version": 5,
+"sim_version": 6,
 "hash": "a4b700268d1caeedc53ecbeaa5cc51aa51be811f98f94df3f2e3a4c098e1d588"
 }

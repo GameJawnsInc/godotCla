@@ -12,6 +12,14 @@ extends SceneTree
 ## rule grafts installed via config {grafts: [...]} (ember_sap, undertow,
 ## compost, oil_tithe), the depth / step caps, and the _graft_stat /
 ## _graft_mod table reads that replaced the six _has_graft sites.
+## Block C4: the nine package "+" rows (spore_cloud+, fungal_ring+, burrow+,
+## tide+, steam_vent+, geyser+, gust+, updraft+, clear_air+) are cast for real
+## through Game.step next to their bases: the bumped number and any rider
+## asserted, costs pinned. Also C4: effective casts (Game.effective_uses, a
+## use whose outcome fired or whose rider ran) against raw player.uses, the
+## run_summary() shape, and mutators as data - Game._mut over
+## Content.MUTATORS[m]["config"]: the six legacy rows reproduce their numbers,
+## no_lance / wide_draft / upgrades_only hold their invariants on fresh games.
 ## Run: godot --headless --path . --script tests/test_grammar.gd
 
 const Content := preload("res://sim/content.gd")
@@ -58,6 +66,18 @@ func _init() -> void:
 	_check_c3_compost()
 	_check_c3_oil_tithe()
 	_check_c3_hook_caps()
+	_check_c4_spore_cloud()
+	_check_c4_fungal_ring()
+	_check_c4_burrow()
+	_check_c4_tide()
+	_check_c4_steam_vent()
+	_check_c4_geyser()
+	_check_c4_gust()
+	_check_c4_updraft()
+	_check_c4_clear_air()
+	_check_c4_effective_uses()
+	_check_c4_run_summary()
+	_check_c4_mutator_config()
 	if failures.is_empty():
 		print("grammar: OK (%d checks)" % checks)
 		quit(0)
@@ -1602,3 +1622,489 @@ func _check_c3_hook_caps() -> void:
 	for ev in _evs(evs, "hook"):
 		ids.append(String(ev["id"]))
 	_ok(ids == ["ember_sap", "compost"], "ignite hook (ember_sap) then its nested kill hook (compost): %s" % str(ids))
+
+
+# --- Block C4: package "+" rows, cast for real through step -----------------------
+
+## 15 x 7 room, player at (2, 3): a long open lane east for the dist / range bumps.
+const LANE := [
+	"###############",
+	"#.............#",
+	"#.............#",
+	"#.@...........#",
+	"#.............#",
+	"#.............#",
+	"###############",
+]
+
+
+## spore_cloud+ {aoe_status spore 3, radius 3}: wider, not longer - two casts
+## still fill the add-stack cap of 6 exactly. Distance 3 is spored by the +
+## form only; distance 4 by neither; every spored enemy carries 3 turns.
+func _check_c4_spore_cloud() -> void:
+	for pair in [["spore_cloud+", 3], ["spore_cloud", 2]]:
+		var aid: String = pair[0]
+		var radius: int = pair[1]
+		var g = _game([aid, "seed_bomb", "mycelium_dash"])
+		var near = g._spawn("drill_bot", Vector2i(7, 3))   # distance 2
+		var edge = g._spawn("drill_bot", Vector2i(8, 3))   # distance 3
+		var far = g._spawn("drill_bot", Vector2i(9, 3))    # distance 4
+		var diag = g._spawn("drill_bot", Vector2i(7, 1))   # distance 4 (2 + 2)
+		var evs: Array = _cast(g, 0, g.player["pos"])
+		_ok(_evs(evs, "illegal").is_empty(), "%s cast is legal: %s" % [aid, str(evs)])
+		_ok(int(near["status"].get("spore", 0)) == 3, "%s spores distance 2 for 3: %s" % [aid, str(near["status"])])
+		_ok(int(edge["status"].get("spore", 0)) == (3 if radius == 3 else 0),
+			"%s (radius %d) at distance 3: %s" % [aid, radius, str(edge["status"])])
+		_ok(not far["status"].has("spore") and not diag["status"].has("spore"), "%s leaves distance 4 alone" % aid)
+		_ok(_evs(evs, "status").size() == (2 if radius == 3 else 1) and _evs(evs, "rider").is_empty(),
+			"%s status events, no rider: %s" % [aid, str(evs)])
+		_ok(int(Content.ABILITIES[aid]["cost"]) == 2, "%s cost stays 2" % aid)
+	# a second + cast stacks to exactly the cap (3 + 3 = 6)
+	var g2 = _game(["spore_cloud+", "seed_bomb", "mycelium_dash"])
+	var e2 = g2._spawn("drill_bot", Vector2i(8, 3))
+	e2["hp"] = 10
+	_cast(g2, 0, g2.player["pos"])
+	_cast(g2, 0, g2.player["pos"])
+	_ok(int(e2["status"].get("spore", 0)) == 6, "two spore_cloud+ casts stack to the cap of 6: %s" % str(e2["status"]))
+
+
+## fungal_ring+ {grow_radius 1, then root 1 who on_planted}: grow_radius never
+## reads its radius key (a fixed plus around the target), so the bump is the
+## seed_bomb+ rider - enemies standing where the ring sprouted are rooted a turn.
+func _check_c4_fungal_ring() -> void:
+	var g = _game(["fungal_ring+", "seed_bomb", "mycelium_dash"])
+	var east = g._spawn("drill_bot", Vector2i(6, 3))    # bare tile the ring plants
+	var west = g._spawn("drill_bot", Vector2i(4, 3))    # pre-existing growth
+	var off = g._spawn("drill_bot", Vector2i(7, 3))     # outside the plus
+	g.terrain[Vector2i(4, 3)] = {"kind": "growth"}
+	var evs: Array = _cast(g, 0, g.player["pos"])
+	_ok(_evs(evs, "illegal").is_empty() and _evs(evs, "growth").size() == 1, "fungal_ring+ cast is legal: %s" % str(evs))
+	for t in [Vector2i(5, 3), Vector2i(6, 3), Vector2i(4, 3), Vector2i(5, 2), Vector2i(5, 4)]:
+		_ok(g._terrain_kind(t) == "growth", "fungal_ring+ growth at %s" % str(t))
+	_ok(g._terrain_kind(Vector2i(7, 3)) == "", "fungal_ring+ plants a plus, not a radius-2 diamond")
+	_ok(int(east["status"].get("root", 0)) == 1, "enemy on a fresh ring tile is rooted 1: %s" % str(east["status"]))
+	_ok(not west["status"].has("root") and not off["status"].has("root"),
+		"pre-existing growth / outside the ring -> no root: %s %s" % [str(west["status"]), str(off["status"])])
+	var then := _riders(evs, "then")
+	_ok(then.size() == 1 and int(then[0]["amt"]) == 1 and String(then[0]["id"]) == "fungal_ring+", "fungal_ring+ rider then once: %s" % str(_evs(evs, "rider")))
+	_ok(_evs(evs, "status").size() == 1 and String(_evs(evs, "status")[0]["status"]) == "root", "one root status event: %s" % str(_evs(evs, "status")))
+	_ok(g.player["charge"] == 9, "fungal_ring+ costs 1: charge %d" % g.player["charge"])
+	# nobody on the ring: growth, no root, no rider
+	var g2 = _game(["fungal_ring+", "seed_bomb", "mycelium_dash"])
+	var e2 = g2._spawn("drill_bot", Vector2i(8, 3))
+	evs = _cast(g2, 0, g2.player["pos"])
+	_ok(_evs(evs, "illegal").is_empty() and not e2["status"].has("root") and _evs(evs, "rider").is_empty() and _evs(evs, "status").is_empty(),
+		"fungal_ring+ with nobody adjacent: no root, no rider: %s" % str(evs))
+	# the base row plants the same plus and carries no rider
+	var g3 = _game(["fungal_ring", "seed_bomb", "mycelium_dash"])
+	var e3 = g3._spawn("drill_bot", Vector2i(6, 3))
+	evs = _cast(g3, 0, g3.player["pos"])
+	_ok(_evs(evs, "illegal").is_empty() and g3._terrain_kind(Vector2i(6, 3)) == "growth" and not e3["status"].has("root") and _evs(evs, "rider").is_empty(),
+		"base fungal_ring plants under the enemy, no root: %s" % str(evs))
+	_ok(int(Content.ABILITIES["fungal_ring"]["cost"]) == 1 and int(Content.ABILITIES["fungal_ring+"]["cost"]) == 1, "fungal_ring costs stay 1")
+
+
+## burrow+ {teleport, range 4}: the tile list (Game._ability_targets "tile")
+## reads adef.range, so distance 4 is legal for the + form and illegal for the base.
+func _check_c4_burrow() -> void:
+	var far := Vector2i(9, 3)
+	var g = _game(["burrow", "burrow+", "mycelium_dash"])
+	var evs: Array = _cast(g, 0, far)
+	_ok(_evs(evs, "illegal").size() == 1 and g.player["pos"] == Vector2i(5, 3), "burrow (range 3) cannot reach distance 4: %s" % str(evs))
+	evs = _cast(g, 1, far)
+	_ok(_evs(evs, "illegal").is_empty() and g.player["pos"] == far and _evs(evs, "teleport").size() == 1 and g.moved_this_turn == 1,
+		"burrow+ (range 4) tunnels to distance 4: %s %s" % [str(g.player["pos"]), str(evs)])
+	# distance 5 is out for both
+	g.player["pos"] = Vector2i(4, 3)
+	evs = _cast(g, 1, far)
+	_ok(_evs(evs, "illegal").size() == 1 and g.player["pos"] == Vector2i(4, 3), "burrow+ stops at 4: %s" % str(evs))
+	# a growth-free destination is fine (burrow is not mycelium_dash); a walled one is not
+	evs = _cast(g, 1, Vector2i(0, 3))
+	_ok(_evs(evs, "illegal").size() == 1, "burrow+ cannot enter a wall")
+	_ok(int(Content.ABILITIES["burrow"]["cost"]) == 2 and int(Content.ABILITIES["burrow+"]["cost"]) == 2, "burrow costs stay 2")
+
+
+## tide+ {wash_all push 3 / collision 2, then root 1 if collided AND pushed}:
+## the water_jet+ pin around the caster. The then reads the merged four-way
+## outcome, so an enemy that moved and hit is rooted; a free lane (pushed only)
+## or a wall-pinned enemy (collided only) is not.
+func _check_c4_tide() -> void:
+	# pin: enemy at (7,3) (distance 2) shoved to (9,3), wall at (10,3) -> pushed + collided
+	var g = _game(["tide+", "seed_bomb", "mycelium_dash"])
+	var e = g._spawn("drill_bot", Vector2i(7, 3))
+	e["hp"] = 10
+	var evs: Array = _cast(g, 0, g.player["pos"])
+	_ok(_evs(evs, "illegal").is_empty() and e["pos"] == Vector2i(9, 3) and e["hp"] == 8,
+		"tide+ pin: shoved to (9,3), 2 collision dmg: %s hp %d" % [str(e["pos"]), e["hp"]])
+	_ok(int(e["status"].get("root", 0)) == 1, "tide+ pin roots 1: %s" % str(e["status"]))
+	var then := _riders(evs, "then")
+	_ok(then.size() == 1 and int(then[0]["amt"]) == 1 and String(then[0]["id"]) == "tide+", "tide+ rider then once: %s" % str(_evs(evs, "rider")))
+	_ok(_dmg(evs, "collision:tide+").size() == 1 and int(_dmg(evs, "collision:tide+")[0]["amt"]) == 2, "collision signed by tide+: %s" % str(evs))
+	# free lane: enemy at (6,3) travels 3 to (9,3), no collision -> no root
+	var g2 = _game(["tide+", "seed_bomb", "mycelium_dash"])
+	var e2 = g2._spawn("drill_bot", Vector2i(6, 3))
+	e2["hp"] = 10
+	evs = _cast(g2, 0, g2.player["pos"])
+	_ok(e2["pos"] == Vector2i(9, 3) and e2["hp"] == 10 and not e2["status"].has("root") and _riders(evs, "then").is_empty(),
+		"tide+ free lane: shoved 3, no dmg, no root: %s %s" % [str(e2["pos"]), str(evs)])
+	# wall-pinned: player at (7,3), enemy at (9,3) -> collided only -> no root
+	var g3 = _game(["tide+", "seed_bomb", "mycelium_dash"])
+	g3.player["pos"] = Vector2i(7, 3)
+	var e3 = g3._spawn("drill_bot", Vector2i(9, 3))
+	e3["hp"] = 10
+	evs = _cast(g3, 0, g3.player["pos"])
+	_ok(e3["pos"] == Vector2i(9, 3) and e3["hp"] == 8 and not e3["status"].has("root") and _riders(evs, "then").is_empty(),
+		"tide+ wall-pinned: 2 dmg, not moved, no root: %s %s" % [str(e3["status"]), str(evs)])
+	# four-way: every direction is washed in one cast; the merged outcome roots every affected enemy
+	var g4 = _game(["tide+", "seed_bomb", "mycelium_dash"])
+	var n = g4._spawn("drill_bot", Vector2i(5, 2))   # north, adjacent: (5,1) then wall -> pushed 1, collided
+	var s_ = g4._spawn("drill_bot", Vector2i(5, 4))  # south, adjacent: (5,5) then wall -> pushed 1, collided
+	var w = g4._spawn("drill_bot", Vector2i(3, 3))   # west, distance 2: (2,3),(1,3) then wall -> pushed 2, collided
+	for x in [n, s_, w]:
+		x["hp"] = 10
+	evs = _cast(g4, 0, g4.player["pos"])
+	_ok(n["pos"] == Vector2i(5, 1) and s_["pos"] == Vector2i(5, 5) and w["pos"] == Vector2i(1, 3), "tide+ washes all four directions: %s %s %s" % [str(n["pos"]), str(s_["pos"]), str(w["pos"])])
+	_ok(n["hp"] == 8 and s_["hp"] == 8 and w["hp"] == 8 and int(n["status"].get("root", 0)) == 1 and int(s_["status"].get("root", 0)) == 1 and int(w["status"].get("root", 0)) == 1,
+		"tide+ pins all three: %d %d %d %s" % [n["hp"], s_["hp"], w["hp"], str(_evs(evs, "status"))])
+	_ok(_riders(evs, "then").size() == 1, "one rider then for the whole wave: %s" % str(_evs(evs, "rider")))
+	# base row: push 2, collision 1, no rider
+	var gb = _game(["tide", "seed_bomb", "mycelium_dash"])
+	var eb = gb._spawn("drill_bot", Vector2i(7, 3))
+	eb["hp"] = 10
+	evs = _cast(gb, 0, gb.player["pos"])
+	_ok(_evs(evs, "illegal").is_empty() and eb["pos"] == Vector2i(9, 3) and eb["hp"] == 10 and not eb["status"].has("root") and _evs(evs, "rider").is_empty(),
+		"base tide shoves 2 to (9,3), no collision, no root: %s hp %d %s" % [str(eb["pos"]), eb["hp"], str(evs)])
+	# base collision: player at (6,3), enemy at (8,3) (distance 2) -> (9,3) then wall -> 1 dmg
+	var gb2 = _game(["tide", "seed_bomb", "mycelium_dash"])
+	gb2.player["pos"] = Vector2i(6, 3)
+	var eb2 = gb2._spawn("drill_bot", Vector2i(8, 3))
+	eb2["hp"] = 10
+	evs = _cast(gb2, 0, gb2.player["pos"])
+	_ok(eb2["pos"] == Vector2i(9, 3) and eb2["hp"] == 9 and not eb2["status"].has("root"), "base tide collision is 1, no root: hp %d %s" % [eb2["hp"], str(eb2["status"])])
+	# the wash reaches range 2 only: an enemy at distance 3 is untouched by either row
+	var gb3 = _game(["tide+", "seed_bomb", "mycelium_dash"])
+	var eb3 = gb3._spawn("drill_bot", Vector2i(8, 3))
+	evs = _cast(gb3, 0, gb3.player["pos"])
+	_ok(eb3["pos"] == Vector2i(8, 3) and _evs(evs, "rider").is_empty(), "tide+ range stays 2: distance 3 untouched: %s" % str(evs))
+	_ok(int(Content.ABILITIES["tide"]["cost"]) == 2 and int(Content.ABILITIES["tide+"]["cost"]) == 2, "tide costs stay 2")
+
+
+## steam_vent+ {create_terrain smoke, ttl 5}: the smoke lingers two turns longer.
+func _check_c4_steam_vent() -> void:
+	for pair in [["steam_vent+", 5], ["steam_vent", 3]]:
+		var aid: String = pair[0]
+		var ttl: int = pair[1]
+		var g = _game([aid, "seed_bomb", "mycelium_dash"])
+		var t := Vector2i(8, 3)
+		var evs: Array = _cast(g, 0, t)
+		_ok(_evs(evs, "illegal").is_empty() and g._terrain_kind(t) == "smoke" and int(g.terrain[t]["ttl"]) == ttl,
+			"%s vents smoke with ttl %d: %s %s" % [aid, ttl, str(g.terrain.get(t)), str(evs)])
+		_ok(_evs(evs, "terrain").size() == 1 and String(_evs(evs, "terrain")[0]["kind"]) == "smoke" and _evs(evs, "rider").is_empty(),
+			"%s one terrain event, no rider: %s" % [aid, str(evs)])
+		# smoke blocks the lance the same either way
+		var far = g._spawn("drill_bot", Vector2i(9, 3))
+		far["hp"] = 10
+		g.player["kit"][1] = "solar_lance"
+		evs = _cast(g, 1, Vector2i(1, 0))
+		_ok(far["hp"] == 10, "%s smoke blocks the lance behind it: hp %d" % [aid, far["hp"]])
+		# distance 4 is out of range; an occupied tile is refused
+		var g2 = _game([aid, "seed_bomb", "mycelium_dash"])
+		evs = _cast(g2, 0, Vector2i(9, 3))
+		_ok(_evs(evs, "illegal").size() == 1, "%s range stays 3" % aid)
+		_ok(int(Content.ABILITIES[aid]["cost"]) == 1, "%s cost stays 1" % aid)
+
+
+## geyser+ {aoe_damage 2 radius 1, bonus 1 if target_on fire; push_all 2}: the
+## sun_flare+ scald - an adjacent enemy standing in fire takes 3 before the shove.
+func _check_c4_geyser() -> void:
+	for pair in [["geyser+", 2, 1], ["geyser", 1, 0]]:
+		var aid: String = pair[0]
+		var base: int = pair[1]
+		var bonus: int = pair[2]
+		var g = _game([aid, "seed_bomb", "mycelium_dash"])
+		var bare = g._spawn("drill_bot", Vector2i(6, 3))     # east, bare
+		var burning = g._spawn("drill_bot", Vector2i(4, 3))  # west, in fire
+		var far = g._spawn("drill_bot", Vector2i(5, 1))      # distance 2: out of radius, not adjacent
+		for e in [bare, burning, far]:
+			e["hp"] = 10
+		g.terrain[Vector2i(4, 3)] = {"kind": "fire", "ttl": 3}
+		var evs: Array = _cast(g, 0, g.player["pos"])
+		_ok(_evs(evs, "illegal").is_empty(), "%s cast is legal: %s" % [aid, str(evs)])
+		_ok(bare["hp"] == 10 - base and bare["pos"] == Vector2i(8, 3), "%s bare enemy takes %d and is shoved 2: hp %d %s" % [aid, base, bare["hp"], str(bare["pos"])])
+		_ok(burning["hp"] == 10 - base - bonus and burning["pos"] == Vector2i(2, 3),
+			"%s enemy in fire takes %d and is shoved 2: hp %d %s" % [aid, base + bonus, burning["hp"], str(burning["pos"])])
+		_ok(far["hp"] == 10 and far["pos"] == Vector2i(5, 1), "%s leaves distance 2 alone" % aid)
+		var riders := _riders(evs, "bonus")
+		_ok(riders.size() == bonus and (bonus == 0 or (int(riders[0]["amt"]) == 1 and String(riders[0]["id"]) == aid)),
+			"%s bonus rider %d: %s" % [aid, bonus, str(_evs(evs, "rider"))])
+		_ok(_dmg(evs, aid).size() == 2 and _evs(evs, "staggered").size() == 2, "%s two hits, two staggers: %s" % [aid, str(evs)])
+		_ok(g._terrain_kind(Vector2i(4, 3)) == "fire", "%s does not ignite or wash: fire stays" % aid)
+		_ok(int(Content.ABILITIES[aid]["cost"]) == 2, "%s cost stays 2" % aid)
+	# oil under an adjacent enemy is not fire: no bonus (geyser carries no ignite)
+	var g2 = _game(["geyser+", "seed_bomb", "mycelium_dash"])
+	var oiled = g2._spawn("drill_bot", Vector2i(6, 3))
+	oiled["hp"] = 10
+	g2.terrain[Vector2i(6, 3)] = {"kind": "oil"}
+	var evs2: Array = _cast(g2, 0, g2.player["pos"])
+	_ok(oiled["hp"] == 8 and g2._terrain_kind(Vector2i(6, 3)) == "oil" and _riders(evs2, "bonus").is_empty(),
+		"geyser+ on oil: 2 dmg, oil unlit, no bonus: hp %d %s" % [oiled["hp"], str(evs2)])
+
+
+## gust+ {push_line dist 4, range 4, clear_smoke}: reaches and shoves one tile
+## further than the base and still clears smoke along the line.
+func _check_c4_gust() -> void:
+	var kit := ["gust+", "gust", "mycelium_dash"]
+	# push distance: enemy at (3,3) in an open lane -> (7,3) for +, (6,3) for base
+	for pair in [[0, Vector2i(7, 3)], [1, Vector2i(6, 3)]]:
+		var g = _game_on(LANE, kit)
+		var e = g._spawn("drill_bot", Vector2i(3, 3))
+		e["hp"] = 10
+		var evs: Array = _cast(g, int(pair[0]), Vector2i(1, 0))
+		_ok(_evs(evs, "illegal").is_empty() and e["pos"] == pair[1] and e["hp"] == 10 and _evs(evs, "staggered").size() == 1,
+			"%s shoves the adjacent enemy to %s: %s %s" % [kit[pair[0]], str(pair[1]), str(e["pos"]), str(evs)])
+	# reach: smoke at distance 4 (6,3) is cleared by the + form only; distance 3 by both
+	for pair in [[0, true], [1, false]]:
+		var g = _game_on(LANE, kit)
+		g.terrain[Vector2i(5, 3)] = {"kind": "smoke", "ttl": 3}
+		g.terrain[Vector2i(6, 3)] = {"kind": "smoke", "ttl": 3}
+		var evs: Array = _cast(g, int(pair[0]), Vector2i(1, 0))
+		_ok(_evs(evs, "illegal").is_empty() and g._terrain_kind(Vector2i(5, 3)) == "", "%s clears smoke at distance 3" % kit[pair[0]])
+		_ok((g._terrain_kind(Vector2i(6, 3)) == "") == bool(pair[1]) and _evs(evs, "smoke_cleared").size() == (2 if pair[1] else 1),
+			"%s smoke at distance 4 cleared = %s: %s" % [kit[pair[0]], str(pair[1]), str(evs)])
+	# an enemy at distance 4 is in reach for the + form only (shoved the full 4 to (10,3))
+	for pair in [[0, Vector2i(10, 3)], [1, Vector2i(6, 3)]]:
+		var g = _game_on(LANE, kit)
+		var e = g._spawn("drill_bot", Vector2i(6, 3))
+		e["hp"] = 10
+		var evs: Array = _cast(g, int(pair[0]), Vector2i(1, 0))
+		_ok(_evs(evs, "illegal").is_empty() and e["pos"] == pair[1], "%s vs an enemy at distance 4: %s" % [kit[pair[0]], str(e["pos"])])
+	_ok(int(Content.ABILITIES["gust"]["cost"]) == 1 and int(Content.ABILITIES["gust+"]["cost"]) == 1, "gust costs stay 1")
+	_ok(_evs(_cast(_game_on(LANE, kit), 0, Vector2i(1, 0)), "rider").is_empty(), "gust+ carries no rider")
+
+
+## updraft+ {dash_dir, range 4}: the dash runs one tile further; walls and
+## enemies still stop it early.
+func _check_c4_updraft() -> void:
+	var kit := ["updraft+", "updraft", "mycelium_dash"]
+	for pair in [[0, Vector2i(6, 3)], [1, Vector2i(5, 3)]]:
+		var g = _game_on(LANE, kit)
+		var evs: Array = _cast(g, int(pair[0]), Vector2i(1, 0))
+		_ok(_evs(evs, "illegal").is_empty() and g.player["pos"] == pair[1] and _evs(evs, "dash").size() == 1 and g.moved_this_turn == 4 - pair[0],
+			"%s dashes to %s: %s %s" % [kit[pair[0]], str(pair[1]), str(g.player["pos"]), str(evs)])
+	# an enemy in the lane stops the + dash short
+	var g2 = _game_on(LANE, kit)
+	g2._spawn("drill_bot", Vector2i(5, 3))
+	var evs2: Array = _cast(g2, 0, Vector2i(1, 0))
+	_ok(_evs(evs2, "illegal").is_empty() and g2.player["pos"] == Vector2i(4, 3), "updraft+ stops before an enemy: %s" % str(g2.player["pos"]))
+	# a wall one tile away: the dash is a single step
+	var g3 = _game_on(LANE, kit)
+	var evs3: Array = _cast(g3, 0, Vector2i(-1, 0))
+	_ok(_evs(evs3, "illegal").is_empty() and g3.player["pos"] == Vector2i(1, 3), "updraft+ west stops at the wall: %s" % str(g3.player["pos"]))
+	_ok(int(Content.ABILITIES["updraft"]["cost"]) == 1 and int(Content.ABILITIES["updraft+"]["cost"]) == 1, "updraft costs stay 1")
+
+
+## clear_air+ {clear_smoke radius 4, push_all dist 2}: smoke at distance 4 goes
+## and adjacent enemies are shoved 2 instead of 1.
+func _check_c4_clear_air() -> void:
+	for pair in [["clear_air+", 4, 2], ["clear_air", 3, 1]]:
+		var aid: String = pair[0]
+		var radius: int = pair[1]
+		var dist: int = pair[2]
+		var g = _game([aid, "seed_bomb", "mycelium_dash"])
+		g.terrain[Vector2i(8, 3)] = {"kind": "smoke", "ttl": 3}   # distance 3
+		g.terrain[Vector2i(9, 3)] = {"kind": "smoke", "ttl": 3}   # distance 4
+		g.terrain[Vector2i(7, 1)] = {"kind": "smoke", "ttl": 3}   # distance 4 (2 + 2)
+		g.terrain[Vector2i(5, 4)] = {"kind": "oil"}                # not smoke: untouched
+		var e = g._spawn("drill_bot", Vector2i(4, 3))
+		e["hp"] = 10
+		var evs: Array = _cast(g, 0, g.player["pos"])
+		_ok(_evs(evs, "illegal").is_empty() and g._terrain_kind(Vector2i(8, 3)) == "", "%s clears smoke at distance 3: %s" % [aid, str(evs)])
+		_ok((g._terrain_kind(Vector2i(9, 3)) == "") == (radius == 4) and (g._terrain_kind(Vector2i(7, 1)) == "") == (radius == 4),
+			"%s (radius %d) at distance 4: %s %s" % [aid, radius, g._terrain_kind(Vector2i(9, 3)), g._terrain_kind(Vector2i(7, 1))])
+		_ok(_evs(evs, "smoke_cleared").size() == (3 if radius == 4 else 1) and g._terrain_kind(Vector2i(5, 4)) == "oil",
+			"%s smoke_cleared events, oil kept: %s" % [aid, str(evs)])
+		_ok(e["pos"] == Vector2i(4 - dist, 3) and e["hp"] == 10 and _evs(evs, "staggered").size() == 1,
+			"%s shoves the adjacent enemy %d: %s" % [aid, dist, str(e["pos"])])
+		_ok(_evs(evs, "rider").is_empty() and _evs(evs, "ability").size() == 1, "%s no rider, one ability event" % aid)
+		_ok(int(Content.ABILITIES[aid]["cost"]) == 2, "%s cost stays 2" % aid)
+
+
+# --- Block C4: effective casts, run summary, mutators as data ------------------
+
+## Game.effective_uses counts a cast only when an effect outcome fired or a
+## rider ran; player.uses counts every legal cast. Keyed by base id, copied by
+## clone(), never in snapshot().
+func _check_c4_effective_uses() -> void:
+	# a lance into an empty lane: a use, not an effective one
+	var g = _game(["solar_lance", "grow_spike", "mycelium_dash"])
+	var evs: Array = _cast(g, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "illegal").is_empty() and int(g.player["uses"].get("solar_lance", 0)) == 1,
+		"empty-lane lance is a use: %s" % str(g.player["uses"]))
+	_ok(not g.effective_uses.has("solar_lance"), "empty-lane lance is not effective: %s" % str(g.effective_uses))
+	# a grow_spike that hits: a use and an effective use
+	var t := Vector2i(8, 3)
+	var e = g._spawn("drill_bot", t)
+	e["hp"] = 10
+	g.terrain[t] = {"kind": "growth"}
+	evs = _cast(g, 1, t)
+	_ok(_evs(evs, "illegal").is_empty() and e["hp"] == 7, "grow_spike hit: hp %d" % e["hp"])
+	_ok(int(g.player["uses"].get("grow_spike", 0)) == 1 and int(g.effective_uses.get("grow_spike", 0)) == 1,
+		"grow_spike hit is a use and effective: %s %s" % [str(g.player["uses"]), str(g.effective_uses)])
+	# a grow_spike whose only legal target is gone by cast time cannot be cast
+	# (illegal, no use); the empty-lane lance above is the raw-not-effective case
+	# a + form folds onto the base id; the lance now hits the enemy
+	g.player["kit"][0] = "solar_lance+"
+	e["pos"] = Vector2i(7, 3)
+	evs = _cast(g, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "illegal").is_empty() and _dmg(evs, "solar_lance+").size() == 1, "solar_lance+ hits: %s" % str(evs))
+	_ok(int(g.effective_uses.get("solar_lance", 0)) == 1 and not g.effective_uses.has("solar_lance+"),
+		"solar_lance+ effective cast folds onto solar_lance: %s" % str(g.effective_uses))
+	_ok(int(g.player["uses"].get("solar_lance+", 0)) == 1 and int(g.player["uses"].get("solar_lance", 0)) == 1,
+		"raw uses keep both keys: %s" % str(g.player["uses"]))
+	# clone copies, and a cast on the clone never leaks back
+	var c = g.clone()
+	_ok(c.effective_uses == g.effective_uses, "clone copies effective_uses: %s" % str(c.effective_uses))
+	var ce = c._spawn("drill_bot", t)
+	ce["hp"] = 10
+	_cast(c, 1, t)
+	_ok(int(c.effective_uses.get("grow_spike", 0)) == 2 and int(g.effective_uses.get("grow_spike", 0)) == 1,
+		"clone effective_uses is a copy: clone %s game %s" % [str(c.effective_uses), str(g.effective_uses)])
+	# not in the snapshot: the hash never churns on it
+	var snap: Dictionary = g.snapshot()
+	_ok(not snap.has("effective_uses") and not snap["player"].has("effective_uses"), "snapshot carries no effective_uses")
+	var h1: String = g.state_hash()
+	g.effective_uses["grow_spike"] = 99
+	_ok(g.state_hash() == h1, "state_hash ignores effective_uses")
+	# a fresh game starts empty; a rider-carrying cast counts once
+	_ok(_game().effective_uses.is_empty(), "fresh game has no effective uses")
+
+
+## run_summary(): the compact end-of-run record. Exact key set; uses_by_base
+## folds + keys onto the base with the larger count (the + key was seeded
+## with the base's count at upgrade time, so a sum would double count).
+func _check_c4_run_summary() -> void:
+	var g = Game.new(7, {"mutators": ["brittle"], "packages": ["mycology"], "tier": 2, "grafts": ["carapace"]})
+	g.player["uses"] = {"solar_lance": 2, "solar_lance+": 5, "seed_bomb": 3}
+	g.effective_uses = {"solar_lance": 4, "seed_bomb": 1}
+	g.player["kit"] = ["solar_lance+", "seed_bomb", "mycelium_dash"]
+	g.bloom = 11
+	g.total_turns = 40
+	g.death_cause = "drill_bot"
+	var sm: Dictionary = g.run_summary()
+	var want := ["won", "floor", "turns", "kit", "grafts", "uses_by_base", "effective_uses_by_base",
+		"bloom", "death_cause", "seed", "tier", "mutators", "packages", "loadout"]
+	var keys: Array = sm.keys()
+	keys.sort()
+	want.sort()
+	_ok(keys == want, "run_summary keys: %s" % str(keys))
+	_ok(sm["won"] == false and int(sm["floor"]) == 1 and int(sm["turns"]) == 40 and int(sm["bloom"]) == 11
+		and String(sm["death_cause"]) == "drill_bot" and int(sm["seed"]) == 7 and int(sm["tier"]) == 2,
+		"run_summary scalars: %s" % str(sm))
+	_ok(sm["kit"] == ["solar_lance+", "seed_bomb", "mycelium_dash"] and sm["grafts"] == ["carapace"]
+		and sm["mutators"] == ["brittle"] and sm["packages"] == ["mycology"] and String(sm["loadout"]) == "tender",
+		"run_summary lists: %s" % str(sm))
+	_ok(sm["uses_by_base"] == {"solar_lance": 5, "seed_bomb": 3}, "uses_by_base folds + onto base: %s" % str(sm["uses_by_base"]))
+	_ok(sm["effective_uses_by_base"] == {"solar_lance": 4, "seed_bomb": 1}, "effective_uses_by_base: %s" % str(sm["effective_uses_by_base"]))
+	sm["kit"].append("x")
+	sm["effective_uses_by_base"]["x"] = 1
+	_ok(g.player["kit"].size() == 3 and not g.effective_uses.has("x"), "run_summary hands out copies")
+	# a won game reports won and the last floor
+	var w = Game.new(3)
+	w.won = true
+	w.over = true
+	w.floor_num = Content.FLOORS.size()
+	_ok(w.run_summary()["won"] == true and int(w.run_summary()["floor"]) == Content.FLOORS.size(), "won summary")
+
+
+## Mutators as data: Game._mut scans Content.MUTATORS[m]["config"] in held
+## order (scalar: first hit; array: concatenation; default otherwise). The six
+## legacy rows reproduce their numbers; the three C4 rows hold their invariants.
+func _check_c4_mutator_config() -> void:
+	# _mut semantics
+	var g = Game.new(1, {"mutators": ["kit_of_3", "brittle"]})
+	_ok(int(g._mut("kit_max", 9)) == 3 and int(g._mut("max_hp_delta", 0)) == -3, "_mut reads both held rows")
+	_ok(int(g._mut("bank_cap", -1)) == -1 and g._mut("pool_ban", []) == [], "_mut default when no held row carries the key")
+	g.mutators = ["no_lance", "no_lance"]
+	_ok(g._mut("pool_ban", []) == ["solar_lance", "solar_lance"], "_mut concatenates array keys: %s" % str(g._mut("pool_ban", [])))
+	g.mutators = ["brittle", "not_a_mutator"]
+	_ok(int(g._mut("max_hp_delta", 0)) == -3 and int(g._mut("kit_max", 5)) == 5, "_mut skips unknown ids")
+	_ok(Game.new(1)._mut("kit_max", Content.KIT_MAX) == Content.KIT_MAX, "_mut with no mutators is the default")
+	for k in Content.MUTATOR_CONFIG_KEYS:
+		var seen := false
+		for m in Content.MUTATORS:
+			if Content.MUTATORS[m]["config"].has(k):
+				seen = true
+		_ok(seen, "config key %s is carried by some mutator row" % k)
+	# the six legacy rows
+	_ok(Game.new(1, {"mutators": ["kit_of_3"]})._kit_max() == 3 and Game.new(1)._kit_max() == Content.KIT_MAX, "kit_of_3 -> kit_max 3")
+	var b = Game.new(1, {"mutators": ["brittle"]})
+	_ok(b.player["max_hp"] == Content.PLAYER_HP - 3 and b.player["hp"] == Content.PLAYER_HP - 3, "brittle -> -3 max hp")
+	_ok(Game.new(1, {"mutators": ["parched"]})._bank_cap() == 0 and Game.new(1)._bank_cap() == Content.BANK_CAP, "parched -> bank cap 0")
+	_ok(Game.new(1, {"mutators": ["parched"], "grafts": ["deep_cells"]})._bank_cap() == 0, "parched beats a bank_cap graft")
+	var d = Game.new(1, {"mutators": ["double_oil"]})
+	_ok(int(d.floor_def(1)["oil"]) == int(Content.FLOORS[0]["oil"]) * 2 and int(Game.new(1).floor_def(1)["oil"]) == int(Content.FLOORS[0]["oil"]),
+		"double_oil -> oil x2")
+	var o = Game.new(1, {"mutators": ["overtime"]})
+	var base_enemies: Dictionary = Content.FLOORS[0]["enemies"]
+	var common := ""
+	var common_n := 0
+	for kind in base_enemies:
+		if int(base_enemies[kind]) > common_n:
+			common_n = int(base_enemies[kind])
+			common = kind
+	_ok(int(o.floor_def(1)["enemies"][common]) == common_n + 1, "overtime -> +1 %s" % common)
+	_ok(o.floor_def(Content.FLOORS.size())["enemies"] == Content.FLOORS[Content.FLOORS.size() - 1]["enemies"], "overtime leaves the boss floor alone")
+	_ok(Game.new(1, {"mutators": ["boarded"]}).shop.is_empty() and not Game.new(1).shop.is_empty(), "boarded -> shop {}")
+	# no_lance: kit of 2 without solar_lance, pool without it, shop stock follows
+	var nl = Game.new(1, {"mutators": ["no_lance"]})
+	_ok(nl.player["kit"] == ["seed_bomb", "mycelium_dash"], "no_lance kit: %s" % str(nl.player["kit"]))
+	_ok(not nl.draft_pool.has("solar_lance") and nl.draft_pool.size() == Content.DRAFT_POOL.size() - 1, "no_lance pool: %s" % str(nl.draft_pool))
+	_ok(nl.snapshot()["pool"] == nl.draft_pool, "no_lance pool in the snapshot")
+	var nl2 = Game.new(1, {"mutators": ["no_lance"], "kit": ["solar_lance+", "seed_bomb"], "pool": ["solar_lance", "vine_whip"]})
+	_ok(nl2.player["kit"] == ["seed_bomb"] and nl2.draft_pool == ["vine_whip"], "no_lance strips the + form and a custom pool: %s %s" % [str(nl2.player["kit"]), str(nl2.draft_pool)])
+	var lance_stocked := 0
+	for s in range(1, 21):
+		var gs = Game.new(s, {"mutators": ["no_lance"]})
+		if String(gs.shop.get("ability", "")) == "solar_lance":
+			lance_stocked += 1
+		gs.player["pos"] = gs.map["stairs"]
+		gs.greened = gs.green_need
+		gs.step({"type": "descend"})
+		if gs.draft_offers.has("solar_lance"):
+			lance_stocked += 1
+	_ok(lance_stocked == 0, "no_lance: no solar_lance in 20 seeds of shop stock or first draft")
+	_ok(Game.new(5, {"mutators": ["no_lance"]}).rng.state == Game.new(5).rng.state, "no_lance never touches the main rng at Game.new")
+	# wide_draft: the first draft offers 4 (3 in the base game)
+	for pair in [[["wide_draft"], 4], [[], 3]]:
+		var wd = Game.new(2, {"mutators": pair[0]})
+		wd.player["pos"] = wd.map["stairs"]
+		wd.greened = wd.green_need
+		wd.step({"type": "descend"})
+		_ok(wd.phase == "draft" and wd.draft_offers.size() == int(pair[1]), "mutators %s: first draft offers %s" % [str(pair[0]), str(wd.draft_offers)])
+	_ok(Game.new(5, {"mutators": ["wide_draft"]}).rng.state == Game.new(5).rng.state, "wide_draft never touches the main rng at Game.new")
+	# upgrades_only: only + forms of held abilities; none available -> skipped
+	var uo = Game.new(2, {"mutators": ["upgrades_only"]})
+	uo.player["pos"] = uo.map["stairs"]
+	uo.greened = uo.green_need
+	uo.step({"type": "descend"})
+	var all_plus: bool = uo.phase == "draft" and not uo.draft_offers.is_empty()
+	for aid in uo.draft_offers:
+		if not String(aid).ends_with("+") or not uo.player["kit"].has(String(aid).trim_suffix("+")):
+			all_plus = false
+	_ok(all_plus, "upgrades_only: first draft offers only + forms of the kit: %s" % str(uo.draft_offers))
+	var uo2 = Game.new(2, {"mutators": ["upgrades_only"], "kit": ["solar_lance+", "seed_bomb+", "mycelium_dash+"]})
+	uo2.player["pos"] = uo2.map["stairs"]
+	uo2.greened = uo2.green_need
+	var evs: Array = uo2.step({"type": "descend"})
+	_ok(uo2.phase == "play" and uo2.floor_num == 2 and _evs(evs, "draft_offer").is_empty(),
+		"upgrades_only with an all-+ kit skips the draft: phase %s floor %d" % [uo2.phase, uo2.floor_num])
+	_ok(Game.new(5, {"mutators": ["upgrades_only"]}).rng.state == Game.new(5).rng.state, "upgrades_only never touches the main rng at Game.new")
+	# every MUTATORS row builds and steps without an error event
+	for m in Content.MUTATORS:
+		var gm = Game.new(3, {"mutators": [m]})
+		var bad := false
+		for i in 5:
+			for ev in gm.step({"type": "end_turn"}):
+				if String(ev.get("t", "")) == "error":
+					bad = true
+		_ok(not bad and gm.snapshot()["mutators"] == [m], "mutator %s runs five end_turns clean" % m)

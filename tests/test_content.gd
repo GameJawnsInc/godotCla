@@ -21,6 +21,10 @@ extends SceneTree
 ##    ops, an int cap_per_turn, and never an op that grants shield or thorns
 ##    (the stall surface). Same self-test discipline: bad fixtures rejected,
 ##    the four rule grafts accepted.
+## 10) mutators as data (Block C4): every MUTATORS row has a name, a desc and a
+##    config dict whose keys come from Content.MUTATOR_CONFIG_KEYS (the closed
+##    set Game._mut reads), typed per key: pool_ban an array of ABILITIES base
+##    ids, the booleans bool, the rest int. Same self-test discipline.
 ## Run: godot --headless --path . --script tests/test_content.gd
 
 const Content := preload("res://sim/content.gd")
@@ -237,6 +241,16 @@ func _init() -> void:
 	print("grafts: %d rows (%d stat, %d mod, %d hooks); hook kinds %d, depth max %d, step cap %d" % [
 		Content.GRAFTS.size(), shape["stat"], shape["mod"], shape["hooks"],
 		Content.HOOK_KINDS.size(), Content.HOOK_DEPTH_MAX, Content.HOOK_STEP_CAP])
+
+	# 10) mutators as data: the live table, then the lint's own self-test
+	failures.append_array(_lint_mutators(Content.MUTATORS))
+	failures.append_array(_lint_mutator_selftest())
+	var mut_keys := {}
+	for mid in Content.MUTATORS:
+		for k in Content.MUTATORS[mid].get("config", {}):
+			mut_keys[k] = true
+	print("mutators: %d rows over %d of %d config keys" % [
+		Content.MUTATORS.size(), mut_keys.size(), Content.MUTATOR_CONFIG_KEYS.size()])
 
 	if failures.is_empty():
 		print("content: OK")
@@ -740,4 +754,89 @@ func _lint_graft_selftest() -> Array:
 		out.append("graft lint self-test: rule-graft fixture rejected: %s" % f)
 	print("graft lint self-test: %d bad rows -> %d failures; %d good rows -> %d failures" % [
 		BAD_GRAFTS.size(), bad.size(), GOOD_GRAFTS.size(), good.size()])
+	return out
+
+
+# --- 10) mutator lint -----------------------------------------------------------
+
+const MUTATOR_BOOL_KEYS := ["shop", "kit_ban", "draft_upgrades_only"]
+const MUTATOR_ARRAY_KEYS := ["pool_ban"]
+
+
+## Lints a MUTATORS-shaped table; failure strings start with the mutator id.
+func _lint_mutators(muts: Dictionary) -> Array:
+	var out: Array = []
+	for mid in muts:
+		var row = muts[mid]
+		var where := "mutator %s" % str(mid)
+		if not (row is Dictionary):
+			out.append("%s: row is not a Dictionary" % where)
+			continue
+		for k in ["name", "desc"]:
+			if not (row.get(k, null) is String) or String(row[k]).is_empty():
+				out.append("%s: missing or empty %s" % [where, k])
+		if not (row.get("config", null) is Dictionary):
+			out.append("%s: missing config dict" % where)
+			continue
+		var cfg: Dictionary = row["config"]
+		if cfg.is_empty():
+			out.append("%s: empty config (a mutator must change something)" % where)
+		for k in cfg:
+			if not Content.MUTATOR_CONFIG_KEYS.has(k):
+				out.append("%s: config key '%s' is not in MUTATOR_CONFIG_KEYS" % [where, str(k)])
+				continue
+			var v = cfg[k]
+			if MUTATOR_ARRAY_KEYS.has(k):
+				if not (v is Array) or v.is_empty():
+					out.append("%s: config %s must be a non-empty Array" % [where, k])
+				else:
+					for aid in v:
+						if not (aid is String) or not Content.ABILITIES.has(aid) or String(aid).ends_with("+"):
+							out.append("%s: config %s entry %s is not a base ability id" % [where, k, str(aid)])
+			elif MUTATOR_BOOL_KEYS.has(k):
+				if not (v is bool):
+					out.append("%s: config %s must be a bool" % [where, k])
+			elif not (v is int):
+				out.append("%s: config %s must be an int" % [where, k])
+		for k in row:
+			if not ["name", "desc", "config"].has(k):
+				out.append("%s: unknown row key '%s'" % [where, str(k)])
+	return out
+
+
+const BAD_MUTATORS := {
+	"no_name": {"desc": "x", "config": {"kit_max": 3}},
+	"no_desc": {"name": "x", "config": {"kit_max": 3}},
+	"no_config": {"name": "x", "desc": "x"},
+	"empty_config": {"name": "x", "desc": "x", "config": {}},
+	"bad_key": {"name": "x", "desc": "x", "config": {"kit_cap": 3}},
+	"float_value": {"name": "x", "desc": "x", "config": {"kit_max": 3.0}},
+	"bool_as_int": {"name": "x", "desc": "x", "config": {"shop": 0}},
+	"ban_not_array": {"name": "x", "desc": "x", "config": {"pool_ban": "solar_lance"}},
+	"ban_unknown_id": {"name": "x", "desc": "x", "config": {"pool_ban": ["laser_lance"]}},
+	"ban_plus_form": {"name": "x", "desc": "x", "config": {"pool_ban": ["solar_lance+"]}},
+	"extra_row_key": {"name": "x", "desc": "x", "config": {"kit_max": 3}, "hooks": []},
+}
+const GOOD_MUTATORS := {
+	"scalar": {"name": "x", "desc": "x", "config": {"kit_max": 4, "max_hp_delta": -1, "bank_cap": 0}},
+	"flags": {"name": "x", "desc": "x", "config": {"shop": false, "draft_upgrades_only": true, "draft_offers": 5}},
+	"ban": {"name": "x", "desc": "x", "config": {"pool_ban": ["solar_lance", "seed_bomb"], "kit_ban": true}},
+}
+
+
+func _lint_mutator_selftest() -> Array:
+	var out: Array = []
+	var bad: Array = _lint_mutators(BAD_MUTATORS)
+	for mid in BAD_MUTATORS.keys():
+		var hit := false
+		for f in bad:
+			if String(f).begins_with("mutator %s" % mid):
+				hit = true
+		if not hit:
+			out.append("mutator lint self-test: bad fixture '%s' was accepted" % mid)
+	var good: Array = _lint_mutators(GOOD_MUTATORS)
+	for f in good:
+		out.append("mutator lint self-test: good fixture rejected: %s" % f)
+	print("mutator lint self-test: %d bad rows -> %d failures; %d good rows -> %d failures" % [
+		BAD_MUTATORS.size(), bad.size(), GOOD_MUTATORS.size(), good.size()])
 	return out

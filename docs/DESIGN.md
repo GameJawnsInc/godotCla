@@ -124,7 +124,7 @@ The theme should do mechanical work, not just paint.
   — which is what riders read, so "lance the oil the enemy stands on, then the
   flare hits harder" is a data row rather than a special case in code. Riders
   emit a `rider` event so the harness can measure how often combos fire.
-- **Seven rows carry a rider today** (the rest are plain recipes). Two base
+- **Ten rows carry a rider today** (the rest are plain recipes). Two base
   rows scale with the board: **Grow Spike** deals 3 and +1 for one adjacent
   growth tile, **Sun Flare** deals 1 in a radius, ignites oil and adds +1 to
   anything standing in fire. Five `+` forms - offered only once the base is
@@ -140,6 +140,7 @@ The theme should do mechanical work, not just paint.
   3 - 2 + 2 = 4, so it needs a surge or a capsule), *drag through embers*
   (whip an enemy across fire: 3 + burn + stun for 1 charge), and *pin* (a jet
   collision roots, so the lance line stays open next turn - 1 + 2 = 3).
+  Three more riders live on the package `+` forms below.
 - Loadout: 4 ability slots + 1 mobility slot. Drafting while full = drop one.
 - Draft cadence: 1-of-3 at each descent; shrines/shops mid-floor spend Bloom.
 - Upgrades appear as draft options (e.g. cost reduction, bigger shape).
@@ -245,7 +246,27 @@ tests a different build muscle so no single draft strategy trivializes it.
   - **Mycology** — spores, tunneling, growth-network tricks.
   - **Hydraulics** — water, steam, washing/pushing.
   - **Aeolian** — wind, repositioning, smoke-clearing.
-- Every pool addition must pass a harness combo-sweep before shipping.
+- Every package ability has its own `+` form, so a package deepens as well as
+  widens: **Spore Cloud+** clouds a radius of 3 (two casts fill the spore
+  stack cap exactly), **Fungal Ring+** roots whoever is standing where the ring
+  sprouts, **Burrow+** tunnels 4, **Tide+** shoves 3 for 2 on impact and roots
+  what it slams, **Steam Vent+** holds its smoke 5 turns, **Geyser+** erupts for
+  2 and adds 1 to anything standing in fire, **Gust+** blows a line of 4,
+  **Updraft+** rides 4, and **Clear Air+** scrubs a radius of 4 and shoves 2.
+  Like every `+`, they appear only once the base is held, so adding a package
+  never changes the base pool's balance.
+- Every pool addition must pass a harness combo-sweep before shipping. Judge a
+  package by a persona that commits to its archetype (Tidecaller, Skyrunner,
+  Sporewright): a generalist bot drafts package abilities and then never casts
+  them, so a flat generalist table means "no dilution", not "no power".
+- The career profile keeps a **50-run history of whole runs** — the kit and
+  grafts held at the end, bloom, turns, death cause, seed, tier, mutators and
+  packages — plus a cumulative count of *effective* casts per ability (a cast
+  that actually did something, so a milestone cannot be farmed by casting into
+  empty air). Milestones read that history, so unlocks can ask for a **build**
+  and not just a depth: win holding a named ability, win holding none of a
+  named ability, land N of a cast, win with N grafts. Daily runs are scored
+  into their own best-per-seed table and never touch the career.
 
 ### Post-win
 
@@ -256,7 +277,14 @@ Both replay hooks, both implemented as data over the same sim:
   Every tier must stay bot-winnable — the harness validates each one.
 - **Run modifiers** (mutators): optional, chosen at run start, unlock-gated
   (e.g. "no growth terrain", "double oil", "kit of 3"). Free-form spice on
-  top of the tier ladder.
+  top of the tier ladder. Each one is a row of data — a name, a description and
+  a small config the sim reads through a single lookup — so a new modifier is a
+  table entry, not a branch. Three of them rewrite the draft or the kit rather
+  than a stat: **Lance Embargo** takes Solar Lance out of the starting kit, the
+  draft pool and the shrine, so the run opens on two abilities and has to find
+  its own damage; **Wide Draft** deals four offers instead of three;
+  **Upgrades Only** never offers a new ability at all, only the `+` forms of
+  what you already hold, so the kit stops widening and starts deepening.
 
 ## Playtest personas (style guide §5)
 

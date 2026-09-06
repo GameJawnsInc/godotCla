@@ -107,7 +107,10 @@ architecture below is designed to bend rather than block.
     `tests/regressions/*.json` (seed, config, actions) pair: illegal/error events,
     outcome, expected event patterns; `REGRESS_STRICT=1` also checks the state
     hash, `REGEN=1` re-stamps outcomes/hashes after a deliberate sim change
-    (check the printed diffs by hand first), `REGRESS_DIR` points at another corpus
+    (check the printed diffs by hand first), `REGRESS_DIR` points at another corpus.
+    An event pattern pins a `Vector2i` value as a String (`"to": "(5, 3)"`):
+    `regress_lib.event_matches` falls back to `str()` as soon as either side is
+    a String, and an `[x, y]` pattern throws on the `!=` operator instead
   - `godot --headless --path . --script tests/playtest.gd` — bot personas, balance
     metrics, and the BALANCE.md band gates (exit 1 when a persona's whole Wilson
     interval sits outside its band; `PLAYTEST_GATE=0` disables, `PLAYTEST_SEEDS`
@@ -232,6 +235,46 @@ architecture below is designed to bend rather than block.
   stat/mod key sets, hook `on` kinds, effect ops) and rejects hook effects that
   grant shield, thorns, heal or cleanse credit — the stall vector BALANCE.md
   documents. `tests/regressions/c3_*.json` demos one rule each.
+- Package `+` rows (C4): every `Content.PACKAGES` ability now has a `<id>+`
+  row — `spore_cloud+`, `fungal_ring+`, `burrow+`, `tide+`, `steam_vent+`,
+  `geyser+`, `gust+`, `updraft+`, `clear_air+`. The draft offers `<id>+` only
+  when the base is held and the shrine forge only upcycles a held base, so
+  `Content.DRAFT_POOL` and base-pool balance are untouched. Convention: costs
+  never move, numeric bumps only (range, dist, radius, dmg, ttl; a row may bump
+  more than one) and at most one C1 rider, only where the vocabulary states the base identity
+  (`grow_radius` ignores its `radius` key, so `fungal_ring+` takes the
+  `seed_bomb+` on-planted root instead of a wider ring).
+  `tests/regressions/c4_*_plus.json` demos one row each.
+- Mutators are data (C4): every `Content.MUTATORS` row carries a `config` dict
+  and the sim reads it through the one helper `Game._mut(key, default)` — it
+  scans the held mutators in order, first hit wins for a scalar, array values
+  concatenate. There is no `mutators.has("...")` left in `sim/game.gd`. The
+  config keys are the closed set `Content.MUTATOR_CONFIG_KEYS`: `kit_max`,
+  `max_hp_delta`, `bank_cap`, `oil_mult`, `extra_common_enemy`, `shop`,
+  `pool_ban`, `kit_ban`, `draft_offers`, `draft_upgrades_only`. Nine rows —
+  the six originals (`kit_of_3`, `brittle`, `parched`, `double_oil`,
+  `overtime`, `boarded`) reproduce their old numbers exactly, plus three new
+  ones: `no_lance` (`pool_ban: ["solar_lance"]` + `kit_ban` — the lance leaves
+  the starting kit and the draft pool, and the shrine stock follows the pool),
+  `wide_draft` (`draft_offers: 4`) and `upgrades_only`
+  (`draft_upgrades_only` — candidates are only the `+` forms of held
+  abilities; with none available the draft is skipped as before). Adding a
+  mutator means adding a row; one that needs a new number needs a new config
+  key, a `_mut` read at the site and the key in `MUTATOR_CONFIG_KEYS` (which
+  `tests/test_content.gd` lints). `tests/regressions/c4_no_lance.json`,
+  `c4_wide_draft.json` and `c4_upgrades_only.json` demo the three.
+- Run summary and effective casts (C4): `Game.effective_uses` (base id -> int)
+  counts a cast only when something happened — an effect outcome fired or a
+  rider ran — while `player.uses` stays the raw count. It is copied by
+  `clone()` and deliberately not in `snapshot()`, so it never churns the state
+  hash. Teleport, dash, clear_smoke and self-only ops set no outcome counter
+  and so never count as effective; `create_terrain` counts (planted). `Game.run_summary()`
+  is the compact end-of-run dict — `{won, floor, turns, kit, grafts,
+  uses_by_base, effective_uses_by_base, bloom, death_cause, seed, tier,
+  mutators, packages, loadout}` — read by the shell's game-over site and the
+  meta layer; the sim never consumes it. `uses_by_base` takes the max of a
+  base and its `+` key rather than the sum, because the draft and the forge
+  seed the `+` key with the base's count.
 - Sim run config: `Game.new(seed, {kit, pool, packages, tier, mutators, grafts,
   bloom})` for sweeps, meta-unlocks, and post-win difficulty tiers. `grafts` is
   a list of `Content.GRAFTS` ids installed before floor 1 (unknown ids are
@@ -239,6 +282,20 @@ architecture below is designed to bend rather than block.
   `bloom` is the starting balance — neither touches the main rng.
 - Meta layer: `meta/profile.gd` records runs against `Content.MILESTONES` and
   hands back the next run's config; the sim itself stays career-agnostic.
+  `record_run(summary)` takes a `Game.run_summary()` dict (the old
+  `{won, floor, tier}` shape still works — every other key defaults) and keeps
+  a 50-entry history of compact per-run records (newest last, older dropped)
+  plus `casts_by_base`, effective casts summed across runs. Milestone
+  `requires` predicates: `best_floor`, `wins`, `tier_wins`,
+  `won_with: [base ids]` (a recorded win whose kit held them all, a `+` form
+  counting as its base), `wins_without: [base ids]`, `casts: {base id: n}`
+  (cumulative effective casts) and `grafts_owned_at_win: n`. A row's `kind`
+  dispatches explicitly to `unlocked_packages` / `unlocked_mutators` /
+  `unlocked_loadouts` / `unlocked_grafts` (the last two have no consumer yet);
+  an unknown kind is a `push_error` and is skipped. `load_from` filters every
+  stored id against `Content`, so renamed content cannot brick a profile.
+  Daily runs go through `record_daily(summary)` into `daily_best[str(seed)]`
+  and never touch the career.
 - Balance targets and the measurement discipline live in `docs/BALANCE.md`;
   `tests/daily_run.gd` generates the date-seeded daily challenge.
 - Death autopsy (`tests/autopsy.gd`): `AUTOPSY_BOT=<persona> AUTOPSY_SEED=<n>`
@@ -250,12 +307,17 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (5
-  today: C3 grafts-as-data and the hook dispatcher — the shrine now stocks from
-  ten grafts, so the `shop_graft` side draw and every bot's graft pick shifted
-  and any bot log recorded at 4 desyncs from its first shrine on; bump 4 was the
-  C2 rider rows on `grow_spike(+)`, `sun_flare(+)`, `water_jet+`, `vine_whip+`
-  and `seed_bomb+`): bump it whenever a sim change alters replay behaviour.
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (6
+  today: C4 — the nine package `+` rows (those bases became forgeable at the
+  shrine and draftable-as-upgrade once held) and mutator numbers moving into
+  `Content.MUTATORS[...].config`; neither changes a default-config run, so the
+  6 re-stamp rewrote only `sim_version` across the corpus with no outcome or
+  hash diff and no bot log needed re-recording. Bump 5 was C3 grafts-as-data
+  and the hook dispatcher — the shrine stocks from ten grafts, so the
+  `shop_graft` side draw and every bot's graft pick shifted and any bot log
+  recorded at 4 desyncs from its first shrine on; bump 4 was the C2 rider rows
+  on `grow_spike(+)`, `sun_flare(+)`, `water_jet+`, `vine_whip+` and
+  `seed_bomb+`): bump it whenever a sim change alters replay behaviour.
   `shell/main.gd` RUN_SAVE_VERSION, `tests/regress_lib.gd` and
   `tests/autopsy.gd` all read it -
   live phone runs persist as replayable action logs and a stale log replayed

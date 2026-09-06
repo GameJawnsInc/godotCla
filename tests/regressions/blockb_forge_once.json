@@ -4,6 +4,6 @@
 "actions": [{"dir":[1,0],"type":"move"},{"keep":0,"scrap":1,"type":"upcycle_ability"},{"item":"item","type":"buy"}],
 "expect": {"events":[{"id":"seed_bomb","t":"upcycle_scrap"},{"id":"solar_lance+","t":"upcycle_ability"},{"id":"spore_vial","item":"item","t":"buy"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "the forge closes after one use (shop.forge erased) while the rest of the shrine stays open: upcycle_ability then a normal item buy",
-"sim_version": 5,
+"sim_version": 6,
 "hash": "76004263aa8491348dbc941cb7fba0e299697f1bc2db1cb9e789614bb8a7396b"
 }

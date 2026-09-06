@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#.......#","#@>.....#","#.......#","#########"]},"mutators":["wide_draft"]},
+"actions": [{"dir":[1,0],"type":"move"},{"type":"descend"}],
+"expect": {"events":[{"t":"descend","to_floor":2},{"offers":["solar_lance+","vine_whip","anchor_roots","thorn_shield"],"t":"draft_offer"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "C4 wide_draft mutator (draft_offers 4): the first descent draft deals four offers instead of three - the exact list is pinned below",
+"sim_version": 6,
+"hash": "6c1a05fccf2c12f3c08519f2a8d6f79de4584b6a343d24e54353ac9110a4b618"
+}

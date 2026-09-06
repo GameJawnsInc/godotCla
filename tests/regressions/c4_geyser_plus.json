@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["###########","#........>#","#.........#","#@k.......#","#.........#","#.........#","###########"],"terrain":[{"kind":"fire","pos":[2,3]}]},"kit":["geyser+","seed_bomb","mycelium_dash"],"pool":["geyser+","seed_bomb","mycelium_dash"]},
+"actions": [{"slot":0,"target":[1,3],"type":"ability"}],
+"expect": {"events":[{"id":"geyser+","t":"ability"},{"amt":1,"id":"geyser+","kind":"bonus","t":"rider"},{"amt":3,"src":"geyser+","t":"damage","who":"smokestack"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "C4 geyser+ dmg 1 -> 2 plus the sun_flare+ bonus: the smokestack beside the player is standing in fire, so the eruption reads 2 + 1 = 3 where the base row deals 1 - the row carries no ignite key of its own, so the fire has to be there already for the bonus to fire",
+"sim_version": 6,
+"hash": "78492677c4405b0186c1bf13efa3e55616ecf0632f6f7eaf703693c4bc9f621c"
+}

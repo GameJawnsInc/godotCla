@@ -9,11 +9,16 @@ const Game := preload("res://sim/game.gd")
 const Sweep := preload("res://tests/sweep_lib.gd")
 const Roster := preload("res://bots/roster.gd")
 
+## The daily draws from the six launch mutators, in their original table order.
+const DAILY_MUTATORS := ["kit_of_3", "double_oil", "brittle", "parched", "overtime", "boarded"]
+
 
 func _init() -> void:
 	var date := Time.get_date_string_from_system(true)
 	var seed_v: int = hash(date) & 0x7FFFFFFF
-	var muts: Array = Content.MUTATORS.keys()
+	# a frozen list, not Content.MUTATORS.keys(): a table that grows would move
+	# every date's daily onto a different mutator (and onto ones no career has)
+	var muts: Array = DAILY_MUTATORS
 	var mut: String = muts[seed_v % muts.size()]
 	var config := {"mutators": [mut], "packages": Content.PACKAGES.keys()}
 	print("TENDER daily %s — seed %d, mutator: %s (%s)" % [

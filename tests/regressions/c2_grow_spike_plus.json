@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[4,3],"type":"ability"}],
 "expect": {"events":[{"amt":2,"id":"grow_spike+","kind":"per","t":"rider"},{"amt":5,"src":"grow_spike+","t":"damage","who":"smokestack"},{"t":"death","who":"smokestack"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C2 grow_spike+ rider: the smokestack stands between two growth tiles, so the per rider (count growth_adjacent_target, cap 2) adds 2 to the base 3 - one 5-damage hit that kills a 4-hp enemy the flat spike could not",
-"sim_version": 5,
+"sim_version": 6,
 "hash": "3f8b105f8e77f0113dbf6f03e6cd73c7c73aae73f511e2d1b5937081af811657"
 }

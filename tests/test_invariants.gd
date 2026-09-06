@@ -13,7 +13,15 @@ const Game := preload("res://sim/game.gd")
 const SEEDS := 200
 const FDEF_SEEDS := 20
 ## Mutators that change floor_def; the others touch the player or shop only.
-const FDEF_MUTATORS := ["double_oil", "overtime"]
+## Every mutator whose config touches floor_def (oil_mult / extra_common_enemy),
+## read from the table so a new row joins the sweep by itself.
+static func _fdef_mutators() -> Array:
+	var out: Array = []
+	for m in Content.MUTATORS:
+		var cfg: Dictionary = Content.MUTATORS[m].get("config", {})
+		if cfg.has("oil_mult") or cfg.has("extra_common_enemy"):
+			out.append(m)
+	return out
 
 
 func _init() -> void:
@@ -63,12 +71,12 @@ func _check_kinds(kinds: Dictionary) -> int:
 
 
 ## Validate every floor of Game.floor_def(n) for tiers 0..TIERS.size() and
-## for each single FDEF_MUTATORS entry, FDEF_SEEDS seeds each.
+## for each mutator whose config touches floor_def, FDEF_SEEDS seeds each.
 func _floor_def_sweep() -> Dictionary:
 	var configs: Array = []
 	for t in range(Content.TIERS.size() + 1):
 		configs.append({"tier": t})
-	for mut in FDEF_MUTATORS:
+	for mut in _fdef_mutators():
 		configs.append({"mutators": [mut]})
 	var gens := 0
 	var bad := 0

@@ -136,7 +136,9 @@ The shell persists a career profile (`user://tender_profile.json`,
 win unlocks the difficulty ladder and a DIFFICULTY cycler appears on the
 menu (tiers from `Content.TIERS`, clamped to what is unlocked). The win
 screen lists newly unlocked tiers/packages/mutators, and the menu footer
-shows runs / wins / best floor.
+shows runs / wins / best floor. Daily runs are scored but never counted
+toward the career: a finished daily is filed as that seed's best result
+(won, floor, turns) and unlocks nothing.
 
 ## Satchel
 

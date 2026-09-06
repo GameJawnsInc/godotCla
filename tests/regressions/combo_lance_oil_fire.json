@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[1,0],"type":"ability"},{"type":"end_turn"}],
 "expect": {"events":[{"t":"ignite"},{"amt":2,"src":"solar_lance","t":"damage"},{"amt":1,"src":"fire:solar_lance","t":"damage","who":"smokestack"}],"floor":1,"timeout":true,"turns":1,"won":false},
 "note": "combo demo: solar_lance ignites the oil under a smokestack and hits it, then the environment phase burns it for 1 more",
-"sim_version": 5,
+"sim_version": 6,
 "hash": "68c71f53a186f04dae54fd47f6ce88ab5e0d6f1ba0fdd6ad54f2f31cc3e5c9cf"
 }

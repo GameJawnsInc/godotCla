@@ -34,7 +34,10 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## 5: C3 - the hook dispatcher (_hook) and grafts as data: four rule grafts
 ## (ember_sap, undertow, compost, oil_tithe) join the shop stock, so the
 ## shop_graft side draw and every hook-carrying run replay anew.
-const SIM_VERSION := 5
+## 6: C4 - the nine package "+" rows (forgeable and draftable once the base is
+## held) and mutators as data (Content.MUTATORS[m]["config"] read through
+## _mut; no_lance, wide_draft, upgrades_only join the table).
+const SIM_VERSION := 6
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -60,6 +63,10 @@ var draft_offers: Array = []
 var shop := {}
 var tier := 0
 var mutators: Array = []
+## Effective casts per base ability id (Content.base_id): a cast counts when
+## at least one of its effects fired an outcome or a rider ran. Read by
+## run_summary(); deliberately absent from snapshot() so the hash never sees it.
+var effective_uses: Dictionary = {}
 var draft_pool: Array = []
 var packages: Array = []  # run-scoped tech packages (config "packages"); read-only metadata
 var loadout := "tender"  # starting loadout id (config "loadout"); read-only metadata
@@ -111,8 +118,25 @@ func _init(seed_v: int, config: Dictionary = {}) -> void:
 		"uses": {}, "grafts": [], "gummed": {}, "items": [],
 		"thorns_dmg": 0, "thorns_turns": 0, "anchor_turns": 0,
 	}
-	if mutators.has("brittle"):
-		player["max_hp"] -= 3
+	# mutator config (Content.MUTATORS[m]["config"], read through _mut):
+	# banned ids leave the pool (the shop stock follows it) and, with kit_ban,
+	# the starting kit; max_hp_delta shifts the starting hp. None touch the rng.
+	var banned: Array = _mut("pool_ban", [])
+	if not banned.is_empty():
+		var kept_pool: Array = []
+		for aid in draft_pool:
+			if not banned.has(Content.base_id(String(aid))):
+				kept_pool.append(aid)
+		draft_pool = kept_pool
+		if bool(_mut("kit_ban", false)):
+			var kept_kit: Array = []
+			for aid in player["kit"]:
+				if not banned.has(Content.base_id(String(aid))):
+					kept_kit.append(aid)
+			player["kit"] = kept_kit
+	var hp_delta := int(_mut("max_hp_delta", 0))
+	if hp_delta != 0:
+		player["max_hp"] += hp_delta
 		player["hp"] = player["max_hp"]
 	# sweep hooks: pre-installed grafts (before floor entry so carapace
 	# applies) and a starting bloom balance. Neither touches the main rng.
@@ -128,7 +152,29 @@ func _init(seed_v: int, config: Dictionary = {}) -> void:
 
 
 func _kit_max() -> int:
-	return 3 if mutators.has("kit_of_3") else Content.KIT_MAX
+	return int(_mut("kit_max", Content.KIT_MAX))
+
+
+## The one mutator read: scans the held mutators in order over
+## Content.MUTATORS[m]["config"]. A scalar key returns the first hit, an array
+## key concatenates every hit; `default` when no held mutator carries the key.
+## Unknown mutator ids carry no config and are skipped.
+func _mut(key: String, default):
+	var arr: Array = []
+	var any_arr := false
+	for m in mutators:
+		var cfg: Dictionary = Content.MUTATORS.get(m, {}).get("config", {})
+		if not cfg.has(key):
+			continue
+		var v = cfg[key]
+		if v is Array:
+			any_arr = true
+			arr.append_array(v)
+		else:
+			return v
+	if any_arr:
+		return arr
+	return default
 
 
 ## Floor definition with this run's difficulty-tier modifiers applied.
@@ -148,9 +194,11 @@ func floor_def(n: int) -> Dictionary:
 		if mod.has("extra_enemy") and not fdef.get("boss", false):
 			var kind := String(mod["extra_enemy"])
 			fdef["enemies"][kind] = int(fdef["enemies"].get(kind, 0)) + 1
-	if mutators.has("double_oil"):
-		fdef["oil"] = int(fdef["oil"]) * 2
-	if mutators.has("overtime") and not fdef.get("boss", false):
+	var oil_mult := int(_mut("oil_mult", 1))
+	if oil_mult != 1:
+		fdef["oil"] = int(fdef["oil"]) * oil_mult
+	var extra_common := int(_mut("extra_common_enemy", 0))
+	if extra_common > 0 and not fdef.get("boss", false):
 		var common := ""
 		var common_n := 0
 		for kind in fdef["enemies"]:
@@ -158,7 +206,7 @@ func floor_def(n: int) -> Dictionary:
 				common_n = int(fdef["enemies"][kind])
 				common = kind
 		if common != "":
-			fdef["enemies"][common] = common_n + 1
+			fdef["enemies"][common] = common_n + extra_common
 	var extra_elites := _tier_mod("extra_elites")
 	if extra_elites > 0 and not fdef.get("boss", false):
 		fdef["elites"] = int(fdef.get("elites", 0)) + extra_elites
@@ -365,6 +413,7 @@ func clone():
 	g.rng.state = rng.state
 	g.tier = tier
 	g.mutators = mutators.duplicate()
+	g.effective_uses = effective_uses.duplicate()
 	g.stoked = stoked
 	g.greened = greened
 	g.green_need = green_need
@@ -425,7 +474,7 @@ func _enter_floor(n: int) -> void:
 		if spec.get("elite", false):
 			e["elite"] = true
 			e["hp"] += Content.ELITE_HP_BONUS
-	shop = {} if mutators.has("boarded") else _stock_shop()
+	shop = _stock_shop() if bool(_mut("shop", true)) else {}
 	var floor_shield := int(_graft_mod("floor_start_shield", 0))
 	if floor_shield > 0:
 		player["shield"] = mini(maxi(player["shield"], floor_shield), _shield_cap())
@@ -1124,7 +1173,7 @@ func _act_descend() -> void:
 	player["hp"] = mini(player["hp"] + Content.DESCEND_HEAL, player["max_hp"])
 	_emit({"t": "descend", "to_floor": floor_num + 1})
 	_pending_floor = floor_num + 1
-	draft_offers = _draw_draft_offers(3)
+	draft_offers = _draw_draft_offers(int(_mut("draft_offers", 3)))
 	if draft_offers.is_empty():
 		_enter_floor(_pending_floor)
 		_begin_player_turn()
@@ -1135,9 +1184,10 @@ func _act_descend() -> void:
 
 func _draw_draft_offers(count: int) -> Array:
 	var candidates: Array = []
-	for aid in draft_pool:
-		if not player["kit"].has(aid) and not player["kit"].has(aid + "+"):
-			candidates.append(aid)
+	if not bool(_mut("draft_upgrades_only", false)):
+		for aid in draft_pool:
+			if not player["kit"].has(aid) and not player["kit"].has(aid + "+"):
+				candidates.append(aid)
 	for aid in player["kit"]:
 		var up: String = aid + "+"
 		if Content.ABILITIES.has(up):
@@ -1400,8 +1450,9 @@ func _graft_mod(key: String, default):
 
 
 func _bank_cap() -> int:
-	if mutators.has("parched"):
-		return 0
+	var cap := int(_mut("bank_cap", -1))
+	if cap >= 0:
+		return cap
 	return Content.BANK_CAP + _graft_stat("bank_cap")
 
 
@@ -1439,8 +1490,39 @@ func _act_ability(action: Dictionary) -> void:
 	}
 	casts_this_turn += 1
 	_emit({"t": "ability", "id": aid, "target": target})
+	var ev_mark := _step_events.size()
+	var fired := false
 	for eff in adef["effects"]:
-		_apply_effect(eff, adef, target, aid, ctx)
+		if _outcome_fired(_apply_effect(eff, adef, target, aid, ctx)):
+			fired = true
+	if not fired:
+		# a rider (per / then) that ran also makes the cast count
+		for i in range(ev_mark, _step_events.size()):
+			if String(_step_events[i].get("t", "")) == "rider":
+				fired = true
+				break
+	if fired:
+		var base := Content.base_id(aid)
+		effective_uses[base] = int(effective_uses.get(base, 0)) + 1
+
+
+## Compact end-of-run record for the meta layer and the runners: what was
+## held, what was cast (raw and effective, folded onto base ids) and how the
+## run ended. Pure read; the sim never consumes it. player.uses keeps both
+## keys when an ability is upgraded (the + key is seeded with the base's
+## count at upgrade time), so per base the larger count is the true total.
+func run_summary() -> Dictionary:
+	var uses_by_base := {}
+	for aid in player["uses"]:
+		var b := Content.base_id(String(aid))
+		uses_by_base[b] = maxi(int(uses_by_base.get(b, 0)), int(player["uses"][aid]))
+	return {
+		"won": won, "floor": floor_num, "turns": total_turns,
+		"kit": player["kit"].duplicate(), "grafts": player["grafts"].duplicate(),
+		"uses_by_base": uses_by_base, "effective_uses_by_base": effective_uses.duplicate(),
+		"bloom": bloom, "death_cause": death_cause, "seed": seed_value, "tier": tier,
+		"mutators": mutators.duplicate(), "packages": packages.duplicate(), "loadout": loadout,
+	}
 
 
 ## Live cost of an ability right now: standing on growth applies the

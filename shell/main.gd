@@ -279,6 +279,31 @@ func _load_run() -> void:
 		_run_save.seek_end()
 
 
+## Game-over site: the run's own record (Game.run_summary(), stamped with the
+## tier and seed mode the shell chose) goes to the career profile - or to the
+## daily board when the seed came from the daily challenge, since a daily
+## scores its seed and unlocks nothing. Then the action log is closed and
+## archived. Called once per run, from _act.
+func _record_finished_run() -> void:
+	_run_recorded = true
+	var summary: Dictionary = game.run_summary()
+	summary["tier"] = run_tier
+	summary["seed_mode"] = seed_mode
+	_run_unlocks = []
+	if seed_mode == "daily":
+		profile.record_daily(summary)
+	else:
+		var prev_ut: int = int(profile.unlocked_tier)
+		_run_unlocks = profile.record_run(summary)
+		if int(profile.unlocked_tier) > prev_ut:
+			_run_unlocks.push_front("tier:%d" % int(profile.unlocked_tier))
+	profile.save(PROFILE_PATH)
+	if _run_save != null:
+		_run_save.close()
+		_run_save = null
+	_archive_run()
+
+
 ## A finished run's action log is a replayable record, not litter: move it to
 ## runs_dir as run_<seed>_<yyyymmdd>_<won|died>.save and keep the newest
 ## RUNS_KEEP. tests/import_run.gd turns one into a regression pair.
@@ -386,16 +411,7 @@ func _act(a: Dictionary) -> void:
 	_arm_anim(prev, prev_floor)
 	_spawn_fx(evs, prev)
 	if game.over and _game_is_run and not _run_recorded:
-		_run_recorded = true
-		var prev_ut: int = int(profile.unlocked_tier)
-		_run_unlocks = profile.record_run({"won": game.won, "floor": game.floor_num, "tier": run_tier})
-		if int(profile.unlocked_tier) > prev_ut:
-			_run_unlocks.push_front("tier:%d" % int(profile.unlocked_tier))
-		profile.save(PROFILE_PATH)
-		if _run_save != null:
-			_run_save.close()
-			_run_save = null
-		_archive_run()
+		_record_finished_run()
 	for ev in evs:
 		var s := _ev_text(ev)
 		if s != "" and (log_lines.is_empty() or log_lines.back() != s):

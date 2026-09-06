@@ -14,6 +14,7 @@ const Game := preload("res://sim/game.gd")
 const ImportRun := preload("res://tests/import_run.gd")
 const Regress := preload("res://tests/regress_lib.gd")
 const AsciiView := preload("res://sim/ascii_view.gd")
+const Profile := preload("res://meta/profile.gd")
 
 ## A kit that fills every slot with slot 0 held by a mobility ability - the one
 ## the forge may never scrap (sim/game.gd _is_mobility).
@@ -386,6 +387,40 @@ func _init() -> void:
 		DirAccess.remove_absolute(arch.runs_dir + "/" + n)
 	DirAccess.remove_absolute(arch.runs_dir)
 	arch.free()
+
+	# 10. the game-over site: a career run is recorded from the sim's own
+	# summary, a daily only scores its seed and unlocks nothing
+	var prof_path: String = Shell.PROFILE_PATH
+	var prof_before := FileAccess.get_file_as_string(prof_path) if FileAccess.file_exists(prof_path) else ""
+	var rec = _bare_shell()
+	rec.profile = Profile.new()
+	rec._game_is_run = true
+	rec._run_recorded = false
+	rec.run_tier = 0
+	rec.seed_mode = "random"
+	rec.game = Game.new(4242, {})
+	rec.game.over = true
+	rec._record_finished_run()
+	_check(rec.profile.runs == 1 and rec.profile.history.size() == 1,
+		"a finished run reaches the career profile")
+	_check(int(rec.profile.history[0]["seed"]) == 4242 and rec.profile.history[0]["kit"] == Content.STARTING_KIT,
+		"the record is the sim's run_summary (seed and kit), not a stub")
+	_check(rec.profile.daily_best.is_empty(), "a random run files no daily result")
+	rec.seed_mode = "daily"
+	rec._run_recorded = false
+	rec.game = Game.new(77, {})
+	rec.game.over = true
+	rec._record_finished_run()
+	_check(rec.profile.runs == 1 and rec.profile.history.size() == 1, "a daily run is not a career run")
+	_check(rec.profile.daily_best.has("77"), "a daily run files that seed's result")
+	_check(rec._run_unlocks.is_empty(), "a daily unlocks nothing")
+	rec.free()
+	if prof_before == "":
+		DirAccess.remove_absolute(prof_path)
+	else:
+		var rf := FileAccess.open(prof_path, FileAccess.WRITE)
+		rf.store_string(prof_before)
+		rf.close()
 
 	shell.free()
 	shell2.free()

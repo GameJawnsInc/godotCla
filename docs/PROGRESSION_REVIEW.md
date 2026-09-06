@@ -298,6 +298,98 @@ upcycles are 0/0 for every persona. NOT done, in 6.3 order: **the nine package
 has its grafted ceiling, since the tier-6 graft table above is the first
 measurement of one - and everything in 6.1.
 
+**Status (2026-09-06e).** Block C4 (6.3, the two closing items) has landed and
+**`Game.SIM_VERSION` is 6**. **Block C is complete.** Four pieces shipped
+together. (1) **The nine package `+` rows** (`sim/content.gd:214-261`), one per
+package ability, offered only when the base is held and forged only from a held
+base: costs never move, each row takes one numeric bump and at most one rider,
+and only where the C1a vocabulary states the base identity - `tide+` takes
+`water_jet+`'s then-root, `geyser+` takes `sun_flare+`'s on-fire bonus, and
+`fungal_ring+` takes `seed_bomb+`'s growth rider because `grow_radius` ignores
+its `radius` key (`sim/game.gd:1615-1626`), so there was no number to bump.
+(2) **`Content.MUTATORS` as data**: every row now carries a `config` dict read
+through one helper, `Game._mut(key, default)` (`sim/game.gd:162`, first hit wins
+for scalars, Arrays concatenate), with a closed `MUTATOR_CONFIG_KEYS`
+vocabulary and **no `mutators.has(` left anywhere in `sim/game.gd`**; the six
+existing rows reproduce their old numbers exactly (a parity probe against the
+pristine tree over optimizer x six mutators x seeds 1..10 reports "PARITY: diff
+empty (before vs after, 60 games)"), and three new rows land on top - `no_lance`
+(`pool_ban` + `kit_ban`), `wide_draft` (`draft_offers: 4`) and `upgrades_only`
+(`draft_upgrades_only`). (3) **`Game.effective_uses` and `run_summary()`**
+(`sim/game.gd:69, 1514`): a cast counts as effective only when an effect outcome
+fired or a rider ran; copied by `clone()`, kept out of `snapshot()` so it adds
+no hash churn. (4) **The profile that sees builds** (`meta/profile.gd`):
+`record_run(summary)` takes the whole `run_summary()` dict (the old
+`{won, floor, tier}` shape still works), keeps a 50-entry history and a
+cumulative `casts_by_base`, gains `won_with` / `wins_without` / `casts` /
+`grafts_owned_at_win`, dispatches explicitly on `kind` to four `unlocked_*`
+buckets with a `push_error` on anything else, filters every stored id against
+`Content` on load, and files dailies into `daily_best` without ever touching the
+career. `DRAFT_POOL` was not shrunk.
+
+The re-baseline is the "2026-09-06e - bump 6 (C4)" entry in `docs/BALANCE.md`,
+and its headline is that it is **not** a re-baseline: a `+` row can only enter a
+game whose pool holds its base, the nine bases live only in the three packages,
+and the mutator refactor is a table read, so **every persona number is identical
+to 06d cell for cell** - seven personas at 30 seeds, the magpie and wanderer
+100-seed canaries, and a 30-seed optimizer `verify_kit` all reproduce the
+previous entry exactly, not merely inside its interval. Suite green including
+the playtest gate ("gate: all PASS", "regressions: 57 ok, 0 failed" plain and
+`REGRESS_STRICT=1`, "grammar: OK (527 checks)", "mutators: 9 rows over 10 of 10
+config keys", "meta: OK"), zero timeouts across all 770 runs in the entry, and
+the corpus re-stamp was the cleanest yet: all 45 stale records replayed "hash
+ok" *before* the bump, so `REGEN=1` rewrote one line per file and **no bot log
+was re-recorded**, unlike bumps 4 and 5. Twelve new `c4_*` records take the
+corpus to 57.
+
+**Four of the nine `+` rows discharge the shipping gate and five do not.**
+SHIP: `geyser+` (13 offers, 12 picks, 42 casts, 1.40/run), `spore_cloud+`
+(4/3/39, 1.30/run), `gust+` (3/2/32, 1.07/run) and `tide+` (6/5/29, 0.97/run -
+one cast under a literal reading of the bar, 14.5 casts in each run that held
+it). HOLD, none of them for a measured warp: `fungal_ring+` on opportunity rate
+(11 casts over 30 runs, the C2 `water_jet+` / C3 `undertow` shape a third time),
+`burrow+` and `updraft+` because **neither measured persona casts a
+pure-mobility ability other than `mycelium_dash`** (the bases are picked 23
+times and cast 0 in 60 runs), `steam_vent+` because it is offered and never
+picked, and `clear_air+` because it has **never been offered in any run** - its
+base is picked once in the 150 runs whose pool holds it, and
+`tests/test_content.gd` already names `clear_air` as the only one of the 23
+draftable ids covered by no archetype core. The three new mutators are all
+indistinguishable from the base run at 30 seeds (optimizer 14/30 [30, 64];
+`no_lance` 13/30 [27, 61], `wide_draft` 16/30 [36, 70], `upgrades_only` 11/30
+[22, 54]), with zero timeouts and zero illegal actions each. The measurement
+finding the block hands forward is about the harness rather than the content:
+**`sweep_packages` with the optimizer cannot judge package content** - over 120
+runs the bot took 99 package picks and made 4 package casts, so its flat table
+measures pool dilution and nothing else, and package rows must be judged by
+`measure_fanatic`'s package archetypes (tidecaller 8/30 [14, 44], skyrunner
+5/30 [7, 34], sporewright 2/30 [2, 21]) or by a forced-kit ceiling run.
+
+**What remains, and it is now all Block D (6.4) plus the two carried items.**
+Nothing from 6.3 is outstanding. Carried forward from earlier blocks:
+**`deeproot_plan`** (7.5) and everything in **6.1** (the run-start choice: the
+mutator picker stayed out of C4's scope, so the three new mutators have data,
+descs and invariants but no shell surface), plus the **tier 6-8 re-judgement**
+6.2 defers to a grafted ceiling, which has had its grafted ceiling since 06d and
+still has not been re-run. Block D in 6.4 order: the affinity-slotted draft with
+"focus" on skip (which now has the prerequisite it was waiting on - a draft the
+sim can vary in width and content, since `draft_offers` and
+`draft_upgrades_only` prove both knobs work through one table read); evolve
+forks; enemies that read terrain; per-ability stat surges and Spore Trail; one
+resonance per element; and repeatable economy sinks, one at a time. Two
+unlock-layer consumers exist but have nothing to consume:
+`unlocked_loadouts` and `unlocked_grafts` are written, saved and filtered, and
+no `MILESTONES` row or `game_config` key reads either, which is the seam a
+loadout block would land in. Still open from earlier blocks and unchanged here:
+`solar_core` is the largest graft effect on record and C3 chose not to price it;
+`quota_reclamp` has never fired in a bot run (0 again across this bump's 530
+counted runs); the press is a dead sink and the forge nearly so; `hook_capped`
+has never fired in play. New to the open list: `tests/daily_run.gd` picks its
+mutator as `Content.MUTATORS.keys()[seed % size]`, so growing the table 6 -> 9
+changed every date's daily and no record covers it, and
+`tests/test_invariants.gd`'s `FDEF_MUTATORS` is a hardcoded pair rather than an
+enumeration of `Content.MUTATORS`.
+
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
 180 bot runs; a synergy-lift sweep of 7 hypothesised pairs at 24 seeds per

@@ -211,6 +211,54 @@ const ABILITIES := {
 		"effects": [{"op": "undim", "amount": 1}],
 		"tags": ["sun"], "role": "utility",
 	},
+	# Package "+" rows (Block C4): offered only once the base is held, so the
+	# base draft pool is untouched. Costs never move; one numeric bump each and
+	# at most one rider, only where the vocabulary states the base identity.
+	"spore_cloud+": {
+		"name": "Spore Cloud+", "cost": 2, "target": "self", "range": 3,
+		"effects": [{"op": "aoe_status", "status": "spore", "turns": 3, "radius": 3}],
+		"tags": ["control"], "role": "control",
+	},
+	"fungal_ring+": {
+		"name": "Fungal Ring+", "cost": 1, "target": "self", "range": 1,
+		"effects": [{"op": "grow_radius", "radius": 1, "then": [{"op": "status_target", "status": "root", "turns": 1, "who": "on_planted"}]}],
+		"tags": ["growth"], "role": "setup",
+	},
+	"burrow+": {
+		"name": "Burrow+", "cost": 2, "target": "tile", "range": 4,
+		"effects": [{"op": "teleport"}],
+		"tags": ["mobility"], "role": "mobility",
+	},
+	"tide+": {
+		"name": "Tide+", "cost": 2, "target": "self", "range": 2,
+		"effects": [{"op": "wash_all", "push": 3, "collision_dmg": 2, "then": [{"op": "status_target", "status": "root", "turns": 1, "if": [{"outcome": "collided"}, {"outcome": "pushed"}]}]}],
+		"tags": ["water", "displace"], "role": "damage",
+	},
+	"steam_vent+": {
+		"name": "Steam Vent+", "cost": 1, "target": "tile_any", "range": 3,
+		"effects": [{"op": "create_terrain", "kind": "smoke", "ttl": 5}],
+		"tags": ["smoke"], "role": "setup",
+	},
+	"geyser+": {
+		"name": "Geyser+", "cost": 2, "target": "self", "range": 1,
+		"effects": [{"op": "aoe_damage", "dmg": 2, "radius": 1, "bonus": {"dmg": 1, "if": [{"target_on": ["fire"]}]}}, {"op": "push_all", "dist": 2}],
+		"tags": ["water", "displace"], "role": "damage",
+	},
+	"gust+": {
+		"name": "Gust+", "cost": 1, "target": "dir", "range": 4,
+		"effects": [{"op": "push_line", "dist": 4, "clear_smoke": true}],
+		"tags": ["wind", "displace", "smoke"], "role": "control",
+	},
+	"updraft+": {
+		"name": "Updraft+", "cost": 1, "target": "dir", "range": 4,
+		"effects": [{"op": "dash_dir"}],
+		"tags": ["wind", "mobility"], "role": "mobility",
+	},
+	"clear_air+": {
+		"name": "Clear Air+", "cost": 2, "target": "self", "range": 4,
+		"effects": [{"op": "clear_smoke", "radius": 4}, {"op": "push_all", "dist": 2}],
+		"tags": ["wind", "smoke", "displace"], "role": "utility",
+	},
 }
 
 ## Abilities that can appear in descent drafts. Mobility stays fixed for now.
@@ -392,6 +440,15 @@ const ABILITY_DESC := {
 	"gust": "Gust down a line: shove 3 tiles, clears smoke",
 	"updraft": "Ride the wind: dash in a straight line",
 	"clear_air": "Clear nearby smoke and push enemies back",
+	"spore_cloud+": "Spore all within 3: 1 dmg a turn for 3 turns",
+	"fungal_ring+": "Sprout growth on every tile around you; enemies on the fresh growth are rooted a turn",
+	"burrow+": "Tunnel to any open tile within 4",
+	"tide+": "Wave outward: shove everything 3 tiles, 2 dmg on impact; an enemy shoved into something is rooted a turn",
+	"steam_vent+": "Vent smoke onto a tile for 5 turns - blocks lances",
+	"geyser+": "Erupt: 2 dmg beside you, shove everything 2; +1 dmg to enemies standing in fire",
+	"gust+": "Gust down a line of 4: shove 4 tiles, clears smoke",
+	"updraft+": "Ride the wind: dash up to 4 in a straight line",
+	"clear_air+": "Clear smoke within 4 and shove enemies 2 tiles back",
 	"bramble_coat": "Grow spikes: attackers take 2 dmg, 4 turns",
 	"anchor_roots": "Root yourself: immune to drags for 4 turns",
 	"moss_filter": "Filter the air: restore a stage of dimmed regen",
@@ -405,13 +462,39 @@ const GRAFT_PRICE_STEP := 2  # each owned graft raises the next graft's price
 const CLEANSE_SMOG_RELIEF := 1  # a cleanse pauses the smog clock, never rewinds it
 
 ## Optional run mutators: free-form spice chosen at run start (unlock-gated).
+## Mutators are data (Block C4): the sim reads every row's "config" through
+## one helper, Game._mut(key, default), which scans the held mutators in
+## order - a scalar key takes the first hit, an array key concatenates every
+## hit. Closed key set (tests/test_content.gd lints it):
+##   kit_max              ability kit cap (default Content.KIT_MAX)
+##   max_hp_delta         added to the starting max hp (hp starts full)
+##   bank_cap             charge carried over a descend (default BANK_CAP + grafts)
+##   oil_mult             multiplies every floor's oil count
+##   extra_common_enemy   +n of each non-boss floor's most common enemy
+##   shop                 false boards every shrine (shop == {})
+##   pool_ban             ability ids removed from the draft pool (array; the
+##                        shop's ability stock follows the pool)
+##   kit_ban              true also strips pool_ban ids (+ forms too) from the
+##                        starting kit
+##   draft_offers         offers per descent draft (default 3)
+##   draft_upgrades_only  draft candidates are only the + forms of held
+##                        abilities (no candidate = the draft is skipped)
+const MUTATOR_CONFIG_KEYS := [
+	"kit_max", "max_hp_delta", "bank_cap", "oil_mult", "extra_common_enemy", "shop",
+	"pool_ban", "kit_ban", "draft_offers", "draft_upgrades_only",
+]
 const MUTATORS := {
-	"kit_of_3": {"name": "Kit of Three", "desc": "ability kit capped at 3"},
-	"double_oil": {"name": "Slick Combine", "desc": "twice the oil everywhere"},
-	"brittle": {"name": "Brittle Tender", "desc": "-3 max HP"},
-	"parched": {"name": "Parched Cells", "desc": "charge cannot be banked"},
-	"overtime": {"name": "Overtime Shift", "desc": "+1 of each floor's most common enemy"},
-	"boarded": {"name": "Boarded Shrines", "desc": "shrines sell nothing"},
+	"kit_of_3": {"name": "Kit of Three", "desc": "ability kit capped at 3", "config": {"kit_max": 3}},
+	"double_oil": {"name": "Slick Combine", "desc": "twice the oil everywhere", "config": {"oil_mult": 2}},
+	"brittle": {"name": "Brittle Tender", "desc": "-3 max HP", "config": {"max_hp_delta": -3}},
+	"parched": {"name": "Parched Cells", "desc": "charge cannot be banked", "config": {"bank_cap": 0}},
+	"overtime": {"name": "Overtime Shift", "desc": "+1 of each floor's most common enemy", "config": {"extra_common_enemy": 1}},
+	"boarded": {"name": "Boarded Shrines", "desc": "shrines sell nothing", "config": {"shop": false}},
+	"no_lance": {"name": "Lance Embargo", "desc": "no Solar Lance: gone from the kit, the drafts and the shrine",
+		"config": {"pool_ban": ["solar_lance"], "kit_ban": true}},
+	"wide_draft": {"name": "Wide Draft", "desc": "four offers in every descent draft", "config": {"draft_offers": 4}},
+	"upgrades_only": {"name": "Upgrades Only", "desc": "drafts offer only + forms of what you hold",
+		"config": {"draft_upgrades_only": true}},
 }
 
 ## Post-win difficulty tiers. Tier N applies the first N modifiers, stacking.
@@ -437,7 +520,18 @@ const PACKAGES := {
 	"aeolian": ["gust", "updraft", "clear_air"],
 }
 
-## Career milestones. requires keys: best_floor, wins, tier_wins (wins at tier >= 1).
+## Career milestones. `kind` names the profile bucket the id unlocks:
+## package | mutator | loadout | graft (meta/profile.gd dispatches on it and
+## push_errors on anything else). requires keys, all evaluated by
+## meta/profile.gd against the recorded run history:
+##   best_floor            deepest floor ever reached
+##   wins                  total wins
+##   tier_wins             wins at tier >= 1
+##   casts {id: n}         effective casts of a base ability, summed over runs
+##   won_with [ids]        one win whose kit held every id ("+" forms satisfy
+##                         a base id; a "+" id must be held exactly)
+##   wins_without [ids]    one win whose kit held none of them
+##   grafts_owned_at_win n one win holding at least n grafts
 const MILESTONES := [
 	{"id": "mycology", "kind": "package", "requires": {"best_floor": 5}, "desc": "Reach the Pipeworks"},
 	{"id": "hydraulics", "kind": "package", "requires": {"wins": 1}, "desc": "Shut down the Furnace"},
@@ -448,6 +542,9 @@ const MILESTONES := [
 	{"id": "parched", "kind": "mutator", "requires": {"tier_wins": 1}, "desc": "Win at tier 1 or higher"},
 	{"id": "overtime", "kind": "mutator", "requires": {"wins": 2}, "desc": "Shut down the Furnace twice"},
 	{"id": "boarded", "kind": "mutator", "requires": {"wins": 2}, "desc": "Shut down the Furnace twice"},
+	{"id": "no_lance", "kind": "mutator", "requires": {"wins_without": ["solar_lance"]}, "desc": "Win with no Solar Lance in your kit"},
+	{"id": "wide_draft", "kind": "mutator", "requires": {"casts": {"grow_spike": 60}}, "desc": "Land 60 Grow Spikes"},
+	{"id": "upgrades_only", "kind": "mutator", "requires": {"won_with": ["seed_bomb+"]}, "desc": "Win holding Seed Bomb+"},
 ]
 
 ## Terrain vaults: hand-authored set-pieces stamped into a room. Terrain-only

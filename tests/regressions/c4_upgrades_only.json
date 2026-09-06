@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#.......#","#@>.....#","#.......#","#########"]},"mutators":["upgrades_only"]},
+"actions": [{"dir":[1,0],"type":"move"},{"type":"descend"}],
+"expect": {"events":[{"t":"descend","to_floor":2},{"offers":["solar_lance+","seed_bomb+","mycelium_dash+"],"t":"draft_offer"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "C4 upgrades_only mutator (draft_upgrades_only): the draft never reaches the pool - the candidate list is the + form of every held ability, so the starting kit's three offers are solar_lance+, seed_bomb+ and mycelium_dash+ (pinned below); a kit already all-+ has no candidates and the draft is skipped as before",
+"sim_version": 6,
+"hash": "232f985a7c936a350e161383e4c448b2acb6e750e8371006ae75af339b2c655a"
+}
