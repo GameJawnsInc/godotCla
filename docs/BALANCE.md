@@ -18,7 +18,7 @@ Reference numbers for TENDER's difficulty, and the discipline for changing them.
 | persona   | target                  | why |
 |-----------|-------------------------|-----|
 | deeproot  | 70–90% wins             | the search ceiling: near-perfect play should nearly always win |
-| deeproot_plan | **informational, no gate** | the combo-depth instrument (review 7.5): deeproot plus option-value terms, one-setup-ahead planning and shrine shopping. Measured 29/30 = 97% [83, 99] at tier 0 and 27/30 = 90% [74, 97] at tier 6 (2026-09-06f). Quote its **delta against deeproot**, never its absolute rate as a band — it is a measuring stick, and tier 0 is saturated for it |
+| deeproot_plan | **informational, no gate** | the combo-depth instrument (review 7.5): deeproot plus option-value terms, one-setup-ahead planning and shrine shopping. Measured 29/30 = 97% [83, 99] at tier 0 and 27/30 = 90% [74, 97] at tier 6 (2026-09-06f, both pre-routing-fix); after 07's routing guards and bump 8's per-offer graft pricing it reads 26/30 = 87% [70, 95] at tier 0 and 19/20 = 95% [76, 99] at tier 6 (2026-09-07b). Quote its **delta against deeproot**, never its absolute rate as a band — it is a measuring stick, and tier 0 is saturated for it |
 | optimizer | 45–65% wins             | skilled play should win often but never be safe (raised from 30–50 after the tempo fix — the old band measured a bot flaw) |
 | fanatic   | every build > 0 at 100 seeds (hard); 20–40% total (soft) | committing to a niche build must stay viable; the total tracks content difficulty and moves when content does |
 | magpie    | 0–5% design target, top bloom; gate trips at a 10% CI lower bound | full greed loses to the current game almost always; a RISE means greed got cheap (canary, like turtle). Under instrument v2 the recorded baseline is 10/100 [6, 17]; a 100-seed lower bound clearing 17% is the signal — see 2026-09-05d |
@@ -4277,6 +4277,422 @@ in `tests/measure_fanatic.gd`, `tests/draft_oracle.gd` and
 `tests/sweep_packages.gd`. The one-line fix is to start those runners from
 `Sweep.env_config({})` and let their own env vars override.
 
+## 2026-09-07b - bump 8: graft prices as data
+
+The graft pricing pass from `docs/PROGRESSION_REVIEW.md` 6.3 C3's closing
+clause: *"every graft measured pre-installed ... before it is priced."* Three
+things landed and only the first changes play. (1) Every `Content.GRAFTS` row
+carries a **`price`**, and a shrine prices each of its two offers from its own
+row instead of from one flat sheet entry. (2) A `regen_on_growth` stat key was
+added to the closed set and is **used by no shipped row** - it exists so the
+alternative probe at the bottom of this entry could be run with real content
+instead of a thought experiment. (3) The consumers (shell cards, the planner's
+shrine detour, the Tally) read the per-offer price. Instruments are unchanged
+(still v2), so this entry compares directly with 2026-09-07, 06f and 06d.
+
+### The price table
+
+`tests/test_content.gd` prints it: **"graft prices (+2 per owned): deep_cells
+3, verdant_pulse 3, thick_bark 3, bloom_surge 3, solar_core 8, carapace 3,
+ember_sap 5, undertow 4, compost 6, oil_tithe 5"**. Every number is read off
+the 30-seed pre-install sweeps already in this file, not invented:
+
+| graft | price | the row it was priced from |
+|---|---|---|
+| `solar_core` | **8** | the one lever. 06d: 14/30 -> 26/30 [70, 95] at tier 0 (+12, 14:2, p=0.00) and 5/30 -> 22/30 [56, 86] at tier 6 (+17, 19:2, p=0.00); four for four on the Method rule across two seed ranges and two bumps. Owning all ten grafts is worth no more than owning this one |
+| `compost` | 6 | the growth loop: 23-32 hooks a run wherever it is held, deeproot +5 [74, 97] at p = 0.12 with damage taken 11.0 -> 4.8, the lowest damage cell in any graft table on record |
+| `ember_sap` | 5 | SHIP rows with a real firing rate and no measurable win warp: 4.30-11.13 ignite hooks per run |
+| `oil_tithe` | 5 | SHIP: 2.10-4.40 tithes per run |
+| `undertow` | 4 | SHIP-UNDER-SEARCH (06f): 2.60 staggered hooks/run for the planner, 0.03-0.27 for the optimizer. Priced under the SHIP rows because the opportunity rate is persona-gated |
+| `deep_cells`, `thick_bark`, `verdant_pulse`, `bloom_surge`, `carapace` | 3 | every delta inside noise at both tiers in 06d (worst -1, best +4, no sign test under p = 0.22). Cheap enough that they are ever worth taking against a lever |
+
+`GRAFT_PRICE_STEP` stays **2** per graft already owned, and the tier markup
+still applies on top, so the sheet is `row price + 2 x owned + markup`: at
+tier 0 a first `solar_core` is 8 and a third graft that happens to be
+`solar_core` is 12, while a first `carapace` is 3. `SHOP_COSTS["graft"]`
+stays **4** as the id-less fallback (`test_content` still prints
+`shop costs: { "heal": 3, "ability": 4, "graft": 4, "item": 2, "press": 1,
+"forge": 3 }`), which is what a caller that just wants "the graft price"
+without naming an offer still gets.
+
+**The pass prices the lever; it does not nerf it.** `solar_core` still grants
++1 regen. Whether it should instead become conditional is measured at the
+bottom of this entry and left to the project owner.
+
+### Plumbing, in one paragraph
+
+`Game.shop_cost(item, id = "")` takes an optional offer id and, for `"graft"`
+with a known id, starts from `Content.GRAFTS[id].price` before adding the
+owned-graft step and the tier markup; every other item is untouched and the
+whole function is still pure table reads with no rng draw. `Game.graft_prices()`
+prices `shop["grafts"]` elementwise, `legal_actions` gates each `{type: buy,
+item: graft, pick: i}` on that pick's own price, `_act_buy` resolves the pick
+to its id before pricing so it deducts the right number, and `snapshot().shop`
+gains a derived `graft_prices` array aligned with `grafts` so consumers never
+call back into the sim. `regen_on_growth` joins the closed stat-key set and is
+added to regen in `_begin_player_turn` only while the tender begins the turn
+standing on growth. On the consumer side the shell's graft cards read
+`snapshot.shop.graft_prices` (falling back to `shop_cost("graft", gid)`), the
+planner's `_cheapest_useful_buy` now loops **every** offer and keeps the
+cheapest one whose `_graft_worth` clears its own price (it used to test only
+the highest-weight offer against the flat price), and `tests/tally.gd` gained
+a `bloom_spent_on_grafts` counter printed on the choice-sinks line. The
+heuristic personas (optimizer, magpie, fanatic) are unchanged: they still pick
+by tag overlap among the offers `legal_actions` says they can afford, so for
+them **price only gates**.
+
+### Version
+
+`Game.SIM_VERSION := 8`. What it invalidates: **every stored log that bought a
+graft.** A logged `{buy, graft, pick}` at a purse that cleared the old flat 4
+can be illegal at the row price, and the illegal buy leaves the bloom in the
+purse, which changes every later spend in that run. Separately,
+`snapshot().shop` now carries `graft_prices`, and `state_hash()` is taken over
+the snapshot, so any record whose final floor still stocks grafts hashes
+differently even when not one action changed.
+
+### Suite
+
+All green, gate included. Every line verbatim:
+
+- `tests/test_invariants.gd`: "invariants: 1400 generations, 0 violations",
+  "terrain kinds: ["oil", "goo", "growth", "rich_goo"] (0 violations)",
+  "floor_def invariants: 11 configs, 1540 generations, 0 violations", exit 0
+- `tests/test_content.gd`: "graft lint self-test: **26 bad rows -> 26
+  failures; 6 good rows -> 0 failures**" (23 / 5 at 06d - three new bad rows
+  for a missing, float and zero price, one new good row for
+  `regen_on_growth`), "grafts: 10 rows (5 stat, 2 mod, 3 hooks); hook kinds 7,
+  depth max 3, step cap 12", the price line quoted above, "content: OK", exit 0
+- `tests/test_economy.gd`: "**economy: OK (170 checks)**" (155 at 07), "rng
+  independence: 50 seeds x 6 configs, 0 mismatches", "graft prices: seed 2
+  offers ["compost", "solar_core"] at [6, 8] bloom; fallback 4, step 2",
+  "regen_on_growth: 0 shipped points; base charge 3, +1 only on growth",
+  "loadouts: 6 rows apply their kit; explicit kit wins; unknown -> tender;
+  kit_ban after loadout; open_pool 23 ids; rng mismatches 0", exit 0
+- `tests/test_grammar.gd`: "grammar: OK (529 checks)", exit 0
+- `tests/test_regressions.gd`: "=== regressions | dir res://tests/regressions |
+  **62 records** | strict false | regen false ===" / "regressions: 62 ok, 0
+  failed", and with `REGRESS_STRICT=1` "strict true" / "regressions: 62 ok, 0
+  failed", both exit 0
+- `tests/test_determinism.gd`: "determinism: OK (61 checks, 8 personas)", exit 0
+- `tests/test_meta.gd`: "meta: OK", exit 0, with "loadout winnability: 6
+  loadouts, optimizer seeds 1..20" reading tender **8/20** (9/20 at 07),
+  tidewarden 12/20, flarekeeper 10/20, spiker 15/20, lasher 9/20, skyrunner
+  6/20 - the one moved cell in the whole test, and it is the optimizer paying
+  more for grafts
+- `tests/test_shell.gd`: "shrine cards: ["thick_bark", "undertow"] at [3, 4]
+  bloom", "shell smoke: OK", exit 0
+- `tests/test_bots.gd`: "graft prices: offers ["verdant_pulse", "solar_core"]
+  at [3, 8] bloom; cheapest useful buy 3 (purse 6)", "**bots: OK (49
+  checks)**" (44 at 06f), "runtime: deeproot 37637 ms (wins 4/5 actions 1934),
+  deeproot_plan 98672 ms (wins 5/5 actions 1173), factor 2.62x over 5 seeds",
+  exit 0
+- `tests/playtest.gd` 30 seeds, gate ON: exit 0, "gate: all PASS"
+
+### Persona table
+
+Before = the 2026-09-07 entry (itself identical to 06d/06e/06f). After =
+`=== playtest | bot wanderer,sprout,magpie,fanatic,optimizer,deeproot | config
+{  } | seeds 1..30 (30) ===`, gate ON. Both columns are seeds 1..30, tier 0,
+Wilson 95% as printed by the runner.
+
+| persona | 2026-09-07 | this bump | moved outside CI? |
+|---|---|---|---|
+| wanderer | 0/30 = 0% [0, 11], floor 1.0, turns 83.5 | 0/30 = 0% [0, 11], floor 1.0, turns 83.5 | no - **identical** |
+| sprout | 1/30 = 3% [1, 17], floor 3.5, turns 102.7 | 1/30 = 3% [1, 17], floor 3.5, turns 100.2 | no |
+| magpie | 5/30 = 17% [7, 34], floor 4.2, turns 177.2 | 5/30 = 17% [7, 34], floor 4.1, turns 178.9 | no |
+| fanatic | 7/30 = 23% [12, 41], floor 5.6, turns 105.8 | **8/30** = 27% [14, 44], floor 5.6, turns 105.5 | no |
+| optimizer | 14/30 = 47% [30, 64], floor 6.0, turns 94.7 | **13/30** = 43% [27, 61], floor 6.1, turns 96.5 | no |
+| deeproot | 22/30 = 73% [56, 86], floor 6.9, turns 104.7 | 22/30 = 73% [56, 86], floor 6.9, turns 104.7 | no - **identical** |
+
+**The two personas that buy no grafts are bit-identical and the four that shop
+all moved.** wanderer and deeproot reproduce 07 to the last decimal of every
+KPI cell; sprout, magpie, fanatic and optimizer each moved by at most one win
+and stayed inside their own intervals. That split is the cleanest evidence the
+pass does exactly what it claims: nothing outside the shrine changed.
+
+### KPI block (playtest, 30 seeds, tier 0)
+
+Same columns as 06d/06e. `dmg` is player damage per run.
+
+| persona | strike | sig | terr | cmb | conv | ent | shrine | unspent | stall | qu | dmg |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| wanderer | 0.32 | 0.00 | 0.02 | 30.33 | 0.00 | 0.00 | 0.77 | 0.10 | 20 | 25 | 42.4 |
+| sprout | 0.40 | 0.08 | 0.01 | 7.93 | 0.12 | 4.36 | 0.97 | 0.34 | 13 | 3 | 30.7 |
+| magpie | 0.27 | 0.53 | 0.01 | 22.13 | 0.51 | 4.32 | 27.27 | 0.50 | 24 | 3 | 57.7 |
+| fanatic | 0.19 | 0.24 | 0.05 | 16.77 | 0.31 | 3.44 | 1.67 | 0.90 | 9 | 2 | 25.7 |
+| optimizer | 0.31 | 0.40 | 0.02 | 14.50 | 0.29 | 3.84 | 1.17 | 0.61 | 4 | 0 | 23.0 |
+| deeproot | 0.09 | 0.39 | 0.16 | 16.70 | 0.01 | 4.08 | 0.23 | 0.73 | 8 | 0 | 11.0 |
+
+Against 06e's table: wanderer and deeproot every cell equal; sprout's combos
+fall 9.27 -> 7.93 and damage 32.2 -> 30.7 (it bought `undertow` where it used
+to buy `solar_core`); magpie's damage rises 52.1 -> 57.7 on the same 5 wins;
+fanatic and optimizer move only in the last decimal apart from one stall floor
+each way. Hooks read `capped 0` everywhere - `hook_capped` has still never
+fired in play since the dispatcher shipped at bump 5.
+
+### Graft-buy distribution, before and after
+
+Before = the 06d graft-distribution block (30-seed playtest). After = the same
+block from the run above, plus the new `bloom spent on grafts` counter, which
+**has no before value at all** - it did not exist until this bump, so the
+right-hand columns are a new baseline, not a comparison.
+
+| persona | 06d buys | this bump buys | bloom on grafts | per buy | 06d `solar_core` | now |
+|---|---|---|---|---|---|---|
+| wanderer | 0 | 0 | 0 (0.0/run) | - | 0 | 0 |
+| sprout | 10 | 10 | 48 (1.6/run) | 4.8 | 1 | **0** |
+| magpie | 93 | 93 | 656 (21.9/run) | 7.1 | 10 | 10 |
+| fanatic | 47 | **49** | 283 (9.4/run) | 5.8 | 4 | 4 |
+| optimizer | 46 | **48** | 272 (9.1/run) | 5.7 | 6 | 6 |
+| deeproot | 0 | 0 | 0 (0.0/run) | - | 0 | 0 |
+
+By id, after: sprout `{compost 3, oil_tithe 3, undertow 1, carapace 2,
+verdant_pulse 1}`; magpie `{bloom_surge 13, solar_core 10, verdant_pulse 14,
+compost 15, carapace 3, oil_tithe 7, deep_cells 9, ember_sap 11, thick_bark 5,
+undertow 6}`; fanatic `{ember_sap 7, compost 8, verdant_pulse 10, undertow 2,
+deep_cells 8, thick_bark 2, solar_core 4, oil_tithe 3, bloom_surge 4,
+carapace 1}`; optimizer `{ember_sap 7, verdant_pulse 7, carapace 2, oil_tithe
+7, compost 3, solar_core 6, bloom_surge 7, deep_cells 5, undertow 3,
+thick_bark 1}`.
+
+**Share of runs that bought `solar_core`.** The recorded entries only ever
+stored buy *counts*, so this was measured directly on both trees with a
+scratch probe (`=== solar_core run share | seeds 1..30 ===`, seeds 1..30,
+`config {}`, run under `--path` on a pristine `git archive HEAD` copy for
+"before" and on a copy of this tree for "after"; the probe's before column
+reproduces 06d's `grafts { ... }` dicts **id for id** and its win column
+reproduces 07's persona table, which is what makes it trustworthy).
+
+| persona | before: runs with `solar_core` | after | before wins | after wins |
+|---|---|---|---|---|
+| sprout | 1/30 | **0/30** | 1/30 | 1/30 |
+| magpie | 10/30 | 10/30 | 5/30 | 5/30 |
+| fanatic | 4/30 | 4/30 | 7/30 | **8/30** |
+| optimizer | 6/30 | 6/30 | 14/30 | **13/30** |
+
+**The headline of this section is a negative result.** Pricing the lever at 8
+did not stop a single heuristic persona from buying it: magpie, fanatic and
+optimizer bought it in exactly as many runs as before, and only sprout - the
+poorest shopper - lost its one purchase. These bots pick by tag overlap among
+whatever `legal_actions` says they can afford, and by the time they stand at a
+shrine their purse usually clears 8, so **the price gates and does not steer
+them**. The buy counts rose slightly (46 -> 48, 47 -> 49) because the cheaper
+stat rows are now affordable at purses that used to buy nothing. Anyone judging
+a future price change on the heuristic personas' graft mix is judging it on a
+weak instrument; the one persona that prices its own detour is the planner,
+below.
+
+### The planner (`deeproot_plan`)
+
+`=== playtest | bot deeproot_plan | config {  } | seeds 1..30 (30) ===`,
+`PLAYTEST_GATE=0`: **26/30 = 87% wins, win CI [70%, 95%]**, 0 timeouts,
+avg floor 6.7, avg turns 85.1, 0 illegal, stall floors 4, quota-unmet 0,
+combos/run 51.00, riders 8.20/run, hooks `{ember_sap 5, compost 94}`,
+shrine turns/run 0.93, `buys { item 18, graft 27, ability 4 }`,
+`grafts { ember_sap 5, oil_tithe 6, verdant_pulse 3, solar_core 7, compost 6 }`,
+**bloom spent on grafts 178 (5.9/run)**, damage taken 26.4/run.
+
+Two confounds sit between this row and 06f's 29/30 [83, 99], and both must be
+named: 06f's planner numbers are **pre-routing-fix** (07's watch item records
+the fix cutting its shrine turns from 2.47 to 0.80 per run), and the planner's
+`_cheapest_useful_buy` **changed in this same commit** to price the detour by
+the cheapest worthwhile offer instead of the dearest lever. The like-for-like
+statement that survives both: at 30 seeds the planner still wins 87% [70, 95]
+against legacy deeproot's 73% [56, 86] on the same seeds, still logs zero
+timeouts and zero illegal actions, and now buys 0.90 grafts per run (27 over
+30) at 5.9 bloom per run.
+
+Tier 6, `=== verify_kit | bot deeproot_plan | config { "tier": 6 } | seeds
+1..20 (20) ===`: **19/20 = 95% wins, win CI [76%, 99%]**, 0 timeouts, avg
+floor 7.0, turns on wins 68.0, damage taken **2.8/run**, shrine turns/run 1.25,
+`buys { item 15, graft 16 }`,
+`grafts { compost 9, solar_core 3, oil_tithe 1, bloom_surge 1, ember_sap 2 }`,
+bloom spent on grafts 118 (5.9/run), combos/run 65.95, riders 16.85/run,
+hooks `{compost 129, ember_sap 17}`, 0 illegal.
+
+Against 06f's tier-6 row (27/30 = 90% [74, 97], 30 seeds, pre-fix) the win rate
+is flat inside noise, but **the mix moved and that is the pricing effect**: 06f
+bought `solar_core` 22 times in 65 graft buys (34% of its purchases, 0.73 per
+run); this run buys it 3 times in 16 (19%, 0.15 per run) and buys `compost`
+9 times (56%). The total buy rate, 0.80 per run, matches 07's post-fix figure
+exactly, so the routing fix explains the volume and the price explains the mix:
+the only persona that weighs a graft against its own cost switched from the
+8-bloom lever to the 6-bloom growth loop.
+
+### Canary (magpie, 100 seeds)
+
+`=== verify_kit | bot magpie | config {  } | seeds 1..100 (100) ===`:
+**10/100 = 10% wins, win CI [6%, 17%]**, avg floor 3.6, turns on wins 228.0,
+damage taken 42.4/run, **0 timeouts, 0 illegal actions, 0 SCRIPT ERROR
+lines**, stall floors 68, quota-unmet deaths 10, `quota reclamps 0`,
+`hooks: by graft { "compost": 1394, "ember_sap": 59, "undertow": 36 }
+... capped 0 tithe 10`, shrine turns/run 20.01, kit entropy 5.12 bits,
+285 graft buys, bloom spent on grafts 1880 (18.8/run), bloom conversion 0.54.
+
+The canary rule (2026-09-05d) asks whether the **lower bound clears 17%**. It
+is **6%**, so **not a signal**. The v2 series now reads 10/100 [6, 17],
+13/100 [8, 21], 13/100 [8, 21], 19/100 [13, 28], 17/100 [11, 26], 17/100
+[11, 26], 17/100 [11, 26] and now **10/100 [6, 17]** - greed has fallen back
+to exactly its recorded rise baseline after three flat readings. A fall is not
+what the canary watches for, but a 7-point drop on 100 seeds immediately after
+a shop change is worth naming rather than filing: magpie spends 18.8 bloom a
+run on grafts now, and it makes 25 fewer graft buys (310 -> 285) for it.
+**Compare the next reading against [6, 17]**, as before.
+
+### Gate verdict
+
+`tests/playtest.gd` at 30 seeds, gate ON: **exit 0, "gate: all PASS"**.
+
+```
+PASS wanderer 0 wins, avg floor <= 2: 0 wins, avg floor 1.00
+PASS wanderer illegal actions == 0: 0
+PASS sprout wins rare (<= 1 per 30 seeds): 1/30
+PASS sprout illegal actions == 0: 0
+PASS magpie canary <= 10% (design target 0-5%): 5/30 CI [7%, 34%] (fails when the lower bound clears the trip line)
+PASS magpie illegal actions == 0: 0
+PASS fanatic illegal actions == 0: 0
+PASS optimizer band 35-65%: 13/30 CI [27%, 61%]
+PASS optimizer timeouts == 0: 0
+PASS optimizer illegal actions == 0: 0
+PASS deeproot band 70-90%: 22/30 CI [56%, 86%]
+PASS deeproot timeouts == 0: 0
+PASS deeproot illegal actions == 0: 0
+gate: all PASS
+```
+
+### The alternative probe: what if `solar_core` were conditional?
+
+Nothing in this section ships. The `regen_on_growth` stat key exists so the
+question "should the lever be a *positional* lever instead of a flat one?"
+could be answered with runs rather than opinion. The probe is a copy of this
+tree with one row rewritten - `solar_core` becomes
+`{stat: {regen_on_growth: 1}}`, **price unchanged at 8** - so the only
+difference is that the +1 regen pays only on the turns the tender begins
+standing on growth. It lints clean in the probe tree ("content: OK").
+
+Three configs, three columns each, same seeds, same runner:
+
+**Optimizer, tier 0, 30 seeds.** `=== sweep_grafts | bot optimizer | config
+{  } | seeds 1..30 (30) ===`, `SWEEP_GRAFTS=solar_core`, run once in this tree
+and once in the probe tree.
+
+| column | wins | win CI | delta vs no graft | sign test | dmg/run | turns on wins |
+|---|---|---|---|---|---|---|
+| no graft | 13/30 | [27%, 61%] | +0 | 0:0, p=1.00 | 23.0 | 88 |
+| **shipped `solar_core`** (price 8) | **26/30** | **[70%, 95%]** | **+13** | 14:1, **p=0.00** | 16.3 | **68** |
+| conditional (`regen_on_growth`, price 8) | 14/30 | [30%, 64%] | +1 | 7:6, p=1.00 | 18.7 | 86 |
+
+(The probe tree's own base row is 13/30 [27%, 61%], dmg 23.2, turns 92 - not
+byte-identical to this tree's base row, because the base row's bot *buys*
+`solar_core` in 6 of 30 runs and in the probe tree those 6 runs get the
+conditional graft. The delta column above uses each tree's own base row.)
+
+**Optimizer, tier 6, 30 seeds.** `=== sweep_grafts | bot optimizer | config
+{ "tier": 6 } | seeds 1..30 (30) ===`.
+
+| column | wins | win CI | delta vs no graft | sign test | dmg/run | turns on wins |
+|---|---|---|---|---|---|---|
+| no graft | 5/30 | [7%, 34%] | +0 | 0:0, p=1.00 | 28.6 | 94 |
+| **shipped `solar_core`** | **24/30** | **[63%, 90%]** | **+19** | 20:1, **p=0.00** | 24.2 | **77** |
+| conditional | 11/30 | [22%, 54%] | +6 | 8:2, p=0.11 | 27.5 | 94 |
+
+(Probe-tree base row 5/30 [7%, 34%], dmg 25.6, turns 96.)
+
+**deeproot_plan, tier 0, 20 seeds.** `=== sweep_grafts | bot deeproot_plan |
+config {  } | seeds 1..20 (20) ===`. 06f established tier 0 is saturated for
+this persona, so read the continuous columns, not the win column.
+
+| column | wins | win CI | delta | sign test | dmg/run | turns on wins | combos/run |
+|---|---|---|---|---|---|---|---|
+| no graft | 18/20 | [70%, 97%] | +0 | 0:0, p=1.00 | 11.6 | 59 | 53.15 |
+| **shipped `solar_core`** | 19/20 | [76%, 99%] | +1 | 1:0, p=1.00 | **9.3** | **46** | 50.55 |
+| conditional | 19/20 | [76%, 99%] | +1 | 2:1, p=1.00 | 11.9 | **73** | 59.15 |
+
+(Probe-tree base row 18/20 [70%, 97%], dmg 11.8, turns 61.)
+
+**Decision summary.** The conditional keeps roughly a third of the lever's
+tier-6 lift (+6 against +19, and its sign test does not clear p = 0.05) and
+**none** of its tier-0 lift (+1 against +13, 7:6 discordant - indistinguishable
+from zero). At the planner ceiling the two are the same on wins and opposite on
+tempo: the shipped row cuts turns-on-wins 59 -> 46 while the conditional pushes
+them 61 -> 73, because a searcher that wants the regen has to stand on growth
+to collect it.
+
+**Recommendation, and the trade-off, with the call left to the owner.** The
+conditional does the thing 06d asked for - it turns the one row that warps the
+game into a build-dependent row, priced against `compost` and `verdant_pulse`
+in a growth kit rather than being correct in every kit - and the tier-6 column
+says it is still worth owning. Three costs come with it. First, at price 8 it
+is plainly mispriced: a +1 tier-0 row cannot be the dearest thing on the
+counter, so taking the conditional means repricing it (4-5 is where the
+measured lift sits) and re-running the table. Second, it removes the only row
+in `GRAFTS` with a measurable effect on win rate, leaving a ten-row table in
+which every row is inside noise at 30 seeds - a table that is safe and also
+says nothing, and the shop's whole job is to offer a choice that matters.
+Third, "stand on growth to be paid" is one step from the stall loop this
+project has twice designed against (the turtle archetype, the hook-effect
+lint), and the planner's turns-on-wins rising 61 -> 73 is that pressure showing
+up in the instrument on the very first measurement. The pass therefore ships
+the lever **priced at 8 and otherwise untouched**, which is reversible in one
+data edit, and files the conditional here with its numbers. This is a design
+call about what the graft table is *for*, not a balance defect, and it is the
+owner's.
+
+### Regression corpus
+
+**60 -> 62 records, all `sim_version: 8`.** Plain and `REGRESS_STRICT=1` both
+"regressions: 62 ok, 0 failed", exit 0. Before the re-stamp the suite read
+"regressions: 0 ok, 60 failed" with all 60 carrying "stale record: sim_version
+7 != 8". The 60 split three ways: **38 version-only** (outcome, action list and
+hash byte-identical - those floors carry no shrine graft stock at the end),
+**18 hash-only** (`snapshot().shop` gained `graft_prices`; not one action
+changed), and **4 re-recorded** because a logged graft buy is no longer
+affordable - `canary_fanatic_s1` (58 illegal + 141 error on replay),
+`canary_magpie_s2` (2 + 12), `det_magpie_s42` (2 + 216) and `det_optimizer_s42`
+(2 + 0). Two new hand-scripted records demo the mechanism on a fixed floor:
+`c6_graft_price` (a purse of 7 between offers priced [6, 8], so `legal_actions`
+returns pick 0 only and the buy deducts `compost`'s own 6 where the flat
+fallback 4 would have made both picks legal) and `c6_solar_core_price`
+(`solar_core` at 8 + 2x2 owned = 12, bought at exactly 12, with two 2-cost
+lances on the next turn proving the +1 regen landed).
+
+### Anything else that moved
+
+- **`canary_fanatic_s1` flipped from a floor-5 death to a floor-7 win**
+  (148 -> 143 turns, 427 -> 480 actions) purely from the price change: the
+  fanatic now pays 5 + 8 = 13 for `ember_sap` + `compost` where the flat sheet
+  billed 4 + 6 = 10, and its whole run diverges from there. A canary record
+  that encoded a loss now encodes a win. `det_magpie_s42` moved the other way
+  (floor 4 / 146 turns -> floor 3 / 57 turns). Neither is evidence about
+  balance - they are two seeds - but the fanatic canary may want a different
+  seed.
+- **`test_meta`'s loadout winnability row moved by exactly one cell**: tender
+  9/20 -> 8/20, every other loadout unchanged. It is a 20-seed row and it is
+  the optimizer paying more for grafts; it is not a loadout signal.
+- **The derived `graft_prices` field is inside the state hash.** It is a pure
+  function of the shop stock and the player's graft count, yet it moved the
+  strict hash of 18 records that were otherwise byte-identical, because
+  `state_hash()` hashes the snapshot. Every future snapshot convenience field
+  will churn the corpus the same way.
+- **The optimizer and magpie still gate their shrine detour on a flat
+  `bloom >= 5`.** With prices spread 3..8 a purse of 5-7 can now walk to a
+  counter holding two dearer offers and buy nothing. The fix is
+  `bloom >= min(shop.graft_prices)`, deliberately not made in this pass because
+  it changes routing in both directions and would confound exactly the
+  measurement above.
+- **The planner's damage taken at tier 0 is up and nothing here pins why.**
+  06f recorded `deeproot_plan` at 7.2 damage per run over seeds 1..30; this
+  entry's 30-seed run reads **26.4** (791 points, 569 of them smog), with the
+  same 0 timeouts and 0 illegal actions and a *higher* win rate than legacy on
+  the same seeds. Between the two readings sit 07's shrine-routing guards and
+  this bump's `_cheapest_useful_buy` change, and neither was measured at 30
+  seeds tier 0 on its own. It is a continuous metric on the roster's strongest
+  persona, so it belongs on the watch list, not in a verdict.
+- **`tests/sweep_grafts.gd`'s header comment is now wrong**: it still says
+  "shop_cost("graft") is 4 + 2 per owned graft". The runner's numbers are fine
+  (it never calls `shop_cost`), the sentence is not.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from
@@ -4681,3 +5097,62 @@ in `tests/measure_fanatic.gd`, `tests/draft_oracle.gd` and
   `SWEEP_TIER`** because they build their configs inline instead of through
   `Sweep.env_config`. Until that is fixed, a loadout or unlock-state run of any
   of them silently measures the default config.
+
+### Bump-8 additions (2026-09-07b)
+
+- **The heuristic personas are not price-sensitive, so they are a weak
+  instrument for any pricing change.** Pricing `solar_core` at 8 (double the
+  old flat 4) changed the number of runs it was bought in by **zero** for
+  magpie (10/30), fanatic (4/30) and optimizer (6/30), and by one for sprout
+  (1/30 -> 0/30). They pick by tag overlap among the offers they can afford,
+  and at a shrine their purse usually clears 8. Judge a future price change on
+  `deeproot_plan` (which weighs a graft against its own cost) or on
+  `sweep_grafts`, never on the heuristic graft mix.
+- **`solar_core` is still the entire graft table, only dearer.** This tree
+  measures it at +13 [70, 95] over 13/30 at tier 0 (14:1, p = 0.00) and +19
+  [63, 90] over 5/30 at tier 6 (20:1, p = 0.00) - louder, not quieter, than
+  06d's +12/+17. Pricing is not a nerf and was never meant to be one. The
+  standing question 06d opened ("price regen or say why it is a deliberate
+  power spike") is now answered "priced"; whether it should also become
+  conditional is measured in the 2026-09-07b alternative probe and **left
+  open for the owner**. If it is ever taken, reprice it: at price 8 the
+  conditional measured +1 at tier 0.
+- **The magpie canary fell to 10/100 = 10% [6, 17]**, back to exactly the v2
+  rise baseline after three flat 17/100 [11, 26] readings. The rule watches
+  for rises, so this is not a signal - but it is the first move in the series
+  since 06d, it lands immediately after a shop change, and magpie now spends
+  18.8 bloom a run on grafts for 25 fewer buys (310 -> 285). Compare the next
+  100-seed reading against **[6, 17]**.
+- **`deeproot_plan`'s tier-0 damage taken rose 7.2 -> 26.4 per run** between
+  06f and this entry, unattributed between 07's routing guards and this bump's
+  `_cheapest_useful_buy` change; wins, timeouts and illegal actions are all
+  fine. The next entry that touches the planner should re-measure it at 30
+  seeds tier 0 before adding anything else to the persona.
+- **The optimizer's and magpie's shrine detour still gates on a flat
+  `bloom >= 5`.** With prices spread 3..8 a 5-7 bloom purse can walk to a
+  counter it cannot buy from. `bloom >= min(shop.graft_prices)` is the fix; it
+  was left out of this pass on purpose so it would not confound the pricing
+  measurement, and it will change optimizer and magpie routing in both
+  directions when it lands.
+- **A derived snapshot field moved 18 corpus hashes.** `snapshot().shop
+  .graft_prices` is a pure function of the stock and the graft count, but
+  `state_hash()` hashes the snapshot, so 18 records that were byte-identical
+  in outcome and action list still needed a hash re-stamp. Any future
+  consumer-convenience field in `snapshot()` costs a corpus pass; if the hash
+  is meant to be state-only, that is the argument for excluding derived keys
+  from whatever `state_hash()` reads.
+- **`canary_fanatic_s1` now encodes a win, not a loss** (floor 5 death ->
+  floor 7 win) because the fanatic pays 13 for `ember_sap` + `compost` where
+  it used to pay 10. The record is still a valid replay; it just no longer
+  demonstrates the thing it was recorded for. Pick a new seed for that canary
+  the next time it is touched.
+- **Two comments in the tree cite pre-bump numbers.**
+  `sim/content.gd`'s price rationale quotes "+9 wins at tier 0" for
+  `solar_core`, which is bump 3's figure - 06d re-baselined it to +12 and this
+  entry measures +13; and `tests/sweep_grafts.gd`'s header still describes the
+  flat "4 + 2 per owned graft" sheet. Neither affects a number, both will
+  mislead the next reader.
+- **Adding or removing a `GRAFTS` row now moves prices relative to each
+  other**, on top of the side-rng shop draw that 06d already flagged. Any
+  future graft edit is a `sweep_grafts` re-run, a `SIM_VERSION` bump and a
+  corpus pass - never a data-only edit.

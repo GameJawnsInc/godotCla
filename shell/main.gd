@@ -2497,12 +2497,17 @@ func _shop_cards(snap: Dictionary) -> Array:
 		cards.append([icon, "%s  -  %d bloom" % [Content.ABILITIES[aid]["name"], game.shop_cost("ability")],
 			adesc, "buy:ability"])
 	var offers: Array = shop.get("grafts", [])
+	# every graft is priced from its own Content.GRAFTS row, so the two offers
+	# rarely cost the same: the sim publishes the per-offer prices as
+	# shop.graft_prices and the card shows this graft's price, never a flat one
+	var gprices: Array = shop.get("graft_prices", [])
 	for i in offers.size():
 		var gid: String = offers[i]
+		var gcost: int = int(gprices[i]) if i < gprices.size() else game.shop_cost("graft", gid)
 		var gdesc: String = "Graft (permanent): %s" % Content.GRAFTS[gid]["desc"]
 		if offers.size() > 1:
 			gdesc += "  ·  take one, the other is lost"
-		cards.append(["shrine", "%s  -  %d bloom" % [Content.GRAFTS[gid]["name"], game.shop_cost("graft")],
+		cards.append(["shrine", "%s  -  %d bloom" % [Content.GRAFTS[gid]["name"], gcost],
 			gdesc, "buy:graft:%d" % i])
 	if shop.has("item") and pl["items"].size() < Content.ITEM_CAP:
 		var iid: String = shop["item"]
@@ -2661,7 +2666,7 @@ func _draw_intro(vw: float, vh: float) -> void:
 		["Move fast: smog rises every turn, and deep smog kills.", COL_GOLD],
 		["", COL_TEXT],
 		["CLEANSE oil and goo: earn bloom AND thin the smog.", COL_TEXT],
-		["Shrines offer TWO grafts - take one, the other is lost.", COL_TEXT],
+		["Shrines offer TWO grafts at their own prices - take one, the other is lost.", COL_TEXT],
 		["Cleanse a WHOLE room and it blooms: bonus + a supply pod.", COL_TEXT],
 		["The stairs are DORMANT until you green the floor's quota.", COL_GOLD],
 		["Cast FROM growth: it fuels the ability (-1 charge, tile spent).", COL_TEXT],

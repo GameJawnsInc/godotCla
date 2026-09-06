@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[1,3],"type":"ability"}],
 "expect": {"events":[{"t":"ignite"},{"amt":1,"id":"sun_flare+","kind":"bonus","t":"rider"},{"amt":3,"src":"sun_flare+","t":"damage","who":"smokestack"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C2 sun_flare+ rider: aoe_damage runs its ignite pass first, so the oil under the smokestack is fire by the time the damage loop reaches it - the bonus rider (if target_on fire) turns the base 2 into 3 in one cast",
-"sim_version": 7,
+"sim_version": 8,
 "hash": "f76577bcd39892657294535efbc1b8d68529a720eb402eadb6369cf5314b47e9"
 }

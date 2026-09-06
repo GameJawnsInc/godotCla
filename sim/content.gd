@@ -398,7 +398,10 @@ const ROOM_BLOOM_BONUS := 2  # extra bloom when a room's last corruption falls
 ## name, desc, tags (a TAGS subset, read by bots to rank shop offers) and
 ## exactly one of:
 ##   stat:  {key: int}   summed over held grafts by Game._graft_stat(key);
-##          keys: bank_cap, shield_cap, regen, growth_heal, cleanse_bloom
+##          keys: bank_cap, shield_cap, regen, regen_on_growth, growth_heal,
+##          cleanse_bloom (regen_on_growth is added to regen only on the turns
+##          the tender begins standing on growth; no shipped row uses it - it
+##          exists so a conditional alternative to solar_core can be measured)
 ##   mod:   {key: value} first held value wins, Game._graft_mod(key, default);
 ##          keys: floor_start_shield, oil_cast_discount
 ##   hooks: [{on: kind, effects: [...], cap_per_turn?: n, if?: [...]}] rows
@@ -409,31 +412,50 @@ const ROOM_BLOOM_BONUS := 2  # extra bloom when a room's last corruption falls
 ## The lint (tests/test_content.gd) rejects hook rows that grant shield,
 ## thorns, heal or cleanse credit: those are the stall vector BALANCE.md
 ## documents, so rule grafts stay on the damage / control / economy side.
+##
+## "price": int >= 1, the graft's own base price in bloom (Game.shop_cost adds
+## GRAFT_PRICE_STEP per graft already owned plus the tier markup; SHOP_COSTS
+## ["graft"] stays as the id-less fallback). Priced off the 30-seed pre-install
+## sweeps at tiers 0 and 6 recorded in docs/BALANCE.md (2026-09-06d/06f/07):
+##   solar_core 8   the one lever: +12 wins at tier 0 (06d; +13 after this
+##                  pass) and 5/30 -> 22/30 at tier 6, four for four on the
+##                  Method rule; all ten grafts held at once are worth no more
+##                  than solar_core alone
+##   compost 6      ~32 hooks a run and it halves the planner's damage taken -
+##                  a growth loop, the second-strongest row
+##   ember_sap 5    SHIP rows with a modest but real lift
+##   oil_tithe 5
+##   undertow 4
+##   deep_cells 3   stat rows inside the noise at both tiers: cheap enough that
+##   thick_bark 3   they are ever worth taking against a lever
+##   verdant_pulse 3
+##   bloom_surge 3
+##   carapace 3
 const GRAFTS := {
-	"deep_cells": {"name": "Deep Cells", "desc": "+2 bank cap", "tags": ["sun"], "stat": {"bank_cap": 2}},
-	"verdant_pulse": {"name": "Verdant Pulse", "desc": "growth heals +1", "tags": ["growth"], "stat": {"growth_heal": 1}},
-	"thick_bark": {"name": "Thick Bark", "desc": "+2 shield cap", "tags": ["bark"], "stat": {"shield_cap": 2}},
-	"bloom_surge": {"name": "Bloom Surge", "desc": "cleansing yields +1 bloom", "tags": ["growth", "economy"], "stat": {"cleanse_bloom": 1}},
-	"solar_core": {"name": "Solar Core", "desc": "+1 charge regen", "tags": ["sun"], "stat": {"regen": 1}},
-	"carapace": {"name": "Carapace", "desc": "start each floor with 2 shield", "tags": ["bark"], "mod": {"floor_start_shield": 2}},
+	"deep_cells": {"name": "Deep Cells", "desc": "+2 bank cap", "tags": ["sun"], "price": 3, "stat": {"bank_cap": 2}},
+	"verdant_pulse": {"name": "Verdant Pulse", "desc": "growth heals +1", "tags": ["growth"], "price": 3, "stat": {"growth_heal": 1}},
+	"thick_bark": {"name": "Thick Bark", "desc": "+2 shield cap", "tags": ["bark"], "price": 3, "stat": {"shield_cap": 2}},
+	"bloom_surge": {"name": "Bloom Surge", "desc": "cleansing yields +1 bloom", "tags": ["growth", "economy"], "price": 3, "stat": {"cleanse_bloom": 1}},
+	"solar_core": {"name": "Solar Core", "desc": "+1 charge regen", "tags": ["sun"], "price": 8, "stat": {"regen": 1}},
+	"carapace": {"name": "Carapace", "desc": "start each floor with 2 shield", "tags": ["bark"], "price": 3, "mod": {"floor_start_shield": 2}},
 	"ember_sap": {
 		"name": "Ember Sap", "desc": "whoever stands on a tile as it catches fire takes 1 (3 times a turn)",
-		"tags": ["fire"],
+		"tags": ["fire"], "price": 5,
 		"hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1}], "cap_per_turn": 3}],
 	},
 	"undertow": {
 		"name": "Undertow", "desc": "staggered enemies are also rooted a turn",
-		"tags": ["water", "displace", "control"],
+		"tags": ["water", "displace", "control"], "price": 4,
 		"hooks": [{"on": "staggered", "effects": [{"op": "status_at", "status": "root", "turns": 1}]}],
 	},
 	"compost": {
 		"name": "Compost", "desc": "a kill leaves growth where the enemy fell",
-		"tags": ["growth"],
+		"tags": ["growth"], "price": 6,
 		"hooks": [{"on": "kill", "effects": [{"op": "terrain_at", "kind": "growth"}]}],
 	},
 	"oil_tithe": {
 		"name": "Oil Tithe", "desc": "the first cast aimed at oil each turn costs 1 less (never below 1)",
-		"tags": ["fire", "water", "economy"],
+		"tags": ["fire", "water", "economy"], "price": 5,
 		"mod": {"oil_cast_discount": 1},
 	},
 }
@@ -505,6 +527,8 @@ const ABILITY_DESC := {
 ## Shrine price list. "press" (two items -> one + item) and "forge" (one
 ## ability -> its + form, another scrapped) are shrine services priced here so
 ## the tier markup (Game.shop_cost) applies to them like every other purchase.
+## "graft" here is only the id-less fallback: a real graft offer is priced from
+## its own GRAFTS row ("price"), through Game.shop_cost("graft", id).
 const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 4, "item": 2, "press": 1, "forge": 3}
 const GRAFT_PRICE_STEP := 2  # each owned graft raises the next graft's price
 const CLEANSE_SMOG_RELIEF := 1  # a cleanse pauses the smog clock, never rewinds it

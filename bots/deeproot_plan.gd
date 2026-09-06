@@ -91,10 +91,14 @@ const GRAFT_WEIGHTS := {
 	"undertow": 1,
 }
 ## Score points per graft weight. Bloom scores 4 per point in _score, so a
-## graft at the base price (4 bloom = 16 points, +2 bloom per graft owned)
-## is a gain only when weight * GRAFT_POINTS clears the price: solar_core
-## (120) always, compost (50) and oil_tithe (40) at the first two prices,
-## ember_sap (30) at the first, the weight-1 rows never.
+## graft is a gain only when weight * GRAFT_POINTS clears its own price
+## (the Content.GRAFTS "price" + 2 per graft already owned + tier markup):
+## solar_core (120 against a base 8) always, compost (50 against 6) while
+## fewer than four are owned, oil_tithe (40 against 5) fewer than three,
+## ember_sap (30 against 5) fewer than two, verdant_pulse and bloom_surge
+## (20 against 3) only as the very first graft, the weight-1 rows never.
+## The weights rank the rows; the prices (which the sim publishes per offer
+## as shop.graft_prices) decide what the purse can actually take.
 const GRAFT_POINTS := 10.0
 ## Score points per filled kit slot: a shrine ability (4 bloom = 16 points)
 ## is a small gain while the kit has room; the tier markup prices it out.
@@ -489,19 +493,27 @@ func _shrine_goal(snap: Dictionary) -> Vector2i:
 
 
 ## Cost of the cheapest useful buy at the snapshot's shop: a graft the search
-## would take (weight clears the price), an ability while the kit has room,
-## a heal while hp is below max. -1 when nothing useful is stocked. Costs come
-## from the live game's shop_cost (graft price rises with grafts owned, tier
-## markup); without a live game, the base price list.
+## would take (its weight clears its own price), an ability while the kit has
+## room, a heal while hp is below max. -1 when nothing useful is stocked.
+## Costs come from the live game's shop_cost (a graft is priced from its own
+## Content.GRAFTS row, plus the per-graft-owned step and the tier markup);
+## without a live game, the base price list.
 func _cheapest_useful_buy(snap: Dictionary) -> int:
 	var shop: Dictionary = snap.get("shop", {})
 	var pl: Dictionary = snap["player"]
 	var best := -1
 	if shop.has("grafts"):
-		var cost := _shop_cost("graft")
-		var pick := _graft_pick(shop["grafts"])
-		if pick >= 0 and _graft_worth(String(shop["grafts"][pick]), cost):
-			best = cost
+		# the two offers are priced apart, so the detour question is "is any
+		# offer worth its own price", not "is the best offer worth the flat
+		# graft price": a Solar Core at 8 the purse cannot cover is no reason
+		# to walk, a 3-bloom stat graft that clears its price is
+		var offers: Array = shop["grafts"]
+		var prices: Array = shop.get("graft_prices", [])
+		for i in offers.size():
+			var gid := String(offers[i])
+			var cost: int = int(prices[i]) if i < prices.size() else _shop_cost("graft", gid)
+			if _graft_worth(gid, cost) and (best < 0 or cost < best):
+				best = cost
 	# the ability and heal branches apply the same worth test the search
 	# does (bloom scores 4 per point), or the routing walks to a shrine the
 	# search then refuses to spend at and flips back to the stairs
@@ -517,9 +529,15 @@ func _cheapest_useful_buy(snap: Dictionary) -> int:
 	return best
 
 
-func _shop_cost(item: String) -> int:
+## Price of one shrine offer. `id` names the specific offer and matters only
+## for grafts, which the sim prices from their own Content.GRAFTS row; without
+## a live game the bare row price (no owned-graft step, no tier markup) is the
+## best the snapshot alone can say.
+func _shop_cost(item: String, id: String = "") -> int:
 	if _sim != null:
-		return int(_sim.shop_cost(item))
+		return int(_sim.shop_cost(item, id))
+	if item == "graft" and Content.GRAFTS.has(id):
+		return int(Content.GRAFTS[id].get("price", Content.SHOP_COSTS.get(item, 9999)))
 	return int(Content.SHOP_COSTS.get(item, 9999))
 
 
@@ -530,19 +548,6 @@ func _kit_max(snap: Dictionary) -> int:
 		if cfg.has("kit_max"):
 			return int(cfg["kit_max"])
 	return Content.KIT_MAX
-
-
-## Offer index with the highest GRAFT_WEIGHTS entry; ties (and all-zero) go
-## to offer 0. -1 on an empty list.
-func _graft_pick(offers: Array) -> int:
-	var best := -1
-	var best_w := -1
-	for i in offers.size():
-		var w := int(GRAFT_WEIGHTS.get(String(offers[i]), 0))
-		if w > best_w:
-			best_w = w
-			best = i
-	return best
 
 
 ## Would the search buy this graft at `cost` bloom: its term clears the

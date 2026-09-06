@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[5,3],"type":"ability"}],
 "expect": {"events":[{"amt":1,"src":"fire:env","t":"damage","who":"extractor_engine"},{"amt":3,"src":"vine_whip+","t":"damage","who":"extractor_engine"},{"status":"stun","t":"status","turns":1},{"amt":1,"id":"vine_whip+","kind":"then","t":"rider"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C2 vine_whip+ embers: the yank drags the extractor across the burning tile at (3,3) - 3 lash plus 1 from the fire it is dragged through, and the then rider (if outcome_crossed fire) stuns it for a turn",
-"sim_version": 7,
+"sim_version": 8,
 "hash": "f965ce15d2810c746bcd3dfdf22e516de50a9b80c780cc38256975a140d1b669"
 }

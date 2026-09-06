@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[1,0],"type":"ability"}],
 "expect": {"events":[{"id":"updraft+","t":"ability"},{"t":"dash","to":"(5, 3)"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C4 updraft+ range 3 -> 4: dash_dir walks adef.range open tiles, so the ride from (1,3) ends on (5,3) - one tile past where the base row stops",
-"sim_version": 7,
+"sim_version": 8,
 "hash": "81f081af2f02d786a6342cb8e661efc0877cf4cc034e1426d053797b7fbb2bc3"
 }

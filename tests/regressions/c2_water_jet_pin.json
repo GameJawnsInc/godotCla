@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[1,0],"type":"ability"}],
 "expect": {"events":[{"amt":3,"src":"collision:water_jet+","t":"damage","who":"smokestack"},{"status":"root","t":"status","turns":1},{"amt":1,"id":"water_jet+","kind":"then","t":"rider"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C2 water_jet+ pin: the smokestack is shoved one tile into the pillar at (5,3) - the then rider needs both outcomes (pushed AND collided), so it roots for a turn and the lance lane stays open; an enemy already against a wall (collided, not pushed) is not pinned",
-"sim_version": 7,
+"sim_version": 8,
 "hash": "0010dab7340a29b019643a2040823f0d57c687dec58cb01d2410a9314ce5b624"
 }

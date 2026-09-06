@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[1,3],"type":"ability"}],
 "expect": {"events":[{"id":"clear_air+","t":"ability"},{"t":"smoke_cleared","tile":"(5, 3)"},{"amt":1,"src":"collision:clear_air+","t":"damage","who":"smokestack"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C4 clear_air+ radius 3 -> 4, push 1 -> 2: the scrub reaches the smoke 4 tiles away that the base row leaves standing, and the same cast shoves the adjacent smokestack to (3,3) and drives its second step into the pillar at (4,3) - the base push of 1 stops at (3,3) with no collision",
-"sim_version": 7,
+"sim_version": 8,
 "hash": "3cb0741633638c38e864a538ee74b6e86da15132a51a4d527372673ac4192051"
 }

@@ -4,6 +4,6 @@
 "actions": [{"dir":[1,0],"type":"move"},{"target":[3,2],"type":"cleanse"},{"type":"end_turn"},{"dir":[1,0],"type":"move"},{"slot":0,"target":[1,0],"type":"ability"},{"type":"end_turn"},{"dir":[1,0],"type":"move"},{"dir":[1,0],"type":"move"},{"dir":[1,0],"type":"move"},{"type":"end_turn"},{"dir":[1,0],"type":"move"},{"dir":[0,-1],"type":"move"},{"type":"descend"}],
 "expect": {"events":[{"kind":"oil","t":"cleanse"},{"t":"wash"},{"need":1,"t":"quota_reclamp","was":2},{"t":"stairs_awaken"},{"t":"descend","to_floor":2}],"floor":1,"timeout":true,"turns":3,"won":false},
 "note": "strandable green gate, wash path: quota 2 with two oil tiles, one cleansed and the other washed away by water_jet - a wash is the bloomless removal that permanently shrinks the gate (its sibling blockb_quota_reclamp burns the tile instead: a fire counts as the ash it will leave, so that path never shrinks the gate at all)",
-"sim_version": 7,
+"sim_version": 8,
 "hash": "c0c8a87cec827d638acb1af9fae48ebc0b75eae769e1f0812f26d00267e3d0dc"
 }

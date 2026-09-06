@@ -1,4 +1,5 @@
 extends RefCounted
+const Content := preload("res://sim/content.gd")
 ## Event tally for bot runs (review §7.1): fed every event game.step()
 ## returns inside Sweep.run_loop, plus begin_step/end_step hooks for
 ## before/after state (bloom deltas, shrine turns, unspent charge, clock
@@ -36,6 +37,10 @@ var item_uses_by_id := {}
 var item_pickups := 0
 var satchel_full := 0
 var graft_discards := 0  # graft buys that threw the second offer away
+## Bloom paid for grafts, at each offer's own price (Content.GRAFTS "price"
+## plus the per-graft-owned step and the tier markup) - the graft half of
+## bloom_spent, so a pass that reprices grafts can be read off directly.
+var bloom_spent_on_grafts := 0
 
 # --- economy ------------------------------------------------------------------
 var bloom_earned := 0
@@ -189,7 +194,13 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 			var kind := String(ev.get("item", ""))
 			_inc(buys_by_kind, kind)
 			if kind == "graft":
-				_inc(grafts_by_id, String(ev.get("id", "")))
+				var gid := String(ev.get("id", ""))
+				_inc(grafts_by_id, gid)
+				# what it cost: the sim prices a graft from its own row plus a
+				# step per graft owned, and this buy has already added itself
+				# to the pile, so ask the live game and take that step back off
+				bloom_spent_on_grafts += maxi(
+					int(game.shop_cost("graft", gid)) - Content.GRAFT_PRICE_STEP, 0)
 				if String(ev.get("discarded", "")) != "":
 					graft_discards += 1
 			elif kind == "ability":
@@ -337,6 +348,7 @@ func merge(other) -> void:
 	item_pickups += other.item_pickups
 	satchel_full += other.satchel_full
 	graft_discards += other.graft_discards
+	bloom_spent_on_grafts += other.bloom_spent_on_grafts
 	bloom_earned += other.bloom_earned
 	bloom_spent += other.bloom_spent
 	shrine_turns += other.shrine_turns
@@ -491,6 +503,7 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 		"collision_by_aid": t.collision_by_aid.duplicate(),
 		"quota_reclamps": t.quota_reclamps,
 		"graft_discards": t.graft_discards,
+		"bloom_spent_on_grafts": t.bloom_spent_on_grafts,
 		# effect-grammar riders (Block C1a)
 		"riders": riders,
 		"riders_by_kind": t.riders_by_kind.duplicate(),
@@ -549,8 +562,8 @@ func print_block(n_runs: int, kits: Array) -> void:
 		str(ability_buys_by_id), upcycles, upcycle_abilities, item_pickups, satchel_full])
 	print("           shrine turns/run %.2f  unspent charge/end_turn %.2f  kit entropy %.2f bits" % [
 		shrine_turns / n, _safe_div(float(unspent_charge_total), float(end_turns)), k["kit_entropy_bits"]])
-	print("           choice sinks: graft offers discarded %d  quota reclamps %d" % [
-		graft_discards, quota_reclamps])
+	print("           choice sinks: graft offers discarded %d  bloom spent on grafts %d (%.1f/run)  quota reclamps %d" % [
+		graft_discards, bloom_spent_on_grafts, bloom_spent_on_grafts / n, quota_reclamps])
 	var smog_avg := 0.0
 	for s in smog_at_descend:
 		smog_avg += float(s)

@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[1,0],"type":"ability"},{"slot":0,"target":[0,1],"type":"ability"},{"type":"end_turn"},{"slot":0,"target":[0,-1],"type":"ability"},{"slot":0,"target":[-1,0],"type":"ability"}],
 "expect": {"events":[{"id":"solar_lance","t":"tithe"},{"id":"solar_lance","t":"ability"},{"t":"ignite"},{"id":"solar_lance","t":"ability"},{"t":"ignite"},{"id":"solar_lance","t":"ability"},{"id":"solar_lance","t":"tithe"},{"id":"solar_lance","t":"ability"},{"t":"ignite"}],"floor":1,"timeout":true,"turns":1,"won":false},
 "note": "C3 oil_tithe: turn 1 opens with 3 charge and spends 1+2 - the first oil-aimed lance is discounted (tithe) and the second oil lane that same turn pays the full 2, leaving 0; turn 2 spends 2 on a dry lane and then casts a 2-cost lance on 1 charge because the tithe is back, which is the discount proving itself (the second cast's full price is pinned by the state hash, since an in-order subset match cannot assert a missing tithe)",
-"sim_version": 7,
+"sim_version": 8,
 "hash": "81f3c1454d9d53a8f44379a2c96235fcc95707c5b7b3bf68f082f0fa3de58de3"
 }

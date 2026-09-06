@@ -268,6 +268,23 @@ func _init() -> void:
 	_check(tags.has("buy:graft:0") and tags.has("buy:graft:1"), "both grafts get a card")
 	_check(tags.has("buy:heal") and tags.has("buy:ability") and tags.has("buy:item"),
 		"heal / ability / item cards are on the sheet")
+	# each graft card carries that offer's own price (snapshot shop.graft_prices),
+	# never a flat graft price: a lever card is dearer than a stat-graft card
+	var gsnap: Dictionary = shop1.game.snapshot()
+	var gprices: Array = gsnap["shop"].get("graft_prices", [])
+	_check(gprices.size() == offers.size(), "the snapshot prices every graft offer: %s" % str(gprices))
+	var gcards: Array = shop1._shop_cards(gsnap)
+	for i in offers.size():
+		var gid := String(offers[i])
+		var want_price: int = shop1.game.shop_cost("graft", gid)
+		var want_title := "%s  -  %d bloom" % [Content.GRAFTS[gid]["name"], want_price]
+		var got_title := ""
+		for c in gcards:
+			if String(c[3]) == "buy:graft:%d" % i:
+				got_title = String(c[1])
+		_check(int(gprices[i]) == want_price and got_title == want_title,
+			"graft card %d shows its own price (want %s, got %s)" % [i, want_title, got_title])
+	print("shrine cards: %s at %s bloom" % [str(offers), str(gprices)])
 	var want := String(offers[1]) if offers.size() > 1 else ""
 	shop1._tap("buy:graft:1")
 	_check(shop1.game.player["grafts"].has(want), "the second graft card buys that graft")

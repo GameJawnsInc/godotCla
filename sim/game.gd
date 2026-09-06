@@ -41,7 +41,12 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## (a run recorded with a non-default loadout replays with that kit from now
 ## on; "tender" is STARTING_KIT so default runs are untouched) and the
 ## open_pool mutator row.
-const SIM_VERSION := 7
+## 8: graft prices as data (Content.GRAFTS[g]["price"], shop_cost("graft", id)):
+## which graft a purse can afford changed, so any log that bought a graft - or
+## skipped one it could not afford - replays differently. snapshot().shop also
+## carries "graft_prices" now, which moves the state hash wherever the shrine
+## stocks grafts.
+const SIM_VERSION := 8
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -240,15 +245,31 @@ func _tier_mod(key: String) -> int:
 	return v
 
 
-func shop_cost(item: String) -> int:
+## Price of one shrine purchase. `id` names the specific offer and matters
+## only for grafts: a graft is priced from its own Content.GRAFTS row
+## ("price"), so a lever costs more than a stat row. Without an id the graft
+## price falls back to the flat SHOP_COSTS entry, which is what callers that
+## just want "the graft price" still get. Prices never touch the rng.
+func shop_cost(item: String, id: String = "") -> int:
 	var cost: int = Content.SHOP_COSTS.get(item, 9999)
 	if item == "graft":
+		if id != "" and Content.GRAFTS.has(id):
+			cost = int(Content.GRAFTS[id].get("price", cost))
 		# permanent power gets dearer the more of it you already own, so
 		# "farm early, buy everything" is a real commitment, not a default
 		cost += player["grafts"].size() * Content.GRAFT_PRICE_STEP
 	for i in range(mini(tier, Content.TIERS.size())):
 		cost += int(Content.TIERS[i].get("shop_markup", 0))
 	return cost
+
+
+## Price of every graft on offer, aligned with shop["grafts"]. One place for
+## the sim, the snapshot and any consumer that needs the per-offer prices.
+func graft_prices() -> Array:
+	var out: Array = []
+	for gid in shop.get("grafts", []):
+		out.append(shop_cost("graft", String(gid)))
+	return out
 
 
 # --- public API ---------------------------------------------------------------
@@ -346,9 +367,12 @@ func legal_actions() -> Array:
 			acts.append({"type": "buy", "item": "heal"})
 		if shop.has("ability") and bloom >= shop_cost("ability") and player["kit"].size() < _kit_max():
 			acts.append({"type": "buy", "item": "ability"})
-		if shop.has("grafts") and bloom >= shop_cost("graft"):
+		if shop.has("grafts"):
+			# each offer carries its own price, so a cheap stat graft can be
+			# affordable on a purse the expensive lever is not
 			for i in shop["grafts"].size():
-				acts.append({"type": "buy", "item": "graft", "pick": i})
+				if bloom >= shop_cost("graft", String(shop["grafts"][i])):
+					acts.append({"type": "buy", "item": "graft", "pick": i})
 		if shop.has("item") and bloom >= shop_cost("item") and player["items"].size() < Content.ITEM_CAP:
 			acts.append({"type": "buy", "item": "item"})
 		if shop.get("press", false) and player["items"].size() == 2 and bloom >= shop_cost("press"):
@@ -371,6 +395,16 @@ func legal_actions() -> Array:
 ## forge.
 func _is_mobility(aid: String) -> bool:
 	return String(Content.ABILITIES.get(aid, {}).get("role", "")) == "mobility"
+
+
+## The shop as a consumer sees it: the live stock plus "graft_prices", the
+## per-offer prices aligned with "grafts". Prices are derived, never stored,
+## so the shop dict the sim carries (and clone() copies) stays pure stock.
+func _shop_snapshot() -> Dictionary:
+	var out: Dictionary = shop.duplicate(true)
+	if shop.has("grafts"):
+		out["graft_prices"] = graft_prices()
+	return out
 
 
 func snapshot() -> Dictionary:
@@ -414,7 +448,7 @@ func snapshot() -> Dictionary:
 			"bloomed": map.get("bloomed", []).duplicate(),
 			"restored": map.get("restored", false),
 		},
-		"shop": shop.duplicate(true),
+		"shop": _shop_snapshot(),
 		"terrain": terr,
 		"events": recent_events.duplicate(true),
 	}
@@ -575,7 +609,11 @@ func _reclamp_quota() -> void:
 
 
 func _begin_player_turn() -> void:
+	# regen_on_growth is the conditional half of the regen key: it only pays
+	# on the turns the tender begins standing on growth
 	var regen: int = maxi(1, Content.BASE_REGEN - dim) + _graft_stat("regen")
+	if _terrain_kind(player["pos"]) == "growth":
+		regen += _graft_stat("regen_on_growth")
 	player["charge"] = player["bank"] + regen
 	player["bank"] = 0
 	casts_this_turn = 0
@@ -1396,7 +1434,16 @@ func _check_room_bloom(p: Vector2i) -> void:
 
 func _act_buy(action: Dictionary) -> void:
 	var item := String(action.get("item", ""))
-	var cost: int = shop_cost(item)
+	# a graft is priced per offer, so the pick has to be resolved before the
+	# price is known; an out-of-range pick keeps the id-less fallback price
+	# and is rejected by the graft branch below
+	var gid_pick := ""
+	if item == "graft":
+		var offers0: Array = shop.get("grafts", [])
+		var pick0 := int(action.get("pick", -1))
+		if pick0 >= 0 and pick0 < offers0.size():
+			gid_pick = String(offers0[pick0])
+	var cost: int = shop_cost(item, gid_pick)
 	var on_shrine: bool = player["pos"] == map["shrine"]
 	if not on_shrine or bloom < cost:
 		_emit({"t": "illegal", "action": "buy"})
@@ -1451,6 +1498,8 @@ func _act_buy(action: Dictionary) -> void:
 
 
 ## Sum of `key` over the "stat" dicts of every held graft (Content.GRAFTS).
+## Keys: bank_cap, shield_cap, regen, regen_on_growth, growth_heal,
+## cleanse_bloom (the closed set tests/test_content.gd lints).
 func _graft_stat(key: String) -> int:
 	var v := 0
 	for gid in player["grafts"]:

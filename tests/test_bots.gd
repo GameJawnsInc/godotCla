@@ -6,7 +6,8 @@ extends SceneTree
 ##      follows with grow_spike+; legacy deeproot does not open with the bomb
 ##   2) pin: water_jet+ into a wall (root) valued, the lance as the follow-up
 ##   3) shrine routing: the field goal is the shrine, the move heads there,
-##      on the shrine the highest-weight graft is bought
+##      on the shrine the highest-weight graft is bought - and the detour is
+##      priced per offer (each graft costs what its own Content.GRAFTS row says)
 ##   4) determinism: two fresh instances agree over 40 steps
 ##   5) runtime factor: deeproot vs deeproot_plan over 5 seeds (test-side
 ##      Time.get_ticks_msec only; the bots never read a clock)
@@ -244,7 +245,8 @@ func _check_shrine_routing() -> void:
 	_ok(String(buy["type"]) == "buy" and String(buy["item"]) == "graft" and int(buy["pick"]) == 1,
 		"on the shrine the highest-weight graft (solar_core, offer 1) is bought first: %s" % str(buy))
 	g.step(buy)
-	_ok(g.player["grafts"] == ["solar_core"] and g.bloom == 8, "graft installed, bloom 12 -> 8: %s %d" % [str(g.player["grafts"]), g.bloom])
+	_ok(g.player["grafts"] == ["solar_core"] and g.bloom == 4,
+		"graft installed at its own price, bloom 12 -> 4: %s %d" % [str(g.player["grafts"]), g.bloom])
 	# with the graft counter closed and bloom for one more buy, the field
 	# goal falls back to the stairs once the shrine has nothing useful left
 	_choose(plan, g)
@@ -271,12 +273,45 @@ func _check_shrine_routing() -> void:
 	var plan3 = _bot("deeproot_plan", g3)
 	_choose(plan3, g3)
 	_ok(plan3._field_goal == Vector2i(1, 1), "bloom below the cheapest useful buy: stairs goal: %s" % str(plan3._field_goal))
-	# graft pick helper: highest weight, ties to offer 0, unknown ids weigh 0
-	_ok(plan._graft_pick(["thick_bark", "solar_core"]) == 1, "graft pick prefers solar_core")
-	_ok(plan._graft_pick(["deep_cells", "carapace"]) == 0, "graft pick ties go to offer 0")
-	_ok(plan._graft_pick(["nonesuch", "compost"]) == 1, "unknown id weighs 0")
+	# worth test: a weight clears the offer's OWN price, not a flat graft price
+	_ok(plan._graft_worth("solar_core", 8) and not plan._graft_worth("thick_bark", 3),
+		"the lever clears its 8, the weight-1 stat row never clears its 3")
+	_ok(not plan._graft_worth("nonesuch", 1), "an unknown id weighs 0 at any price")
 	for gid in Content.GRAFTS:
 		_ok(plan.GRAFT_WEIGHTS.has(gid), "GRAFT_WEIGHTS covers %s" % gid)
+
+	# per-offer prices: a Solar Core at 8 is no reason to walk with 6 bloom,
+	# a 3-bloom Verdant Pulse on the same counter is. Graft-only shops, so the
+	# ability and heal branches cannot price the detour instead.
+	var g4 = _game(["solar_lance", "seed_bomb", "mycelium_dash"])
+	g4.map["shrine"] = shrine
+	g4.map["stairs"] = Vector2i(1, 1)
+	g4.bloom = 6
+	g4.shop = {"grafts": ["solar_core"]}
+	var plan4 = _bot("deeproot_plan", g4)
+	var snap4: Dictionary = g4.snapshot()
+	_ok(snap4["shop"]["graft_prices"] == [8], "the snapshot prices the lone offer: %s" % str(snap4["shop"].get("graft_prices", [])))
+	_ok(plan4._cheapest_useful_buy(snap4) == 8,
+		"the cheapest useful buy is the lever's own 8: %d" % plan4._cheapest_useful_buy(snap4))
+	_choose(plan4, g4)
+	_ok(plan4._field_goal == Vector2i(1, 1),
+		"a lever the purse cannot cover is no detour: %s" % str(plan4._field_goal))
+	var g5 = _game(["solar_lance", "seed_bomb", "mycelium_dash"])
+	g5.map["shrine"] = shrine
+	g5.map["stairs"] = Vector2i(1, 1)
+	g5.bloom = 6
+	g5.shop = {"grafts": ["verdant_pulse", "solar_core"]}
+	var plan5 = _bot("deeproot_plan", g5)
+	var snap5: Dictionary = g5.snapshot()
+	_ok(snap5["shop"]["graft_prices"] == [3, 8],
+		"the two offers are priced apart: %s" % str(snap5["shop"].get("graft_prices", [])))
+	_ok(plan5._cheapest_useful_buy(snap5) == 3,
+		"the cheap stat graft prices the detour: %d" % plan5._cheapest_useful_buy(snap5))
+	_choose(plan5, g5)
+	_ok(plan5._field_goal == shrine,
+		"a 3-bloom graft the purse covers is worth the walk: %s" % str(plan5._field_goal))
+	print("graft prices: offers %s at %s bloom; cheapest useful buy %d (purse 6)" % [
+		str(g5.shop["grafts"]), str(snap5["shop"]["graft_prices"]), plan5._cheapest_useful_buy(snap5)])
 
 
 # --- 4) determinism -----------------------------------------------------------

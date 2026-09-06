@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[3,2],"type":"ability"},{"slot":1,"target":[3,2],"type":"ability"},{"type":"end_turn"},{"dir":[1,0],"type":"move"},{"type":"descend"}],
 "expect": {"events":[{"id":"seed_bomb","t":"ability"},{"id":"mycelium_dash","t":"ability"},{"t":"teleport","to":"(3, 2)"},{"t":"descend","to_floor":2},{"offers":["mycelium_dash+","sap_snare","water_jet"],"t":"draft_offer"}],"floor":1,"timeout":true,"turns":1,"won":false},
 "note": "C4 no_lance mutator (pool_ban solar_lance + kit_ban): the run starts on a two-ability kit whose slots 0 and 1 are seed_bomb and mycelium_dash - the lance is gone from the kit, and the descent draft draws from a pool that no longer holds it (the offers are pinned below and the state hash pins the whole kit and pool)",
-"sim_version": 7,
+"sim_version": 8,
 "hash": "81f358830e53ee254521fcd9e748a7e21ea0aa4c6683a4ba233ea9e3adb5bfe1"
 }

@@ -8,8 +8,9 @@ extends SceneTree
 ## _enter_floor(1)), so a row starts from the same floor-1 map and the same rng
 ## state as the base row on a seed - the paired sign test below is exact there
 ## and the rows diverge later only through play. They do raise the graft price
-## (shop_cost("graft") is 4 + 2 per owned graft), so a graft row is "own it
-## from turn 1, pay more for the next one" - not a free extra.
+## (each offer costs its Content.GRAFTS price + GRAFT_PRICE_STEP per owned
+## graft), so a graft row is "own it from turn 1, pay more for the next one" -
+## not a free extra.
 ##
 ## Run: [SWEEP_BOT=deeproot] [SWEEP_SEEDS=30] [SWEEP_SEED_FROM=101]
 ##      [SWEEP_TIER=2] [SWEEP_GRAFTS=carapace,solar_core] [SWEEP_BLOOM=12]

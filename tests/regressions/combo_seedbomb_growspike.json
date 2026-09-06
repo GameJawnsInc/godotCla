@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[4,2],"type":"ability"},{"slot":1,"target":[5,2],"type":"ability"}],
 "expect": {"events":[{"t":"growth"},{"amt":1,"id":"grow_spike","kind":"per","t":"rider"},{"amt":4,"src":"grow_spike","t":"damage","who":"drill_bot"},{"t":"death","who":"drill_bot"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "combo demo: seed_bomb grows a cross under the drill bot, grow_spike pays off the same turn (2+1 charge); under C2 the spike carries a per rider (growth_adjacent_target, cap 1) so the seeded cross turns its base 3 into 4",
-"sim_version": 7,
+"sim_version": 8,
 "hash": "42b896e80c69206069ae77bd46c41bc2853f3f8a306cc2c6ed1db975d24703b1"
 }

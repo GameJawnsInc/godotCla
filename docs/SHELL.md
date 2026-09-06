@@ -206,8 +206,10 @@ or item card is still shown with its price and flashes when tapped:
   free kit slot. With a full kit the card is not for sale: the sim stops
   offering the action and the card flashes when tapped.
 - **two grafts** - the shrine offers two and sells **one**; taking either
-  closes the counter and the other offer is lost. Prices rise as you stack
-  grafts, so the pair is a choice, not a shopping list.
+  closes the counter and the other offer is lost. Each graft carries its own
+  price - a lever like Solar Core costs more than a stat graft, and the card
+  shows that price - and every graft you own raises the next one, so the pair
+  is a choice, not a shopping list.
 - **item** - one base consumable
 - **press** - two held items become the `+` form of the one you keep
 - **forge** - one kit ability becomes its `+` form and another is scrapped

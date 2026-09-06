@@ -223,9 +223,13 @@ architecture below is designed to bend rather than block.
   when the drag crossed fire, root when the shove both pushed and collided) —
   `tests/regressions/c2_*.json` demos one row each.
 - Grafts are data (`docs/PROGRESSION_REVIEW.md` §6.3 C3): every `Content.GRAFTS`
-  row is `{name, desc, tags}` (tags a `Content.TAGS` subset) plus exactly one of
+  row is `{name, desc, tags, price}` (tags a `Content.TAGS` subset, `price` an
+  int >= 1 — both lint-enforced) plus exactly one of
   `stat: {key: int}` — summed by `Game._graft_stat(key)` over the held grafts,
-  keys `bank_cap`, `shield_cap`, `regen`, `growth_heal`, `cleanse_bloom`;
+  keys `bank_cap`, `shield_cap`, `regen`, `regen_on_growth`, `growth_heal`,
+  `cleanse_bloom` (`regen_on_growth` is added to regen only on the turns the
+  tender begins standing on growth; no shipped row uses it — the key exists so a
+  conditional alternative to `solar_core` can be probed in a scratch tree);
   `mod: {key: value}` — first held value via `Game._graft_mod(key, default)`,
   keys `floor_start_shield`, `oil_cast_discount`; or `hooks: [rows]`. There is
   no `_has_graft`: a graft that needs a new number needs a new stat/mod key and
@@ -235,7 +239,21 @@ architecture below is designed to bend rather than block.
   (hooks). `oil_tithe` takes 1 off the first oil-aimed cast of each turn
   (floored at 1; `ability_cost(aid, target)` prices it, `legal_actions` prices
   each target, `{t: "tithe", id}` marks the spend, `tithe_used_this_turn` resets
-  in `_begin_player_turn`).
+  in `_begin_player_turn`). A graft's `price` is what the shrine charges for it
+  (bump 8): `Game.shop_cost(item, id = "")` reads `Content.GRAFTS[id].price` for
+  item `"graft"` with a known id, then adds `GRAFT_PRICE_STEP` (2) per owned
+  graft and the tier markup — `SHOP_COSTS["graft"]` (4) survives only as the
+  id-less fallback for callers that want "the graft price". Prices are pure
+  table reads and never touch the rng. `legal_actions` prices every offer
+  separately, so a purse can afford one pick and not the other; `_act_buy`
+  resolves the pick before pricing and deducts that offer's own price; and
+  `snapshot().shop` carries `graft_prices` (aligned with `grafts`, derived per
+  snapshot, never stored) so the shell and the bots read prices without calling
+  the sim. Prices today — `solar_core` 8 (the one measured lever), `compost` 6,
+  `ember_sap` 5, `oil_tithe` 5, `undertow` 4, and the five noise-level stat rows
+  `deep_cells`/`thick_bark`/`verdant_pulse`/`bloom_surge`/`carapace` at 3 — come
+  from measuring every graft pre-installed (`{grafts: [g]}`) before pricing it;
+  the sweeps are in `docs/BALANCE.md` (2026-09-06d, 06f and 07).
 - Hook dispatcher (`Game._hook(kind, ctx)`, C3): reactive rules are data.
   Kinds are `Content.HOOK_KINDS` — `ignite`, `staggered`, `cleanse`,
   `growth_planted`, `kill`, `shield_break`, `collision` — each fired at the sim
@@ -360,13 +378,22 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (7
-  today: Block A — the starting loadout (`Content.LOADOUTS`, config key
-  `loadout`) and the `open_pool` mutator. A default-config run is untouched
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (8
+  today: the graft pricing pass — every `Content.GRAFTS` row carries a `price`
+  and `Game.shop_cost(item, id)` charges it, so a log that bought a graft at the
+  old flat 4 now finds that buy illegal and diverges from there, and
+  `snapshot().shop` gained `graft_prices`, which moves the state hash of any run
+  whose final shrine still stocks grafts. The 8 re-stamp rewrote `sim_version`
+  across all 60 old records — 38 with no hash diff, 18 hash-only — and four bot
+  logs whose actions no longer replay (`canary_fanatic_s1`, `canary_magpie_s2`,
+  `det_magpie_s42`, `det_optimizer_s42`) were re-recorded on their personas;
+  `c6_graft_price` and `c6_solar_core_price` are the two new demos. Bump 7 was
+  Block A — the starting loadout (`Content.LOADOUTS`, config key
+  `loadout`) and the `open_pool` mutator. A default-config run was untouched
   (`tender` is `STARTING_KIT` and the pool is unchanged), so the 7 re-stamp
   rewrote only `sim_version` across the corpus with no outcome or hash diff;
   a run recorded with a non-default loadout would replay with a different kit,
-  which is what the bump buys. Bump 6 was C4 — the nine package `+` rows (those
+  which is what that bump bought. Bump 6 was C4 — the nine package `+` rows (those
   bases became forgeable at the
   shrine and draftable-as-upgrade once held) and mutator numbers moving into
   `Content.MUTATORS[...].config`; neither changed a default-config run either.

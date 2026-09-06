@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[0,-1],"type":"ability"},{"dir":[1,0],"type":"move"},{"type":"descend"}],
 "expect": {"events":[{"id":"water_jet","t":"ability"},{"amt":2,"src":"collision:water_jet","t":"damage","who":"smokestack"},{"t":"descend","to_floor":2},{"offers":["mycelium_dash+","grow_spike","root_wall"],"t":"draft_offer"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "Block A loadout tidewarden under the no_lance mutator: the loadout kit is chosen first and kit_ban then finds no solar_lance to strip, so all three slots survive (slot 0 water_jet washes the smokestack into the north wall for 2) where tender + no_lance drops to the two-ability kit of c4_no_lance; the descent draft draws from the 13-id pool the ban already emptied of the lance, and no solar_lance+ can be offered either because the kit holds no lance to upgrade",
-"sim_version": 7,
+"sim_version": 8,
 "hash": "ab7311fa1b2e3b8750e5c1dfc54e1b058961ad59639741653b689b70d938a85d"
 }

@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[4,2],"type":"ability"},{"dir":[0,1],"type":"move"},{"dir":[-1,0],"type":"move"},{"type":"end_turn"},{"dir":[-1,0],"type":"move"},{"dir":[0,-1],"type":"move"},{"slot":1,"target":[1,0],"type":"ability"}],
 "expect": {"events":[{"t":"verdant"},{"t":"roots"},{"amt":2,"src":"collision:water_jet","t":"damage","who":"smokestack"},{"t":"staggered"}],"floor":1,"timeout":true,"turns":1,"won":false},
 "note": "combo demo: root_wall (verdant-discounted) walls off x=4, the player circles to the far side and water_jet shoves the smokestack one tile into the roots: collision damage plus stagger",
-"sim_version": 7,
+"sim_version": 8,
 "hash": "5b9099ef1fec4a7c91692143ee3f8c6dd1e544540633b4fbc713ef7a99ffbd3a"
 }

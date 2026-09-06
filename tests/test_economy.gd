@@ -6,6 +6,12 @@ extends SceneTree
 ##     two distinct unowned grafts (one when one remains, none when all owned)
 ##  c) supply pods hand out base item ids only
 ##  d) two-graft stock: buying one discards the other
+##  d2) graft prices as data (bump 8): every offer is priced from its own
+##     Content.GRAFTS row - shop_cost("graft", id) = price + GRAFT_PRICE_STEP
+##     per owned graft + tier markup; legal_actions prices each pick on its
+##     own (a purse between the two prices makes exactly one pick legal), the
+##     buy deducts that pick's price, snapshot().shop.graft_prices lines up
+##     with .grafts (in a clone too), and the id-less fallback is unchanged
 ##  e) the shrine ability card is only buyable with a free kit slot
 ##  f) press/forge: shop-gated, tier markup, forge once per floor, never
 ##     scraps mobility; Boarded shrines board every purchase and service
@@ -15,6 +21,11 @@ extends SceneTree
 ##     a fire or an ash tile away does; the room bloom and the floor restore
 ##     wait for the ash too, and neither fire nor ash shields the boss core
 ##  h) config keys "grafts" and "bloom"
+##  d3) the regen_on_growth stat key (bump 8): _begin_player_turn adds
+##     _graft_stat("regen_on_growth") to regen only while the tender stands on
+##     growth. No shipped GRAFTS row uses it - it exists so a conditional
+##     alternative to solar_core can be measured - so the behaviour is driven
+##     through a subclass that pretends to hold one
 ##  i) damage attribution: fire tiles carry "by", enemy-side sources are
 ##     "fire:<by>" / "collision:<aid>", player-side sources unchanged
 ##  j) loadouts (Block A, bump 7): config "loadout" picks the kit from
@@ -43,6 +54,8 @@ func _init() -> void:
 	_check_stock_filter()
 	_check_pods_and_shops_in_play()
 	_check_graft_buy()
+	_check_graft_prices()
+	_check_regen_on_growth()
 	_check_ability_buy_kit_slot()
 	_check_press_forge_boarded()
 	_check_quota_reclamp()
@@ -140,6 +153,7 @@ func _check_rng_independence() -> void:
 	var variants: Array = [
 		{"kit": ["solar_lance+", "seed_bomb", "mycelium_dash", "vine_whip", "water_jet"]},
 		{"grafts": Content.GRAFTS.keys()},
+		{"grafts": ["solar_core"]},  # prices are pure table reads: never an rng draw
 		{"pool": ["solar_lance", "seed_bomb", "vine_whip"]},
 		{"bloom": 9},
 		{"packages": Content.PACKAGES.keys()},
@@ -267,13 +281,15 @@ func _check_graft_buy() -> void:
 	_ok(not g.shop.has("grafts") and not g.shop.has("graft"), "graft buy: shop still has grafts %s" % str(g.shop))
 	_ok(buys.size() == 1 and buys[0].get("id", "") == offers[1] and buys[0].get("discarded", "") == offers[0],
 		"graft buy: event %s" % str(buys))
-	_ok(g.bloom == bloom_before - Content.SHOP_COSTS["graft"], "graft buy: bloom %d -> %d" % [bloom_before, g.bloom])
+	_ok(g.bloom == bloom_before - int(Content.GRAFTS[offers[1]]["price"]),
+		"graft buy: bloom %d -> %d, %s costs %d" % [bloom_before, g.bloom, offers[1], int(Content.GRAFTS[offers[1]]["price"])])
 	# the old scalar form is gone: a pick-less buy is illegal
 	var g2 = Game.new(1, {"bloom": 20})
 	g2.player["pos"] = g2.map["shrine"]
 	var evs2: Array = g2.step({"type": "buy", "item": "graft"})
 	_ok(not _events_of(evs2, "illegal").is_empty() and g2.player["grafts"].is_empty(), "graft buy without pick was accepted")
 	# price steps with owned grafts, pre-installed ones included
+	# the id-less fallback is untouched by pricing-as-data: still 4 + 2 per held
 	var g3 = Game.new(1, {"grafts": ["carapace"]})
 	_ok(g3.shop_cost("graft") == Content.SHOP_COSTS["graft"] + Content.GRAFT_PRICE_STEP,
 		"graft price with one config graft: %d" % g3.shop_cost("graft"))
@@ -282,6 +298,165 @@ func _check_graft_buy() -> void:
 	_ok(g4.shop_cost("graft") == Content.SHOP_COSTS["graft"] + 3 * Content.GRAFT_PRICE_STEP,
 		"graft price with three config grafts (rule grafts count): %d" % g4.shop_cost("graft"))
 	print("graft buy: offers %s, bought %s, discarded %s" % [str(offers), offers[1], offers[0]])
+
+
+# --- d2) graft prices as data -------------------------------------------------
+
+func _check_graft_prices() -> void:
+	# 1) the price formula, per id, with and without owned grafts and markup
+	var g0 = Game.new(1)
+	var bad_formula := 0
+	for gid in Content.GRAFTS:
+		if g0.shop_cost("graft", gid) != int(Content.GRAFTS[gid]["price"]):
+			bad_formula += 1
+	_ok(bad_formula == 0, "graft price: %d ids priced off their own row on a fresh run" % bad_formula)
+	var held := ["carapace", "ember_sap"]
+	var gh = Game.new(1, {"grafts": held})
+	var gt = Game.new(1, {"tier": GOUGING_TIER, "grafts": held})
+	var bad_step := 0
+	for gid in Content.GRAFTS:
+		var base: int = int(Content.GRAFTS[gid]["price"])
+		if gh.shop_cost("graft", gid) != base + held.size() * Content.GRAFT_PRICE_STEP:
+			bad_step += 1
+		if gt.shop_cost("graft", gid) != base + held.size() * Content.GRAFT_PRICE_STEP + 1:
+			bad_step += 1
+	_ok(bad_step == 0, "graft price: %d ids mispriced with %d held / gouging markup" % [bad_step, held.size()])
+	# an unknown or empty id falls back to the flat SHOP_COSTS entry
+	_ok(g0.shop_cost("graft", "no_such_graft") == Content.SHOP_COSTS["graft"]
+			and g0.shop_cost("graft") == Content.SHOP_COSTS["graft"],
+		"graft price: unknown id did not fall back to %d" % Content.SHOP_COSTS["graft"])
+	# 2) a purse between the two offers makes exactly one pick legal
+	var seed_used := -1
+	var cheap := -1
+	var dear := -1
+	var picks: Array = []
+	for s in range(1, 200):
+		var gs = Game.new(s)
+		var offs: Array = gs.shop.get("grafts", [])
+		if offs.size() != 2:
+			continue
+		var p0: int = gs.shop_cost("graft", String(offs[0]))
+		var p1: int = gs.shop_cost("graft", String(offs[1]))
+		if p0 == p1:
+			continue
+		seed_used = s
+		cheap = mini(p0, p1)
+		dear = maxi(p0, p1)
+		picks = [p0, p1]
+		break
+	_ok(seed_used > 0, "graft price: no seed under 200 offered two differently priced grafts")
+	if seed_used > 0:
+		var gm = Game.new(seed_used, {"bloom": dear - 1})
+		gm.player["pos"] = gm.map["shrine"]
+		var legal := 0
+		var legal_pick := -1
+		for a in gm.legal_actions():
+			if String(a.get("type", "")) == "buy" and String(a.get("item", "")) == "graft":
+				legal += 1
+				legal_pick = int(a.get("pick", -1))
+		_ok(legal == 1 and legal_pick == (0 if picks[0] == cheap else 1),
+			"graft price: bloom %d between %d and %d -> %d legal picks (pick %d)" % [dear - 1, cheap, dear, legal, legal_pick])
+		# the dear pick is not just missing from legal_actions, it is refused
+		var evs: Array = gm.step({"type": "buy", "item": "graft", "pick": 1 if picks[0] == cheap else 0})
+		_ok(not _events_of(evs, "illegal").is_empty() and gm.player["grafts"].is_empty(),
+			"graft price: an unaffordable pick was sold anyway (%s)" % str(evs))
+		# with the dear price in the purse both picks are legal again
+		var gr = Game.new(seed_used, {"bloom": dear})
+		gr.player["pos"] = gr.map["shrine"]
+		var legal2 := 0
+		for a in gr.legal_actions():
+			if String(a.get("type", "")) == "buy" and String(a.get("item", "")) == "graft":
+				legal2 += 1
+		_ok(legal2 == 2, "graft price: bloom %d -> %d legal picks, expected 2" % [dear, legal2])
+		# 3) the buy deducts that pick's own price, not the flat one
+		var bad_charge := 0
+		for pick in 2:
+			var gb = Game.new(seed_used, {"bloom": 30})
+			gb.player["pos"] = gb.map["shrine"]
+			var gid: String = String(gb.shop["grafts"][pick])
+			var want: int = gb.shop_cost("graft", gid)
+			var before: int = gb.bloom
+			gb.step({"type": "buy", "item": "graft", "pick": pick})
+			if gb.bloom != before - want or gb.player["grafts"] != [gid]:
+				bad_charge += 1
+				failures.append("graft price: pick %d (%s) charged %d, expected %d" % [pick, gid, before - gb.bloom, want])
+		_ok(bad_charge == 0, "graft price: %d picks charged the wrong price" % bad_charge)
+	# 4) snapshot().shop.graft_prices lines up with .grafts, in a clone too
+	var bad_snap := 0
+	var no_key := 0
+	for s in range(1, 60):
+		var gs2 = Game.new(s)
+		var snap: Dictionary = gs2.snapshot()
+		var offs2: Array = snap["shop"].get("grafts", [])
+		if offs2.is_empty():
+			if snap["shop"].has("graft_prices"):
+				no_key += 1
+			continue
+		var prices: Array = snap["shop"].get("graft_prices", [])
+		if prices.size() != offs2.size():
+			bad_snap += 1
+			continue
+		for i in offs2.size():
+			if int(prices[i]) != gs2.shop_cost("graft", String(offs2[i])):
+				bad_snap += 1
+		var csnap: Dictionary = gs2.clone().snapshot()
+		if csnap["shop"].get("graft_prices", []) != prices or csnap["shop"].get("grafts", []) != offs2:
+			bad_snap += 1
+	_ok(bad_snap == 0 and no_key == 0,
+		"graft price: %d snapshots misaligned, %d graftless shops carried graft_prices" % [bad_snap, no_key])
+	# a graftless shrine (every graft held) exposes neither key
+	var gall = Game.new(1, {"grafts": Content.GRAFTS.keys()})
+	var sall: Dictionary = gall.snapshot()
+	_ok(not sall["shop"].has("grafts") and not sall["shop"].has("graft_prices"),
+		"graft price: all-grafts shop %s" % str(sall["shop"]))
+	print("graft prices: seed %d offers %s at %s bloom; fallback %d, step %d" % [
+		seed_used, str(Game.new(maxi(seed_used, 1)).shop.get("grafts", [])), str(picks), Content.SHOP_COSTS["graft"], Content.GRAFT_PRICE_STEP])
+
+
+# --- d3) the regen_on_growth stat key -----------------------------------------
+
+## Game with one imaginary graft granting `stat` - the table is a const, so a
+## key no shipped row uses is exercised by overriding the one table read.
+class _StatProbe extends Game:
+	var probe_stat: Dictionary = {}
+
+	func _graft_stat(key: String) -> int:
+		return super(key) + int(probe_stat.get(key, 0))
+
+
+func _check_regen_on_growth() -> void:
+	# no shipped row uses the key: a real run never pays it
+	var live := 0
+	for gid in Content.GRAFTS:
+		live += int(Content.GRAFTS[gid].get("stat", {}).get("regen_on_growth", 0))
+	_ok(live == 0, "regen_on_growth: %d shipped points - the key is meant to be unused" % live)
+	var plain = Game.new(1)
+	plain.terrain[plain.player["pos"]] = {"kind": "growth"}
+	plain._begin_player_turn()
+	var base_charge: int = plain.player["charge"]
+	plain.terrain.erase(plain.player["pos"])
+	plain._begin_player_turn()
+	_ok(plain.player["charge"] == base_charge, "regen_on_growth: growth moved regen with no graft holding the key")
+	# unconditional regen (the shipped solar_core shape) pays everywhere
+	var sun = Game.new(1, {"grafts": ["solar_core"]})
+	sun._begin_player_turn()
+	_ok(sun.player["charge"] == base_charge + 1, "regen_on_growth: solar_core regen %d, expected %d" % [sun.player["charge"], base_charge + 1])
+	# the conditional key pays on growth and nowhere else
+	var p = _StatProbe.new(1)
+	p.probe_stat = {"regen_on_growth": 1}
+	p.terrain.erase(p.player["pos"])
+	p._begin_player_turn()
+	var off: int = p.player["charge"]
+	p.terrain[p.player["pos"]] = {"kind": "growth"}
+	p._begin_player_turn()
+	var on: int = p.player["charge"]
+	_ok(off == base_charge and on == base_charge + 1,
+		"regen_on_growth: charge off growth %d (want %d), on growth %d (want %d)" % [off, base_charge, on, base_charge + 1])
+	# oil is not growth: only the growth tile pays
+	p.terrain[p.player["pos"]] = {"kind": "oil"}
+	p._begin_player_turn()
+	_ok(p.player["charge"] == base_charge, "regen_on_growth: oil paid the growth bonus (%d)" % p.player["charge"])
+	print("regen_on_growth: %d shipped points; base charge %d, +1 only on growth" % [live, base_charge])
 
 
 # --- e) ability buy needs a free kit slot -------------------------------------

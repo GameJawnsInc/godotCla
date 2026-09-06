@@ -4,6 +4,6 @@
 "actions": [{"target":[2,2],"type":"cleanse"},{"slot":0,"target":[1,0],"type":"ability"},{"type":"end_turn"},{"type":"end_turn"},{"dir":[1,0],"type":"move"},{"dir":[1,0],"type":"move"},{"target":[4,2],"type":"cleanse"},{"type":"end_turn"},{"dir":[1,0],"type":"move"},{"dir":[1,0],"type":"move"},{"dir":[1,0],"type":"move"},{"type":"end_turn"},{"dir":[1,0],"type":"move"},{"dir":[0,-1],"type":"move"},{"type":"descend"}],
 "expect": {"events":[{"kind":"oil","t":"cleanse"},{"t":"ignite"},{"t":"ash"},{"kind":"ash","t":"cleanse"},{"t":"stairs_awaken"},{"t":"descend","to_floor":2}],"floor":1,"timeout":true,"turns":4,"won":false},
 "note": "strandable green gate, burn path: quota 2 with two oil tiles, one cleansed and the other lit by solar_lance - the fire is pending corruption (Content.counts_as_corruption reads burns_to), so ignition does NOT shrink the need and the stairs stay dormant through the burn; the tile comes back as ash (event ash) and only cleansing the ash meets the quota and wakes the stairs - see blockb_quota_reclamp_wash for the same gate opened by a real bloomless removal",
-"sim_version": 7,
+"sim_version": 8,
 "hash": "c878ec8264608fb9fef801e5f4602afd24e3d0e93f08309d5e997681124dfb04"
 }

@@ -202,10 +202,14 @@ tests a different build muscle so no single draft strategy trivializes it.
 - `+` items exist only through the press: the shrine and supply pods stock base
   items only, so item upgrades are a spend, never a drop.
 - **Grafts** are the relic analog: passive run-long modifiers, and they are
-  **data, not code**. Every `Content.GRAFTS` row is `{name, desc, tags}` plus
-  exactly one of three shapes, and the sim reads the shape rather than the id:
+  **data, not code**. Every `Content.GRAFTS` row is `{name, desc, tags, price}`
+  plus exactly one of three shapes, and the sim reads the shape rather than the
+  id:
   - `stat: {key: int}` — summed over everything you hold. Keys are a closed
-    set: `bank_cap`, `shield_cap`, `regen`, `growth_heal`, `cleanse_bloom`.
+    set: `bank_cap`, `shield_cap`, `regen`, `regen_on_growth`, `growth_heal`,
+    `cleanse_bloom` (`regen_on_growth` pays only on the turns you begin
+    standing on growth; no shipped row uses it — it exists so a conditional
+    alternative to Solar Core can be measured).
   - `mod: {key: value}` — a rule switch the sim looks up where the rule lives
     (`floor_start_shield`, `oil_cast_discount`).
   - `hooks: [{on, effects, cap_per_turn?, if?}]` — rows the hook dispatcher
@@ -224,8 +228,19 @@ tests a different build muscle so no single draft strategy trivializes it.
   takes 1, three times a turn), **Undertow** (staggered enemies are also rooted
   a turn), **Compost** (a kill leaves growth where the enemy fell) and **Oil
   Tithe** (the first cast aimed at oil each turn costs 1 less, never below 1).
-  Kit stays 4+1; Grafts are where long-tail build identity accumulates. Each
-  graft owned raises the price of the next.
+  Kit stays 4+1; Grafts are where long-tail build identity accumulates.
+- **Each graft carries its own price** (the row's `price`, in Bloom), and each
+  graft you already own still raises the price of the next one on top of that.
+  A shrine's two offers are therefore usually priced apart, and the card shows
+  what each one costs. The prices come from the measured tables, not from
+  flavour: Solar Core is 8 because it is the one row that moves win rate on
+  its own, Compost 6, Ember Sap and Oil Tithe 5, Undertow 4, and the five
+  stat/mod rows that sit inside noise are 3 so they are ever worth taking
+  against a lever. **The lever is priced, not nerfed** — Solar Core still does
+  exactly what it did, it just costs about a floor's worth of Bloom — and
+  whether the row should instead become conditional is an open call for the
+  project owner, measured but not taken (see `docs/BALANCE.md`, the
+  alternative-probe table).
 - Rule grafts are deliberately kept off the stall surface: a hook may not grant
   shield, healing, thorns or cleanse credit, because those are the loops that
   let a run stand still and win. Damage, control and economy only.

@@ -538,6 +538,59 @@ retires 06e's "no persona casts a pure-mobility ability other than
 heuristic bot. Everything else outstanding is Block D (6.4) plus the carried
 items already listed at 06e.
 
+**Status (2026-09-07b).** **The graft pricing pass is done** and
+**`Game.SIM_VERSION` is 8**. This closes 6.3 C3's last open clause - *"every
+graft measured pre-installed ... before it is priced"* - by turning the price
+itself into data. Every `Content.GRAFTS` row now carries a `price` (int >= 1,
+required by the `tests/test_content.gd` lint), `Game.shop_cost(item, id = "")`
+starts a graft from that row's own number before adding `GRAFT_PRICE_STEP` per
+graft already owned and the tier markup, `legal_actions` gates each of the
+shrine's two offers on its own price, `_act_buy` resolves the pick before
+pricing it, and `snapshot().shop` publishes a derived `graft_prices` array so
+the shell cards and `deeproot_plan`'s shrine detour read the per-offer price
+without calling back into the sim; the id-less `SHOP_COSTS["graft"]` = 4
+survives as the fallback, and no path touches the rng. The prices come from
+the tables already in `docs/BALANCE.md` (06d, 06f, 07): **solar_core 8**
+(the one lever), compost 6, ember_sap and oil_tithe 5, undertow 4, and the
+five rows that sit inside noise at both tiers at 3. A second, deliberately
+unused, addition is the `regen_on_growth` stat key, which exists only so the
+"should the lever be conditional instead?" question could be measured against
+real content.
+
+The measurement is the "2026-09-07b - bump 8" entry in `docs/BALANCE.md`, and
+its headline is a **negative result about the instrument**: pricing the lever
+at double the old flat cost changed the number of runs in which `solar_core`
+was bought by *zero* for magpie (10/30), fanatic (4/30) and optimizer (6/30),
+and by one for sprout - the heuristic personas pick by tag overlap among the
+offers they can afford, so a price gates them and does not steer them. The one
+persona that weighs a graft against its own cost, `deeproot_plan`, did move:
+at tier 6 it now buys `solar_core` in 3 of 16 graft purchases where 06f had 22
+of 65, and `compost` in 9 of 16. The default game is otherwise intact - the
+30-seed persona table has wanderer and deeproot (which buy no grafts)
+**bit-identical** to 07 and the four shopping personas each within one win of
+it, the gate reads "gate: all PASS", and the 100-seed magpie canary is
+10/100 [6, 17], back to its recorded rise baseline and well under the 17%
+trip line. Suite green throughout ("regressions: 62 ok, 0 failed" plain and
+`REGRESS_STRICT=1`, "economy: OK (170 checks)", "bots: OK (49 checks)",
+"determinism: OK (61 checks, 8 personas)", "meta: OK", "shell smoke: OK"); the
+corpus went 60 -> 62 with 38 records stale on `sim_version` alone, 18 hash-only
+(the derived `graft_prices` sits inside the snapshot the state hash reads),
+four bot logs re-recorded because a logged graft buy is no longer affordable,
+and two new `c6_*` demos.
+
+**What the pass deliberately did not decide.** `solar_core` is **priced, not
+nerfed**: this tree measures it at +13 [70, 95] at tier 0 and +19 [63, 90] at
+tier 6, louder than 06d's +12/+17, so the graft table is still one lever plus
+nine rows inside noise. The alternative - `{stat: {regen_on_growth: 1}}`, +1
+regen only while standing on growth - was measured in a scratch tree at the
+same price and keeps about a third of the tier-6 lift (+6, p = 0.11) and none
+of the tier-0 lift (+1, 7:6 discordant), while pushing the planner's
+turns-on-wins from 61 to 73. The trade-off (a build-dependent lever and more
+variety, against a table where nothing measurably matters and a "stand still
+to be paid" loop this project has twice designed against) is written up in the
+BALANCE entry's alternative-probe section as **a decision for the project
+owner**, not taken here.
+
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
 180 bot runs; a synergy-lift sweep of 7 hypothesised pairs at 24 seeds per

@@ -15,8 +15,9 @@ extends SceneTree
 ##    (they must be rejected) and the Block C2 rider rows from the review
 ##    (they must pass), so this check cannot rot into "accepts everything".
 ## 9) grafts as data (Block C3, section D): every GRAFTS row has name, desc,
-##    tags from TAGS and exactly one of stat / mod / hooks; stat and mod keys
-##    come from closed sets; hook rows name a Content.HOOK_KINDS kind, carry
+##    tags from TAGS, a "price" int >= 1 (the shrine's per-graft price, read by
+##    Game.shop_cost("graft", id)) and exactly one of stat / mod / hooks; stat
+##    and mod keys come from closed sets; hook rows name a HOOK_KINDS kind, carry
 ##    non-empty effects from the effect vocabulary plus the positional hook
 ##    ops, an int cap_per_turn, and never an op that grants shield or thorns
 ##    (the stall surface). Same self-test discipline: bad fixtures rejected,
@@ -84,7 +85,10 @@ const TERRAIN_REQUIRED := [
 const STATUS_REQUIRED := ["stack", "blocks", "tick_dmg", "cap"]
 # --- grafts as data (section 9) ------------------------------------------------
 ## Closed stat keys Game._graft_stat sums, and mod keys Game._graft_mod reads.
-const GRAFT_STAT_KEYS := ["bank_cap", "shield_cap", "regen", "growth_heal", "cleanse_bloom"]
+## regen_on_growth is the conditional half of regen: Game._begin_player_turn
+## adds it only while the tender stands on growth. No shipped row uses it; the
+## key exists so a conditional alternative to solar_core can be measured.
+const GRAFT_STAT_KEYS := ["bank_cap", "shield_cap", "regen", "regen_on_growth", "growth_heal", "cleanse_bloom"]
 const GRAFT_MOD_KEYS := ["floor_start_shield", "oil_cast_discount"]
 ## Positional ops only the hook dispatcher (Game._hook_effect) implements.
 const HOOK_OP_KEYS := {
@@ -96,7 +100,7 @@ const HOOK_OP_KEYS := {
 ## vector BALANCE.md documents, so no graft hook grants them.
 const HOOK_FORBIDDEN_OPS := ["shield", "thorns"]
 const HOOK_ROW_KEYS := ["on", "effects", "cap_per_turn", "if"]
-const GRAFT_ROW_KEYS := ["name", "desc", "tags", "stat", "mod", "hooks"]
+const GRAFT_ROW_KEYS := ["name", "desc", "tags", "price", "stat", "mod", "hooks"]
 
 ## Every enemy intent type Game._execute_intent can be handed; a status may
 ## only block one of these (or "*", every intent).
@@ -238,9 +242,13 @@ func _init() -> void:
 		for k in shape:
 			if Content.GRAFTS[gid].has(k):
 				shape[k] += 1
+	var prices: Array = []
+	for gid in Content.GRAFTS:
+		prices.append("%s %d" % [gid, int(Content.GRAFTS[gid].get("price", -1))])
 	print("grafts: %d rows (%d stat, %d mod, %d hooks); hook kinds %d, depth max %d, step cap %d" % [
 		Content.GRAFTS.size(), shape["stat"], shape["mod"], shape["hooks"],
 		Content.HOOK_KINDS.size(), Content.HOOK_DEPTH_MAX, Content.HOOK_STEP_CAP])
+	print("graft prices (+%d per owned): %s" % [Content.GRAFT_PRICE_STEP, ", ".join(prices)])
 
 	# 10) mutators as data: the live table, then the lint's own self-test
 	failures.append_array(_lint_mutators(Content.MUTATORS))
@@ -618,6 +626,14 @@ func _lint_grafts(grafts: Dictionary) -> Array:
 			for t in tags:
 				if not Content.TAGS.has(t):
 					out.append("%s: tag '%s' not in TAGS" % [gid, str(t)])
+		# price is required and closed to ints >= 1: the shrine prices every
+		# offer from its own row, so a row without one has no price at all
+		if not row.has("price"):
+			out.append("%s: missing 'price' (int >= 1)" % gid)
+		elif not (row["price"] is int):
+			out.append("%s: price must be an int, got %s" % [gid, str(row["price"])])
+		elif int(row["price"]) < 1:
+			out.append("%s: price %d must be >= 1" % [gid, int(row["price"])])
 		var shapes := 0
 		for shape in ["stat", "mod", "hooks"]:
 			if row.has(shape):
@@ -717,43 +733,49 @@ func _forbidden_ops(eff: Dictionary, where: String) -> Array:
 
 ## Graft rows the lint MUST reject, one violation each.
 const BAD_GRAFTS := {
-	"ya_no_name": {"desc": "x", "tags": ["fire"], "stat": {"regen": 1}},
-	"yb_no_desc": {"name": "x", "tags": ["fire"], "stat": {"regen": 1}},
-	"yc_bad_tag": {"name": "x", "desc": "x", "tags": ["lava"], "stat": {"regen": 1}},
-	"yd_no_tags": {"name": "x", "desc": "x", "tags": [], "stat": {"regen": 1}},
-	"ye_no_shape": {"name": "x", "desc": "x", "tags": ["fire"]},
-	"yf_two_shapes": {"name": "x", "desc": "x", "tags": ["fire"], "stat": {"regen": 1}, "mod": {"floor_start_shield": 1}},
-	"yg_stat_key": {"name": "x", "desc": "x", "tags": ["fire"], "stat": {"luck": 1}},
-	"yh_stat_float": {"name": "x", "desc": "x", "tags": ["fire"], "stat": {"regen": 1.5}},
-	"yi_mod_key": {"name": "x", "desc": "x", "tags": ["fire"], "mod": {"discount": 1}},
-	"yj_hook_kind": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "sneeze", "effects": [{"op": "damage_at", "dmg": 1}]}]},
-	"yk_hook_no_effects": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "ignite", "effects": []}]},
-	"yl_hook_shield": {"name": "x", "desc": "x", "tags": ["bark"], "hooks": [{"on": "cleanse", "effects": [{"op": "shield", "amount": 1}]}]},
-	"ym_hook_thorns": {"name": "x", "desc": "x", "tags": ["bark"], "hooks": [{"on": "shield_break", "effects": [{"op": "thorns", "dmg": 1, "turns": 2}]}]},
-	"yn_hook_then_shield": {"name": "x", "desc": "x", "tags": ["bark"], "hooks": [{"on": "kill", "effects": [
+	"ya_no_name": {"desc": "x", "tags": ["fire"], "price": 4, "stat": {"regen": 1}},
+	"yb_no_desc": {"name": "x", "tags": ["fire"], "price": 4, "stat": {"regen": 1}},
+	"yc_bad_tag": {"name": "x", "desc": "x", "tags": ["lava"], "price": 4, "stat": {"regen": 1}},
+	"yd_no_tags": {"name": "x", "desc": "x", "tags": [], "price": 4, "stat": {"regen": 1}},
+	"ye_no_shape": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4},
+	"yf_two_shapes": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "stat": {"regen": 1}, "mod": {"floor_start_shield": 1}},
+	"yg_stat_key": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "stat": {"luck": 1}},
+	"yh_stat_float": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "stat": {"regen": 1.5}},
+	"yi_mod_key": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "mod": {"discount": 1}},
+	"yj_hook_kind": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "hooks": [{"on": "sneeze", "effects": [{"op": "damage_at", "dmg": 1}]}]},
+	"yk_hook_no_effects": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "hooks": [{"on": "ignite", "effects": []}]},
+	"yl_hook_shield": {"name": "x", "desc": "x", "tags": ["bark"], "price": 4, "hooks": [{"on": "cleanse", "effects": [{"op": "shield", "amount": 1}]}]},
+	"ym_hook_thorns": {"name": "x", "desc": "x", "tags": ["bark"], "price": 4, "hooks": [{"on": "shield_break", "effects": [{"op": "thorns", "dmg": 1, "turns": 2}]}]},
+	"yn_hook_then_shield": {"name": "x", "desc": "x", "tags": ["bark"], "price": 4, "hooks": [{"on": "kill", "effects": [
 		{"op": "damage", "dmg": 1, "then": [{"op": "shield", "amount": 1}]}]}]},
-	"yo_hook_cap_float": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1}], "cap_per_turn": 2.5}]},
-	"yp_hook_unknown_op": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "ignite", "effects": [{"op": "melt_at", "dmg": 1}]}]},
-	"yq_hook_op_key": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1, "radius": 2}]}]},
-	"yr_hook_status": {"name": "x", "desc": "x", "tags": ["water"], "hooks": [{"on": "staggered", "effects": [{"op": "status_at", "status": "curse", "turns": 1}]}]},
-	"ys_hook_terrain": {"name": "x", "desc": "x", "tags": ["growth"], "hooks": [{"on": "kill", "effects": [{"op": "terrain_at", "kind": "lava"}]}]},
-	"yt_hook_row_key": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1}], "chance": 50}]},
-	"yu_hook_then_only": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "kill", "effects": [{"op": "status_target", "status": "stun", "turns": 1}]}]},
-	"yv_hook_if_pred": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1}], "if": [{"outcome": "hit"}]}]},
-	"yw_row_key": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "stat": {"regen": 1}},
+	"yo_hook_cap_float": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1}], "cap_per_turn": 2.5}]},
+	"yp_hook_unknown_op": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "hooks": [{"on": "ignite", "effects": [{"op": "melt_at", "dmg": 1}]}]},
+	"yq_hook_op_key": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1, "radius": 2}]}]},
+	"yr_hook_status": {"name": "x", "desc": "x", "tags": ["water"], "price": 4, "hooks": [{"on": "staggered", "effects": [{"op": "status_at", "status": "curse", "turns": 1}]}]},
+	"ys_hook_terrain": {"name": "x", "desc": "x", "tags": ["growth"], "price": 4, "hooks": [{"on": "kill", "effects": [{"op": "terrain_at", "kind": "lava"}]}]},
+	"yt_hook_row_key": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1}], "chance": 50}]},
+	"yu_hook_then_only": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "hooks": [{"on": "kill", "effects": [{"op": "status_target", "status": "stun", "turns": 1}]}]},
+	"yv_hook_if_pred": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1}], "if": [{"outcome": "hit"}]}]},
+	"yw_row_key": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "cost": 4, "stat": {"regen": 1}},
+	"yx_no_price": {"name": "x", "desc": "x", "tags": ["fire"], "stat": {"regen": 1}},
+	"yy_price_float": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4.5, "stat": {"regen": 1}},
+	"yz_price_zero": {"name": "x", "desc": "x", "tags": ["fire"], "price": 0, "stat": {"regen": 1}},
 }
 
 ## Graft rows the lint MUST accept: the four C3 rule grafts as the review
-## writes them, plus a hook row with an `if` and a plain effect-vocabulary op.
+## writes them, a hook row with an `if` and a plain effect-vocabulary op, and
+## a regen_on_growth stat row (the key exists for the solar_core probe).
 const GOOD_GRAFTS := {
-	"ha_ember_sap": {"name": "x", "desc": "x", "tags": ["fire"],
+	"ha_ember_sap": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4,
 		"hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1}], "cap_per_turn": 3}]},
-	"hb_undertow": {"name": "x", "desc": "x", "tags": ["water", "displace", "control"],
+	"hb_undertow": {"name": "x", "desc": "x", "tags": ["water", "displace", "control"], "price": 4,
 		"hooks": [{"on": "staggered", "effects": [{"op": "status_at", "status": "root", "turns": 1}]}]},
-	"hc_compost": {"name": "x", "desc": "x", "tags": ["growth"],
+	"hc_compost": {"name": "x", "desc": "x", "tags": ["growth"], "price": 4,
 		"hooks": [{"on": "kill", "effects": [{"op": "terrain_at", "kind": "growth"}]}]},
-	"hd_oil_tithe": {"name": "x", "desc": "x", "tags": ["fire", "water", "economy"], "mod": {"oil_cast_discount": 1}},
-	"he_hook_if_effect": {"name": "x", "desc": "x", "tags": ["fire"],
+	"hd_oil_tithe": {"name": "x", "desc": "x", "tags": ["fire", "water", "economy"], "price": 4, "mod": {"oil_cast_discount": 1}},
+	# the conditional regen key: no shipped row uses it, the lint accepts it
+	"hf_regen_on_growth": {"name": "x", "desc": "x", "tags": ["growth", "sun"], "price": 8, "stat": {"regen_on_growth": 1}},
+	"he_hook_if_effect": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4,
 		"hooks": [{"on": "cleanse", "effects": [{"op": "aoe_damage", "dmg": 1, "radius": 1, "ignite": false}],
 			"if": [{"target_adjacent": ["oil"]}], "cap_per_turn": 0}]},
 }
