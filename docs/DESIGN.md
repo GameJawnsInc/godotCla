@@ -76,6 +76,15 @@ The theme should do mechanical work, not just paint.
   set alight. Water washes it away and convert-radius abilities turn it into
   growth, exactly as they do oil and goo. Burning a slick therefore trades a
   cleanup job for a different cleanup job instead of erasing it.
+- **Pending corruption** — a fire counts as the ash it will leave. For the
+  three *counting* questions — the floor's green quota, whether a room is
+  fully tended, and whether the floor is restored — a burning tile is already
+  corruption, so lighting a slick never discounts the quota, a room whose last
+  corrupt tile is on fire waits for the ash before it blooms, and the floor is
+  not restored until the burn is cleaned up. Everything else still asks the
+  plain question: fire is not cleansable while it burns, does not shield the
+  core, and washing it away is a real removal that does shrink the quota.
+  Burning is a delay, not a shortcut.
 - Cleansing corrupted tiles (via abilities) yields **Bloom**.
 - Terrain is **data, not code**: `Content.TERRAIN` holds one row per kind
   (corruption, shields_core, flammable, washable, bloom yield, ttl/decays,

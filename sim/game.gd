@@ -208,8 +208,9 @@ func step(action: Dictionary) -> Array:
 		_:
 			_emit({"t": "error", "msg": "unknown action"})
 	# one place covers every bloomless corruption removal (wash, convert,
-	# ignite, burnout, dredge, enemy-made changes): the gate can never demand
-	# more than what is still standing
+	# dredge, enemy-made changes): the gate can never demand more than what
+	# is still standing. Ignition is not one of them - a fire counts as the
+	# ash it will leave, so lighting a slick never shrinks the gate
 	if not over and phase == "play":
 		_reclamp_quota()
 	return _step_events
@@ -465,9 +466,10 @@ func _base_item_ids() -> Array:
 
 
 ## The dormant-stairs quota can never demand more than what is still
-## standing: greened plus the corruption left on the floor. Bloomless
-## removals (wash, ignite, convert, dredge, enemy churn) lower it; a burnout
-## does not, since fire leaves ash and ash is corruption.
+## standing: greened plus the corruption left on the floor (fire included -
+## it counts as the ash it burns to). Bloomless removals (wash, convert,
+## dredge, enemy churn) lower it; neither igniting a slick nor the burnout
+## that follows does, since the tile is corruption the whole way through.
 func _reclamp_quota() -> void:
 	var need: int = mini(green_need, greened + _count_corruption())
 	if need < green_need:
@@ -1244,10 +1246,13 @@ func _room_of(p: Vector2i) -> int:
 	return -1
 
 
+## Corruption for counting: the two sites that feed the quota clamp, the
+## floor-restore check and the room bloom read Content.counts_as_corruption,
+## so a burning oil slick still counts as the corruption it will become.
 func _count_corruption() -> int:
 	var cnt := 0
 	for t in terrain.keys():
-		if Content.is_corruption(String(terrain[t]["kind"])):
+		if Content.counts_as_corruption(String(terrain[t]["kind"])):
 			cnt += 1
 	return cnt
 
@@ -1255,7 +1260,7 @@ func _count_corruption() -> int:
 func _room_has_corruption(ri: int) -> bool:
 	var r: Rect2i = map["rooms"][ri]
 	for t in terrain.keys():
-		if r.has_point(t) and Content.is_corruption(String(terrain[t]["kind"])):
+		if r.has_point(t) and Content.counts_as_corruption(String(terrain[t]["kind"])):
 			return true
 	return false
 

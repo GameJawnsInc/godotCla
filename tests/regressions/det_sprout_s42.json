@@ -5,5 +5,5 @@
 "expect": {"floor":4,"timeout":false,"turns":126,"won":false},
 "note": "determinism seed 42, sprout persona (tests/test_determinism.gd seeds)",
 "sim_version": 3,
-"hash": "dfc7a3afde4099dc45c4b925154a90921d6a41c49e1ea07f5bbab97a305834e6"
+"hash": "65872625111fa988b047965672a6d1422a118c5e895218733d944d649187a7dc"
 }

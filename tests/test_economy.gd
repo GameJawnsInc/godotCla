@@ -10,7 +10,10 @@ extends SceneTree
 ##  f) press/forge: shop-gated, tier markup, forge once per floor, never
 ##     scraps mobility; Boarded shrines board every purchase and service
 ##  g) quota re-clamp after bloomless corruption removal; enemy oil pays 0;
-##     a burnout leaves ash (corruption: no re-clamp), washing ash re-clamps
+##     fire is pending corruption (Content.counts_as_corruption), so neither
+##     igniting a slick nor the burnout that follows re-clamps, while washing
+##     a fire or an ash tile away does; the room bloom and the floor restore
+##     wait for the ash too, and neither fire nor ash shields the boss core
 ##  h) config keys "grafts" and "bloom"
 ##  i) damage attribution: fire tiles carry "by", enemy-side sources are
 ##     "fire:<by>" / "collision:<aid>", player-side sources unchanged
@@ -391,28 +394,51 @@ func _check_quota_reclamp() -> void:
 	_ok(g.green_need == 0, "wash: green_need %d" % g.green_need)
 	g.player["pos"] = g.map["stairs"]
 	_ok(_has_action(g.legal_actions(), "descend"), "wash: descend not legal on stairs")
-	# ignite: the lance turns both oil tiles into fire, which is not corruption
+	# ignite: the lance turns both oil tiles into fire. Fire is pending
+	# corruption (Content.counts_as_corruption: its burns_to is ash), so the
+	# count is unchanged, the gate does not shrink and the stairs stay
+	# dormant - lighting a slick is a detour, never a discount
 	var gi = Game.new(1, _fixed(rows, ["solar_lance", "mycelium_dash"], {"fdef": {"green_need": 2}}))
+	_ok(gi.green_need == 2 and gi._count_corruption() == 2, "ignite setup: need %d count %d" % [gi.green_need, gi._count_corruption()])
 	var evi: Array = gi.step({"type": "ability", "slot": 0, "target": Vector2i(1, 0)})
 	_ok(_events_of(evi, "ignite").size() == 2, "ignite: %d ignite events" % _events_of(evi, "ignite").size())
-	var rci := _events_of(evi, "quota_reclamp")
-	_ok(rci.size() == 1 and int(rci[0].get("need", -1)) == 0 and gi.green_need == 0, "ignite: reclamp %s need %d" % [str(rci), gi.green_need])
-	_ok(_events_of(evi, "stairs_awaken").size() == 1, "ignite: stairs_awaken missing")
+	_ok(_events_of(evi, "quota_reclamp").is_empty(), "ignite: quota_reclamp fired %s" % str(_events_of(evi, "quota_reclamp")))
+	_ok(_events_of(evi, "stairs_awaken").is_empty(), "ignite: stairs awoke over a burning gate (%s)" % str(evi))
+	_ok(gi.green_need == 2 and gi._count_corruption() == 2, "ignite: need %d count %d (fire counts)" % [gi.green_need, gi._count_corruption()])
 	_ok(gi.terrain[Vector2i(2, 1)].get("by", "") == "solar_lance", "ignite: fire by %s" % str(gi.terrain.get(Vector2i(2, 1))))
-	# burnout: the fires (ttl 2) become ash over two end_turns; ash is corruption
-	# again, so the count climbs back to 2 and no quota_reclamp fires on the way
+	# counting is the only rule that changed: a fire is still not cleansable
+	_ok(not _has_action(gi.legal_actions(), "cleanse"), "ignite: fire offered as a cleanse target")
+	var stairs_pos: Vector2i = gi.map["stairs"]
+	var here: Vector2i = gi.player["pos"]
+	gi.player["pos"] = stairs_pos
+	_ok(not _has_action(gi.legal_actions(), "descend"), "ignite: descend legal with the gate unmet")
+	gi.player["pos"] = here
+	# burnout: the fires (ttl 2) become ash over two end_turns. The tile was
+	# corruption for the counter the whole way through, so no quota_reclamp
+	# fires at either end of the burn
 	var evb1: Array = gi.step({"type": "end_turn"})
 	var evb2: Array = gi.step({"type": "end_turn"})
 	_ok(_events_of(evb1, "quota_reclamp").is_empty() and _events_of(evb2, "quota_reclamp").is_empty(), "burnout: reclamp fired %s %s" % [str(evb1), str(evb2)])
 	_ok(_events_of(evb1, "ash").is_empty() and _events_of(evb2, "ash").size() == 2, "burnout: ash events %s / %s" % [str(_events_of(evb1, "ash")), str(_events_of(evb2, "ash"))])
 	_ok(gi.terrain.get(Vector2i(2, 1), {}) == {"kind": "ash"} and gi.terrain.get(Vector2i(3, 1), {}) == {"kind": "ash"},
 		"burnout: tiles %s %s" % [str(gi.terrain.get(Vector2i(2, 1))), str(gi.terrain.get(Vector2i(3, 1)))])
-	_ok(gi._count_corruption() == 2 and gi.green_need == 0, "burnout: count %d need %d (the quota never grows back)" % [gi._count_corruption(), gi.green_need])
+	_ok(gi._count_corruption() == 2 and gi.green_need == 2, "burnout: count %d need %d (the gate never moved)" % [gi._count_corruption(), gi.green_need])
 	# cleansing the mapgen-oil ash pays the table's 1 and counts greened; the event names the kind
 	var evca: Array = gi.step({"type": "cleanse", "target": Vector2i(2, 1)})
 	var cla := _events_of(evca, "cleanse")
 	_ok(cla.size() == 1 and cla[0].get("kind", "") == "ash" and gi.greened == 1 and gi.terrain[Vector2i(2, 1)]["kind"] == "growth",
 		"ash cleanse: %s greened %d" % [str(cla), gi.greened])
+	# washing a live fire is a real removal (nothing is left to burn to ash):
+	# the re-clamp fires, exactly as it does for oil or ash
+	var gf = Game.new(1, _fixed(rows, ["water_jet", "mycelium_dash"], {"fdef": {"green_need": 2}}))
+	gf.terrain[Vector2i(2, 1)] = {"kind": "fire", "ttl": 2, "by": "solar_lance"}
+	gf.terrain[Vector2i(3, 1)] = {"kind": "fire", "ttl": 2, "by": "solar_lance"}
+	_ok(gf.green_need == 2 and gf._count_corruption() == 2, "fire wash setup: need %d count %d" % [gf.green_need, gf._count_corruption()])
+	var evf: Array = gf.step({"type": "ability", "slot": 0, "target": Vector2i(1, 0)})
+	var rcf := _events_of(evf, "quota_reclamp")
+	_ok(_events_of(evf, "wash").size() == 2 and rcf.size() == 1 and int(rcf[0].get("need", -1)) == 0 and int(rcf[0].get("was", -1)) == 2 and gf.green_need == 0,
+		"fire wash: %d washes, reclamp %s need %d" % [_events_of(evf, "wash").size(), str(rcf), gf.green_need])
+	_ok(not gf.terrain.has(Vector2i(2, 1)) and not gf.terrain.has(Vector2i(3, 1)), "fire wash: tiles gone %s" % str(gf.terrain))
 	# washing ash is a bloomless removal like washing oil: the re-clamp still fires
 	var ga = Game.new(1, _fixed(rows, ["water_jet", "mycelium_dash"], {"fdef": {"green_need": 2}}))
 	ga.terrain[Vector2i(2, 1)] = {"kind": "ash", "bloom": 0}
@@ -477,7 +503,58 @@ func _check_quota_reclamp() -> void:
 	var trail_ok: bool = gs.terrain.has(Vector2i(6, 1)) and gs.terrain[Vector2i(6, 1)].get("kind", "") == "oil" \
 		and int(gs.terrain[Vector2i(6, 1)].get("bloom", 1)) == 0
 	_ok(trail_ok, "sludge trail: terrain at (6,1) %s" % str(gs.terrain.get(Vector2i(6, 1))))
-	print("quota reclamp: wash 2->0, ignite 2->0, burnout to ash no reclamp, ash wash 2->0, partial 3->2; enemy oil / bloom-0 ash pay 0 bloom, count greened")
+	_check_pending_corruption()
+	print("quota reclamp: wash 2->0, ignite no reclamp (fire counts), burnout to ash no reclamp, fire/ash wash 2->0, partial 3->2; enemy oil / bloom-0 ash pay 0 bloom, count greened")
+
+
+## Pending corruption, the other two consumers: a room whose last corruption
+## is burning does not bloom, and a floor whose last corruption is burning is
+## not restored - both wait for the ash. The boss gate is untouched by either
+## (shields_core still reads is_corruption, and neither fire nor ash shields).
+func _check_pending_corruption() -> void:
+	var rows := [
+		"#######",
+		"#.~.>.#",
+		"#;@...#",
+		"#######",
+	]
+	var g = Game.new(1, _fixed(rows, ["solar_lance", "mycelium_dash"], {"fdef": {"green_need": 0}}))
+	g.map["rooms"] = [Rect2i(1, 1, 5, 2)]
+	var seen: Array = []
+	_ok(g._count_corruption() == 2 and g._room_has_corruption(0), "pending setup: count %d room %s" % [g._count_corruption(), str(g._room_has_corruption(0))])
+	_ok(g._corruption_adjacent(Vector2i(3, 1)), "pending setup: oil shields the core")
+	# 1. light the oil overhead
+	seen.append_array(g.step({"type": "ability", "slot": 0, "target": Vector2i(0, -1)}))
+	_ok(g.terrain.get(Vector2i(2, 1), {}).get("kind", "") == "fire", "pending: oil not lit (%s)" % str(g.terrain.get(Vector2i(2, 1))))
+	_ok(g._room_has_corruption(0), "pending: burning room reads clean")
+	_ok(not g._corruption_adjacent(Vector2i(3, 1)), "pending: fire shields the core")
+	seen.append_array(g.step({"type": "end_turn"}))
+	# 2. cleanse the room's other corruption: the fire still counts, so the
+	#    room does not bloom and the floor is not restored
+	seen.append_array(g.step({"type": "cleanse", "target": Vector2i(1, 2)}))
+	_ok(_events_of(seen, "room_bloom").is_empty(), "pending: room bloomed with the fire still burning (%s)" % str(seen))
+	_ok(_events_of(seen, "floor_restored").is_empty(), "pending: floor restored with the fire still burning")
+	_ok(g._count_corruption() == 1 and g._room_has_corruption(0), "pending: count %d room %s" % [g._count_corruption(), str(g._room_has_corruption(0))])
+	# 3. the fire burns out; ash is corruption outright, so nothing changes
+	while g.terrain.get(Vector2i(2, 1), {}).get("kind", "") == "fire":
+		seen.append_array(g.step({"type": "end_turn"}))
+	_ok(g.terrain.get(Vector2i(2, 1), {}).get("kind", "") == "ash", "pending: fire left %s" % str(g.terrain.get(Vector2i(2, 1))))
+	_ok(_events_of(seen, "ash").size() == 1, "pending: %d ash events" % _events_of(seen, "ash").size())
+	_ok(_events_of(seen, "room_bloom").is_empty() and _events_of(seen, "floor_restored").is_empty(), "pending: burnout itself bloomed/restored the room")
+	_ok(not g._corruption_adjacent(Vector2i(3, 1)), "pending: ash shields the core")
+	# 4. cleanse the ash: the room blooms once and the floor is restored
+	seen.append_array(g.step({"type": "cleanse", "target": Vector2i(2, 1)}))
+	_ok(_events_of(seen, "cleanse").size() == 2, "pending: %d cleanse events" % _events_of(seen, "cleanse").size())
+	_ok(_events_of(seen, "room_bloom").size() == 1, "pending: %d room_bloom events after the ash cleanse" % _events_of(seen, "room_bloom").size())
+	_ok(_events_of(seen, "floor_restored").size() == 1, "pending: %d floor_restored events after the ash cleanse" % _events_of(seen, "floor_restored").size())
+	_ok(g._count_corruption() == 0 and not g._room_has_corruption(0), "pending: count %d room %s" % [g._count_corruption(), str(g._room_has_corruption(0))])
+	# the room blooms exactly once: a later cleanse in the same room adds none
+	g.terrain[Vector2i(3, 2)] = {"kind": "goo"}
+	var evx: Array = g.step({"type": "cleanse", "target": Vector2i(3, 2)})
+	_ok(_events_of(evx, "room_bloom").is_empty(), "pending: room bloomed twice (%s)" % str(evx))
+	_ok(_events_of(seen, "illegal").is_empty() and _events_of(seen, "error").is_empty(),
+		"pending: %d illegal / %d error events during the run" % [_events_of(seen, "illegal").size(), _events_of(seen, "error").size()])
+	print("pending corruption: fire counts for the quota, the room bloom and the floor restore; it never shields the core and is never cleansable")
 
 
 # --- h) config keys -----------------------------------------------------------

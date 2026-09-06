@@ -1389,18 +1389,21 @@ What changed:
   counts ash events, cleanses by kind (the `cleanse` event gained `kind`),
   `resisted` events, and status events by status name.
 
-**The quota claim in the 6.3 spec does not hold, and was not made to hold.**
-The spec assumed ash would stop a burn from opening the green gate. It does
-not: `_reclamp_quota` fires at *ignition*, because fire is not corruption in
-`Content.TERRAIN`, and the clamp only ever lowers `green_need`. Ash restores
-the corruption count *after* the burn, so later re-clamps shrink the quota
-less, but lighting a slick still opens a dormant stairs exactly as it did in
-bump 2 (`test_economy`: "quota reclamp: wash 2->0, ignite 2->0, burnout to
-ash no reclamp, ash wash 2->0, partial 3->2"; the
-`blockb_quota_reclamp.json` record replays its `quota_reclamp need 1 was 2` /
-`stairs_awaken` / `descend` chain unchanged). Closing that line needs fire to
-count as pending corruption - a sim change nobody has made. Flagged, not
-patched; see the Watch addendum.
+**The quota claim in the 6.3 spec did not hold as C1b shipped it - CLOSED by
+the 2026-09-06b revision below.** The spec assumed ash would stop a burn from
+opening the green gate. As committed here it did not: `_reclamp_quota` fired
+at *ignition*, because fire was not corruption in `Content.TERRAIN`, and the
+clamp only ever lowers `green_need`. Ash restored the corruption count *after*
+the burn, so later re-clamps shrank the quota less, but lighting a slick still
+opened a dormant stairs exactly as it did in bump 2 (`test_economy` as
+committed here: "quota reclamp: wash 2->0, ignite 2->0, burnout to ash no
+reclamp, ash wash 2->0, partial 3->2"; the `blockb_quota_reclamp.json` record
+replayed its `quota_reclamp need 1 was 2` / `stairs_awaken` / `descend` chain
+unchanged). Closing the line needed fire to count as pending corruption - a
+sim change, which the next entry makes: `Content.counts_as_corruption` now
+counts a fire as the ash it will leave, at the same `SIM_VERSION` 3. Read this
+paragraph as the state of the tree at commit 347c9b4 only; every number in
+this entry still stands, because the revision moved no win count.
 
 What this invalidates: **every pre-bump replay hash.** All 32
 `tests/regressions/*.json` records carry `sim_version: 3`, and an action log
@@ -1712,6 +1715,309 @@ and with `REGRESS_STRICT=1`.
   builds around.
 - Nothing else left a CI.
 
+## 2026-09-06b - bump 3 revision: burning oil counts as pending corruption
+
+`Game.SIM_VERSION` stays 3 (bump 3 was never shipped) and the instruments are
+unchanged (still v2), so this entry compares directly with the "bump 3 (C1b)"
+entry above it and with the 2026-09-05c / 05d entries above that. It closes
+the one premise C1b recorded as refuted.
+
+**The rule.** A terrain kind counts as corruption *for counting purposes*
+when it is corruption itself **or** its `burns_to` is corruption - the new
+`Content.counts_as_corruption(kind)` (`sim/content.gd:559-566`), which is true
+for oil, goo, rich_goo and ash as before and now also for fire, the one kind
+that is "pending corruption": a tile that will leave ash behind. Exactly two
+sim sites read it, `_count_corruption` (`sim/game.gd:1252`, which feeds the
+floor-entry clamp, `_reclamp_quota` and the `floor_restored` check) and
+`_room_has_corruption` (`sim/game.gd:1260`, the room bloom); every other rule -
+cleanse legality, `shields_core`, `convertible`, `washable`, and the bots'
+pathing to cleansable tiles - still reads `is_corruption`, so a fire is still
+not a thing you can cleanse and still does not shield the Furnace core.
+
+**What it changes for play.** Lighting a slick no longer discounts the green
+quota: ignition emits no `quota_reclamp`, the burnout to ash emits none
+either, and a dormant stairs stays dormant through the entire burn. The room
+bloom and the floor restore now wait for the ash - a room whose last corrupt
+tile is on fire does not bloom while it burns, and blooms exactly once when
+the ash is cleansed - and `floor_restored` waits with it. Washing the fire (or
+the ash) away is still a bloomless removal and still re-clamps, so the only
+way to shrink the gate remains actually removing corruption. Burning is a
+delay, not a shortcut, which is what §6.3 assumed and what the bump-3 entry
+had to record as not holding.
+
+### Suite
+
+All green, gate included:
+
+- `tests/test_invariants.gd`: "invariants: 1400 generations, 0 violations",
+  "terrain kinds: ["oil", "goo", "growth", "rich_goo"] (0 violations)",
+  "floor_def invariants: 11 configs, 1540 generations, 0 violations"
+- `tests/test_determinism.gd`: "determinism: OK (55 checks, 7 personas)"
+- `tests/test_content.gd`: "effect grammar: 39 ability rows over 22 ops;
+  terrain 9, reactions 5, statuses 3", "content: OK" (unchanged - the TERRAIN
+  lint reads each row's own `corruption` / `convertible` fields, not the
+  helper)
+- `tests/test_meta.gd`: "meta: OK", "tier-0 career: 20 runs, 12 wins, best
+  floor 7"
+- `tests/test_economy.gd`: "economy: OK (120 checks)" (95 -> 120), with the two
+  new section-g lines verbatim: "pending corruption: fire counts for the
+  quota, the room bloom and the floor restore; it never shields the core and
+  is never cleansable" and "quota reclamp: wash 2->0, ignite no reclamp (fire
+  counts), burnout to ash no reclamp, fire/ash wash 2->0, partial 3->2; enemy
+  oil / bloom-0 ash pay 0 bloom, count greened"
+- `tests/test_grammar.gd`: "grammar: OK (207 checks)" (195 -> 207)
+- `tests/test_regressions.gd`: "regressions: 32 ok, 0 failed", and
+  `REGRESS_STRICT=1` "regressions: 32 ok, 0 failed" (32 records, unchanged
+  count)
+- `tests/test_shell.gd`: "shell smoke: OK"
+- `tests/playtest.gd` 30 seeds, gate ON: exit 0, "gate: all PASS"
+
+### Persona table
+
+Before = the "bump 3 (C1b)" entry above. That column was also re-measured in
+this session against a pristine `git archive HEAD` tree (commit 347c9b4) so
+that both columns come from one machine and one instrument run; the HEAD
+re-run reproduced the bump-3 entry cell for cell, including the terrain lines
+and the quota counters. After =
+`=== playtest | bot wanderer,sprout,magpie,fanatic,optimizer,deeproot |
+config {  } | seeds 1..30 (30) ===` and
+`=== playtest | bot deeproot_rollout | config {  } | seeds 1..30 (30) ===`.
+Both columns are seeds 1..30, tier 0, Wilson 95% as printed.
+
+| persona | bump-3 entry | this revision | moved outside CI? |
+|---|---|---|---|
+| wanderer | 0/30 = 0% [0, 11], floor 1.0 | 0/30 = 0% [0, 11], floor 1.0 | no |
+| sprout | 1/30 = 3% [1, 17], floor 3.5 | 1/30 = 3% [1, 17], floor 3.5 | no |
+| magpie | 5/30 = 17% [7, 34], floor 3.8 | 5/30 = 17% [7, 34], floor 3.8 | no |
+| fanatic | 9/30 = 30% [17, 48], floor 5.6 | 9/30 = 30% [17, 48], floor 5.6 | no |
+| optimizer | 11/30 = 37% [22, 54], floor 5.9 | 11/30 = 37% [22, 54], floor 5.9 | no |
+| deeproot | 23/30 = 77% [59, 88], floor 6.9 | 23/30 = 77% [59, 88], floor 6.9 | no |
+| deeproot_rollout | 29/30 = 97% [83, 99], floor 7.0 | 29/30 = 97% [83, 99], floor 7.0 | no |
+
+**Every win count is identical, seed for seed**, so no interval moves and no
+persona's average floor moves. Zero timeouts and zero illegal actions for all
+seven personas, both columns. This is a stronger statement than the usual
+"inside the other CI": the revision changes what a burning tile *counts* as,
+and at 30 seeds that never changed which runs were won.
+
+The trajectories are not identical, though, and the diff against the pristine
+HEAD tree says exactly who moved:
+
+- **wanderer and optimizer: byte-identical output blocks.** Neither ever
+  reaches a decision where a fire is the last corruption in a room or in the
+  floor count.
+- **sprout, magpie, fanatic: a handful of room blooms and one death cause.**
+  sprout room_bloom 4.10 -> 4.07/run and pickups 50 -> 49; magpie room_bloom
+  7.77 -> 7.73/run, bloom earned 55.7 -> 55.6/run, avg bloom 27.2 -> 27.1;
+  fanatic player damage 795 -> 791 over 30 runs with one death moving from
+  `smog` to `drill_bot` (causes drill_bot 8 -> 9, smog 7 -> 6). The room-bloom
+  delay is the whole mechanism: a room stops paying its bonus at the moment
+  the fire goes out and starts paying it when the ash is cleansed.
+- **deeproot and deeproot_rollout moved most**, as expected for the two
+  personas that use the sim as a forward model - the counting rule is inside
+  their eval. deeproot: avg turns 102.6 -> 101.9, avg bloom 45.4 -> 45.2, ash
+  539 -> 528, ash cleanses 65 -> 67, combos/run 15.53 -> 15.27, player damage
+  317 -> 314. deeproot_rollout: avg turns 87.5 -> 86.0, stall floors 4 -> 3,
+  ash 355 -> 352, ash cleanses 52 -> 50, combos/run 11.80 -> 11.07, player
+  damage 94 -> 77 (3.1 -> 2.6/run), unspent charge 1.22 -> 1.08.
+
+### KPI block (playtest, 30 seeds, tier 0)
+
+Same derivation and columns as the bump-3 table: strike/sig/terr = shares of
+enemy damage, cmb = combos/run, conv = bloom spent/earned, ent = kit entropy
+bits, shrine = shrine turns/run, unspent = unspent charge per end_turn, stall
+= stall floors over 30 runs, qu = quota-unmet deaths, dmg = player damage per
+run.
+
+| persona | strike | sig | terr | cmb | conv | ent | shrine | unspent | stall | qu | dmg |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| wanderer | 0.32 | 0.00 | 0.02 | 30.33 | 0.00 | 0.00 | 0.77 | 0.10 | 20 | 25 | 42.4 |
+| sprout | 0.38 | 0.12 | 0.01 | 6.40 | 0.11 | 4.29 | 1.00 | 0.36 | 15 | 2 | 34.4 |
+| magpie | 0.39 | 0.27 | 0.01 | 2.80 | 0.51 | 4.05 | 23.17 | 0.64 | 19 | 4 | 32.3 |
+| fanatic | 0.21 | 0.21 | 0.05 | 12.23 | 0.25 | 3.54 | 1.37 | 0.79 | 9 | 3 | 26.4 |
+| optimizer | 0.43 | 0.12 | 0.02 | 4.13 | 0.26 | 4.28 | 1.47 | 0.75 | 5 | 2 | 23.4 |
+| deeproot | 0.09 | 0.38 | 0.16 | 15.27 | 0.01 | 3.83 | 0.27 | 0.70 | 7 | 0 | 10.5 |
+| deeproot_rollout | 0.07 | 0.25 | 0.12 | 11.07 | 0.01 | 4.11 | 0.37 | 1.08 | 3 | 0 | 2.6 |
+
+Against the bump-3 KPI table the only cells that move are the ones listed
+above: fanatic dmg 26.5 -> 26.4, deeproot cmb 15.53 -> 15.27 / terr 0.15 ->
+0.16 / dmg 10.6 -> 10.5, deeproot_rollout cmb 11.80 -> 11.07 / strike 0.06 ->
+0.07 / terr 0.13 -> 0.12 / unspent 1.22 -> 1.08 / stall 4 -> 3 / dmg 3.1 ->
+2.6. Everything else is unchanged to the printed precision. `riders: 0.00/run`
+for every persona (no content row carries a rider yet) and upcycles are still
+0/0 everywhere - three bumps and a revision with press and forge dead.
+Choice sinks, graft offers discarded over 30 runs, are unchanged from bump 3:
+wanderer 0, sprout 10, magpie 84, fanatic 42, optimizer 41, deeproot 0,
+deeproot_rollout 0.
+
+**Stall floors did not rise.** The bump-3 Watch entry asked whether "the floor
+is not finished when the fire goes out" would show up as a stall regression
+now that the room bloom waits for the ash: wanderer 20, sprout 15, magpie 19,
+fanatic 9, optimizer 5, deeproot 7 are all identical to bump 3, and
+deeproot_rollout drops 4 -> 3. Timeouts stayed 0 everywhere.
+
+### Quota probe (before/after)
+
+Both columns are the 30-seed playtest, same seeds, same personas; "before" is
+the bump-3 entry, re-measured this session on the pristine HEAD tree.
+
+| persona | quota reclamps bump 3 | this revision | quota-unmet deaths bump 3 | this revision |
+|---|---|---|---|---|
+| wanderer | 0 | 0 | 25 | 25 |
+| sprout | 0 | 0 | 2 | 2 |
+| magpie | 0 | 0 | 4 | 4 |
+| fanatic | 0 | 0 | 3 | 3 |
+| optimizer | 0 | 0 | 2 | 2 |
+| deeproot | 0 | 0 | 0 | 0 |
+| deeproot_rollout | 0 | 0 | 0 | 0 |
+
+Plus the 100-seed magpie canary: `quota reclamps 0`, quota-unmet deaths 8 -
+both unchanged.
+
+**The counter was already 0 before this revision, and it is 0 after.** The sim
+report's "quota reclamps 0 on every choice-sinks line (was nonzero before this
+revision)" is wrong: the pristine HEAD tree prints `quota reclamps 0` on all
+seven personas too. Nothing about the bot-visible reclamp rate changed here,
+because no bot has ever driven the reclamp in play. What changed is
+synthetic-only coverage: `tests/test_economy.gd` section g now asserts the
+*absence* of the event on the ignite and burnout paths, where it previously
+asserted its presence. `quota_reclamp` has now never fired in a bot run across
+three bumps and a revision - 0 over this entry's 210 playtest runs and 100
+canary runs, on top of everything before it.
+
+### The terrain line
+
+`tests/tally.gd`, 30 seeds each, verbatim:
+
+```
+wanderer          terrain: ash 26  cleanses by kind { "ash": 6, "oil": 8, "goo": 5 }  resisted 0  statuses {  }
+sprout            terrain: ash 86  cleanses by kind { "oil": 316, "goo": 142, "rich_goo": 4, "ash": 40 }  resisted 0  statuses {  }
+magpie            terrain: ash 169  cleanses by kind { "oil": 686, "goo": 263, "rich_goo": 29, "ash": 42 }  resisted 0  statuses { "stun": 29, "root": 2 }
+fanatic           terrain: ash 261  cleanses by kind { "oil": 455, "goo": 230, "rich_goo": 23, "ash": 63 }  resisted 0  statuses { "stun": 30, "root": 23 }
+optimizer         terrain: ash 259  cleanses by kind { "oil": 515, "goo": 259, "rich_goo": 18, "ash": 20 }  resisted 0  statuses { "stun": 18 }
+deeproot          terrain: ash 528  cleanses by kind { "oil": 440, "goo": 259, "rich_goo": 32, "ash": 67 }  resisted 0  statuses { "stun": 22 }
+deeproot_rollout  terrain: ash 352  cleanses by kind { "oil": 445, "goo": 311, "rich_goo": 34, "ash": 50 }  resisted 0  statuses { "stun": 12 }
+```
+
+Read against bump 3: five of seven lines are identical; the two search
+personas burn slightly less (deeproot ash 539 -> 528, rollout 355 -> 352) and
+deeproot cleans up slightly more of what it burnt (ash cleanses 65 -> 67)
+while rollout cleans up less (52 -> 50). 1,681 ash tiles over 210 runs against
+1,695 before - ash is still a live mechanic in play and the revision did not
+scare any persona off fire. `resisted` is still 0 in all 210 runs and `spore`
+still never appears, so root's cooldown and spore's stacking remain
+unmeasured; that gap is bump 3's, not this revision's.
+
+### Magpie canary at 100 seeds
+
+`=== verify_kit | bot magpie | config {  } | seeds 1..100 (100) ===`:
+**13/100 = 13% wins, win CI [8%, 21%]**, avg floor 3.8, turns on wins 213.8,
+damage taken 33.0/run, **0 timeouts**, 0 illegal, ability buys 102, stall
+floors 58, quota-unmet deaths 8, `quota reclamps 0`. Its terrain line:
+`terrain: ash 444  cleanses by kind { "oil": 2247, "goo": 932, "rich_goo":
+136, "ash": 193 }  resisted 3  statuses { "stun": 157, "root": 32 }`.
+
+Against the 2026-09-05d rule ("the real canary is the 100-seed `verify_kit`
+line, and a rise whose lower bound clears the recorded [6, 17] is the
+signal"): the recorded rise baseline is 10/100 = 10% [6, 17]; this revision
+measures 13/100 = 13% [8, 21], lower bound 8%, which does not clear 17%.
+**Not a signal**, and it is the same 13/100 [8, 21] bump 3 measured - every
+field the bump-3 canary paragraph recorded comes back identical, terrain line
+included. The same 100-seed run on the pristine HEAD tree differs in exactly
+two printed cells: room_bloom 8.04 -> 8.03/run (804 -> 803 room blooms over
+100 runs) and satchel_full 273 -> 272. Wins, CI, average floor, turns on wins,
+damage, the terrain line and both quota counters are identical. The 0-5%
+design target is still unmet, as it has been since before bump 2.
+
+### Gate verdict
+
+`tests/playtest.gd` at 30 seeds, gate ON: **exit 0, "gate: all PASS"**.
+
+```
+PASS wanderer 0 wins, avg floor <= 2: 0 wins, avg floor 1.00
+PASS wanderer illegal actions == 0: 0
+PASS sprout wins rare (<= 1 per 30 seeds): 1/30
+PASS sprout illegal actions == 0: 0
+PASS magpie canary <= 10% (design target 0-5%): 5/30 CI [7%, 34%] (fails when the lower bound clears the trip line)
+PASS magpie illegal actions == 0: 0
+PASS fanatic illegal actions == 0: 0
+PASS optimizer band 35-65%: 11/30 CI [22%, 54%]
+PASS optimizer timeouts == 0: 0
+PASS optimizer illegal actions == 0: 0
+PASS deeproot band 70-90%: 23/30 CI [59%, 88%]
+PASS deeproot timeouts == 0: 0
+PASS deeproot illegal actions == 0: 0
+gate: all PASS
+```
+
+`PLAYTEST_BOTS=deeproot_rollout PLAYTEST_SEEDS=30`: exit 0.
+
+```
+PASS deeproot_rollout illegal actions == 0: 0
+gate: all PASS
+```
+
+### Regression corpus
+
+**32 records, unchanged in count. Three records changed in substance, one
+more got a note-only edit, and the other 28 files are byte-identical to bump
+3.** Plain and `REGRESS_STRICT=1` both "regressions: 32 ok, 0 failed", exit 0.
+Before the corpus work the suite was "regressions: 30 ok, 2 failed", exit 1.
+From the sim report, with the cause column re-attributed where the review
+corrected it:
+
+- `blockb_quota_reclamp.json` - re-scripted, because under the new rule the
+  old script never opened the gate at all (it ended on `stairs_dormant`). Old
+  expectation: `[cleanse, ignite, quota_reclamp need 1 was 2, stairs_awaken,
+  ash, descend]`, turns 3, hash `512d1c4e...`. New: `[cleanse kind oil,
+  ignite, ash, cleanse kind ash, stairs_awaken, descend to_floor 2]`, turns 4,
+  hash `c878ec82...`, and no `quota_reclamp` anywhere in the 17-event replay
+  trace. This record is now the burn path's truth; its sibling
+  `blockb_quota_reclamp_wash.json` (note updated, hash unchanged) is the wash
+  path that still shrinks the gate.
+- `det_optimizer_s42.json` - re-recorded, not `REGEN`'d: the stored action log
+  desynced (1 illegal event on replay). {won false, floor 7, turns 99} ->
+  {won false, floor 7, turns 101}, 467 -> 474 actions, hash `b836da6f...` ->
+  `2ed44917...`.
+- `det_sprout_s42.json` - re-recorded; outcome identical ({died, floor 4,
+  turns 126}) and the action count unchanged at 389, hash `dfc7a3af...` ->
+  `65872625...`.
+- Cause for both re-records: **the room-bloom site**, not the quota. HEAD
+  bloomed a room while a fire still burned; the revision waits for the ash, so
+  the bloom (and its supply drop) lands later or not at all, and the persona
+  diverges from there. The sim report's cause table attributed this to the
+  quota clamp; the first divergence in both records is the room bloom.
+- The other 28 files came back byte-identical after a `REGEN=1` pass plus an
+  int-normalisation pass, confirming only the three intended records moved.
+  (`REGEN=1` re-emits every numeric config and action value as a float, which
+  `regress_lib.ints_from_json` folds back on load, so nothing fails but the
+  corpus churns on disk; the sim phase worked around it with a scratch
+  normaliser. A permanent fix belongs in `regress_lib.save_record`.)
+
+The negative assertion - "ignition emits no `quota_reclamp`" - is pinned in
+the corpus only indirectly (a reclamp-free replay trace plus the state hash),
+because the record format has no negative-event assertion. The explicit
+absence checks live in `tests/test_economy.gd` section g.
+
+### Anything else that moved
+
+- **Nothing with a CI.** No win count, no average floor, no interval, on any
+  of the seven personas at 30 seeds or on the 100-seed canary. The revision is
+  a rules fix whose measured cost is a few room blooms and two search
+  personas' trajectories.
+- **Not measured:** no `sweep_grafts`, `sweep_combos`, `measure_fanatic` or
+  `draft_oracle` run was made for this revision. Per-build win rates,
+  per-graft lift and draft regret are still the bump-3 numbers. The fire-using
+  builds (`pyro`, `ember`, `pyro_nolance`) are the ones most likely to feel a
+  burn that no longer discounts the quota, and `measure_fanatic` is where that
+  would show; it is the obvious follow-up before any fire-pool content ships.
+- **`counts_as_corruption` reads `TERRAIN.burns_to`, but the burnout that
+  actually happens comes from `REACTIONS.fire_burns_out.result`.** Both say
+  `ash` today and `burns_to` now has no other reader, so nothing lints that
+  the two agree; if a future edit desyncs them, a fire would be counted as
+  pending corruption that never arrives, and the floor would only re-clamp
+  once the tile resolved. Flagged by review, not patched here.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from
@@ -1812,13 +2118,18 @@ and with `REGRESS_STRICT=1`.
   burn. No CI attaches to this - it is one record - but it is the mechanism
   behind every "burn then leave" line and it wants a 100-seed look before any
   fire-pool content ships.
-- **Lighting oil still opens the green gate.** The 6.3 spec assumed ash would
-  close that line; it does not, because `_reclamp_quota` fires at ignition
-  (fire is not corruption per `Content.TERRAIN`) and the clamp only ever
-  lowers `green_need`. Ash restores the corruption count afterwards, so later
-  re-clamps shrink less, but the burn-to-open exploit is untouched. Closing it
-  needs fire to count as pending corruption - a sim change, not a table edit.
-  Flagged by the sim and corpus phases both; not made.
+- **Lighting oil opened the green gate - CLOSED (2026-09-06b).** As C1b
+  shipped, `_reclamp_quota` fired at ignition (fire was not corruption per
+  `Content.TERRAIN`) and the clamp only ever lowers `green_need`, so a burn
+  woke a dormant stairs. The revision makes fire count as the ash it will
+  leave (`Content.counts_as_corruption`, read by `_count_corruption` and
+  `_room_has_corruption` only): ignition and burnout now emit no
+  `quota_reclamp`, the room bloom and `floor_restored` wait for the ash, and a
+  wash is still the bloomless removal that shrinks the gate. Measured cost at
+  30 seeds: no win count moved on any of the seven personas, and the 100-seed
+  magpie canary is unchanged at 13/100 [8, 21]. What is still open is the
+  successor question below - nobody has ever seen `quota_reclamp` fire in
+  play, before or after this fix.
 - **Root's cooldown and spore's stacking are effectively unmeasured in play.**
   `resisted` is 0 across all 210 playtest runs and 3 across 100 magpie seeds;
   `root` statuses appear only for fanatic (23 per 30 runs) and magpie (2);

@@ -479,6 +479,15 @@ func _check_terrain_helpers() -> void:
 		_ok(Content.is_corruption(k), "is_corruption(%s)" % k)
 	for k in ["growth", "fire", "smoke", "roots", "supply", "", "nope"]:
 		_ok(not Content.is_corruption(k), "not is_corruption(%s)" % k)
+	# counts_as_corruption: corruption, plus "pending corruption" - a fire
+	# whose burns_to leaves corruption behind (only the quota clamp, the
+	# floor restore and the room bloom read this)
+	for k in ["oil", "goo", "rich_goo", "ash", "fire"]:
+		_ok(Content.counts_as_corruption(k), "counts_as_corruption(%s)" % k)
+	for k in ["growth", "smoke", "roots", "supply", "", "nope"]:
+		_ok(not Content.counts_as_corruption(k), "not counts_as_corruption(%s)" % k)
+	_ok(not Content.is_corruption("fire") and Content.counts_as_corruption("fire"),
+		"fire is pending corruption, not corruption")
 	_ok(int(Content.terrain("fire", "ttl", 0)) == 2 and int(Content.terrain("smoke", "ttl", 0)) == 3, "fire/smoke ttl rows")
 	_ok(int(Content.terrain("rich_goo", "bloom", 0)) == Content.RICH_GOO_BLOOM, "rich_goo bloom row")
 	_ok(Content.terrain("smoke", "blocks_beam", false) == true and Content.terrain("roots", "blocks", false) == true, "smoke blocks_beam, roots blocks")

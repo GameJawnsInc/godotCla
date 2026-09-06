@@ -556,6 +556,16 @@ static func is_corruption(kind: String) -> bool:
 	return bool(terrain(kind, "corruption", false))
 
 
+## Corruption for COUNTING purposes (the quota clamp, floor restore and room
+## bloom): the kind itself, or "pending corruption" - a fire whose burns_to
+## leaves corruption behind. Lighting a slick therefore never shrinks the
+## green gate, and the room it burns in waits for the ash before it blooms.
+## Every other rule (cleanse legality, shields_core, convertible, washable,
+## bot pathing) keeps is_corruption: a fire is not a thing you can tend.
+static func counts_as_corruption(kind: String) -> bool:
+	return is_corruption(kind) or is_corruption(String(terrain(kind, "burns_to", "")))
+
+
 const ENEMIES := {
 	"drill_bot": {"name": "Drill Bot", "hp": 3, "dmg": 2, "slow": false, "traits": ["fuses"]},
 	"oil_sludge": {"name": "Oil Sludge", "hp": 4, "dmg": 1, "slow": true, "traits": ["splits", "oil_trail"]},

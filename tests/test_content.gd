@@ -435,6 +435,21 @@ func _lint_tables() -> Array:
 		if st.has("cooldown") and not (st["cooldown"] is int and int(st["cooldown"]) > 0):
 			out.append("STATUSES %s: cooldown must be a positive int" % sname)
 	out.append_array(_lint_surge("SURGE_DEFAULT", Content.SURGE_DEFAULT))
+	# burns_to (read by Content.counts_as_corruption) and the enabled on_expire
+	# REACTIONS row (what the sim actually writes at burnout) must agree, or the
+	# pending-corruption count silently diverges from play
+	for kind in Content.TERRAIN:
+		var burns2 := String(Content.TERRAIN[kind].get("burns_to", ""))
+		var expire_result := ""
+		var expire_rows := 0
+		for row2 in Content.REACTIONS:
+			if String(row2.get("from", "")) == kind and row2.has("on_expire") and bool(row2.get("enabled", false)):
+				expire_rows += 1
+				expire_result = String(row2.get("result", ""))
+		if expire_rows > 1:
+			out.append("REACTIONS: %d enabled on_expire rows for '%s' (want at most one)" % [expire_rows, kind])
+		if burns2 != expire_result:
+			out.append("TERRAIN %s: burns_to '%s' disagrees with the enabled on_expire REACTIONS result '%s'" % [kind, burns2, expire_result])
 	return out
 
 

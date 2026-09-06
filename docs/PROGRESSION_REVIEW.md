@@ -148,22 +148,26 @@ close to unmeasured: 0 `resisted` events in 210 playtest runs, 0 spore
 statuses anywhere, and 0 rooted/resisted/spore events across the whole
 bot-derived corpus.
 
-One spec premise was refuted rather than implemented, and is recorded as such:
-6.3 says ash makes burnt oil stop shrinking the green quota, but
-`_reclamp_quota` fires at *ignition* (fire is not corruption in
-`Content.TERRAIN`) and the clamp only ever lowers `green_need`, so lighting a
-slick still opens a dormant stairs exactly as it did in bump 2. Ash restores
-the corruption count afterwards - which is why the measurable cost of a burn
-is now a forfeited `room_bloom` bonus rather than a cheaper quota - but
-closing the burn-to-open line needs fire to count as pending corruption, a sim
-change nobody has made. Also still open from earlier blocks: `quota_reclamp`
-has now never fired in a bot run across three bumps (0 over this bump's 210
-playtest, 240 graft-sweep and 100 canary runs), and press/forge upcycles are
-still 0/0 for every persona. NOT done, in 6.3 order: **C2** (riders on the
-`+` forms, then the two base `grow_spike` / `sun_flare` rows) - the
-vocabulary, the lint and the Tally counters all exist and `riders: 0.00/run`
-for every persona because no content row carries one yet, so C2 is now pure
-data work; **C3** (the `_hook` dispatcher, grafts as `stat | mod | hooks`
+One spec premise was refuted rather than implemented in C1b itself, and was
+recorded as such: 6.3 says ash makes burnt oil stop shrinking the green quota,
+but as C1b shipped `_reclamp_quota` fired at *ignition* (fire was not
+corruption in `Content.TERRAIN`) and the clamp only ever lowers `green_need`,
+so lighting a slick still opened a dormant stairs exactly as it did in bump 2.
+The 2026-09-06b revision (`docs/BALANCE.md`) closes it at the same
+`SIM_VERSION` 3: `Content.counts_as_corruption` counts a fire as the ash it
+will leave at the two counting sites (`_count_corruption`,
+`_room_has_corruption`) while every other rule keeps `is_corruption`, so
+ignition and burnout emit no `quota_reclamp`, the room bloom and
+`floor_restored` wait for the ash, and no persona's win count moved at 30
+seeds (the magpie canary is unchanged at 13/100 [8, 21]). Also still open
+from earlier blocks: `quota_reclamp` has now never fired in a bot run across
+three bumps (0 over this bump's 210 playtest, 240 graft-sweep and 100 canary
+runs, and 0 again over the revision's 210 playtest and 100 canary runs), and
+press/forge upcycles are still 0/0 for every persona. NOT done, in 6.3 order:
+**C2** (riders on the `+` forms, then the two base `grow_spike` /
+`sun_flare` rows) - the vocabulary, the lint and the Tally counters all exist
+and `riders: 0.00/run` for every persona because no content row carries one
+yet, so C2 is now pure data work; **C3** (the `_hook` dispatcher, grafts as `stat | mod | hooks`
 data, and the four rule grafts), which this bump's graft sweep argues for
 harder than bump 2 did - `solar_core` now clears p < 0.05 in sample (20/30
 [49, 81] vs 11/30 [22, 54], 10:1, p=0.01) on top of its out-of-sample

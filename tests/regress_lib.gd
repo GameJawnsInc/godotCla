@@ -200,7 +200,9 @@ static func save_record(path: String, rec: Dictionary) -> bool:
 	var lines: Array = []
 	for k in KEY_ORDER:
 		if rec.has(k):
-			lines.append("%s: %s" % [JSON.stringify(k), JSON.stringify(rec[k])])
+			# whole floats (JSON round-trips, Vector2i components) are written as
+			# ints so a REGEN pass does not churn every record on disk
+			lines.append("%s: %s" % [JSON.stringify(k), JSON.stringify(ints_from_json(rec[k]))])
 	f.store_string("{\n" + ",\n".join(lines) + "\n}\n")
 	f.close()
 	return true
