@@ -22,7 +22,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 
 	# buy everything affordable, always
 	if by.has("buy"):
-		var deal := _magpie_buy(by["buy"])
+		var deal := _magpie_buy(by["buy"], snap)
 		if not deal.is_empty():
 			return deal
 
@@ -69,13 +69,14 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 
 ## Greedy shrine: heal, then a graft, then an ability - everything affordable
 ## on the counter, in that order. Empty dict when nothing is affordable.
-func _magpie_buy(buys: Array) -> Dictionary:
+func _magpie_buy(buys: Array, snap: Dictionary) -> Dictionary:
 	for a in buys:
 		if a["item"] == "heal":
 			return a
-	# graft offer 0: no bot ranks grafts yet - the progression review holds
-	# any graft weighting until tests/sweep_grafts.gd has run at 30+ seeds
-	var graft := _first_graft(buys)
+	# the graft pick is the parent's tag-fit ranking (optimizer._first_graft):
+	# best overlap between the offer's Content.GRAFTS tags and the tags of the
+	# abilities in hand, ties to the lowest offer index
+	var graft := _first_graft(buys, snap)
 	if not graft.is_empty():
 		return graft
 	for a in buys:

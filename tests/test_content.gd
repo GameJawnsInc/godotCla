@@ -14,6 +14,13 @@ extends SceneTree
 ##    self-consistent. A self-test feeds the same lint deliberately bad rows
 ##    (they must be rejected) and the Block C2 rider rows from the review
 ##    (they must pass), so this check cannot rot into "accepts everything".
+## 9) grafts as data (Block C3, section D): every GRAFTS row has name, desc,
+##    tags from TAGS and exactly one of stat / mod / hooks; stat and mod keys
+##    come from closed sets; hook rows name a Content.HOOK_KINDS kind, carry
+##    non-empty effects from the effect vocabulary plus the positional hook
+##    ops, an int cap_per_turn, and never an op that grants shield or thorns
+##    (the stall surface). Same self-test discipline: bad fixtures rejected,
+##    the four rule grafts accepted.
 ## Run: godot --headless --path . --script tests/test_content.gd
 
 const Content := preload("res://sim/content.gd")
@@ -71,6 +78,22 @@ const TERRAIN_REQUIRED := [
 ## immunity (root, since Block C1b) carry one, but where it appears it
 ## must be a positive int - a 0 or a float would silently disable it.
 const STATUS_REQUIRED := ["stack", "blocks", "tick_dmg", "cap"]
+# --- grafts as data (section 9) ------------------------------------------------
+## Closed stat keys Game._graft_stat sums, and mod keys Game._graft_mod reads.
+const GRAFT_STAT_KEYS := ["bank_cap", "shield_cap", "regen", "growth_heal", "cleanse_bloom"]
+const GRAFT_MOD_KEYS := ["floor_start_shield", "oil_cast_discount"]
+## Positional ops only the hook dispatcher (Game._hook_effect) implements.
+const HOOK_OP_KEYS := {
+	"damage_at": ["dmg"],
+	"status_at": ["status", "turns"],
+	"terrain_at": ["kind"],
+}
+## Ops a hook row may never carry: shield and thorns credit are the stall
+## vector BALANCE.md documents, so no graft hook grants them.
+const HOOK_FORBIDDEN_OPS := ["shield", "thorns"]
+const HOOK_ROW_KEYS := ["on", "effects", "cap_per_turn", "if"]
+const GRAFT_ROW_KEYS := ["name", "desc", "tags", "stat", "mod", "hooks"]
+
 ## Every enemy intent type Game._execute_intent can be handed; a status may
 ## only block one of these (or "*", every intent).
 const INTENT_TYPES := [
@@ -202,6 +225,18 @@ func _init() -> void:
 	print("effect grammar: %d ability rows over %d ops; terrain %d, reactions %d, statuses %d" % [
 		Content.ABILITIES.size(), OP_KEYS.size(), Content.TERRAIN.size(),
 		Content.REACTIONS.size(), Content.STATUSES.size()])
+
+	# 9) grafts as data: the live table, then the lint's own self-test
+	failures.append_array(_lint_grafts(Content.GRAFTS))
+	failures.append_array(_lint_graft_selftest())
+	var shape := {"stat": 0, "mod": 0, "hooks": 0}
+	for gid in Content.GRAFTS:
+		for k in shape:
+			if Content.GRAFTS[gid].has(k):
+				shape[k] += 1
+	print("grafts: %d rows (%d stat, %d mod, %d hooks); hook kinds %d, depth max %d, step cap %d" % [
+		Content.GRAFTS.size(), shape["stat"], shape["mod"], shape["hooks"],
+		Content.HOOK_KINDS.size(), Content.HOOK_DEPTH_MAX, Content.HOOK_STEP_CAP])
 
 	if failures.is_empty():
 		print("content: OK")
@@ -523,4 +558,186 @@ func _lint_selftest() -> Array:
 		out.append("lint self-test: rider fixture rejected: %s" % f)
 	print("effect-grammar self-test: %d bad rows -> %d failures; %d rider rows -> %d failures" % [
 		BAD_ROWS.size(), bad.size(), GOOD_ROWS.size(), good.size()])
+	return out
+
+
+# --- 9) grafts-as-data lint ---------------------------------------------------
+
+## Lints a GRAFTS-shaped table; failure strings start with the graft id.
+func _lint_grafts(grafts: Dictionary) -> Array:
+	var out: Array = []
+	for gid in grafts.keys():
+		var row = grafts[gid]
+		if not (row is Dictionary):
+			out.append("%s: row is not a dictionary" % gid)
+			continue
+		for k in row:
+			if not GRAFT_ROW_KEYS.has(String(k)):
+				out.append("%s: unknown key '%s' %s" % [gid, str(k), str(GRAFT_ROW_KEYS)])
+		for key in ["name", "desc"]:
+			if not (row.get(key, null) is String) or String(row.get(key, "")) == "":
+				out.append("%s: missing or empty '%s'" % [gid, key])
+		var tags = row.get("tags", null)
+		if not (tags is Array) or (tags as Array).is_empty():
+			out.append("%s: missing or empty tags" % gid)
+		else:
+			for t in tags:
+				if not Content.TAGS.has(t):
+					out.append("%s: tag '%s' not in TAGS" % [gid, str(t)])
+		var shapes := 0
+		for shape in ["stat", "mod", "hooks"]:
+			if row.has(shape):
+				shapes += 1
+		if shapes != 1:
+			out.append("%s: wants exactly one of stat | mod | hooks, has %d" % [gid, shapes])
+		if row.has("stat"):
+			var stat = row["stat"]
+			if not (stat is Dictionary) or (stat as Dictionary).is_empty():
+				out.append("%s: stat must be a non-empty dictionary" % gid)
+			else:
+				for k in stat:
+					if not GRAFT_STAT_KEYS.has(String(k)):
+						out.append("%s: stat key '%s' not in %s" % [gid, str(k), str(GRAFT_STAT_KEYS)])
+					if not (stat[k] is int):
+						out.append("%s: stat['%s'] must be an int" % [gid, str(k)])
+		if row.has("mod"):
+			var mod = row["mod"]
+			if not (mod is Dictionary) or (mod as Dictionary).is_empty():
+				out.append("%s: mod must be a non-empty dictionary" % gid)
+			else:
+				for k in mod:
+					if not GRAFT_MOD_KEYS.has(String(k)):
+						out.append("%s: mod key '%s' not in %s" % [gid, str(k), str(GRAFT_MOD_KEYS)])
+					if not (mod[k] is int):
+						out.append("%s: mod['%s'] must be an int" % [gid, str(k)])
+		if row.has("hooks"):
+			var hooks = row["hooks"]
+			if not (hooks is Array) or (hooks as Array).is_empty():
+				out.append("%s: hooks must be a non-empty array of rows" % gid)
+			else:
+				for i in range((hooks as Array).size()):
+					out.append_array(_lint_hook_row(hooks[i], "%s hook %d" % [gid, i]))
+	return out
+
+
+## One hook row: {on: HOOK_KINDS kind, effects: non-empty, cap_per_turn?: int,
+## if?: predicates}. Effects are effect-vocabulary dicts (linted as top-level
+## effects: no then-only ops, no outcome predicates) or positional hook ops;
+## HOOK_FORBIDDEN_OPS are rejected anywhere in the row, then-lists included.
+func _lint_hook_row(row, where: String) -> Array:
+	var out: Array = []
+	if not (row is Dictionary):
+		return ["%s: hook row is not a dictionary" % where]
+	for k in row:
+		if not HOOK_ROW_KEYS.has(String(k)):
+			out.append("%s: unknown key '%s' %s" % [where, str(k), str(HOOK_ROW_KEYS)])
+	if not Content.HOOK_KINDS.has(String(row.get("on", ""))):
+		out.append("%s: on '%s' not in Content.HOOK_KINDS %s" % [where, str(row.get("on", "")), str(Content.HOOK_KINDS)])
+	if row.has("cap_per_turn") and not (row["cap_per_turn"] is int and int(row["cap_per_turn"]) >= 0):
+		out.append("%s: cap_per_turn must be a non-negative int" % where)
+	if row.has("if"):
+		out.append_array(_lint_if(row["if"], "%s if" % where, false))
+	var effs = row.get("effects", null)
+	if not (effs is Array) or (effs as Array).is_empty():
+		return out + ["%s: effects must be a non-empty array" % where]
+	for i in range((effs as Array).size()):
+		var eff = effs[i]
+		var ew := "%s effect %d" % [where, i]
+		if not (eff is Dictionary):
+			out.append("%s: effect is not a dictionary" % ew)
+			continue
+		var op := String(eff.get("op", ""))
+		if HOOK_OP_KEYS.has(op):
+			var own: Array = HOOK_OP_KEYS[op]
+			for k in eff:
+				if String(k) != "op" and not own.has(String(k)):
+					out.append("%s: key '%s' is not part of hook op '%s' %s" % [ew, str(k), op, str(own)])
+			for k in own:
+				if not eff.has(k):
+					out.append("%s: hook op '%s' needs '%s'" % [ew, op, k])
+			if op == "status_at" and not Content.STATUSES.has(String(eff.get("status", ""))):
+				out.append("%s: status '%s' not in Content.STATUSES" % [ew, str(eff.get("status", ""))])
+			if op == "terrain_at" and not Content.TERRAIN.has(String(eff.get("kind", ""))):
+				out.append("%s: terrain_at kind '%s' not in Content.TERRAIN" % [ew, str(eff.get("kind", ""))])
+			if (op == "damage_at" and not (eff.get("dmg", 0) is int)) or (op == "status_at" and not (eff.get("turns", 0) is int)):
+				out.append("%s: hook op '%s' wants int amounts" % [ew, op])
+			continue
+		out.append_array(_lint_effect(eff, ew, false))
+		out.append_array(_forbidden_ops(eff, ew))
+	return out
+
+
+## Every op in `eff` and its then-list that a hook may not grant.
+func _forbidden_ops(eff: Dictionary, where: String) -> Array:
+	var out: Array = []
+	var op := String(eff.get("op", ""))
+	if HOOK_FORBIDDEN_OPS.has(op):
+		out.append("%s: op '%s' grants shield/thorns credit, forbidden in a hook" % [where, op])
+	if eff.get("then", null) is Array:
+		for i in range((eff["then"] as Array).size()):
+			var sub = eff["then"][i]
+			if sub is Dictionary:
+				out.append_array(_forbidden_ops(sub, "%s then %d" % [where, i]))
+	return out
+
+
+## Graft rows the lint MUST reject, one violation each.
+const BAD_GRAFTS := {
+	"ya_no_name": {"desc": "x", "tags": ["fire"], "stat": {"regen": 1}},
+	"yb_no_desc": {"name": "x", "tags": ["fire"], "stat": {"regen": 1}},
+	"yc_bad_tag": {"name": "x", "desc": "x", "tags": ["lava"], "stat": {"regen": 1}},
+	"yd_no_tags": {"name": "x", "desc": "x", "tags": [], "stat": {"regen": 1}},
+	"ye_no_shape": {"name": "x", "desc": "x", "tags": ["fire"]},
+	"yf_two_shapes": {"name": "x", "desc": "x", "tags": ["fire"], "stat": {"regen": 1}, "mod": {"floor_start_shield": 1}},
+	"yg_stat_key": {"name": "x", "desc": "x", "tags": ["fire"], "stat": {"luck": 1}},
+	"yh_stat_float": {"name": "x", "desc": "x", "tags": ["fire"], "stat": {"regen": 1.5}},
+	"yi_mod_key": {"name": "x", "desc": "x", "tags": ["fire"], "mod": {"discount": 1}},
+	"yj_hook_kind": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "sneeze", "effects": [{"op": "damage_at", "dmg": 1}]}]},
+	"yk_hook_no_effects": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "ignite", "effects": []}]},
+	"yl_hook_shield": {"name": "x", "desc": "x", "tags": ["bark"], "hooks": [{"on": "cleanse", "effects": [{"op": "shield", "amount": 1}]}]},
+	"ym_hook_thorns": {"name": "x", "desc": "x", "tags": ["bark"], "hooks": [{"on": "shield_break", "effects": [{"op": "thorns", "dmg": 1, "turns": 2}]}]},
+	"yn_hook_then_shield": {"name": "x", "desc": "x", "tags": ["bark"], "hooks": [{"on": "kill", "effects": [
+		{"op": "damage", "dmg": 1, "then": [{"op": "shield", "amount": 1}]}]}]},
+	"yo_hook_cap_float": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1}], "cap_per_turn": 2.5}]},
+	"yp_hook_unknown_op": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "ignite", "effects": [{"op": "melt_at", "dmg": 1}]}]},
+	"yq_hook_op_key": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1, "radius": 2}]}]},
+	"yr_hook_status": {"name": "x", "desc": "x", "tags": ["water"], "hooks": [{"on": "staggered", "effects": [{"op": "status_at", "status": "curse", "turns": 1}]}]},
+	"ys_hook_terrain": {"name": "x", "desc": "x", "tags": ["growth"], "hooks": [{"on": "kill", "effects": [{"op": "terrain_at", "kind": "lava"}]}]},
+	"yt_hook_row_key": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1}], "chance": 50}]},
+	"yu_hook_then_only": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "kill", "effects": [{"op": "status_target", "status": "stun", "turns": 1}]}]},
+	"yv_hook_if_pred": {"name": "x", "desc": "x", "tags": ["fire"], "hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1}], "if": [{"outcome": "hit"}]}]},
+	"yw_row_key": {"name": "x", "desc": "x", "tags": ["fire"], "price": 4, "stat": {"regen": 1}},
+}
+
+## Graft rows the lint MUST accept: the four C3 rule grafts as the review
+## writes them, plus a hook row with an `if` and a plain effect-vocabulary op.
+const GOOD_GRAFTS := {
+	"ha_ember_sap": {"name": "x", "desc": "x", "tags": ["fire"],
+		"hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1}], "cap_per_turn": 3}]},
+	"hb_undertow": {"name": "x", "desc": "x", "tags": ["water", "displace", "control"],
+		"hooks": [{"on": "staggered", "effects": [{"op": "status_at", "status": "root", "turns": 1}]}]},
+	"hc_compost": {"name": "x", "desc": "x", "tags": ["growth"],
+		"hooks": [{"on": "kill", "effects": [{"op": "terrain_at", "kind": "growth"}]}]},
+	"hd_oil_tithe": {"name": "x", "desc": "x", "tags": ["fire", "water", "economy"], "mod": {"oil_cast_discount": 1}},
+	"he_hook_if_effect": {"name": "x", "desc": "x", "tags": ["fire"],
+		"hooks": [{"on": "cleanse", "effects": [{"op": "aoe_damage", "dmg": 1, "radius": 1, "ignite": false}],
+			"if": [{"target_adjacent": ["oil"]}], "cap_per_turn": 0}]},
+}
+
+
+func _lint_graft_selftest() -> Array:
+	var out: Array = []
+	var bad: Array = _lint_grafts(BAD_GRAFTS)
+	for gid in BAD_GRAFTS.keys():
+		var caught := false
+		for f in bad:
+			if String(f).begins_with(String(gid)):
+				caught = true
+		if not caught:
+			out.append("graft lint self-test: '%s' is a deliberate violation the lint accepted" % gid)
+	var good: Array = _lint_grafts(GOOD_GRAFTS)
+	for f in good:
+		out.append("graft lint self-test: rule-graft fixture rejected: %s" % f)
+	print("graft lint self-test: %d bad rows -> %d failures; %d good rows -> %d failures" % [
+		BAD_GRAFTS.size(), bad.size(), GOOD_GRAFTS.size(), good.size()])
 	return out

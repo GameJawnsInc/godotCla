@@ -79,6 +79,19 @@ var resisted_events := 0
 ## second spore on the same enemy shows up here as a second "spore".
 var status_by_kind := {}
 
+# --- graft hooks (Block C3) ---------------------------------------------------
+## Hook rows that ran ({"t": "hook", id, on, tile}), by source id (the graft or
+## ability row that owns the hook) and by hook kind (the event that fired it).
+## One count per row that ran, so a row carrying three effects still counts once.
+var hooks_by_graft := {}
+var hooks_by_kind := {}
+## Hooks skipped by Content.HOOK_DEPTH_MAX / HOOK_STEP_CAP ({"t": "hook_capped"});
+## the sim emits that at most once per step, so this counts steps that hit a cap.
+var hook_capped := 0
+## Oil Tithe discounts that actually applied ({"t": "tithe", id}) - at most one
+## per turn while the graft is held.
+var tithes := 0
+
 # --- damage by raw source string ---------------------------------------------
 var enemy_dmg_by_src := {}
 var player_dmg_by_src := {}
@@ -216,6 +229,13 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 			resisted_events += 1
 		"status":
 			_inc(status_by_kind, String(ev.get("status", "")))
+		"hook":
+			_inc(hooks_by_graft, String(ev.get("id", "")))
+			_inc(hooks_by_kind, String(ev.get("on", "")))
+		"hook_capped":
+			hook_capped += 1
+		"tithe":
+			tithes += 1
 		"heal":
 			growth_heal_hp += int(ev.get("amt", 0))
 		"shield_absorb":
@@ -343,6 +363,10 @@ func merge(other) -> void:
 	_merge_dict(cleanses_by_kind, other.cleanses_by_kind)
 	resisted_events += other.resisted_events
 	_merge_dict(status_by_kind, other.status_by_kind)
+	_merge_dict(hooks_by_graft, other.hooks_by_graft)
+	_merge_dict(hooks_by_kind, other.hooks_by_kind)
+	hook_capped += other.hook_capped
+	tithes += other.tithes
 	_merge_dict(enemy_dmg_by_src, other.enemy_dmg_by_src)
 	_merge_dict(player_dmg_by_src, other.player_dmg_by_src)
 	_merge_dict(kills_by_kind, other.kills_by_kind)
@@ -476,6 +500,12 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 		"cleanses_by_kind": t.cleanses_by_kind.duplicate(),
 		"resisted_events": t.resisted_events,
 		"status_by_kind": t.status_by_kind.duplicate(),
+		# graft hooks (Block C3): rows run by source id and by firing kind
+		"hooks": _sum(t.hooks_by_kind),
+		"hooks_by_graft": t.hooks_by_graft.duplicate(),
+		"hooks_by_kind": t.hooks_by_kind.duplicate(),
+		"hook_capped": t.hook_capped,
+		"tithes": t.tithes,
 	}
 
 
@@ -512,6 +542,8 @@ func print_block(n_runs: int, kits: Array) -> void:
 		float(_sum(riders_by_kind)) / n, str(riders_by_kind), str(riders_by_aid)])
 	print("           terrain: ash %d  cleanses by kind %s  resisted %d  statuses %s" % [
 		ash_events, str(cleanses_by_kind), resisted_events, str(status_by_kind)])
+	print("           hooks: by graft %s  by kind %s  capped %d  tithe %d" % [
+		str(hooks_by_graft), str(hooks_by_kind), hook_capped, tithes])
 	print("           bloom earned %.1f/run  spent %.1f/run  conversion %.2f  buys %s  grafts %s  ability buys %s  upcycles %d/%d  pickups %d  satchel_full %d" % [
 		bloom_earned / n, bloom_spent / n, k["bloom_conversion"], str(buys_by_kind), str(grafts_by_id),
 		str(ability_buys_by_id), upcycles, upcycle_abilities, item_pickups, satchel_full])

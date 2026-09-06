@@ -8,6 +8,10 @@ extends SceneTree
 ## the bloom flag. The Block C2 content rows (grow_spike(+), sun_flare(+),
 ## water_jet+, vine_whip+, seed_bomb+) are cast for real through Game.step on
 ## controlled boards and their numbers, statuses and rider events asserted.
+## Block C3: the hook dispatcher (Game._hook) is exercised through the four
+## rule grafts installed via config {grafts: [...]} (ember_sap, undertow,
+## compost, oil_tithe), the depth / step caps, and the _graft_stat /
+## _graft_mod table reads that replaced the six _has_graft sites.
 ## Run: godot --headless --path . --script tests/test_grammar.gd
 
 const Content := preload("res://sim/content.gd")
@@ -48,6 +52,12 @@ func _init() -> void:
 	_check_c2_water_jet()
 	_check_c2_vine_whip()
 	_check_c2_seed_bomb()
+	_check_c3_graft_tables()
+	_check_c3_ember_sap()
+	_check_c3_undertow()
+	_check_c3_compost()
+	_check_c3_oil_tithe()
+	_check_c3_hook_caps()
 	if failures.is_empty():
 		print("grammar: OK (%d checks)" % checks)
 		quit(0)
@@ -1229,3 +1239,366 @@ func _check_c2_seed_bomb() -> void:
 	var e4 = g4._spawn("drill_bot", Vector2i(7, 3))
 	evs = _cast(g4, 0, Vector2i(7, 3))
 	_ok(_evs(evs, "illegal").is_empty() and not e4["status"].has("root") and _evs(evs, "rider").is_empty(), "base seed_bomb carries no rider: %s" % str(evs))
+
+
+# --- Block C3: hook dispatcher through the rule grafts ---------------------------
+
+## A fresh game on ROOM with the given kit and pre-installed grafts.
+static func _game_g(kit: Array, grafts: Array) -> RefCounted:
+	return Game.new(1, {"fixed_floor": {"gen": _gen(ROOM), "fdef": {}}, "kit": kit, "grafts": grafts})
+
+
+static func _hooks(events: Array, id: String) -> Array:
+	var outl: Array = []
+	for ev in _evs(events, "hook"):
+		if String(ev.get("id", "")) == id:
+			outl.append(ev)
+	return outl
+
+
+## _graft_stat sums stat keys over held grafts, _graft_mod returns the first
+## held mod value; the six legacy grafts read through them with their old numbers.
+func _check_c3_graft_tables() -> void:
+	var g = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], ["deep_cells", "thick_bark", "solar_core", "carapace"])
+	_ok(g._graft_stat("bank_cap") == 2 and g._bank_cap() == Content.BANK_CAP + 2, "deep_cells: bank cap %d" % g._bank_cap())
+	_ok(g._graft_stat("shield_cap") == 2 and g._shield_cap() == Content.SHIELD_CAP + 2, "thick_bark: shield cap %d" % g._shield_cap())
+	_ok(g._graft_stat("regen") == 1 and g.player["charge"] == Content.BASE_REGEN + 1, "solar_core: regen +1, charge %d" % g.player["charge"])
+	_ok(g._graft_stat("growth_heal") == 0 and g._graft_stat("cleanse_bloom") == 0 and g._graft_stat("no_such_stat") == 0, "unheld stats read 0")
+	_ok(int(g._graft_mod("floor_start_shield", 0)) == 2 and g.player["shield"] == 2, "carapace: floor_start_shield 2, shield %d" % g.player["shield"])
+	_ok(int(g._graft_mod("oil_cast_discount", 0)) == 0 and String(g._graft_mod("oil_cast_discount", "none")) == "none", "unheld mod returns the default")
+	var g0 = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], [])
+	_ok(g0._bank_cap() == Content.BANK_CAP and g0._shield_cap() == Content.SHIELD_CAP and g0.player["charge"] == Content.BASE_REGEN and g0.player["shield"] == 0,
+		"no grafts: base numbers")
+	# verdant_pulse and bloom_surge through the table
+	var gv = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], ["verdant_pulse", "bloom_surge"])
+	gv.terrain[gv.player["pos"]] = {"kind": "growth"}
+	gv.player["hp"] = 5
+	gv.step({"type": "end_turn"})
+	_ok(gv.player["hp"] == 7, "verdant_pulse: growth heals 2, hp %d" % gv.player["hp"])
+	gv.terrain[Vector2i(6, 3)] = {"kind": "oil"}
+	gv.terrain[Vector2i(9, 1)] = {"kind": "oil"}  # keeps the floor from restoring
+	gv.player["charge"] = 3
+	var b0: int = gv.bloom
+	gv.step({"type": "cleanse", "target": Vector2i(6, 3)})
+	_ok(gv.bloom == b0 + 2, "bloom_surge: cleanse pays 2, bloom %d -> %d" % [b0, gv.bloom])
+	# every graft row has the shape the dispatcher reads
+	for gid in Content.GRAFTS:
+		var row: Dictionary = Content.GRAFTS[gid]
+		_ok(row.has("stat") or row.has("mod") or row.has("hooks"), "graft %s carries stat/mod/hooks" % gid)
+	_ok(Content.GRAFTS.size() == 10, "ten grafts")
+	# hook state is per-turn, cloned, not in the snapshot
+	var gc = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], ["ember_sap", "oil_tithe"])
+	gc.hook_uses = {"ember_sap": 2}
+	gc.tithe_used_this_turn = true
+	var c = gc.clone()
+	_ok(c.hook_uses == {"ember_sap": 2} and c.tithe_used_this_turn == true, "clone copies hook_uses / tithe_used_this_turn")
+	_ok(not gc.snapshot().has("hook_uses") and not gc.snapshot().has("tithe_used_this_turn"), "snapshot leaves hook state out")
+	gc.step({"type": "end_turn"})
+	_ok(gc.hook_uses.is_empty() and gc.tithe_used_this_turn == false, "new turn resets hook_uses / tithe: %s %s" % [str(gc.hook_uses), str(gc.tithe_used_this_turn)])
+
+
+## ember_sap {on ignite, damage_at 1, cap 3}: whoever stands on the tile that
+## just lit takes 1 signed ember_sap - the enemy under a lance-lit slick, the
+## caster when a flare lights the oil underfoot; three times a turn, then it
+## rests until the next turn.
+func _check_c3_ember_sap() -> void:
+	# lance lights oil under an enemy: ember 1 + lance 2
+	var g = _game_g(["solar_lance", "sun_flare", "mycelium_dash"], ["ember_sap"])
+	var e = g._spawn("drill_bot", Vector2i(7, 3))
+	e["hp"] = 10
+	g.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	var evs: Array = _cast(g, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "illegal").is_empty() and e["hp"] == 7, "ember_sap + lance on oiled enemy: hp %d %s" % [e["hp"], str(evs)])
+	var emb := _dmg(evs, "ember_sap")
+	_ok(emb.size() == 1 and int(emb[0]["amt"]) == 1 and int(emb[0]["id"]) == int(e["id"]), "ember_sap damage event signed ember_sap: %s" % str(emb))
+	var hk := _hooks(evs, "ember_sap")
+	_ok(hk.size() == 1 and String(hk[0]["on"]) == "ignite" and hk[0]["tile"] == Vector2i(7, 3), "hook event {ember_sap, ignite, (7,3)}: %s" % str(hk))
+	# order: ignite, hook, ember damage, then the lance damage
+	var order: Array = []
+	for ev in evs:
+		if ["ignite", "hook", "damage"].has(String(ev["t"])):
+			order.append(String(ev["t"]) + ":" + String(ev.get("src", "")))
+	_ok(order == ["ignite:", "hook:", "damage:ember_sap", "damage:solar_lance"], "hook fires right after the ignite emit: %s" % str(order))
+	_ok(int(g.hook_uses.get("ember_sap", 0)) == 1, "hook_uses counts the run: %s" % str(g.hook_uses))
+	# the caster lights the oil underfoot with a flare: the sap burns the caster
+	var g2 = _game_g(["sun_flare", "seed_bomb", "mycelium_dash"], ["ember_sap"])
+	g2.terrain[g2.player["pos"]] = {"kind": "oil"}
+	evs = _cast(g2, 0, g2.player["pos"])
+	_ok(_evs(evs, "illegal").is_empty() and g2.player["hp"] == Content.PLAYER_HP - 1, "flare on oil underfoot: player hp %d %s" % [g2.player["hp"], str(evs)])
+	var pd := _dmg(evs, "ember_sap")
+	_ok(pd.size() == 1 and String(pd[0]["who"]) == "player" and int(pd[0]["amt"]) == 1, "player damage signed ember_sap: %s" % str(pd))
+	_ok(_hooks(evs, "ember_sap").size() == 1, "one hook for the one ignite")
+	# no ember_sap held: no hook, no extra damage
+	var g3 = _game_g(["solar_lance", "sun_flare", "mycelium_dash"], [])
+	var e3 = g3._spawn("drill_bot", Vector2i(7, 3))
+	e3["hp"] = 10
+	g3.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	evs = _cast(g3, 0, Vector2i(1, 0))
+	_ok(e3["hp"] == 8 and _evs(evs, "hook").is_empty() and _dmg(evs, "ember_sap").is_empty(), "without the graft: plain lance %d" % e3["hp"])
+	# cap 3 per turn: a flare lighting three oiled enemies runs the hook thrice;
+	# a fourth ignite the same turn is silent; the next turn it runs again
+	var g4 = _game_g(["sun_flare", "seed_bomb", "mycelium_dash"], ["ember_sap"])
+	var tiles: Array = [Vector2i(4, 3), Vector2i(6, 3), Vector2i(5, 2)]
+	var ens: Array = []
+	for t in tiles:
+		var en = g4._spawn("drill_bot", t)
+		en["hp"] = 10
+		g4.terrain[t] = {"kind": "oil"}
+		ens.append(en)
+	evs = _cast(g4, 0, g4.player["pos"])
+	_ok(_hooks(evs, "ember_sap").size() == 3 and _dmg(evs, "ember_sap").size() == 3, "three ignites -> three hooks: %s" % str(_evs(evs, "hook")))
+	_ok(ens[0]["hp"] == 7 and ens[1]["hp"] == 7 and ens[2]["hp"] == 7, "each oiled enemy: 1 sap + 1 flare + 1 fire bonus: %d %d %d" % [ens[0]["hp"], ens[1]["hp"], ens[2]["hp"]])
+	_ok(int(g4.hook_uses.get("ember_sap", 0)) == 3, "hook_uses ember_sap 3: %s" % str(g4.hook_uses))
+	g4.terrain[Vector2i(5, 4)] = {"kind": "oil"}
+	var e4 = g4._spawn("drill_bot", Vector2i(5, 4))
+	e4["hp"] = 10
+	evs = _cast(g4, 0, g4.player["pos"])
+	_ok(_evs(evs, "ignite").size() == 1 and _hooks(evs, "ember_sap").is_empty() and _dmg(evs, "ember_sap").is_empty() and _evs(evs, "hook_capped").is_empty(),
+		"fourth ignite this turn: cap holds silently (no hook_capped): %s" % str(evs))
+	_ok(e4["hp"] == 8, "capped: flare + fire bonus only, hp %d" % e4["hp"])
+	g4.step({"type": "end_turn"})
+	_ok(g4.hook_uses.is_empty(), "hook_uses reset at the new turn")
+	g4.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	var e5 = g4._spawn("drill_bot", Vector2i(7, 3))
+	e5["hp"] = 10
+	evs = _cast(g4, 0, g4.player["pos"])
+	var hk5 := _hooks(evs, "ember_sap")
+	_ok(hk5.size() == 1 and hk5[0]["tile"] == Vector2i(7, 3) and e5["hp"] == 7, "next turn the sap runs again: hp %d %s" % [e5["hp"], str(hk5)])
+	# igniter enemy stepping onto oil fires the hook too (by = enemy kind)
+	var g6 = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], ["ember_sap"])
+	var mite = g6._spawn("cinder_mite", Vector2i(8, 3))
+	mite["hp"] = 10
+	g6.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	mite["intent"] = {"type": "move"}
+	evs = g6.step({"type": "end_turn"})
+	var hk6 := _hooks(evs, "ember_sap")
+	_ok(hk6.size() >= 1 and _dmg(evs, "ember_sap").size() >= 1, "igniter enemy lighting oil fires the hook: %s" % str(evs))
+
+
+## undertow {on staggered, status_at root 1}: a shoved enemy that stops is
+## staggered and therefore rooted; the root cooldown refuses the next one.
+func _check_c3_undertow() -> void:
+	var g = _game_g(["water_jet", "seed_bomb", "mycelium_dash"], ["undertow"])
+	var e = g._spawn("drill_bot", Vector2i(7, 3))
+	e["hp"] = 10
+	var evs: Array = _cast(g, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "illegal").is_empty() and e["pos"] == Vector2i(9, 3) and _evs(evs, "staggered").size() == 1, "jet to the wall staggers: %s %s" % [str(e["pos"]), str(evs)])
+	_ok(int(e["status"].get("root", 0)) == 1 and int(e["status"].get("root_cd", 0)) == 3, "undertow roots the staggered enemy (cd 3): %s" % str(e["status"]))
+	var hk := _hooks(evs, "undertow")
+	_ok(hk.size() == 1 and String(hk[0]["on"]) == "staggered" and hk[0]["tile"] == Vector2i(9, 3), "hook event {undertow, staggered, (9,3)}: %s" % str(hk))
+	var st := _evs(evs, "status")
+	_ok(st.size() == 1 and String(st[0]["status"]) == "root" and int(st[0]["id"]) == int(e["id"]), "one root status event: %s" % str(st))
+	# root expired, cooldown still running, stagger available again: resisted
+	e["status"]["root"] = 0
+	e["status"]["stagger_cd"] = 0
+	e["pos"] = Vector2i(7, 3)
+	evs = _cast(g, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "staggered").size() == 1 and _hooks(evs, "undertow").size() == 1, "second stagger runs the hook again: %s" % str(evs))
+	_ok(_evs(evs, "resisted").size() == 1 and int(e["status"].get("root", 0)) == 0 and _evs(evs, "status").is_empty(), "the root cooldown refuses the second root: %s %s" % [str(e["status"]), str(evs)])
+	# a pull that moves the enemy staggers it too
+	var g2 = _game_g(["vine_whip", "seed_bomb", "mycelium_dash"], ["undertow"])
+	var e2 = g2._spawn("drill_bot", Vector2i(8, 3))
+	e2["hp"] = 10
+	evs = _cast(g2, 0, Vector2i(8, 3))
+	_ok(e2["pos"] == Vector2i(6, 3) and int(e2["status"].get("root", 0)) == 1 and _hooks(evs, "undertow").size() == 1, "vine_whip pull -> staggered -> rooted: %s %s" % [str(e2["pos"]), str(e2["status"])])
+	# without the graft the stagger roots nothing
+	var g3 = _game_g(["water_jet", "seed_bomb", "mycelium_dash"], [])
+	var e3 = g3._spawn("drill_bot", Vector2i(7, 3))
+	e3["hp"] = 10
+	evs = _cast(g3, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "staggered").size() == 1 and not e3["status"].has("root") and _evs(evs, "hook").is_empty(), "no undertow: staggered, not rooted")
+
+
+## compost {on kill, terrain_at growth}: a kill leaves growth on the tile the
+## enemy fell on when it is bare; a tile holding terrain (fire, oil) keeps it.
+func _check_c3_compost() -> void:
+	var g = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], ["compost"])
+	var e = g._spawn("drill_bot", Vector2i(7, 3))
+	e["hp"] = 1
+	var evs: Array = _cast(g, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "death").size() == 1 and g._terrain_kind(Vector2i(7, 3)) == "growth", "kill on bare floor leaves growth: %s %s" % [g._terrain_kind(Vector2i(7, 3)), str(evs)])
+	var hk := _hooks(evs, "compost")
+	_ok(hk.size() == 1 and String(hk[0]["on"]) == "kill" and hk[0]["tile"] == Vector2i(7, 3), "hook event {compost, kill, (7,3)}: %s" % str(hk))
+	var terr := _evs(evs, "terrain")
+	_ok(terr.size() == 1 and String(terr[0]["kind"]) == "growth" and terr[0]["tile"] == Vector2i(7, 3), "terrain event for the compost growth: %s" % str(terr))
+	# killed while standing on oil the lance just lit: the fire stays
+	var g2 = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], ["compost"])
+	var e2 = g2._spawn("drill_bot", Vector2i(7, 3))
+	e2["hp"] = 1
+	g2.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	evs = _cast(g2, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "death").size() == 1 and g2._terrain_kind(Vector2i(7, 3)) == "fire" and _hooks(evs, "compost").size() == 1 and _evs(evs, "terrain").is_empty(),
+		"kill on fire: hook runs, nothing planted: %s %s" % [g2._terrain_kind(Vector2i(7, 3)), str(evs)])
+	# killed on oil that did not light (strike): the oil stays
+	var g3 = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], ["compost"])
+	var e3 = g3._spawn("drill_bot", Vector2i(6, 3))
+	e3["hp"] = 1
+	g3.terrain[Vector2i(6, 3)] = {"kind": "oil"}
+	g3.player["charge"] = 5
+	evs = g3.step({"type": "strike", "dir": Vector2i(1, 0)})
+	_ok(_evs(evs, "death").size() == 1 and g3._terrain_kind(Vector2i(6, 3)) == "oil", "kill on oil keeps the oil: %s" % g3._terrain_kind(Vector2i(6, 3)))
+	# a kill by an enemy-side source (fire tick) composts too: any kill counts
+	var g4 = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], ["compost"])
+	var e4 = g4._spawn("drill_bot", Vector2i(8, 1))
+	e4["hp"] = 1
+	g4.terrain[Vector2i(8, 1)] = {"kind": "fire", "ttl": 3}
+	evs = g4.step({"type": "end_turn"})
+	_ok(_evs(evs, "death").size() == 1 and _hooks(evs, "compost").size() == 1 and g4._terrain_kind(Vector2i(8, 1)) == "fire", "fire-tick kill: hook runs, fire tile kept: %s" % str(evs))
+	# nesting: ember_sap's damage kills -> the kill hook runs inside the ignite
+	# hook (depth 2); the lance then continues to the enemy behind
+	var g5 = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], ["ember_sap", "compost"])
+	var e5 = g5._spawn("drill_bot", Vector2i(7, 3))
+	var e6 = g5._spawn("drill_bot", Vector2i(8, 3))
+	e5["hp"] = 1
+	e6["hp"] = 10
+	g5.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	evs = _cast(g5, 0, Vector2i(1, 0))
+	_ok(_dmg(evs, "ember_sap").size() == 1 and _evs(evs, "death").size() == 1 and not g5.enemies.has(e5), "ember_sap kills the oiled enemy: %s" % str(evs))
+	_ok(_hooks(evs, "ember_sap").size() == 1 and _hooks(evs, "compost").size() == 1 and _evs(evs, "hook_capped").is_empty(), "nested kill hook ran (depth 2): %s" % str(_evs(evs, "hook")))
+	_ok(g5._terrain_kind(Vector2i(7, 3)) == "fire", "compost finds fire, plants nothing")
+	_ok(e6["hp"] == 8 and _dmg(evs, "solar_lance").size() == 1, "the lance passes the emptied tile and hits the next enemy: hp %d" % e6["hp"])
+
+
+## oil_tithe {mod oil_cast_discount 1}: the first oil-aimed cast of a turn
+## costs 1 less, floored at 1; legal_actions prices each target on its own.
+func _check_c3_oil_tithe() -> void:
+	var kit := ["solar_lance", "water_jet", "seed_bomb"]
+	var g = _game_g(kit, ["oil_tithe"])
+	g.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	_ok(g.ability_cost("solar_lance") == 2, "no target: full price %d" % g.ability_cost("solar_lance"))
+	_ok(g.ability_cost("solar_lance", Vector2i(1, 0)) == 1, "lance at the oil line: %d" % g.ability_cost("solar_lance", Vector2i(1, 0)))
+	_ok(g.ability_cost("solar_lance", Vector2i(-1, 0)) == 2, "lance away from oil: %d" % g.ability_cost("solar_lance", Vector2i(-1, 0)))
+	_ok(g.ability_cost("water_jet", Vector2i(1, 0)) == 1, "cost-1 jet at oil stays 1 (floor): %d" % g.ability_cost("water_jet", Vector2i(1, 0)))
+	# legal_actions: with exactly 1 charge only the discounted lance is offered
+	g.player["charge"] = 1
+	var acts: Array = g.legal_actions()
+	var lances: Array = []
+	for a in acts:
+		if String(a["type"]) == "ability" and int(a["slot"]) == 0:
+			lances.append(a["target"])
+	_ok(lances == [Vector2i(1, 0)], "1 charge: only the oil-line lance is legal: %s" % str(lances))
+	# the same board without the graft offers no lance on 1 charge
+	var g0 = _game_g(kit, [])
+	g0.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	g0.player["charge"] = 1
+	var l0 := 0
+	for a in g0.legal_actions():
+		if String(a["type"]) == "ability" and int(a["slot"]) == 0:
+			l0 += 1
+	_ok(l0 == 0 and g0.ability_cost("solar_lance", Vector2i(1, 0)) == 2, "no graft: no discounted lance (%d legal, cost %d)" % [l0, g0.ability_cost("solar_lance", Vector2i(1, 0))])
+	# cast: charge 2 -> 1, tithe event, discount spent
+	g.player["charge"] = 2
+	var evs: Array = g.step({"type": "ability", "slot": 0, "target": Vector2i(1, 0)})
+	_ok(_evs(evs, "illegal").is_empty() and g.player["charge"] == 1 and g.tithe_used_this_turn, "discounted lance: charge %d tithe_used %s" % [g.player["charge"], str(g.tithe_used_this_turn)])
+	var tithe := _evs(evs, "tithe")
+	_ok(tithe.size() == 1 and String(tithe[0]["id"]) == "solar_lance", "tithe event: %s" % str(tithe))
+	_ok(_evs(evs, "ignite").size() == 1 and g._terrain_kind(Vector2i(7, 3)) == "fire", "the lance still lit the oil")
+	# second oil cast this turn: full price
+	g.terrain[Vector2i(5, 1)] = {"kind": "oil"}
+	_ok(g.ability_cost("solar_lance", Vector2i(0, -1)) == 2, "second oil cast this turn: %d" % g.ability_cost("solar_lance", Vector2i(0, -1)))
+	evs = g.step({"type": "ability", "slot": 0, "target": Vector2i(0, -1)})
+	_ok(_evs(evs, "illegal").size() == 1 and g.player["charge"] == 1, "1 charge cannot pay the full second cast: %s" % str(evs))
+	g.player["charge"] = 5
+	evs = g.step({"type": "ability", "slot": 0, "target": Vector2i(0, -1)})
+	_ok(_evs(evs, "illegal").is_empty() and g.player["charge"] == 3 and _evs(evs, "tithe").is_empty(), "second oil cast pays 2, no tithe event: charge %d" % g.player["charge"])
+	# 1 charge with the discount spent: the lance is not legal even at oil
+	g.player["charge"] = 1
+	g.terrain[Vector2i(5, 5)] = {"kind": "oil"}
+	var l1 := 0
+	for a in g.legal_actions():
+		if String(a["type"]) == "ability" and int(a["slot"]) == 0:
+			l1 += 1
+	_ok(l1 == 0, "discount spent: no lance on 1 charge (%d)" % l1)
+	# new turn: the discount is back
+	g.step({"type": "end_turn"})
+	_ok(not g.tithe_used_this_turn and g.ability_cost("solar_lance", Vector2i(0, 1)) == 1, "next turn: oil lance costs %d again" % g.ability_cost("solar_lance", Vector2i(0, 1)))
+	# a cost-1 ability aimed at oil never consumes the tithe (nothing to discount)
+	g.player["charge"] = 5
+	evs = g.step({"type": "ability", "slot": 1, "target": Vector2i(0, 1)})
+	_ok(_evs(evs, "illegal").is_empty() and g.player["charge"] == 4 and _evs(evs, "tithe").is_empty() and not g.tithe_used_this_turn,
+		"jet at oil: cost 1, tithe untouched: charge %d %s" % [g.player["charge"], str(evs)])
+	_ok(g.ability_cost("solar_lance", Vector2i(0, 1)) == 1 or g._terrain_kind(Vector2i(5, 5)) != "oil", "tithe still available after the jet")
+	# a "dir" line whose oil sits beyond range is not oil-aimed
+	var g2 = _game_g(kit, ["oil_tithe"])
+	g2.terrain[Vector2i(9, 3)] = {"kind": "oil"}  # distance 4 > lance range 3
+	_ok(g2.ability_cost("solar_lance", Vector2i(1, 0)) == 2, "oil beyond range: %d" % g2.ability_cost("solar_lance", Vector2i(1, 0)))
+	# a wall between: the walk stops
+	g2.terrain.erase(Vector2i(9, 3))
+	g2.map["tiles"][3 * 11 + 7] = 0
+	g2.terrain[Vector2i(8, 3)] = {"kind": "oil"}
+	_ok(g2.ability_cost("solar_lance", Vector2i(1, 0)) == 2, "oil behind a wall: %d" % g2.ability_cost("solar_lance", Vector2i(1, 0)))
+	# surge plus tithe: growth underfoot already makes it 1, the tithe adds nothing
+	var g3 = _game_g(kit, ["oil_tithe"])
+	g3.terrain[g3.player["pos"]] = {"kind": "growth"}
+	g3.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	_ok(g3.ability_cost("solar_lance", Vector2i(1, 0)) == 1, "surge + tithe floors at 1: %d" % g3.ability_cost("solar_lance", Vector2i(1, 0)))
+	g3.player["charge"] = 2
+	evs = g3.step({"type": "ability", "slot": 0, "target": Vector2i(1, 0)})
+	_ok(_evs(evs, "verdant").size() == 1 and _evs(evs, "tithe").is_empty() and not g3.tithe_used_this_turn and g3.player["charge"] == 1,
+		"surged cast: verdant, no tithe spent: %s" % str(evs))
+	# a non-dir target on oil: the target tile itself decides (enemy on oil)
+	var g4 = _game_g(["pollen_burst", "grow_spike", "mycelium_dash"], ["oil_tithe"])
+	g4.terrain[g4.player["pos"]] = {"kind": "oil"}
+	_ok(g4.ability_cost("pollen_burst", g4.player["pos"]) == 1, "self-target while standing on oil: %d" % g4.ability_cost("pollen_burst", g4.player["pos"]))
+	g4.terrain.erase(g4.player["pos"])
+	_ok(g4.ability_cost("pollen_burst", g4.player["pos"]) == 2, "self-target off oil: %d" % g4.ability_cost("pollen_burst", g4.player["pos"]))
+
+
+## Depth and step caps: the dispatcher reads Content.HOOK_DEPTH_MAX and
+## Content.HOOK_STEP_CAP, skips the hook beyond either and emits hook_capped
+## once per step; step() clears the per-step counters.
+func _check_c3_hook_caps() -> void:
+	_ok(Content.HOOK_DEPTH_MAX == 3 and Content.HOOK_STEP_CAP == 12, "cap constants: depth %d step %d" % [Content.HOOK_DEPTH_MAX, Content.HOOK_STEP_CAP])
+	var g = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], ["compost"])
+	# direct dispatch on a bare tile plants growth (the kill ctx after an erase)
+	g._step_events = []
+	g._hook("kill", {"tile": Vector2i(8, 1), "enemy_kind": "drill_bot", "enemy_id": 99})
+	_ok(g._terrain_kind(Vector2i(8, 1)) == "growth" and _hooks(g._step_events, "compost").size() == 1 and g._hook_runs == 1, "direct kill hook plants: runs %d" % g._hook_runs)
+	# step cap: at the cap the hook is skipped, hook_capped once
+	g._step_events = []
+	g._hook_runs = Content.HOOK_STEP_CAP
+	g._hook("kill", {"tile": Vector2i(8, 2), "enemy_kind": "drill_bot", "enemy_id": 99})
+	g._hook("kill", {"tile": Vector2i(8, 3), "enemy_kind": "drill_bot", "enemy_id": 99})
+	_ok(not g.terrain.has(Vector2i(8, 2)) and not g.terrain.has(Vector2i(8, 3)) and _evs(g._step_events, "hook").is_empty(),
+		"step cap: both hooks skipped")
+	_ok(_evs(g._step_events, "hook_capped").size() == 1, "hook_capped emitted once: %s" % str(g._step_events))
+	# one below the cap still runs, and the run lands exactly on the cap
+	g._step_events = []
+	g._hook_runs = Content.HOOK_STEP_CAP - 1
+	g._hook_capped = false
+	g._hook("kill", {"tile": Vector2i(8, 2), "enemy_kind": "drill_bot", "enemy_id": 99})
+	_ok(g._terrain_kind(Vector2i(8, 2)) == "growth" and g._hook_runs == Content.HOOK_STEP_CAP and _evs(g._step_events, "hook_capped").is_empty(), "cap - 1 runs")
+	# a new step clears the counters: the next kill hook runs
+	var e = g._spawn("drill_bot", Vector2i(7, 3))
+	e["hp"] = 1
+	var evs: Array = _cast(g, 0, Vector2i(1, 0))
+	_ok(_hooks(evs, "compost").size() == 1 and g._terrain_kind(Vector2i(7, 3)) == "growth" and _evs(evs, "hook_capped").is_empty(), "step() resets the step cap: %s" % str(evs))
+	# depth cap: a dispatch at HOOK_DEPTH_MAX is skipped, hook_capped once
+	g._step_events = []
+	g._hook_depth = Content.HOOK_DEPTH_MAX
+	g._hook("kill", {"tile": Vector2i(8, 4), "enemy_kind": "drill_bot", "enemy_id": 99})
+	g._hook("kill", {"tile": Vector2i(8, 5), "enemy_kind": "drill_bot", "enemy_id": 99})
+	_ok(not g.terrain.has(Vector2i(8, 4)) and _evs(g._step_events, "hook").is_empty() and _evs(g._step_events, "hook_capped").size() == 1, "depth cap: skipped, capped once: %s" % str(g._step_events))
+	g._hook_depth = Content.HOOK_DEPTH_MAX - 1
+	g._step_events = []
+	g._hook("kill", {"tile": Vector2i(8, 4), "enemy_kind": "drill_bot", "enemy_id": 99})
+	_ok(g._terrain_kind(Vector2i(8, 4)) == "growth" and g._hook_depth == Content.HOOK_DEPTH_MAX - 1, "depth max - 1 runs and restores the depth")
+	g._hook_depth = 0
+	# an unknown hook kind runs nothing; a game that is over runs nothing
+	g._step_events = []
+	g._hook("sneeze", {"tile": Vector2i(8, 5)})
+	_ok(_evs(g._step_events, "hook").is_empty() and not g.terrain.has(Vector2i(8, 5)), "unknown kind: no source matches")
+	g.over = true
+	g._hook("kill", {"tile": Vector2i(8, 5), "enemy_kind": "drill_bot", "enemy_id": 99})
+	_ok(not g.terrain.has(Vector2i(8, 5)), "game over: hooks do not run")
+	g.over = false
+	# sources scan kit slots first, then grafts in held order (hook events in that order)
+	var g2 = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], ["compost", "ember_sap"])
+	var e2 = g2._spawn("drill_bot", Vector2i(7, 3))
+	e2["hp"] = 1
+	g2.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	evs = _cast(g2, 0, Vector2i(1, 0))
+	var ids: Array = []
+	for ev in _evs(evs, "hook"):
+		ids.append(String(ev["id"]))
+	_ok(ids == ["ember_sap", "compost"], "ignite hook (ember_sap) then its nested kill hook (compost): %s" % str(ids))

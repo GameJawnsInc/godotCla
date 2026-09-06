@@ -118,10 +118,10 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		for a in by["buy"]:
 			if a["item"] == "heal":
 				return a
-		# graft offer 0: the fanatic has no graft opinion either - the
-		# progression review holds any graft weighting until
-		# tests/sweep_grafts.gd has run at 30+ seeds
-		var graft := _first_graft(by["buy"])
+		# grafts come from the parent's tag-fit ranking (optimizer._first_graft),
+		# which suits a build persona: the offer whose tags overlap the build's
+		# abilities most, ties to the lowest offer index
+		var graft := _first_graft(by["buy"], snap)
 		if not graft.is_empty():
 			return graft
 		for a in by["buy"]:

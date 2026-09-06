@@ -2480,6 +2480,539 @@ report:
   cannot say either way: that runner prints its own per-build summary, not the
   Tally block. Press and forge upcycles are still 0/0 for every persona.
 
+## 2026-09-06d - bump 5 (C3): hook dispatcher, grafts as data, four rule grafts
+
+Block C's third content commit from docs/PROGRESSION_REVIEW.md 6.3 ("C3").
+Three things landed together and they cannot be separated in the numbers: a
+hook dispatcher in `sim/game.gd`, the `GRAFTS` table rewritten as data, and
+four new rule grafts that take the table from six rows to ten. The instruments
+did not change (still v2), so this entry compares directly with the
+2026-09-06c entry above it and with everything back to 2026-09-05; it does
+**not** compare per-seed with anything, because the shop's graft draw changed.
+
+**The `GRAFTS` table, verbatim** (`sim/content.gd:316-340`). Every row is
+`{name, desc, tags}` plus exactly one of `stat`, `mod` or `hooks`:
+
+```
+deep_cells     tags [sun]                     stat  {bank_cap: 2}
+verdant_pulse  tags [growth]                  stat  {growth_heal: 1}
+thick_bark     tags [bark]                    stat  {shield_cap: 2}
+bloom_surge    tags [growth, economy]         stat  {cleanse_bloom: 1}
+solar_core     tags [sun]                     stat  {regen: 1}
+carapace       tags [bark]                    mod   {floor_start_shield: 2}
+ember_sap      tags [fire]                    hooks [{on: ignite, effects: [{op: damage_at, dmg: 1}],
+                                                     cap_per_turn: 3}]
+undertow       tags [water, displace, control]
+                                              hooks [{on: staggered,
+                                                     effects: [{op: status_at, status: root, turns: 1}]}]
+compost        tags [growth]                  hooks [{on: kill, effects: [{op: terrain_at, kind: growth}]}]
+oil_tithe      tags [fire, water, economy]    mod   {oil_cast_discount: 1}
+```
+
+The six pre-existing grafts are pure migration: `Game._graft_stat(key)` sums
+`stat[key]` over held grafts and `Game._graft_mod(key, default)` returns the
+first held `mod`, replacing all six `_has_graft` call sites (`_has_graft` no
+longer exists in the tree). The sim phase proved the migration is numerically
+identical with a parity probe against the pristine pre-C3 tree - optimizer, 10
+seeds, each of the six legacy grafts pre-installed, comparing the per-step
+event-stream hash, the final `state_hash` and `rng.state` after `Game.new`:
+"PARITY: identical (60 rows)", diff empty, plus a 70-row `rng.state` check
+with the shop kept.
+
+**The dispatcher.** `Game._hook(kind, ctx)` (`sim/game.gd:2037`) runs
+immediately after the existing `_emit` at seven kinds -
+`Content.HOOK_KINDS = ["ignite", "staggered", "cleanse", "growth_planted",
+"kill", "shield_break", "collision"]` - scanning sources in fixed order (kit
+slots 0..n, then `player.grafts` in held order). Rows are
+`{on, effects, cap_per_turn?, if?}`; effects reuse `_apply_effect` aimed at the
+hook tile plus three positional ops (`damage_at`, `status_at`, `terrain_at`)
+that read the tile out of `ctx`. Every row that runs emits
+`{t: "hook", id, on, tile}`, which is what the new Tally `hooks` line counts.
+`Content.HOOK_DEPTH_MAX = 3` and `Content.HOOK_STEP_CAP = 12` bound nesting and
+per-step work; past either the hook is skipped and `{t: "hook_capped"}` is
+emitted once for the step. Per-turn caps live in `hook_uses`, and `oil_tithe`'s
+once-a-turn discount in `tithe_used_this_turn`; both reset in
+`_begin_player_turn`, are copied by `clone()` and are **not** in `snapshot()`.
+`ability_cost(aid, target)` applies the discount and emits `{t: "tithe", id}`,
+and `legal_actions` prices each target individually while the mod is unspent.
+
+**Bots.** `optimizer._first_graft` now scores every stocked offer by tag
+overlap with the kit (`Content.ABILITIES[base_id].tags` counted with
+multiplicity) and takes the best, ties falling back to the lowest offer index;
+magpie and fanatic call the same helper. Everything is read from `Content`, so
+a future `GRAFTS` row ranks itself. deeproot is untouched and buys no grafts,
+so the ranking is unexercised at the ceiling.
+
+**Version.** `Game.SIM_VERSION := 5` (`sim/game.gd:37`). What it invalidates:
+**every stored replay hash, and every shop stock draw in the project.** The
+shrine picks its two graft offers from `Content.GRAFTS` through the side-rng
+`shop_graft` draw, so a table of ten instead of six changes which grafts every
+seed is offered - before any bot decides anything. Add the tag-overlap pick on
+top and a persona's held grafts diverge from its first shrine on. Aggregate win
+rates still compare across the bump (same instruments, same seeds 1..30, same
+personas); **per-seed pairing does not**, and no number in this entry is paired
+against a pre-C3 tree.
+
+### Suite
+
+All green, gate included:
+
+- `tests/test_invariants.gd`: "invariants: 1400 generations, 0 violations",
+  "terrain kinds: ["oil", "goo", "growth", "rich_goo"] (0 violations)",
+  "floor_def invariants: 11 configs, 1540 generations, 0 violations"
+- `tests/test_determinism.gd`: "determinism: OK (55 checks, 7 personas)"
+- `tests/test_content.gd`: "graft lint self-test: 23 bad rows -> 23 failures;
+  5 good rows -> 0 failures", "grafts: 10 rows (5 stat, 2 mod, 3 hooks); hook
+  kinds 7, depth max 3, step cap 12", "effect-grammar self-test: 19 bad rows ->
+  19 failures; 8 rider rows -> 0 failures", "content: OK" (the ability grammar
+  line is unchanged: "39 ability rows over 22 ops; terrain 9, reactions 5,
+  statuses 3")
+- `tests/test_economy.gd`: "economy: OK (123 checks)" (120 -> 123; the stock
+  filter is generalised to ten grafts)
+- `tests/test_grammar.gd`: "grammar: OK (364 checks)" (273 -> 364; a new
+  "Block C3" section casts every hook through `Game.step`)
+- `tests/test_regressions.gd`: "=== regressions | dir res://tests/regressions |
+  45 records | strict false | regen false ===" / "regressions: 45 ok, 0
+  failed", and with `REGRESS_STRICT=1` "strict true" / "regressions: 45 ok, 0
+  failed" (39 -> 45 records)
+- `tests/test_meta.gd`: "meta: OK"
+- `tests/test_shell.gd`: "shell smoke: OK"
+- `tests/playtest.gd` 30 seeds, gate ON: exit 0, "gate: all PASS"
+
+### Persona table
+
+Before = the 2026-09-06c entry above. After =
+`=== playtest | bot wanderer,sprout,magpie,fanatic,optimizer,deeproot |
+config {  } | seeds 1..30 (30) ===` and
+`=== playtest | bot deeproot_rollout | config {  } | seeds 1..30 (30) ===`.
+Both columns are seeds 1..30, tier 0, Wilson 95% as printed.
+
+| persona | 06c | this bump | moved outside CI? |
+|---|---|---|---|
+| wanderer | 0/30 = 0% [0, 11], floor 1.0 | 0/30 = 0% [0, 11], floor 1.0 | no |
+| sprout | 1/30 = 3% [1, 17], floor 3.5 | 1/30 = 3% [1, 17], floor 3.5 | no |
+| magpie | 5/30 = 17% [7, 34], floor 4.1 | 5/30 = 17% [7, 34], floor 4.2 | no |
+| fanatic | 9/30 = 30% [17, 48], floor 5.6 | 7/30 = 23% [12, 41], floor 5.6 | no |
+| optimizer | 13/30 = 43% [27, 61], floor 5.8 | 14/30 = 47% [30, 64], floor 6.0 | no |
+| deeproot | 22/30 = 73% [56, 86], floor 6.9 | 22/30 = 73% [56, 86], floor 6.9 | no |
+| deeproot_rollout | 28/30 = 93% [79, 98], floor 7.0 | 27/30 = 90% [74, 97], floor 7.0 | no |
+
+**No persona moved outside the other column's interval.** wanderer, sprout,
+magpie and deeproot are identical win counts; the three that moved (fanatic -2,
+optimizer +1, deeproot_rollout -1) are all well inside both intervals, and all
+three are personas whose held grafts changed. Zero illegal actions for all
+seven personas. **Timeouts are 0 for every persona at 30 seeds**, which closes
+06c's one open gate-(v) item: magpie's 30-seed timeout is gone (1 -> 0) and so
+is its 100-seed one (see Canaries).
+
+### KPI block (playtest, 30 seeds, tier 0)
+
+Same derivation and columns as the 06c table: strike/sig/terr = shares of enemy
+damage, cmb = combos/run, conv = bloom spent/earned, ent = kit entropy bits,
+shrine = shrine turns/run, unspent = unspent charge per end_turn, stall = stall
+floors over 30 runs, qu = quota-unmet deaths, dmg = player damage per run.
+
+| persona | strike | sig | terr | cmb | conv | ent | shrine | unspent | stall | qu | dmg |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| wanderer | 0.32 | 0.00 | 0.02 | 30.33 | 0.00 | 0.00 | 0.77 | 0.10 | 20 | 25 | 42.4 |
+| sprout | 0.36 | 0.13 | 0.01 | 9.27 | 0.11 | 4.36 | 1.00 | 0.36 | 14 | 2 | 32.2 |
+| magpie | 0.27 | 0.53 | 0.01 | 22.27 | 0.50 | 4.39 | 27.57 | 0.39 | 24 | 3 | 52.1 |
+| fanatic | 0.19 | 0.24 | 0.05 | 16.73 | 0.29 | 3.44 | 1.67 | 0.97 | 10 | 2 | 25.2 |
+| optimizer | 0.31 | 0.39 | 0.02 | 14.33 | 0.28 | 3.86 | 1.23 | 0.61 | 4 | 0 | 22.3 |
+| deeproot | 0.09 | 0.39 | 0.16 | 16.70 | 0.01 | 4.08 | 0.23 | 0.73 | 8 | 0 | 11.0 |
+| deeproot_rollout | 0.07 | 0.30 | 0.11 | 14.20 | 0.00 | 3.71 | 0.40 | 1.06 | 4 | 0 | 4.1 |
+
+The riders line (C2's counter, unchanged content, printed for continuity):
+
+```
+wanderer   riders: 0.00/run  by kind {  }  by ability {  }
+sprout     riders: 2.00/run  by kind { "per": 58, "then": 2 }  by ability { "grow_spike": 57, "seed_bomb+": 2, "grow_spike+": 1 }
+magpie     riders: 17.83/run  by kind { "per": 533, "bonus": 2 }  by ability { "grow_spike": 533, "sun_flare": 2 }
+fanatic    riders: 5.10/run  by kind { "then": 29, "per": 121, "bonus": 3 }  by ability { "seed_bomb+": 29, "grow_spike": 89, "sun_flare": 3, "grow_spike+": 32 }
+optimizer  riders: 8.50/run  by kind { "per": 242, "bonus": 13 }  by ability { "grow_spike": 177, "grow_spike+": 65, "sun_flare": 9, "sun_flare+": 4 }
+deeproot   riders: 1.33/run  by kind { "then": 1, "per": 31, "bonus": 8 }  by ability { "water_jet+": 1, "grow_spike+": 7, "grow_spike": 24, "sun_flare": 4, "sun_flare+": 4 }
+deeproot_rollout  riders: 3.00/run  by kind { "per": 72, "then": 15, "bonus": 3 }  by ability { "grow_spike": 37, "seed_bomb+": 7, "water_jet+": 8, "sun_flare": 1, "grow_spike+": 35, "sun_flare+": 2 }
+```
+
+The hooks line - new this bump, `hooks: 0` for every persona in every entry
+before it, because no hook existed:
+
+```
+wanderer   hooks: by graft {  }  by kind {  }  capped 0  tithe 0
+sprout     hooks: by graft { "compost": 37 }  by kind { "kill": 37 }  capped 0  tithe 3
+magpie     hooks: by graft { "compost": 546, "ember_sap": 21 }  by kind { "kill": 546, "ignite": 21 }  capped 0  tithe 6
+fanatic    hooks: by graft { "compost": 187, "ember_sap": 41, "undertow": 4 }  by kind { "kill": 187, "ignite": 41, "staggered": 4 }  capped 0  tithe 11
+optimizer  hooks: by graft { "ember_sap": 46, "compost": 51, "undertow": 5 }  by kind { "ignite": 46, "kill": 51, "staggered": 5 }  capped 0  tithe 2
+deeproot   hooks: by graft {  }  by kind {  }  capped 0  tithe 0
+deeproot_rollout  hooks: by graft {  }  by kind {  }  capped 0  tithe 0
+```
+
+Four readings from those two blocks. (1) **`hook_capped` is 0 in every run in
+this entry that prints the counter** - 210 playtest runs, 200 canary runs and
+540 hook-probe runs, 950 in all: neither `HOOK_DEPTH_MAX` nor `HOOK_STEP_CAP` has ever bound in
+play, and the caps' only coverage is `tests/test_grammar.gd`'s direct `_hook`
+calls and `c3_ember_sap_cap.json`'s per-turn cap. (2) **The two search personas
+print an empty hooks line** because they buy no grafts at all (deeproot shrine
+turns/run 0.23, buys `{ "item": 5 }`), so every ceiling number below comes from
+a pre-installed config, never from play. (3) **`compost` dominates the counter
+wherever it is held** - 546 of magpie's 567 hooks, 187 of fanatic's 232 - which
+is what a kill hook does in a game whose bots kill a lot. (4) magpie's
+signature share is 0.53 against 0.57 in 06c and its damage taken rose 43.6 ->
+52.1 on the same 5 wins; `ember_sap` shows up in its own damage table (`by
+family { ..., "ember_sap": 5 }` dealt, and **1 point taken**: `player dmg ... {
+"ember_sap": 1 }`, the first time a graft has damaged the player).
+
+### Choice sinks: the graft pick is no longer offer 0
+
+The shrine's two graft offers are drawn from `Content.GRAFTS` through the
+side-rng `shop_graft` tag, so a ten-row table re-rolls **every** shop on every
+seed; on top of that optimizer, magpie and fanatic now pick by tag overlap
+instead of taking offer 0. Graft buys by id over the 30-seed playtest (each buy
+discards the other offer, so buys = discards):
+
+```
+sprout     grafts { "compost": 3, "oil_tithe": 3, "solar_core": 1, "carapace": 2, "verdant_pulse": 1 }               10 buys / 10 discarded
+magpie     grafts { "bloom_surge": 12, "solar_core": 10, "verdant_pulse": 14, "compost": 14, "carapace": 4,
+                    "oil_tithe": 8, "deep_cells": 9, "ember_sap": 11, "thick_bark": 5, "undertow": 6 }               93 buys / 93 discarded
+fanatic    grafts { "ember_sap": 7, "compost": 8, "undertow": 2, "verdant_pulse": 8, "deep_cells": 9,
+                    "thick_bark": 2, "solar_core": 4, "oil_tithe": 3, "bloom_surge": 3, "carapace": 1 }              47 buys / 47 discarded
+optimizer  grafts { "ember_sap": 7, "verdant_pulse": 7, "carapace": 2, "oil_tithe": 6, "compost": 3,
+                    "solar_core": 6, "undertow": 4, "deep_cells": 5, "bloom_surge": 6 }                              46 buys / 46 discarded
+wanderer, deeproot, deeproot_rollout: no graft buys at all
+```
+
+Magpie and fanatic touch all ten ids and the optimizer nine (never
+`thick_bark`), unevenly - which is the point: the distribution tracks the kit,
+not the offer order. The bot phase's own probe over seeds 1..20 put the change
+at magpie 13 of 60 buys and optimizer 5 of 27 buys landing on offer **1**,
+where both were 100% offer 0 before. Kit entropy moved with it (magpie 4.22 ->
+4.39, optimizer 4.05 -> 3.86, fanatic 3.54 -> 3.44).
+
+### Graft table, optimizer, tier 0
+
+`=== sweep_grafts | bot optimizer | config {  } | seeds 1..30 (30) ===`,
+"grafts: deep_cells, verdant_pulse, thick_bark, bloom_surge, solar_core,
+carapace, ember_sap, undertow, compost, oil_tithe". Each row pre-installs its
+graft before floor 1 on the same seeds as the base row; delta and the sign test
+are paired against that base row. Hooks come from
+`=== hooks_probe(scratch) | bot optimizer | config {  } | seeds 1..30 (30) ===`,
+a scratch runner that re-runs the identical configs and prints the Tally hook
+counters `sweep_grafts`' compact row does not carry (its win column reproduces
+the sweep's cell for cell). "own hooks/run" counts only the row's own graft;
+the base row's hooks are grafts the bot *bought*.
+
+| row | wins | CI | delta | disc. | p | dmg | turns(w) | t/o | own hooks/run | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|
+| (no graft) | 14/30 | [30, 64] | +0 | 0:0 | 1.00 | 22.3 | 89 | 0 | - (bought: ember_sap 46, compost 51, undertow 5, tithe 2) | - |
+| deep_cells | 15/30 | [33, 67] | +1 | 3:2 | 1.00 | 22.5 | 86 | 0 | n/a (stat) | re-baseline |
+| verdant_pulse | 18/30 | [42, 75] | +4 | 5:1 | 0.22 | 31.8 | 90 | 0 | n/a (stat) | re-baseline |
+| thick_bark | 13/30 | [27, 61] | -1 | 2:3 | 1.00 | 29.6 | 87 | 0 | n/a (stat) | re-baseline |
+| bloom_surge | 16/30 | [36, 70] | +2 | 3:1 | 0.62 | 20.7 | 82 | 0 | n/a (stat) | re-baseline |
+| **solar_core** | **26/30** | **[70, 95]** | **+12** | **14:2** | **0.00** | 17.1 | 69 | 0 | n/a (stat) | re-baseline (see the lever below) |
+| carapace | 15/30 | [33, 67] | +1 | 3:2 | 1.00 | 16.5 | 86 | 0 | n/a (mod) | re-baseline |
+| ember_sap | 12/30 | [25, 58] | -2 | 1:3 | 0.62 | 20.7 | 88 | 0 | **4.93** (148 ignite hooks) | SHIP |
+| undertow | 14/30 | [30, 64] | +0 | 1:1 | 1.00 | 21.4 | 90 | 0 | **0.27** (8 staggered hooks) | **HOLD (ii)** |
+| compost | 15/30 | [33, 67] | +1 | 3:2 | 1.00 | 25.7 | 94 | 0 | **32.10** (963 kill hooks) | SHIP |
+| oil_tithe | 14/30 | [30, 64] | +0 | 3:3 | 1.00 | 22.2 | 89 | 0 | **2.10** (63 tithes; the mod has no hooks) | SHIP |
+| all 10 | 26/30 | [70, 95] | +12 | 12:0 | 0.00 | 15.0 | 66 | 0 | compost 809, ember_sap 216, undertow 0, tithe 49 | - |
+
+### Graft table, optimizer, tier 6
+
+`=== sweep_grafts | bot optimizer | config { "tier": 6 } | seeds 1..30 (30) ===`
+and `=== hooks_probe(scratch) | bot optimizer | config { "tier": 6 } | seeds
+1..30 (30) ===`, same seeds, same ten rows.
+
+| row | wins | CI | delta | disc. | p | dmg | turns(w) | t/o | own hooks/run | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|
+| (no graft) | 5/30 | [7, 34] | +0 | 0:0 | 1.00 | 28.4 | 94 | 0 | - (bought: compost 137, ember_sap 9, tithe 13) | - |
+| deep_cells | 6/30 | [10, 37] | +1 | 2:1 | 1.00 | 24.5 | 90 | 0 | n/a (stat) | re-baseline |
+| verdant_pulse | 5/30 | [7, 34] | +0 | 1:1 | 1.00 | 32.2 | 86 | 0 | n/a (stat) | re-baseline |
+| thick_bark | 6/30 | [10, 37] | +1 | 1:0 | 1.00 | 25.1 | 92 | 0 | n/a (stat) | re-baseline |
+| bloom_surge | 7/30 | [12, 41] | +2 | 2:0 | 0.50 | 26.4 | 103 | 0 | n/a (stat) | re-baseline |
+| **solar_core** | **22/30** | **[56, 86]** | **+17** | **19:2** | **0.00** | 26.1 | 77 | 0 | n/a (stat) | re-baseline (see the lever below) |
+| carapace | 5/30 | [7, 34] | +0 | 1:1 | 1.00 | 25.6 | 79 | 0 | n/a (mod) | re-baseline |
+| ember_sap | 7/30 | [12, 41] | +2 | 2:0 | 0.50 | 25.7 | 87 | 0 | **4.30** (129 ignite hooks) | SHIP |
+| undertow | 6/30 | [10, 37] | +1 | 1:0 | 1.00 | 24.8 | 91 | 0 | **0.03** (1 staggered hook in 30 runs) | **HOLD (ii)** |
+| compost | 4/30 | [5, 30] | -1 | 2:3 | 1.00 | 33.0 | 100 | 0 | **31.70** (951 kill hooks) | SHIP |
+| oil_tithe | 7/30 | [12, 41] | +2 | 3:1 | 0.62 | 26.6 | 108 | 0 | **2.27** (68 tithes) | SHIP |
+| all 10 | 24/30 | [63, 90] | +19 | 21:2 | 0.00 | 20.7 | 77 | **1** | compost 1073, ember_sap 154, undertow 5, tithe 35 | - |
+
+### Graft table, deeproot, tier 0 (the four rule grafts)
+
+`=== sweep_grafts | bot deeproot | config {  } | seeds 1..30 (30) ===`,
+"grafts: ember_sap, undertow, compost, oil_tithe", with
+`=== hooks_probe(scratch) | bot deeproot | config {  } | seeds 1..30 (30) ===`.
+deeproot buys **no** grafts, so its base row is the only clean "hooks that
+exist only because the config installed them" reading in the project.
+
+| row | wins | CI | delta | disc. | p | dmg | turns(w) | t/o | own hooks/run | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|
+| (no graft) | 22/30 | [56, 86] | +0 | 0:0 | 1.00 | 11.0 | 75 | 0 | 0 (buys none) | - |
+| ember_sap | 22/30 | [56, 86] | +0 | 1:1 | 1.00 | 11.8 | 75 | 0 | **11.13** (334 ignite hooks) | SHIP |
+| undertow | 22/30 | [56, 86] | +0 | 0:0 | 1.00 | 11.0 | 75 | 0 | **4.27** (128 staggered hooks) | clears (ii) here |
+| compost | 27/30 | [74, 97] | +5 | 6:1 | 0.12 | **4.8** | 83 | 0 | **23.67** (710 kill hooks) | SHIP |
+| oil_tithe | 25/30 | [66, 93] | +3 | 6:3 | 0.51 | 7.6 | 88 | 0 | **4.40** (132 tithes) | SHIP |
+| all 4 | 27/30 | [74, 97] | +5 | 6:1 | 0.12 | 10.4 | 76 | 0 | compost 675, ember_sap 473, undertow 79, tithe 99 | - |
+
+### Reading the three tables
+
+**Gate (iii) as applied here.** `sweep_grafts` prints a Wilson interval on each
+row's own win fraction and a paired sign test against the base row on the same
+seeds; it does not print an interval on the delta itself. The operational test
+used above is "the row's whole Wilson interval sits below the base row's win
+fraction" - and **no row in any of the three tables fails it**. Every rule
+graft's delta is indistinguishable from zero at 30 seeds (the worst sign-test
+p among the eight rule-graft rows is 0.50, the best 0.12). None of the four is
+a measured win-rate warp, in either direction, at either tier, for either bot.
+
+**`undertow` is the one HOLD, and the reason is the persona, not the row.**
+Its hook needs a `staggered` event, i.e. forced movement interrupting a
+wind-up. Over the 30-seed playtest the optimizer staggers **0.37 times a run**
+and deeproot **4.27** - and the graft's own rows land exactly there: 8 hooks in
+30 optimizer runs at tier 0, **1** in 30 at tier 6, and 128 in 30 deeproot
+runs. It is the C2 `water_jet+` shape again (a control rider only the search
+personas reach), except that this time the search persona clears the
+once-per-run line comfortably. Before re-judging it, decide whether the fix is
+the row, the bot (no heuristic persona seeks a shove into a wind-up), or the
+board.
+
+**`compost` is the row to watch, not the row to fear - yet.** It fires more
+than any other hook in the project (23-32 per run wherever it is held) and its
+only measurable effect on wins is deeproot's +5 [74, 97] against [56, 86] at
+p = 0.12, with damage taken **11.0 -> 4.8 per run**, the lowest cell in any
+graft table this project has recorded. It is also the row 06c explicitly warned
+about: `grow_spike` reads growth adjacent to its target, and `compost` turns
+every kill into another growth tile. The optimizer tables do not show that loop
+paying (+1 at tier 0, -1 at tier 6, combos/run 14.33 -> 18.13 at tier 0), and
+`grow_spike` riders per run did not jump (optimizer 8.50/run against 7.47 in
+06c). Verify at 100 seeds and out of sample before shipping any further growth
+content.
+
+**`ember_sap` is the first content that damages the player.** magpie's 30-seed
+`player dmg ... { "ember_sap": 1 }` and the 100-seed canary's `{ "ember_sap":
+1 }` are small, but the hook bills *whoever* stands on the tile, and the
+`c3_ember_sap` record pins that the bill lands before the beam does. On the
+dealing side it is 34 damage over 100 magpie runs and 14 over 30 optimizer
+runs - the hook fires 4-11 times a run and each fire is worth 1.
+
+**`oil_tithe` fires as designed and buys nothing.** 2.10 tithes/run for the
+optimizer at tier 0, 2.27 at tier 6, 4.40 for deeproot, +0/+2/+3 wins. A
+1-charge discount once a turn is inside the noise of every table it appears in;
+what it does change is the *bought* tithe counters everywhere (sprout 3,
+magpie 6, fanatic 11, optimizer 2 per 30 runs), so the mod is reachable in
+normal play without a pre-install.
+
+**The stat rows are a re-baseline only.** Against the last graft sweep
+(2026-09-06 bump 3, same runner, same seeds, same tier, six-graft shop):
+base 11/30 [22, 54] -> 14/30 [30, 64]; deep_cells 12/30 -> 15/30;
+verdant_pulse 14/30 -> 18/30; thick_bark 12/30 -> 13/30; bloom_surge 12/30 ->
+16/30; carapace 12/30 -> 15/30; **solar_core 20/30 [49, 81] -> 26/30 [70, 95]**.
+Only `solar_core` moved outside the other reading's interval (87% is above
+[49, 81] and 67% is below [70, 95]); every other stat row's point estimate sits
+inside its own predecessor's interval. Nothing in C3 changed what any stat
+graft does - `_graft_stat` returns the same integers `_has_graft` produced, and
+the parity probe proves the event streams are byte-identical - so the movement
+is the new shop stock and the new pick, i.e. exactly the re-baseline this bump
+exists to record. **These are the numbers to compare against next time; do not
+quote the bump-3 graft table beside them.**
+
+### The `solar_core` lever, again
+
+Third and fourth clearing of the Method rule, and the largest yet:
+
+| reading | base | solar_core | delta | discordant | sign p |
+|---|---|---|---|---|---|
+| 2026-09-05b out-of-sample (seeds 101..130) | 10/30 [19, 51] | 25/30 [66, 93] | +15 | 16:1 | 0.00 |
+| 2026-09-06 in-sample (bump 3) | 11/30 [22, 54] | 20/30 [49, 81] | +9 | 10:1 | 0.01 |
+| **this bump, tier 0** | 14/30 [30, 64] | **26/30 [70, 95]** | **+12** | 14:2 | **0.00** |
+| **this bump, tier 6** | 5/30 [7, 34] | **22/30 [56, 86]** | **+17** | 19:2 | **0.00** |
+
+Four readings, two seed ranges, three bumps, two tiers, the same answer. Two
+new things this bump can say that the earlier ones could not:
+
+- **The tier-6 row is the loudest number in the entry.** A +1 regen turns the
+  hardest measured tier from 5/30 into 22/30 - it converts tier 6 from
+  "barely winnable" (`sweep_tiers` fails a tier when the Wilson upper bound is
+  under 10%; the bare row's is 34%) into roughly the bare tier-0 ceiling. The
+  difficulty ladder and the graft table are not independent knobs.
+- **Ten grafts are worth exactly one graft.** At tier 0 the `all 10` row is
+  26/30 [70, 95] - *the same win count as `solar_core` alone*, with the same
+  interval. At tier 6 `all 10` is 24/30 [63, 90] against `solar_core`'s 22/30
+  [56, 86]. Owning the whole table adds nothing measurable over owning the one
+  lever (and costs the run its shop: `grafts bought {}`, conversion 0.02, the
+  graft price starts at 4 + 2x9). C3 was the block that owns graft values and
+  it did not touch `solar_core`; that is still an open balance question, now
+  with four independent readings behind it.
+
+### Canaries (gate v)
+
+- **magpie, 100 seeds.** `=== verify_kit | bot magpie | config {  } | seeds
+  1..100 (100) ===`: **17/100 = 17% wins, win CI [11%, 26%]**, avg floor 4.1,
+  turns on wins 234.8, damage taken 43.8/run, **0 timeouts**, 0 illegal, 0
+  SCRIPT ERROR lines, stall floors 75, quota-unmet deaths 9, `quota reclamps
+  0`. Hooks: `by graft { "compost": 1737, "ember_sap": 188, "undertow": 39 }
+  by kind { "kill": 1737, "ignite": 188, "staggered": 39 } capped 0 tithe 34`,
+  and all ten graft ids appear in `grafts { bloom_surge 36, solar_core 31,
+  verdant_pulse 40, compost 42, carapace 15, oil_tithe 35, deep_cells 33,
+  ember_sap 41, thick_bark 15, undertow 22 }` over 310 buys.
+  Against the 2026-09-05d rule ("the recorded rise baseline is 10/100 = 10%
+  [6, 17]; a 100-seed lower bound clearing 17% is the signal"): the lower bound
+  is **11%**, which does not clear 17%, so **not a signal**. The v2 series now
+  reads 10/100 [6, 17], 13/100 [8, 21], 13/100 [8, 21], 19/100 [13, 28] and
+  **17/100 [11, 26]** - the first reading in the series that did not rise.
+  **Compare the next one against [6, 17], not against [11, 26].** The timeout
+  06c picked up is gone (1 -> 0 at both 30 and 100 seeds), so the one
+  gate-(v) item 06c could not deliver is delivered here.
+- **wanderer, 100 seeds.** `=== verify_kit | bot wanderer | config {  } | seeds
+  1..100 (100) ===`: **0/100 = 0% [0%, 4%]**, avg floor 1.0, **0 timeouts, 0
+  illegal actions, 0 SCRIPT ERROR lines**, `hooks: by graft {  } by kind {  }
+  capped 0 tithe 0` (wanderer never reaches a shrine purchase). Clean pass.
+- **turtle.** `=== measure_fanatic | bot fanatic | config {  } | seeds 1..30
+  (30) ===` at 30 seeds: **2/30 [2%, 21%], avg floor 4.2, core-complete
+  "never" (never 100%), signature 0.06, strike 0.56, 0 timeouts** against 06c's
+  1/30 [1%, 17%], floor 4.2, signature 0.06, strike 0.57. One win apart, each
+  point inside the other interval, and every other cell identical - the canary
+  did not rise.
+- **Timeouts.** 0 for all seven personas at 30 seeds and for both 100-seed
+  canaries. The only timeouts anywhere in this entry are **1 in the tier-6
+  `all 10` graft row** (30 optimizer runs with every graft pre-installed) and
+  **1 in `measure_fanatic`'s `shover_nolance` build** (seed 1, floor 4). 06c
+  recorded 1 magpie timeout at 30 seeds and 1 at 100; both are gone.
+
+### Fanatic archetypes
+
+`FANATIC_SEEDS=30`, `=== measure_fanatic | bot fanatic | config {  } | seeds
+1..30 (30) ===`, all eight builds (06c ran the five-build subset, so the three
+new columns have no before value):
+
+| build | 06c | this bump |
+|---|---|---|
+| turtle | 1/30 [1, 17], floor 4.2, sig 0.06 | 2/30 [2, 21], floor 4.2, sig 0.06 |
+| gardener | 9/30 [17, 48], floor 5.6, sig 0.50 | 11/30 [22, 54], floor 5.7, sig 0.54 |
+| pyro | 9/30 [17, 48], floor 5.7, sig 0.05 | 8/30 [14, 44], floor 5.7, sig 0.04 |
+| ember | 6/30 [10, 37], floor 5.5, sig 0.46 | 8/30 [14, 44], floor 5.6, sig 0.48 |
+| pyro_nolance | 16/30 [36, 70], floor 6.3, sig 0.32 | 13/30 [27, 61], floor 6.3, sig 0.35 |
+| shover | not run | 4/30 [5, 30], floor 5.7, sig 0.18 |
+| shover_nolance | not run | 3/30 [3, 26], floor 4.4, sig 0.61, **1 timeout** |
+| anchor | not run | 4/30 [5, 30], floor 4.3, sig 0.00 |
+| total | 41/150 over 5 builds | 53/240 over 8 builds |
+
+**Every build is above zero** (the hard target) and no build with a before
+value moved outside the other interval. `shover_nolance`'s timeout (seed 1,
+floor 4) is the only one in 240 runs.
+
+### Gate verdict
+
+`tests/playtest.gd` at 30 seeds, gate ON: **exit 0, "gate: all PASS"**.
+
+```
+PASS wanderer 0 wins, avg floor <= 2: 0 wins, avg floor 1.00
+PASS wanderer illegal actions == 0: 0
+PASS sprout wins rare (<= 1 per 30 seeds): 1/30
+PASS sprout illegal actions == 0: 0
+PASS magpie canary <= 10% (design target 0-5%): 5/30 CI [7%, 34%] (fails when the lower bound clears the trip line)
+PASS magpie illegal actions == 0: 0
+PASS fanatic illegal actions == 0: 0
+PASS optimizer band 35-65%: 14/30 CI [30%, 64%]
+PASS optimizer timeouts == 0: 0
+PASS optimizer illegal actions == 0: 0
+PASS deeproot band 70-90%: 22/30 CI [56%, 86%]
+PASS deeproot timeouts == 0: 0
+PASS deeproot illegal actions == 0: 0
+gate: all PASS
+```
+
+`PLAYTEST_BOTS=deeproot_rollout PLAYTEST_SEEDS=30`: exit 0.
+
+```
+PASS deeproot_rollout illegal actions == 0: 0
+gate: all PASS
+```
+
+### Regression corpus
+
+**39 -> 45 records, all `sim_version: 5`.** Plain and `REGRESS_STRICT=1` both
+"regressions: 45 ok, 0 failed", exit 0. Before the corpus work the suite was
+"regressions: 0 ok, 39 failed", exit 1, every line "stale record: sim_version 4
+!= 5". What the corpus phase did, from its report:
+
+- **6 new hand-scripted records**, one per rule graft plus a cap case and a
+  stat-graft case: `c3_ember_sap` (the ignite hook bills the tile's occupant
+  *before* the beam lands: 1 + 2 kills a 3-hp bot the bare lance leaves alive),
+  `c3_ember_sap_cap` (one `sun_flare` lights four oil tiles, three hooks fire
+  and the fourth is skipped - proved *positively*, because with the fourth hook
+  the bot would die inside the cast and the recorded trailing fire tick and
+  death could not exist), `c3_undertow` (jet -> collision -> staggered -> hook
+  -> root 1), `c3_compost` (kill -> hook -> growth, then `mycelium_dash`
+  teleports onto it to prove it is real growth), `c3_oil_tithe` (turn 1 spends
+  1 + 2, turn 2 casts a 2-cost lance on 1 charge - a cast that is illegal
+  without the discount), `c3_stat_grafts` (three grafts at once: `thick_bark`
+  reads shield 2/4/5 where the bare cap reads 2/3/3, and `solar_core` +
+  `deep_cells` pay six lances on turn 4, which neither graft can do alone).
+- **18 fixed-board records re-stamped only** (expect and hash byte-identical),
+  **3 fixed-board records whose hash changed with expect unchanged**
+  (`blockb_forge_once`, `blockb_graft_buy`, `c1b_spore_vial`: their floor
+  carries a shrine, the shop is stocked in `_enter_floor` and `snapshot()`
+  includes `shop`, so the ten-graft side draw moves the state hash even when
+  the shop is never used), **7 bot logs whose action list and outcome survived
+  and whose hash moved**, and **11 bot logs re-recorded** because the new stock
+  plus the tag-overlap pick desynchronises them from the first shrine on.
+- **One hand-edit `REGEN=1` can never do**: `blockb_graft_buy`'s expected event
+  id `carapace` -> `bloom_surge`, because that fixed floor's shrine now stocks
+  `["bloom_surge", "verdant_pulse"]`.
+- **magpie lost both of its determinism-seed wins** on re-record
+  (`det_magpie_s3` won floor 7 in 238 turns -> died floor 3 at 113;
+  `det_magpie_s42` won floor 7 in 134 -> died floor 4 at 146), while the
+  optimizer kept 3/3 on the same seeds but took 30-45 more turns each
+  (68 -> 113, 78 -> 83, 88 -> 121). Three seeds is noise and the 30- and
+  100-seed numbers above say magpie did not move; recorded here because it is
+  the corpus's own evidence and it points the same way as the re-baseline.
+
+### Anything else that moved
+
+- **Nothing in this entry is comparable per seed with anything before it.** The
+  ten-graft shop draw reaches every seed of every persona, so this bump is a
+  re-baseline by construction. Aggregate win rates still compare (same
+  instruments, same seeds, same personas) and none of the seven moved; the
+  paired A/B that 06c could run against a pristine tree is not available here.
+- **magpie's damage taken rose again**, 43.6 -> 52.1 per run at 30 seeds on the
+  same 5 wins, with shrine turns 29.60 -> 27.57 and 93 graft offers discarded.
+  Its signature share fell 0.57 -> 0.53. Greed now has ten permanents to shop
+  for and spends the same time in the smog buying them.
+- **deeproot's damage taken fell 11.0 -> 4.8 per run in the `compost` row** and
+  its rollout sibling's is 4.1 in the playtest (3.4 in 06c). The ceiling's
+  terrain share held at 0.16 (0.11 for the rollout) and its collision damage is
+  still the roster's largest (`collision` 299 over 30 runs).
+- **`resisted` is unchanged at 2** (fanatic only, exactly as in 06c; 0 for
+  every other persona at 30 seeds and 0 over the 100-seed magpie canary), and
+  it is still `seed_bomb+`'s root doing it, not `undertow`'s: root statuses run
+  fanatic 56, deeproot_rollout 16, optimizer 5, sprout 2, magpie 1, deeproot 1,
+  and at 4-8 `undertow` hooks per 30 optimizer runs the graft cannot exercise
+  the cooldown either way. `spore` statuses are still 0 everywhere.
+- **`quota_reclamp` has still never fired in a bot run** - 0 over this entry's
+  210 playtest runs, 200 canary runs and 900 graft-sweep runs (the 540
+  hook-probe runs do not print it), on top of every earlier bump. Five bumps. Its only coverage remains
+  `tests/test_economy.gd` and the two `blockb_quota_reclamp*` records.
+- **Press and forge are still dead sinks**: `upcycles 0/0` for every persona in
+  every run in this entry.
+- **`hook_capped` has never fired in play** (0 in all 950 runs that print it),
+  so `HOOK_DEPTH_MAX` and `HOOK_STEP_CAP` are load-bearing only in the tests.
+  The sim phase notes the reachable nesting in C3 is exactly one level
+  (`ember_sap` ignite -> kill -> `compost` growth), so the depth cap has no
+  natural pressure until a hook writes terrain that fires another hook.
+- **`tests/sweep_grafts.gd` cannot print the hooks line.** Only
+  `tests/playtest.gd` and `tests/verify_kit.gd` call `Tally.print_block`;
+  `sweep_grafts.gd:84` prints its own compact KPI pair. Every "own hooks/run"
+  cell above therefore comes from a scratch probe that re-runs the same configs
+  through `Sweep.measure` (win columns reproduce the sweep exactly, which is
+  how the probe is validated). Whoever owns `tests/sweep_lib.gd` can end that
+  by adding `str(t.hooks_by_graft)` to the per-config line.
+- **Not measured for this bump:** no `sweep_combos`, `sweep_packages`,
+  `sweep_tiers`, `measure_bosses` or `draft_oracle` run. Locked-kit lift, tier
+  winnability, boss arrivals and draft regret are still the 06c / bump-3
+  numbers, and all of them predate the ten-graft shop, so every one of them is
+  stale in the same way the corpus was.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from
@@ -2688,3 +3221,58 @@ report:
   above the remaining build casts so the seed-on-head lead is not eaten by a
   second bomb. The flare branch is the likeliest cause of `sun_flare`'s locked
   row losing 3 wins.
+
+### Bump-5 additions (2026-09-06d)
+
+- **`solar_core` is now four-for-four and the tier-6 row is the loudest yet:**
+  5/30 [7, 34] -> 22/30 [56, 86], +17, 19:2 discordant, p = 0.00, on top of
+  tier 0's 14/30 [30, 64] -> 26/30 [70, 95], +12, 14:2, p = 0.00. It is the
+  only row in the whole re-baseline that moved outside its own predecessor's
+  interval (bump 3: 20/30 [49, 81]; 87% is above that and 67% is below
+  [70, 95]). Owning the whole ten-row table is worth the same
+  26/30 as owning `solar_core` alone at tier 0. C3 was the block that owns
+  graft values and chose not to touch it; the next block that opens `GRAFTS`
+  should either price regen or say why it is a deliberate power spike.
+- **`undertow` is the C3 row on HOLD:** 8 hooks over 30 optimizer runs at
+  tier 0 and **1** over 30 at tier 6, against 128 over 30 deeproot runs. The
+  optimizer staggers 0.37 times a run and deeproot 4.27; the row is fine and
+  the opportunity rate is not there for heuristic play. Same shape as C2's
+  `water_jet+`, which is also a shove rider - two blocks in a row have shipped
+  control content only the search personas reach. Judge any further
+  displacement content with a deeproot forced-kit run, per the standing watch
+  item about fanatic and control archetypes.
+- **`compost` fires 23-32 times a run and is the growth-loop risk 06c flagged.**
+  Its only visible win effect is deeproot +5 [74, 97] at p = 0.12 with damage
+  taken 11.0 -> 4.8 - the lowest damage cell in any graft table on record.
+  The `grow_spike` loop it was predicted to feed has not shown up in the
+  optimizer tables yet (+1 at tier 0, -1 at tier 6, riders/run 7.47 -> 8.50).
+  Verify at 100 seeds and out of sample (`SWEEP_SEED_FROM=101`) before any
+  further growth content, and re-run `sweep_combos` for `grow_spike` pairs,
+  which has not been measured since the graft table changed.
+- **The magpie canary did not rise for the first time in the v2 series.**
+  10/100 [6, 17], 13/100 [8, 21], 13/100 [8, 21], 19/100 [13, 28], and now
+  **17/100 [11, 26]** with **0 timeouts** (06c had 1 at 30 seeds and 1 at 100).
+  Not a signal either way by the 2026-09-05d rule; the trip line is still
+  "a lower bound clearing 17%", and 11% is well under it. **Compare the next
+  100-seed run against [6, 17].**
+- **Every pre-C3 measurement of a shop is stale, not just the corpus.** The
+  shrine's graft offers come from a side-rng draw over `Content.GRAFTS`, so
+  going from six rows to ten re-rolls every shop on every seed even for a bot
+  that buys nothing - `blockb_forge_once`, `blockb_graft_buy` and
+  `c1b_spore_vial` changed their state hash without changing a single action.
+  Any future `GRAFTS` addition does the same thing: it is a `SIM_VERSION` bump
+  and a corpus pass, not a data-only edit.
+- **The hook caps are untested in play.** `hook_capped` is 0 across all 950
+  runs in this entry that print it, and the only reachable nesting in C3 is
+  depth 2. The caps exist for content that does not exist yet; the first hook
+  that writes terrain firing another hook is the one to re-measure them on.
+- **`tests/sweep_grafts.gd` still prints no hooks line**, so the per-graft hook
+  counts in this entry come from a scratch probe rather than a repo runner.
+  That is a measurement gap, not a result: the next person to want these
+  numbers has to rebuild the probe unless `sweep_lib`'s per-config line grows
+  the counter.
+- **Two graft rows are the first things to revert if a later sweep dislikes
+  this bump**, in this order: `undertow` (no heuristic opportunity rate) and
+  `compost` (the growth loop that no 30-seed table has yet priced). `ember_sap`
+  and `oil_tithe` both fire several times a run and move no win rate outside
+  noise at either tier.

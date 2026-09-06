@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["###########","#........>#","#.........#","#@.k.#....#","#.........#","###########"]},"grafts":["undertow"],"kit":["water_jet","seed_bomb","mycelium_dash"],"pool":["water_jet","seed_bomb","mycelium_dash"]},
+"actions": [{"slot":0,"target":[1,0],"type":"ability"}],
+"expect": {"events":[{"id":"water_jet","t":"ability"},{"amt":2,"src":"collision:water_jet","t":"damage","who":"smokestack"},{"t":"staggered"},{"id":"undertow","on":"staggered","t":"hook"},{"status":"root","t":"status","turns":1}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "C3 undertow: the jet shoves the smokestack one tile into the pillar at (5,3) - the collision staggers it, and the staggered hook roots it for a turn on top of the dropped intent",
+"sim_version": 5,
+"hash": "b75c0973e4a69a8eb2bf7d01074a4986ed7d670cd9103419641d063ebf4e6a6f"
+}

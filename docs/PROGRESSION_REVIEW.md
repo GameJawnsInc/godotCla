@@ -234,6 +234,70 @@ for every persona. NOT done, in 6.3 order: **C3** (the `_hook` dispatcher,
 grafts as `stat | mod | hooks` data, the four rule grafts), the nine package
 `+` rows, the profile that sees builds, and everything in 6.1 and 7.5.
 
+**Status (2026-09-06d).** Block C3 (6.3) has landed and **`Game.SIM_VERSION` is
+5**. Three pieces shipped together: `Game._hook(kind, ctx)` (`sim/game.gd:2037`)
+called immediately after the existing `_emit` at all seven kinds this section
+names (`Content.HOOK_KINDS` = ignite, staggered, cleanse, growth_planted, kill,
+shield_break, collision), sources scanned in fixed order (kit slots, then
+`player.grafts`), `Content.HOOK_DEPTH_MAX` 3 and `HOOK_STEP_CAP` 12 with
+`{t: "hook_capped"}` once per step, and the positional ops `damage_at`,
+`status_at`, `terrain_at`; `GRAFTS` rewritten as `{name, desc, tags}` plus
+exactly one of `stat | mod | hooks`, with `_graft_stat` / `_graft_mod`
+replacing all six `_has_graft` sites (`_has_graft` is gone from the tree); and
+the four rule grafts as specified - `ember_sap` (ignite, 1 damage, cap 3),
+`undertow` (staggered -> root 1), `compost` (kill -> growth), `oil_tithe`
+(first oil-aimed cast each turn costs 1 less, floored at 1, `{t: "tithe"}`).
+The six legacy grafts are numerically untouched: a parity probe against the
+pristine pre-C3 tree (optimizer, 10 seeds, each graft pre-installed) reports
+identical per-step event-stream hashes, `state_hash` and `rng.state` on all 60
+rows. `tests/test_content.gd` gained the graft lint the section asked for
+("23 bad rows -> 23 failures; 5 good rows -> 0 failures"), including the ban on
+hook rows that grant shield, thorns, heal or cleanse credit. Optimizer, magpie
+and fanatic now pick the stocked graft whose tags overlap the kit most, read
+from `Content` so a new row ranks itself; deeproot is unchanged and buys no
+grafts. The corpus went 39 -> 45 records, all `sim_version: 5`, with six new
+`c3_*` records - one per rule graft plus the per-turn cap and a three-stat-graft
+case.
+
+The re-baseline is the "2026-09-06d - bump 5 (C3)" entry in `docs/BALANCE.md`,
+and it is a **full** re-baseline: the shrine draws its two graft offers from
+`Content.GRAFTS` through the side rng, so ten rows instead of six re-roll every
+shop on every seed even for a bot that buys nothing. Suite green including the
+playtest gate ("gate: all PASS", "regressions: 45 ok, 0 failed" plain and
+`REGRESS_STRICT=1`), no persona outside the other run's Wilson interval at 30
+seeds (optimizer 14/30 [30, 64], deeproot 22/30 [56, 86], magpie 5/30 [7, 34],
+fanatic 7/30 [12, 41], deeproot_rollout 27/30 [74, 97]), **zero timeouts for
+every persona** - which closes 06c's one unmet gate-(v) item, magpie's timeout,
+at both 30 and 100 seeds - every fanatic build above zero (53/240 over all
+eight builds) with the turtle canary at 2/30 [2, 21] against 06c's 1/30
+[1, 17], magpie's canary at 17/100 [11, 26] (the first reading in the v2 series
+that did not rise; the trip line is still a lower bound clearing 17%), and
+wanderer clean at 100 seeds (0/100 [0, 4], zero script errors, zero illegal
+actions). **Three of the four rule grafts discharge the 6.0 shipping gate and
+one does not.** SHIP: `compost` (23-32 hooks per run wherever it is held;
+deeproot +5, 22/30 [56, 86] -> 27/30 [74, 97] at p = 0.12 with damage taken
+11.0 -> 4.8), `ember_sap` (4.93 / 4.30 / 11.13 hooks per run for optimizer
+tier 0, optimizer tier 6 and deeproot; the first content in the project that
+damages the player) and `oil_tithe` (2.10 / 2.27 / 4.40 tithes per run).
+**HOLD on gate (ii)**: `undertow` fires 8 hooks over 30 optimizer runs at
+tier 0 and **1** over 30 at tier 6, against 128 over 30 deeproot runs - the
+optimizer staggers 0.37 times a run and deeproot 4.27, so this is C2's
+`water_jet+` shape again, a shove rider only the search personas reach. No rule
+graft's win delta is distinguishable from zero at 30 seeds in either tier for
+either bot (worst sign-test p = 0.50), so nothing here is a measured warp, and
+nothing was patched to make a gate pass. What C3 did **not** fix, and its own
+numbers make louder: `solar_core` is now four-for-four on the Method rule and
+its tier-6 row (5/30 [7, 34] -> 22/30 [56, 86], +17, p = 0.00) is the largest
+graft effect ever recorded here, while owning all ten grafts is worth exactly
+the same 26/30 as owning `solar_core` alone at tier 0. Still open from earlier
+blocks and unchanged here: `quota_reclamp` has never fired in a bot run (0
+again over this bump's 1,310 runs that print the counter) and press/forge
+upcycles are 0/0 for every persona. NOT done, in 6.3 order: **the nine package
+`+` rows**, the **profile that sees builds**, **`deeproot_plan`** (7.5), the
+**tier 6-8 re-judgement** review 6.2 defers to a grafted ceiling - which now
+has its grafted ceiling, since the tier-6 graft table above is the first
+measurement of one - and everything in 6.1.
+
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
 180 bot runs; a synergy-lift sweep of 7 hypothesised pairs at 24 seeds per

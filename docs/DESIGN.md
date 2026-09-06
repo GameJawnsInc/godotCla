@@ -200,11 +200,41 @@ tests a different build muscle so no single draft strategy trivializes it.
   can always still move. A draft reroll is not in the game yet.
 - `+` items exist only through the press: the shrine and supply pods stock base
   items only, so item upgrades are a spend, never a drop.
-- **Grafts** are the relic analog: passive run-long modifiers, data-driven like
-  everything else (e.g. "+2 bank cap", "growth tiles heal +1", "first ability
-  each turn that targets oil is free"). Kit stays 4+1; Grafts are where
-  long-tail build identity accumulates. Each graft owned raises the price of
-  the next.
+- **Grafts** are the relic analog: passive run-long modifiers, and they are
+  **data, not code**. Every `Content.GRAFTS` row is `{name, desc, tags}` plus
+  exactly one of three shapes, and the sim reads the shape rather than the id:
+  - `stat: {key: int}` — summed over everything you hold. Keys are a closed
+    set: `bank_cap`, `shield_cap`, `regen`, `growth_heal`, `cleanse_bloom`.
+  - `mod: {key: value}` — a rule switch the sim looks up where the rule lives
+    (`floor_start_shield`, `oil_cast_discount`).
+  - `hooks: [{on, effects, cap_per_turn?, if?}]` — rows the hook dispatcher
+    runs when something happens. The seven hook kinds are `ignite`,
+    `staggered`, `cleanse`, `growth_planted`, `kill`, `shield_break` and
+    `collision`; effects are the ordinary effect grammar aimed at the tile the
+    event happened on, plus three positional ops (`damage_at`, `status_at`,
+    `terrain_at`). Nesting and per-step work are capped so a hook chain can
+    never run away, and `cap_per_turn` bounds a single graft's firing rate.
+  Adding a graft means adding a row. Nothing in the shop, the bots, the tests
+  or the shell learns its name.
+- The ten live rows: **Deep Cells** (+2 bank cap), **Verdant Pulse** (growth
+  heals +1), **Thick Bark** (+2 shield cap), **Bloom Surge** (cleansing yields
+  +1 bloom), **Solar Core** (+1 charge regen), **Carapace** (start each floor
+  with 2 shield), **Ember Sap** (whoever stands on a tile as it catches fire
+  takes 1, three times a turn), **Undertow** (staggered enemies are also rooted
+  a turn), **Compost** (a kill leaves growth where the enemy fell) and **Oil
+  Tithe** (the first cast aimed at oil each turn costs 1 less, never below 1).
+  Kit stays 4+1; Grafts are where long-tail build identity accumulates. Each
+  graft owned raises the price of the next.
+- Rule grafts are deliberately kept off the stall surface: a hook may not grant
+  shield, healing, thorns or cleanse credit, because those are the loops that
+  let a run stand still and win. Damage, control and economy only.
+- The combos the rule grafts are for: **Ember Sap + water_jet + lance** (shove
+  an enemy onto oil and lance the line — ignite 1, burn tick 1, lance 2, four
+  damage for three charge); **Undertow + a wide shove** (a whole staggered
+  group is rooted for a turn, which buys two clean lance lanes next turn); and
+  **Compost + grow_spike** (every kill leaves a growth tile, so the next enemy
+  is already standing next to growth) — a growth engine for a kit that never
+  drafted the gardener's tools.
 - Grafts enter the combo-sweep harness the same as abilities, and can be
   pre-installed for a sweep via the run config (`tests/sweep_grafts.gd`).
 

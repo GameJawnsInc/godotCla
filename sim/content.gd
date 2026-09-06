@@ -232,7 +232,7 @@ const DRAFT_POOL := [
 ## fold upgrades back onto the base entry.
 
 ## Closed tag vocabulary. Adding a tag means adding it here first.
-const TAGS := ["sun", "fire", "water", "wind", "growth", "bark", "control", "displace", "smoke", "mobility"]
+const TAGS := ["sun", "fire", "water", "wind", "growth", "bark", "control", "displace", "smoke", "mobility", "economy"]
 ## Closed role vocabulary: what an ability does for a turn plan.
 const ROLES := ["setup", "payoff", "damage", "defense", "control", "mobility", "utility"]
 
@@ -298,14 +298,69 @@ const ITEMS := {
 const ITEM_CAP := 2  # satchel slots
 const ROOM_BLOOM_BONUS := 2  # extra bloom when a room's last corruption falls
 
+## Grafts as data (docs/PROGRESSION_REVIEW.md 6.3 C3). Every row carries
+## name, desc, tags (a TAGS subset, read by bots to rank shop offers) and
+## exactly one of:
+##   stat:  {key: int}   summed over held grafts by Game._graft_stat(key);
+##          keys: bank_cap, shield_cap, regen, growth_heal, cleanse_bloom
+##   mod:   {key: value} first held value wins, Game._graft_mod(key, default);
+##          keys: floor_start_shield, oil_cast_discount
+##   hooks: [{on: kind, effects: [...], cap_per_turn?: n, if?: [...]}] rows
+##          the Game._hook dispatcher runs when `kind` (HOOK_KINDS) happens;
+##          effects are _apply_effect dicts aimed at the hook tile plus the
+##          positional ops damage_at {dmg}, status_at {status, turns} and
+##          terrain_at {kind}. cap_per_turn (0 = none) is per source id.
+## The lint (tests/test_content.gd) rejects hook rows that grant shield,
+## thorns, heal or cleanse credit: those are the stall vector BALANCE.md
+## documents, so rule grafts stay on the damage / control / economy side.
 const GRAFTS := {
-	"deep_cells": {"name": "Deep Cells", "desc": "+2 bank cap"},
-	"verdant_pulse": {"name": "Verdant Pulse", "desc": "growth heals +1"},
-	"thick_bark": {"name": "Thick Bark", "desc": "+2 shield cap"},
-	"bloom_surge": {"name": "Bloom Surge", "desc": "cleansing yields +1 bloom"},
-	"solar_core": {"name": "Solar Core", "desc": "+1 charge regen"},
-	"carapace": {"name": "Carapace", "desc": "start each floor with 2 shield"},
+	"deep_cells": {"name": "Deep Cells", "desc": "+2 bank cap", "tags": ["sun"], "stat": {"bank_cap": 2}},
+	"verdant_pulse": {"name": "Verdant Pulse", "desc": "growth heals +1", "tags": ["growth"], "stat": {"growth_heal": 1}},
+	"thick_bark": {"name": "Thick Bark", "desc": "+2 shield cap", "tags": ["bark"], "stat": {"shield_cap": 2}},
+	"bloom_surge": {"name": "Bloom Surge", "desc": "cleansing yields +1 bloom", "tags": ["growth", "economy"], "stat": {"cleanse_bloom": 1}},
+	"solar_core": {"name": "Solar Core", "desc": "+1 charge regen", "tags": ["sun"], "stat": {"regen": 1}},
+	"carapace": {"name": "Carapace", "desc": "start each floor with 2 shield", "tags": ["bark"], "mod": {"floor_start_shield": 2}},
+	"ember_sap": {
+		"name": "Ember Sap", "desc": "whoever stands on a tile as it catches fire takes 1 (3 times a turn)",
+		"tags": ["fire"],
+		"hooks": [{"on": "ignite", "effects": [{"op": "damage_at", "dmg": 1}], "cap_per_turn": 3}],
+	},
+	"undertow": {
+		"name": "Undertow", "desc": "staggered enemies are also rooted a turn",
+		"tags": ["water", "displace", "control"],
+		"hooks": [{"on": "staggered", "effects": [{"op": "status_at", "status": "root", "turns": 1}]}],
+	},
+	"compost": {
+		"name": "Compost", "desc": "a kill leaves growth where the enemy fell",
+		"tags": ["growth"],
+		"hooks": [{"on": "kill", "effects": [{"op": "terrain_at", "kind": "growth"}]}],
+	},
+	"oil_tithe": {
+		"name": "Oil Tithe", "desc": "the first cast aimed at oil each turn costs 1 less (never below 1)",
+		"tags": ["fire", "water", "economy"],
+		"mod": {"oil_cast_discount": 1},
+	},
 }
+
+## Hook kinds the sim dispatches (Game._hook), with the ctx keys each carries:
+##   ignite {tile, by}                every ignition: lance, flare, igniter
+##                                    enemy, ignite_all, spread, create_terrain
+##   staggered {enemy}                forced movement interrupted a wind-up
+##   cleanse {tile, kind}             the player tended a corruption tile
+##   growth_planted {tiles}           grow_radius / the cleanse plant, one hook
+##                                    per cast carrying every tile planted
+##   kill {tile, enemy_kind, enemy_id}  an enemy died (any source)
+##   shield_break {amt}               a hit took the player shield from > 0 to 0
+##   collision {enemy, tile, src, dmg}  an enemy took collision damage
+## A REACTIONS row whose event is a hook kind fires that hook (fire spread
+## fires "ignite"), so the reaction table and the dispatcher share one name.
+const HOOK_KINDS := ["ignite", "staggered", "cleanse", "growth_planted", "kill", "shield_break", "collision"]
+## Hooks caused by hook effects nest at most this deep (ember_sap kill ->
+## compost growth is depth 2); deeper hooks are skipped with {t: hook_capped}.
+const HOOK_DEPTH_MAX := 3
+## Total hook rows run in one step(); beyond it hooks are skipped and
+## {t: hook_capped} is emitted once for the step.
+const HOOK_STEP_CAP := 12
 
 ## One-line effect text per ability (a + form without its own entry falls back
 ## to the base). Rider rows (docs/PROGRESSION_REVIEW.md 6.3 C2) name the rider

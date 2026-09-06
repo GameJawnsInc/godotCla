@@ -91,3 +91,12 @@ func _kpi_line(m: Dictionary) -> void:
 	print("    shrine: buys %s  grafts bought %s  discarded %d  quota reclamps %d  shrine turns/run %.2f" % [
 		str(t.buys_by_kind), str(t.grafts_by_id), t.graft_discards,
 		t.quota_reclamps, float(t.shrine_turns) / n])
+	print("    hooks/run %.2f  by graft %s  by kind %s  capped %d  tithe %d" % [
+		float(_sum_int(t.hooks_by_graft)) / n, str(t.hooks_by_graft), str(t.hooks_by_kind), t.hook_capped, t.tithes])
+
+
+func _sum_int(d: Dictionary) -> int:
+	var total := 0
+	for k in d:
+		total += int(d[k])
+	return total

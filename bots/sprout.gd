@@ -156,9 +156,9 @@ func _shop_impulse(buys: Array) -> Dictionary:
 	for a in buys:
 		if a["item"] == "ability":
 			return a
-	# the shrine offers two grafts and one pick closes the counter: take
-	# offer 0. No bot ranks grafts yet - the progression review holds any
-	# graft weighting until tests/sweep_grafts.gd has run at 30+ seeds.
+	# the shrine offers two grafts and one pick closes the counter: sprout
+	# deliberately takes offer 0 (the cautious noob has no graft opinion);
+	# optimizer, magpie and fanatic rank the offers by tag overlap with the kit.
 	var graft: Dictionary = {}
 	for a in buys:
 		if a["item"] != "graft":

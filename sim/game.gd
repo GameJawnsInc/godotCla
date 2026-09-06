@@ -31,7 +31,10 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## advance/drag, spore add-stacking, spread fire inheriting the bloom flag.
 ## 4: C2 - rider rows on grow_spike(+), sun_flare(+), water_jet+, vine_whip+
 ## and seed_bomb+ (Content data only; every cast of those ids replays anew).
-const SIM_VERSION := 4
+## 5: C3 - the hook dispatcher (_hook) and grafts as data: four rule grafts
+## (ember_sap, undertow, compost, oil_tithe) join the shop stock, so the
+## shop_graft side draw and every hook-carrying run replay anew.
+const SIM_VERSION := 5
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -71,6 +74,15 @@ var _fixed_floor := {}  # config "fixed_floor": scripted floor-1 layout (tutoria
 ## later block exposes them alongside a SIM_VERSION bump.
 var casts_this_turn := 0
 var moved_this_turn := 0
+## Hook dispatcher state (C3). hook_uses: source id -> hook rows run this
+## turn (per-turn caps); tithe_used_this_turn: the oil_cast_discount mod has
+## been spent this turn. Both reset in _begin_player_turn, copied by clone(),
+## NOT in snapshot(). The three underscore fields are per-step (reset in step).
+var hook_uses := {}
+var tithe_used_this_turn := false
+var _hook_depth := 0
+var _hook_runs := 0
+var _hook_capped := false
 
 var _next_id := 1
 var _step_events: Array = []
@@ -177,6 +189,8 @@ func shop_cost(item: String) -> int:
 
 func step(action: Dictionary) -> Array:
 	_step_events = []
+	_hook_runs = 0
+	_hook_capped = false
 	if over:
 		_emit({"t": "error", "msg": "game is over"})
 		return _step_events
@@ -248,8 +262,14 @@ func legal_actions() -> Array:
 		if player["gummed"].has(slot):
 			continue
 		var aid: String = player["kit"][slot]
-		if player["charge"] >= ability_cost(aid):
-			for tgt in _ability_targets(aid):
+		var flat := ability_cost(aid)
+		# oil_cast_discount: each target is priced on its own while the
+		# discount is still available this turn (a cheaper oil cast may be
+		# legal on 1 charge when the flat price is not)
+		var tithe: bool = _graft_mod("oil_cast_discount", 0) > 0 and not tithe_used_this_turn
+		for tgt in _ability_targets(aid):
+			var c: int = ability_cost(aid, tgt) if tithe else flat
+			if player["charge"] >= c:
 				acts.append({"type": "ability", "slot": slot, "target": tgt})
 	for i in player["items"].size():
 		acts.append({"type": "use_item", "slot": i})
@@ -371,6 +391,8 @@ func clone():
 	g.shop = shop.duplicate(true)
 	g.casts_this_turn = casts_this_turn
 	g.moved_this_turn = moved_this_turn
+	g.hook_uses = hook_uses.duplicate()
+	g.tithe_used_this_turn = tithe_used_this_turn
 	g._next_id = _next_id
 	g._pending_floor = _pending_floor
 	return g
@@ -404,8 +426,9 @@ func _enter_floor(n: int) -> void:
 			e["elite"] = true
 			e["hp"] += Content.ELITE_HP_BONUS
 	shop = {} if mutators.has("boarded") else _stock_shop()
-	if _has_graft("carapace"):
-		player["shield"] = mini(maxi(player["shield"], 2), _shield_cap())
+	var floor_shield := int(_graft_mod("floor_start_shield", 0))
+	if floor_shield > 0:
+		player["shield"] = mini(maxi(player["shield"], floor_shield), _shield_cap())
 	_emit({"t": "floor", "floor": n, "name": fdef["name"]})
 	_compute_intents()
 
@@ -485,11 +508,13 @@ func _reclamp_quota() -> void:
 
 
 func _begin_player_turn() -> void:
-	var regen: int = maxi(1, Content.BASE_REGEN - dim) + (1 if _has_graft("solar_core") else 0)
+	var regen: int = maxi(1, Content.BASE_REGEN - dim) + _graft_stat("regen")
 	player["charge"] = player["bank"] + regen
 	player["bank"] = 0
 	casts_this_turn = 0
 	moved_this_turn = 0
+	hook_uses = {}
+	tithe_used_this_turn = false
 	for slot in player["gummed"].keys().duplicate():
 		player["gummed"][slot] -= 1
 		if player["gummed"][slot] <= 0:
@@ -680,6 +705,7 @@ func _stagger(e: Dictionary) -> void:
 	e["status"]["stagger_cd"] = 3
 	e["intent"] = {"type": "idle"}
 	_emit({"t": "staggered", "id": e["id"]})
+	_hook("staggered", {"enemy": e})
 
 
 func _execute_intent(e: Dictionary) -> void:
@@ -743,6 +769,7 @@ func _execute_intent(e: Dictionary) -> void:
 			for t in terrain.keys().duplicate():
 				if Content.terrain(String(terrain[t]["kind"]), "flammable", false):
 					_ignite(t, e["kind"])
+					_hook("ignite", {"tile": t, "by": e["kind"]})
 			_emit({"t": "ignite_all"})
 		"gather":
 			e["cycle"] = int(e.get("cycle", 0)) + 1
@@ -892,7 +919,7 @@ func _environment_phase() -> void:
 				_damage_enemy(e, tick, sname)
 	var heal := int(Content.terrain(_terrain_kind(player["pos"]), "heal", 0))
 	if heal > 0 and player["hp"] < player["max_hp"]:
-		var heal_amt: int = heal + (1 if _has_graft("verdant_pulse") else 0)
+		var heal_amt: int = heal + _graft_stat("growth_heal")
 		player["hp"] = mini(player["hp"] + heal_amt, player["max_hp"])
 		_emit({"t": "heal", "amt": heal_amt})
 
@@ -957,6 +984,9 @@ func _terrain_react() -> void:
 		var ev := String(row.get("event", ""))
 		if ev != "":
 			_emit({"t": ev, "tile": p})
+			# a reaction whose event is a hook kind fires it (fire spread -> ignite)
+			if Content.HOOK_KINDS.has(ev):
+				_hook(ev, {"tile": p, "by": String(pending[p]["by"])})
 
 
 func _tick_smog() -> void:
@@ -1048,7 +1078,7 @@ func _act_cleanse(action: Dictionary) -> void:
 	var yield_: int = int(terrain[target].get("bloom", Content.terrain(k, "bloom", 1)))
 	terrain[target] = {"kind": "growth"}
 	if yield_ > 0:
-		bloom += yield_ + (1 if _has_graft("bloom_surge") else 0)
+		bloom += yield_ + _graft_stat("cleanse_bloom")
 	# tending the world buys time, but the sky can only mend so fast per
 	# floor: quota cleanses thin the smog by 2 (funds the gate's detour),
 	# the next few thin it by 1, and beyond that cleansing still pays
@@ -1063,6 +1093,8 @@ func _act_cleanse(action: Dictionary) -> void:
 	smog = maxi(smog - relief, 0)
 	greened += 1
 	_emit({"t": "cleanse", "tile": target, "kind": k, "bloom": bloom})
+	_hook("cleanse", {"tile": target, "kind": k})
+	_hook("growth_planted", {"tiles": [target]})
 	if green_need > 0 and greened == green_need:
 		_emit({"t": "stairs_awaken", "tile": map["stairs"]})
 	_check_room_bloom(target)
@@ -1350,18 +1382,31 @@ func _act_buy(action: Dictionary) -> void:
 			_emit({"t": "illegal", "action": "buy"})
 
 
-func _has_graft(gid: String) -> bool:
-	return player["grafts"].has(gid)
+## Sum of `key` over the "stat" dicts of every held graft (Content.GRAFTS).
+func _graft_stat(key: String) -> int:
+	var v := 0
+	for gid in player["grafts"]:
+		v += int(Content.GRAFTS[gid].get("stat", {}).get(key, 0))
+	return v
+
+
+## The first held graft's "mod" value for `key` (held order), else `default`.
+func _graft_mod(key: String, default):
+	for gid in player["grafts"]:
+		var mod: Dictionary = Content.GRAFTS[gid].get("mod", {})
+		if mod.has(key):
+			return mod[key]
+	return default
 
 
 func _bank_cap() -> int:
 	if mutators.has("parched"):
 		return 0
-	return Content.BANK_CAP + (2 if _has_graft("deep_cells") else 0)
+	return Content.BANK_CAP + _graft_stat("bank_cap")
 
 
 func _shield_cap() -> int:
-	return Content.SHIELD_CAP + (2 if _has_graft("thick_bark") else 0)
+	return Content.SHIELD_CAP + _graft_stat("shield_cap")
 
 
 func _act_ability(action: Dictionary) -> void:
@@ -1372,14 +1417,19 @@ func _act_ability(action: Dictionary) -> void:
 	var aid: String = player["kit"][slot]
 	var adef: Dictionary = Content.ABILITIES[aid]
 	var target = action.get("target")
-	var cost := ability_cost(aid)
+	var surge_cost := ability_cost(aid)
+	var cost := ability_cost(aid, target)
 	if player["charge"] < cost or not _ability_targets(aid).has(target):
 		_emit({"t": "illegal", "action": "ability", "id": aid})
 		return
-	if cost < int(adef["cost"]):
+	if surge_cost < int(adef["cost"]):
 		# verdant surge: the cast draws the growth underfoot up into itself
 		terrain.erase(player["pos"])
 		_emit({"t": "verdant", "tile": player["pos"]})
+	if cost < surge_cost:
+		# oil_cast_discount (oil_tithe): spent on the first oil-aimed cast of the turn
+		tithe_used_this_turn = true
+		_emit({"t": "tithe", "id": aid})
 	player["charge"] -= cost
 	player["uses"][aid] = int(player["uses"].get(aid, 0)) + 1
 	# cast context: what the riders (if / per / bonus / then) may read
@@ -1395,14 +1445,35 @@ func _act_ability(action: Dictionary) -> void:
 
 ## Live cost of an ability right now: standing on growth applies the
 ## ability's surge rule (Content.SURGE_DEFAULT unless the row carries its own
-## "surge") to a cost-2+ cast, consuming the tile (verdant surge).
-func ability_cost(aid: String) -> int:
+## "surge") to a cost-2+ cast, consuming the tile (verdant surge). With a
+## `target`, a held oil_cast_discount graft mod (oil_tithe) that is unspent
+## this turn takes its discount off an oil-aimed cast, floored at 1: the
+## resolved target tile is oil, or for "dir" abilities the line holds oil
+## within range. Without a target the discount is never applied.
+func ability_cost(aid: String, target = null) -> int:
 	var adef: Dictionary = Content.ABILITIES[aid]
 	var base: int = int(adef["cost"])
+	var cost := base
 	if base >= 2 and _terrain_kind(player["pos"]) == "growth":
 		var surge: Dictionary = adef.get("surge", Content.SURGE_DEFAULT)
-		return maxi(1, base + int(surge.get("cost", -1)))
-	return base
+		cost = maxi(1, base + int(surge.get("cost", -1)))
+	if target != null and cost > 1 and not tithe_used_this_turn:
+		var discount := int(_graft_mod("oil_cast_discount", 0))
+		if discount > 0 and _targets_oil(adef, target):
+			cost = maxi(1, cost - discount)
+	return cost
+
+
+## Whether a cast of `adef` at `target` is aimed at oil: "dir" abilities when
+## the line holds oil within range (walls stop the walk, Game._rider_per
+## oil_in_line), every other target shape when the target tile itself is oil.
+func _targets_oil(adef: Dictionary, target) -> bool:
+	if not (target is Vector2i):
+		return false
+	if String(adef.get("target", "")) == "dir":
+		var ctx := {"adef": adef, "target": target, "origin": player["pos"]}
+		return _rider_per({"count": "oil_in_line"}, ctx) > 0
+	return _terrain_kind(target) == "oil"
 
 
 ## Public read-only view of the legal target list for an ability the player
@@ -1534,6 +1605,7 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 					_ignite(p, aid)
 					_emit({"t": "ignite", "tile": p})
 					out["ignited"] += 1
+					_hook("ignite", {"tile": p, "by": aid})
 				var e = _enemy_at(p)
 				if e != null:
 					if _damage_enemy(e, dmg + _bonus_dmg(eff, ctx, e), aid):
@@ -1550,6 +1622,8 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 					out["planted"] += 1
 					out["tiles"].append(t)
 			_emit({"t": "growth", "tile": target})
+			if not out["tiles"].is_empty():
+				_hook("growth_planted", {"tiles": out["tiles"].duplicate()})
 		"pull":
 			var e = _enemy_at(target)
 			if e == null:
@@ -1620,6 +1694,8 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 				out["planted"] += 1
 				out["tiles"].append(target)
 				_emit({"t": "terrain", "kind": eff["kind"], "tile": target})
+				if String(eff["kind"]) == "fire":
+					_hook("ignite", {"tile": target, "by": aid})
 		"clear_smoke":
 			for t in terrain.keys().duplicate():
 				if terrain[t]["kind"] == "smoke" and _manhattan(t, player["pos"]) <= int(eff["radius"]):
@@ -1669,6 +1745,7 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 					_ignite(t, aid)
 					_emit({"t": "ignite", "tile": t})
 					out["ignited"] += 1
+					_hook("ignite", {"tile": t, "by": aid})
 			for e in enemies.duplicate():
 				if _manhattan(e["pos"], player["pos"]) <= int(eff["radius"]):
 					if _damage_enemy(e, int(eff["dmg"]) + _bonus_dmg(eff, ctx, e), aid):
@@ -1936,6 +2013,113 @@ func _enemy_by_id(id: int):
 	return null
 
 
+# --- hook dispatcher (C3) -----------------------------------------------------
+
+## Synthetic ability row hook effects run under: hook effects are aimed at the
+## hook tile, so every op reads it as a "tile" target of range 1.
+const HOOK_ADEF := {"name": "hook", "cost": 0, "target": "tile", "range": 1, "effects": []}
+## Positional ops only the dispatcher knows: they read the tile / enemy from
+## the hook ctx instead of a cast target.
+const HOOK_OPS := ["damage_at", "status_at", "terrain_at"]
+
+## Dispatch a hook of `kind` (Content.HOOK_KINDS) with its ctx (see the table
+## comment there). Sources are scanned in fixed order: kit slots 0..n (an
+## ABILITIES row may carry "hooks"), then player.grafts in held order; each
+## source row {on, effects, cap_per_turn?, if?} whose `on` matches runs once
+## per dispatch, unless its per-turn cap (hook_uses, per source id) is spent
+## or its `if` predicates (Game._rider_if against the hook tile) fail.
+## Effects reuse _apply_effect with the hook tile as target, plus the three
+## HOOK_OPS. Hooks caused by hook effects nest up to Content.HOOK_DEPTH_MAX and
+## at most Content.HOOK_STEP_CAP rows run per step; beyond either the hook is
+## skipped and {t: hook_capped} is emitted once per step. Every row that runs
+## emits {t: hook, id: source id, on: kind, tile}. Nothing runs once the game
+## is over.
+func _hook(kind: String, ctx: Dictionary) -> void:
+	if over:
+		return
+	var sources: Array = []
+	for aid in player["kit"]:
+		for row in Content.ABILITIES[aid].get("hooks", []):
+			sources.append([String(aid), row])
+	for gid in player["grafts"]:
+		for row in Content.GRAFTS[gid].get("hooks", []):
+			sources.append([String(gid), row])
+	var tile = _hook_tile(kind, ctx)
+	for src in sources:
+		var sid: String = src[0]
+		var row: Dictionary = src[1]
+		if String(row.get("on", "")) != kind:
+			continue
+		var cap := int(row.get("cap_per_turn", 0))
+		if cap > 0 and int(hook_uses.get(sid, 0)) >= cap:
+			continue
+		if _hook_depth >= Content.HOOK_DEPTH_MAX or _hook_runs >= Content.HOOK_STEP_CAP:
+			if not _hook_capped:
+				_hook_capped = true
+				_emit({"t": "hook_capped"})
+			continue
+		var hctx := {
+			"aid": sid, "adef": HOOK_ADEF, "target": tile, "origin": player["pos"],
+			"casts_before": casts_this_turn, "moved": moved_this_turn, "hook": kind,
+		}
+		if row.has("if") and not _rider_if(row["if"], hctx, null, null):
+			continue
+		hook_uses[sid] = int(hook_uses.get(sid, 0)) + 1
+		_hook_runs += 1
+		_emit({"t": "hook", "id": sid, "on": kind, "tile": tile})
+		_hook_depth += 1
+		for eff in row.get("effects", []):
+			if over:
+				break
+			if HOOK_OPS.has(String(eff.get("op", ""))):
+				_hook_effect(eff, sid, tile, ctx)
+			else:
+				_apply_effect(eff, HOOK_ADEF, tile, sid, hctx)
+		_hook_depth -= 1
+
+
+## The tile a hook is "about": ctx.tile when given, the enemy's tile for
+## staggered, the player's for shield_break, the first planted tile for
+## growth_planted; null when nothing applies.
+func _hook_tile(kind: String, ctx: Dictionary):
+	if ctx.has("tile"):
+		return ctx["tile"]
+	if ctx.has("enemy"):
+		return ctx["enemy"]["pos"]
+	if ctx.has("tiles") and not (ctx["tiles"] as Array).is_empty():
+		return ctx["tiles"][0]
+	if kind == "shield_break":
+		return player["pos"]
+	return null
+
+
+## The positional hook ops. damage_at {dmg}: whoever stands on the hook tile
+## (an enemy via _damage_enemy, or the player via _damage_player), src = the
+## source id. status_at {status, turns}: ctx.enemy when the hook carries one
+## (staggered, collision), else the enemy on the tile. terrain_at {kind}: write
+## the kind on the hook tile when it is floor with no terrain and no enemy.
+func _hook_effect(eff: Dictionary, sid: String, tile, ctx: Dictionary) -> void:
+	if tile == null:
+		return
+	match String(eff["op"]):
+		"damage_at":
+			var e = _enemy_at(tile)
+			if e != null:
+				_damage_enemy(e, int(eff["dmg"]), sid)
+			elif player["pos"] == tile:
+				_damage_player(int(eff["dmg"]), sid)
+		"status_at":
+			var e = ctx.get("enemy", null)
+			if e == null:
+				e = _enemy_at(tile)
+			if e != null and enemies.has(e):
+				_apply_status(e, String(eff["status"]), int(eff["turns"]))
+		"terrain_at":
+			if _tile(tile) == MapGen.T_FLOOR and not terrain.has(tile) and _enemy_at(tile) == null:
+				terrain[tile] = _tile_dict(String(eff["kind"]), "", {})
+				_emit({"t": "terrain", "kind": eff["kind"], "tile": tile})
+
+
 # --- entities and damage ------------------------------------------------------
 
 func _spawn(kind: String, pos: Vector2i) -> Dictionary:
@@ -1963,6 +2147,7 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> bool:
 	if e["hp"] <= 0:
 		enemies.erase(e)
 		_emit({"t": "death", "who": e["kind"], "id": e["id"]})
+		_hook("kill", {"tile": e["pos"], "enemy_kind": e["kind"], "enemy_id": e["id"]})
 		if e.get("elite", false):
 			bloom += Content.ELITE_BOUNTY
 			_emit({"t": "bounty", "bloom": bloom})
@@ -2019,6 +2204,8 @@ func _damage_player(amt: int, src: String) -> void:
 		player["shield"] -= absorbed
 		amt -= absorbed
 		_emit({"t": "shield_absorb", "amt": absorbed})
+		if player["shield"] == 0:
+			_hook("shield_break", {"amt": absorbed})
 		if amt <= 0:
 			return
 	player["hp"] -= amt
@@ -2042,15 +2229,19 @@ func _push_enemy(e: Dictionary, dir: Vector2i, dist: int, collision_dmg: int, sr
 		var nxt: Vector2i = e["pos"] + dir
 		if not _open(nxt):
 			if collision_dmg > 0:
-				if _damage_enemy(e, collision_dmg + _bonus_dmg(eff, ctx, e), "collision:" + src):
+				var dmg1: int = collision_dmg + _bonus_dmg(eff, ctx, e)
+				if _damage_enemy(e, dmg1, "collision:" + src):
 					res["collided"] += 1
 					if not res["affected"].has(e["id"]):
 						res["affected"].append(e["id"])
+					_hook("collision", {"enemy": e, "tile": e["pos"], "src": src, "dmg": dmg1})
 				var hit = _enemy_at(nxt)
 				if hit != null:
-					if _damage_enemy(hit, collision_dmg + _bonus_dmg(eff, ctx, hit), "collision:" + src):
+					var dmg2: int = collision_dmg + _bonus_dmg(eff, ctx, hit)
+					if _damage_enemy(hit, dmg2, "collision:" + src):
 						res["collided"] += 1
 						res["affected"].append(hit["id"])
+						_hook("collision", {"enemy": hit, "tile": hit["pos"], "src": src, "dmg": dmg2})
 			if int(res["moved"]) > 0 and enemies.has(e):
 				_stagger(e)
 			return res
@@ -2090,9 +2281,11 @@ func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int, src: Str
 				if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
 					# too heavy to shove; the jet's pressure still hits
 					if collision_dmg > 0:
-						if _damage_enemy(e, collision_dmg + _bonus_dmg(eff, ctx, e), "collision:" + src):
+						var dmg3: int = collision_dmg + _bonus_dmg(eff, ctx, e)
+						if _damage_enemy(e, dmg3, "collision:" + src):
 							res["collided"] += 1
 							res["affected"].append(e["id"])
+							_hook("collision", {"enemy": e, "tile": e["pos"], "src": src, "dmg": dmg3})
 					return res
 				pushed = e
 	if pushed != null:
@@ -2149,6 +2342,7 @@ func _enemy_enter_tile(e: Dictionary) -> void:
 	if Content.ENEMIES[e["kind"]]["traits"].has("igniter") and bool(Content.terrain(k, "flammable", false)):
 		_ignite(e["pos"], e["kind"])
 		_emit({"t": "ignite", "tile": e["pos"]})
+		_hook("ignite", {"tile": e["pos"], "by": e["kind"]})
 		k = _terrain_kind(e["pos"])
 	var dmg := int(Content.terrain(k, "enter_dmg_enemy", 0))
 	if dmg > 0:

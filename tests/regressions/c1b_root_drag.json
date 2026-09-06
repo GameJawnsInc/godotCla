@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[4,2],"type":"ability"},{"type":"end_turn"},{"type":"end_turn"},{"slot":0,"target":[4,2],"type":"ability"},{"type":"end_turn"},{"type":"end_turn"},{"slot":0,"target":[4,2],"type":"ability"}],
 "expect": {"events":[{"status":"root","t":"status","turns":2},{"t":"rooted"},{"t":"rooted"},{"status":"root","t":"resisted"},{"t":"drag"},{"status":"root","t":"status","turns":2}],"floor":1,"timeout":true,"turns":4,"won":false},
 "note": "C1b root: STATUSES.root.blocks covers drag, so a rooted magnet_crane cannot reel the player in (two rooted events, one per blocked drag); the stagger-style cooldown then refuses a fresh snare (resisted) until it runs out",
-"sim_version": 4,
+"sim_version": 5,
 "hash": "a169b7b5a52707b3935dd6308a9e224ef23fb6b857849eaa3c22cd0dfd314a20"
 }

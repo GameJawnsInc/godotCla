@@ -154,8 +154,9 @@ func _check_rng_independence() -> void:
 
 func _check_stock_filter() -> void:
 	var kit := ["solar_lance+", "seed_bomb", "mycelium_dash"]
-	var five: Array = Content.GRAFTS.keys().slice(0, 5)
-	var sixth: String = Content.GRAFTS.keys()[5]
+	# every graft but the last pre-installed: the one remaining is the only offer
+	var all_but_last: Array = Content.GRAFTS.keys().slice(0, Content.GRAFTS.size() - 1)
+	var last: String = Content.GRAFTS.keys()[Content.GRAFTS.size() - 1]
 	var bad_ability := 0
 	var bad_item := 0
 	var bad_grafts := 0
@@ -174,9 +175,15 @@ func _check_stock_filter() -> void:
 		var gr: Array = shop.get("grafts", [])
 		if gr.size() != 2 or gr[0] == gr[1] or not Content.GRAFTS.has(gr[0]) or not Content.GRAFTS.has(gr[1]):
 			bad_grafts += 1
-		var g5 = Game.new(s, {"grafts": five})
+		var g5 = Game.new(s, {"grafts": all_but_last})
 		var gr5: Array = g5.shop.get("grafts", [])
-		if gr5 != [sixth]:
+		if gr5 != [last]:
+			bad_grafts += 1
+		# held grafts never reappear in the stock (four held: both offers unheld)
+		var held: Array = Content.GRAFTS.keys().slice(0, 4)
+		var g4 = Game.new(s, {"grafts": held})
+		var gr4: Array = g4.shop.get("grafts", [])
+		if gr4.size() != 2 or held.has(gr4[0]) or held.has(gr4[1]) or gr4[0] == gr4[1]:
 			bad_grafts += 1
 		var g6 = Game.new(s, {"grafts": Content.GRAFTS.keys()})
 		if g6.shop.has("grafts") or g6.shop.has("graft"):
@@ -184,7 +191,8 @@ func _check_stock_filter() -> void:
 	_ok(bad_keys == 0, "stock: %d unexpected shop keys" % bad_keys)
 	_ok(bad_ability == 0, "stock: %d shops offered an owned/owned-plus base ability" % bad_ability)
 	_ok(bad_item == 0, "stock: %d shops offered a + item" % bad_item)
-	_ok(bad_grafts == 0, "stock: %d graft offers wrong (2 distinct / 1 remaining / none)" % bad_grafts)
+	_ok(bad_grafts == 0, "stock: %d graft offers wrong (2 distinct / 1 remaining / none / held excluded)" % bad_grafts)
+	_ok(Content.GRAFTS.size() == 10, "stock draws from %d grafts (C3: ten)" % Content.GRAFTS.size())
 	# a floor without a shrine stocks nothing
 	var g7 = Game.new(1)
 	g7._enter_floor(Content.FLOORS.size())
@@ -263,6 +271,10 @@ func _check_graft_buy() -> void:
 	var g3 = Game.new(1, {"grafts": ["carapace"]})
 	_ok(g3.shop_cost("graft") == Content.SHOP_COSTS["graft"] + Content.GRAFT_PRICE_STEP,
 		"graft price with one config graft: %d" % g3.shop_cost("graft"))
+	_ok(Content.GRAFT_PRICE_STEP == 2 and Content.SHOP_COSTS["graft"] == 4, "graft price step unchanged (4 + 2 per held)")
+	var g4 = Game.new(1, {"grafts": ["carapace", "ember_sap", "compost"]})
+	_ok(g4.shop_cost("graft") == Content.SHOP_COSTS["graft"] + 3 * Content.GRAFT_PRICE_STEP,
+		"graft price with three config grafts (rule grafts count): %d" % g4.shop_cost("graft"))
 	print("graft buy: offers %s, bought %s, discarded %s" % [str(offers), offers[1], offers[0]])
 
 

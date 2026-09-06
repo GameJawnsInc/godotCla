@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[1,3],"type":"ability"}],
 "expect": {"events":[{"t":"ignite"},{"amt":1,"id":"sun_flare","kind":"bonus","t":"rider"},{"amt":2,"src":"sun_flare","t":"damage","who":"smokestack"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C2 sun_flare base rider: the same self-ignite the + form gets, on the base row's 1 damage - 1 + 1 = 2 (the + form deals 3 on the identical board, see c2_sun_flare_plus)",
-"sim_version": 4,
+"sim_version": 5,
 "hash": "3188d24ab7366fe4377b088660d3c65c041639b3fb77278b949472fe575b8634"
 }

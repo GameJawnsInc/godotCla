@@ -71,7 +71,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 						return a
 
 	if by.has("buy"):
-		var deal := _shop_choice(by["buy"])
+		var deal := _shop_choice(by["buy"], snap)
 		if not deal.is_empty():
 			return deal
 
@@ -331,8 +331,8 @@ func _pref_rank(aid: String) -> int:
 
 ## Shrine purchase, in the old order (graft, heal, ability, item), from the
 ## legal list only. Empty dict when nothing on the counter is worth taking.
-func _shop_choice(buys: Array) -> Dictionary:
-	var graft := _first_graft(buys)
+func _shop_choice(buys: Array, snap: Dictionary) -> Dictionary:
+	var graft := _first_graft(buys, snap)
 	if not graft.is_empty():
 		return graft
 	for a in buys:
@@ -347,18 +347,54 @@ func _shop_choice(buys: Array) -> Dictionary:
 	return {}
 
 
-## The shop offers two grafts and one pick closes the counter. Every heuristic
-## bot takes offer 0: no graft preference table exists anywhere yet, and the
-## progression review holds any graft weighting until tests/sweep_grafts.gd
-## has measured them at 30+ seeds. Empty dict when no graft is affordable.
-func _first_graft(buys: Array) -> Dictionary:
+## The shop stocks two grafts and one pick closes the counter (Block C3 spec E).
+## Rank the stocked offers by how well they fit the kit actually in hand: score
+## each offer by the kit's tag histogram summed over that graft's Content.GRAFTS
+## tags, and take the highest. A fire kit takes Ember Sap, a growth kit takes
+## Compost, and a graft sharing no tag with the kit scores 0. Ties - including
+## the all-zero case that reproduces the old behaviour - fall back to the lowest
+## offer index, so the pick stays deterministic and rng-free. Everything is read
+## from Content, so a new GRAFTS row ranks itself with no bot change.
+## Empty dict when no graft is affordable.
+func _first_graft(buys: Array, snap: Dictionary) -> Dictionary:
+	var kit_tags := _kit_tag_counts(snap)
+	var offers: Array = snap.get("shop", {}).get("grafts", [])
 	var best: Dictionary = {}
+	var best_score := -1
+	var best_pick := 1 << 30
 	for a in buys:
 		if a["item"] != "graft":
 			continue
-		if best.is_empty() or int(a.get("pick", 0)) < int(best.get("pick", 0)):
+		var pick := int(a.get("pick", 0))
+		var gid := String(offers[pick]) if pick >= 0 and pick < offers.size() else ""
+		var score := _graft_fit(gid, kit_tags)
+		if score > best_score or (score == best_score and pick < best_pick):
+			best_score = score
+			best_pick = pick
 			best = a
 	return best
+
+
+## Tag histogram of the kit as held: every slot contributes its
+## Content.ABILITIES tags, counted with multiplicity, so a kit carrying three
+## fire abilities weighs "fire" three times. Upgrade forms fold onto their base
+## through base_id (a "+" row carries its base's tags).
+func _kit_tag_counts(snap: Dictionary) -> Dictionary:
+	var counts := {}
+	for aid in snap["player"]["kit"]:
+		var row: Dictionary = CONTENT.ABILITIES.get(CONTENT.base_id(String(aid)), {})
+		for tag in row.get("tags", []):
+			counts[tag] = int(counts.get(tag, 0)) + 1
+	return counts
+
+
+## How well a graft fits a kit tag histogram: the kit counts summed over the
+## graft's own tags. 0 for an unknown id or a graft sharing no tag with the kit.
+func _graft_fit(gid: String, kit_tags: Dictionary) -> int:
+	var n := 0
+	for tag in CONTENT.GRAFTS.get(gid, {}).get("tags", []):
+		n += int(kit_tags.get(tag, 0))
+	return n
 
 
 ## Step out of telegraphed damage; when cornered, shove an adjacent attacker

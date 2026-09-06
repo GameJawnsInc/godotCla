@@ -4,6 +4,6 @@
 "actions": [{"type":"end_turn"},{"slot":1,"target":[1,2],"type":"ability"},{"slot":0,"target":[1,0],"type":"ability"}],
 "expect": {"events":[{"dim":1,"t":"smog_dim"},{"dim":0,"t":"undim"},{"amt":4,"src":"solar_lance+","t":"damage"},{"t":"death","who":"smokestack"}],"floor":1,"timeout":true,"turns":1,"won":false},
 "note": "combo demo: the sky dims after one turn (smog_dim [1, 2]); moss_filter clears the dim and solar_lance+ regains its clear-sky bonus, dealing 4",
-"sim_version": 4,
+"sim_version": 5,
 "hash": "8aa35d87fb5a5cacb2c36b365b531231fc958dc4301ea9c5419e8913d5bd1bf8"
 }

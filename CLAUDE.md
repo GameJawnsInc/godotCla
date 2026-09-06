@@ -131,7 +131,9 @@ architecture below is designed to bend rather than block.
     open-pool "start with the pair" question as a labelled second table
   - `tests/sweep_packages.gd` — each tech package added to the pool
   - `tests/sweep_grafts.gd` — each `Content.GRAFTS` entry pre-installed
-    (`{grafts: [g]}`) against the same seeds with none, plus an all-grafts row;
+    (`{grafts: [g]}`) against the same seeds with none, plus an all-grafts row
+    (ten grafts since C3: six stat/mod rows plus `ember_sap`, `undertow`,
+    `compost` and `oil_tithe`, so a full sweep is ten configs + base + all);
     `SWEEP_GRAFTS=a,b` narrows, `SWEEP_BLOOM=<n>` gives every config, base
     included, that much starting bloom
   - `tests/sweep_tiers.gd` — every difficulty tier must stay bot-winnable (fails
@@ -190,13 +192,46 @@ architecture below is designed to bend rather than block.
   keys go into the `tests/test_content.gd` vocabulary constants in the same
   change, or the lint rejects them. Riders emit `{t: "rider", id, kind, amt}`,
   which `tests/tally.gd` counts (`riders_by_kind` / `riders_by_aid`) and folds
-  into the combo rate. Live rider rows (C2, `Game.SIM_VERSION` 4): `grow_spike`
+  into the combo rate. Live rider rows (C2, added at bump 4): `grow_spike`
   and `grow_spike+` carry `per` (growth_adjacent_target over a base 3, cap 1 and
   cap 2), `sun_flare` and `sun_flare+` a `bonus` (+1 on an enemy standing in
   fire, which their own ignite pass can light under it), and `seed_bomb+`,
   `vine_whip+` and `water_jet+` a `then` (root on freshly planted tiles, stun
   when the drag crossed fire, root when the shove both pushed and collided) —
   `tests/regressions/c2_*.json` demos one row each.
+- Grafts are data (`docs/PROGRESSION_REVIEW.md` §6.3 C3): every `Content.GRAFTS`
+  row is `{name, desc, tags}` (tags a `Content.TAGS` subset) plus exactly one of
+  `stat: {key: int}` — summed by `Game._graft_stat(key)` over the held grafts,
+  keys `bank_cap`, `shield_cap`, `regen`, `growth_heal`, `cleanse_bloom`;
+  `mod: {key: value}` — first held value via `Game._graft_mod(key, default)`,
+  keys `floor_start_shield`, `oil_cast_discount`; or `hooks: [rows]`. There is
+  no `_has_graft`: a graft that needs a new number needs a new stat/mod key and
+  a table read at the site, never an id literal in `game.gd`. Ten rows today:
+  `deep_cells`, `thick_bark`, `solar_core`, `verdant_pulse`, `bloom_surge`
+  (stat), `carapace`, `oil_tithe` (mod), `ember_sap`, `undertow`, `compost`
+  (hooks). `oil_tithe` takes 1 off the first oil-aimed cast of each turn
+  (floored at 1; `ability_cost(aid, target)` prices it, `legal_actions` prices
+  each target, `{t: "tithe", id}` marks the spend, `tithe_used_this_turn` resets
+  in `_begin_player_turn`).
+- Hook dispatcher (`Game._hook(kind, ctx)`, C3): reactive rules are data.
+  Kinds are `Content.HOOK_KINDS` — `ignite`, `staggered`, `cleanse`,
+  `growth_planted`, `kill`, `shield_break`, `collision` — each fired at the sim
+  site right after the matching `_emit`. Sources are scanned in fixed order:
+  kit slots 0..n (an `ABILITIES` row may carry `hooks`; none does yet) then
+  `player.grafts` in held order. A row is `{on, effects, cap_per_turn?, if?}`;
+  effects are ordinary `_apply_effect` dicts aimed at the hook tile plus the
+  three positional ops `damage_at {dmg}`, `status_at {status, turns}` and
+  `terrain_at {kind}`. Every row that runs emits `{t: "hook", id, on, tile}`
+  (counted by `tests/tally.gd` as `hooks_by_graft` / `hooks_by_kind`).
+  `Content.HOOK_DEPTH_MAX` (3) bounds hook-caused nesting and
+  `Content.HOOK_STEP_CAP` (12) the rows run per `step()`; past either the hook
+  is skipped and `{t: "hook_capped"}` is emitted once per step. Per-turn caps
+  live in `hook_uses` (per source id, reset in `_begin_player_turn`, copied by
+  `clone()`, deliberately not in `snapshot()`); `tithe_used_this_turn` is kept
+  the same way. `tests/test_content.gd` lints every row (tags, the closed
+  stat/mod key sets, hook `on` kinds, effect ops) and rejects hook effects that
+  grant shield, thorns, heal or cleanse credit — the stall vector BALANCE.md
+  documents. `tests/regressions/c3_*.json` demos one rule each.
 - Sim run config: `Game.new(seed, {kit, pool, packages, tier, mutators, grafts,
   bloom})` for sweeps, meta-unlocks, and post-win difficulty tiers. `grafts` is
   a list of `Content.GRAFTS` ids installed before floor 1 (unknown ids are
@@ -215,10 +250,12 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (4
-  today: C2 rider rows on `grow_spike(+)`, `sun_flare(+)`, `water_jet+`,
-  `vine_whip+` and `seed_bomb+`, so every cast of those ids replays anew):
-  bump it whenever a sim change alters replay behaviour.
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (5
+  today: C3 grafts-as-data and the hook dispatcher — the shrine now stocks from
+  ten grafts, so the `shop_graft` side draw and every bot's graft pick shifted
+  and any bot log recorded at 4 desyncs from its first shrine on; bump 4 was the
+  C2 rider rows on `grow_spike(+)`, `sun_flare(+)`, `water_jet+`, `vine_whip+`
+  and `seed_bomb+`): bump it whenever a sim change alters replay behaviour.
   `shell/main.gd` RUN_SAVE_VERSION, `tests/regress_lib.gd` and
   `tests/autopsy.gd` all read it -
   live phone runs persist as replayable action logs and a stale log replayed
