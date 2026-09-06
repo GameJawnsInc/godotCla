@@ -2323,7 +2323,8 @@ func _sheet(vw: float, vh: float, title: String) -> float:
 
 
 func _ability_desc(aid: String) -> String:
-	return Content.ABILITY_DESC.get(aid.trim_suffix("+"), "")
+	# exact id first (the + forms carry their own rider clause), base as fallback
+	return Content.ABILITY_DESC.get(aid, Content.ABILITY_DESC.get(aid.trim_suffix("+"), ""))
 
 
 ## A choice card: icon, title with cost, and the effect explained inline -

@@ -177,6 +177,63 @@ the nine package `+` rows; the profile that sees builds; and everything in
 the mutator picker, `Profile.daily_config`, `deeproot_plan`), plus the tier
 6-8 re-judgement on a grafted ceiling.
 
+**Status (2026-09-06c).** Block C2 (6.3) has landed and **`Game.SIM_VERSION` is
+4**. It is pure data: seven `sim/content.gd` rows gained a rider against C1a's
+existing grammar, no `sim/game.gd` rule changed (only the version constant and
+its comment), and `tests/test_content.gd`'s lint accepted every row unedited
+("8 rider rows -> 0 failures"). The rows as shipped: `grow_spike`
+`{dmg: 3, per: {growth_adjacent_target, cap: 1, add: {dmg: 1}}}` and
+`grow_spike+` the same with `cap: 2` at range 4 - a deliberate deviation from
+the 6.3 text, which gave the base row cap 2 as well, so that the upgrade stays
+an upgrade; `sun_flare` `{dmg: 1, ignite, bonus: {dmg: 1, if: target_on fire}}`
+and `sun_flare+` the same at `dmg: 2`; `water_jet+` `then: root 1 if
+[{outcome: collided}, {outcome: pushed}]` (the conjunct is the spec's
+`moved >= 1` guard, expressed in the grammar rather than as a new key);
+`vine_whip+` `then: stun 1 if outcome_crossed fire`; `seed_bomb+` `then: root 1
+who on_planted`. Costs, tags, roles and target shapes are untouched; the one
+number that moved is `grow_spike+`, which was a flat `dmg: 4` and now deals 3
+with no adjacent growth and 5 with two. Bots landed with it
+(`optimizer._est_dmg` reading Content instead of hardcoded guesses, plus a
+seed-on-head branch; fanatic's gardener leads with it), and the corpus went
+32 -> 39 records, all `sim_version: 4`, with one outcome flip
+(`det_optimizer_s42` now wins).
+
+The re-baseline is the "2026-09-06c - bump 4 (C2)" entry in `docs/BALANCE.md`:
+suite green including the playtest gate ("gate: all PASS", "regressions: 39 ok,
+0 failed" plain and `REGRESS_STRICT=1`), no persona outside the other run's
+Wilson interval at 30 seeds (optimizer 13/30 [27, 61], deeproot 22/30 [56, 86],
+magpie 5/30 [7, 34], deeproot_rollout 28/30 [79, 98]), every fanatic build
+still above zero (41/150) with the turtle canary identical cell for cell
+(1/30 [1, 17]), and wanderer clean at 100 seeds (0/100 [0, 4], zero script
+errors, zero illegal actions). **Three of the seven rows discharge the 6.0
+shipping gate and four do not.** SHIP: `grow_spike` (locked lift +7, 10/30
+[19, 51] -> 17/30 [39, 73], signature share 0.36 -> 0.83, damage taken 19.1 ->
+13.7), `grow_spike+` (23.87 riders/run in its forced kit) and `seed_bomb+`
+(5.30 riders/run in the seed-on-head kit; the first content to make `resisted`
+non-zero in bot play). HOLD on gate (ii), the once-per-run line: `sun_flare`
+0.03 riders/run and `sun_flare+` 0.63 in the forced kit - the rows fire, but
+the review's own telemetry put "enemy on fire" under 1% of sightings. HOLD on
+(ii) and (iv): `water_jet+` fired 9 rider events over 680 runs, all of them for
+deeproot or deeproot_rollout, and `vine_whip+` fired **zero**; both rows'
+30-seed locked blocks are byte-identical to the pre-C2 tree, so they cost
+nothing and bought nothing. They are correct - `tests/test_grammar.gd` casts
+both through `Game.step` and `c2_water_jet_pin.json` / `c2_vine_whip_embers.json`
+replay them - they simply have no opportunity rate in play, which is the
+question 6.0 (ii) exists to ask. No row was patched or removed to make a gate
+pass; the four HOLDs are the owner's call. Gate (v) is clean except one thing:
+magpie gained a timeout (0 -> 1 at both 30 and 100 seeds) and its 100-seed
+canary rose 13/100 [8, 21] -> 19/100 [13, 28] in a same-seed A/B against the
+pristine pre-C2 tree - not a signal by the 2026-09-05d rule (the lower bound
+13% does not clear 17%), but the highest of the four 100-seed readings taken
+under instrument v2 (10, 13, 13, 19 per 100) and the first whose whole interval
+sits above 10%. Still open from
+earlier blocks and unchanged here: `quota_reclamp` has never fired in a bot run
+(0 again over the 680 runs in this bump that print the counter) and
+press/forge upcycles are 0/0
+for every persona. NOT done, in 6.3 order: **C3** (the `_hook` dispatcher,
+grafts as `stat | mod | hooks` data, the four rule grafts), the nine package
+`+` rows, the profile that sees builds, and everything in 6.1 and 7.5.
+
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
 180 bot runs; a synergy-lift sweep of 7 hypothesised pairs at 24 seeds per

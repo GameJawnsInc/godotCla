@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["###########","#........>#","#...\".....#","#@..k.....#","#...\".....#","#.........#","###########"]},"kit":["grow_spike","seed_bomb","mycelium_dash"],"pool":["grow_spike","seed_bomb","mycelium_dash"]},
+"actions": [{"slot":0,"target":[4,3],"type":"ability"}],
+"expect": {"events":[{"amt":1,"id":"grow_spike","kind":"per","t":"rider"},{"amt":4,"src":"grow_spike","t":"damage","who":"smokestack"},{"t":"death","who":"smokestack"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "C2 grow_spike base rider: the same two adjacent growth tiles as c2_grow_spike_plus, but the base row caps the per rider at 1 - 3 + 1 = 4, and the + form keeps the extra point",
+"sim_version": 4,
+"hash": "8afdf9f2a2cab45f1d8c71049226c6bf0f44c10d743b7458b1b71e382130ceb5"
+}

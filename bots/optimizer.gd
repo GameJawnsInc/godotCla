@@ -1,7 +1,8 @@
 extends "res://bots/bot_base.gd"
 ## Optimizer persona: deterministic heuristic play aimed at winning.
-## Priorities: descend > strike > lance > dodge telegraphed damage > cleanse
-## when safe > path to stairs > pull a blocker into reach > end turn.
+## Priorities: descend > spike > strike > seed-on-head > lance > dodge
+## telegraphed damage > cleanse when safe > path to stairs > pull a blocker
+## into reach > end turn.
 
 ## sim/content.gd under a shouting name: the subclasses (fanatic, deeproot)
 ## already declare a `Content` const of their own and GDScript forbids
@@ -25,6 +26,11 @@ const DRAFT_PREF := [
 ## escape button and seed_bomb is the growth engine that makes the Furnace
 ## core killable.
 const NEVER_DROP := ["mycelium_dash", "seed_bomb"]
+
+## Effect ops that put damage on an enemy tile. _est_dmg reads their "dmg"
+## (plus the rider arithmetic around it) and ignores every other op - a bot
+## guess, not a sim call, so it stays cheap enough for every candidate.
+const DMG_OPS := ["damage", "aoe_damage", "lance", "pull"]
 
 
 func get_bot_name() -> String:
@@ -95,11 +101,13 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		if best_bomb != null:
 			return best_bomb
 
-	# 3 damage for 1 charge beats everything else on the menu
+	# 3+ damage for 1 charge beats everything else on the menu. The spike's
+	# per-growth rider makes WHICH enemy it hits matter, so the target comes
+	# from _est_dmg (kill first, then biggest estimate) instead of kit order.
 	if by.has("ability"):
-		for a in by["ability"]:
-			if _kit_id(snap, a["slot"]) == "grow_spike":
-				return a
+		var spike := _best_spike(snap, by["ability"])
+		if not spike.is_empty():
+			return spike
 
 	# Desperation: 120+ turns on one floor means some stable loop has eaten
 	# the run (spawn streams, corner shield-cycling, dodge orbits). Stop
@@ -137,7 +145,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		if by.has("strike"):
 			for a in by["strike"]:
 				var e = _enemy_at(snap, ppos + a["dir"])
-				if e != null and e["hp"] <= 1:
+				if e != null and e["hp"] <= CONTENT.STRIKE_DMG:
 					return a
 		var out := _dodge(snap, by, threat)
 		if not out.is_empty():
@@ -167,7 +175,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		for a in by["strike"]:
 			var se = _enemy_at(snap, ppos + a["dir"])
 			if se != null and (se["traits"].has("spiked") or se.get("elite", false)):
-				if se["hp"] > 1 and snap["player"]["hp"] + snap["player"]["shield"] <= 6:
+				if se["hp"] > CONTENT.STRIKE_DMG and snap["player"]["hp"] + snap["player"]["shield"] <= 6:
 					continue
 			filtered.append(a)
 		if filtered.is_empty():
@@ -191,11 +199,24 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		if best != null:
 			return best
 
+	# Seed on head: the bomb plants growth on the enemy's own tile, which both
+	# makes the spike legal against it and feeds the spike's growth rider - so
+	# the spike that follows this same turn lands for its capped maximum.
+	# Sits below the strike ladder (never spend 3 charge on what a punch
+	# finishes) and above the generic casts.
+	if by.has("ability"):
+		var head := _seed_on_head(snap, by["ability"])
+		if not head.is_empty():
+			return head
+
 	if by.has("ability"):
 		var near := _enemies_within(snap, 2)
 		for a in by["ability"]:
 			var aid: String = _kit_id(snap, a["slot"])
-			if aid == "sun_flare" and near >= 2:
+			# the flare pays for two targets, or for one it finishes: the
+			# estimate counts the burning-ground bonus (and the oil this very
+			# cast lights first), which is the light-then-flare finisher
+			if aid == "sun_flare" and (near >= 2 or _aoe_finishes(snap, _kit_full_id(snap, a["slot"]))):
 				return a
 			if aid == "pollen_burst" and _enemies_within(snap, 1) >= 2:
 				return a
@@ -502,6 +523,208 @@ func _growth_adj_to(snap: Dictionary, pos: Vector2i) -> bool:
 		if snap["terrain"].get(pos + d, {}).get("kind", "") == "growth":
 			return true
 	return false
+
+
+## Growth tiles orthogonally adjacent to `pos` - what the sim's
+## growth_adjacent_target rider counts (the tile itself never counts).
+func _growth_adj_count(snap: Dictionary, pos: Vector2i) -> int:
+	var n := 0
+	for d in DIRS:
+		if String(snap["terrain"].get(pos + d, {}).get("kind", "")) == "growth":
+			n += 1
+	return n
+
+
+## Kit slot id as written, upgrade suffix and all: _est_dmg needs the exact
+## row, and "grow_spike+" is not "grow_spike" (_kit_id strips the suffix).
+func _kit_full_id(snap: Dictionary, slot: int) -> String:
+	return String(snap["player"]["kit"][slot])
+
+
+## What a cast costs right now: Game.ability_cost mirrored over the snapshot -
+## standing on growth surges a cost-2+ ability by its own "surge" rule.
+func _cast_cost(snap: Dictionary, aid: String) -> int:
+	var adef: Dictionary = CONTENT.ABILITIES.get(aid, {})
+	if adef.is_empty():
+		return 99
+	var base := int(adef["cost"])
+	if base >= 2 and String(snap["terrain"].get(snap["player"]["pos"], {}).get("kind", "")) == "growth":
+		var surge: Dictionary = adef.get("surge", CONTENT.SURGE_DEFAULT)
+		return maxi(1, base + int(surge.get("cost", -1)))
+	return base
+
+
+## Damage `aid` would land on an enemy standing at `target`, read from Content
+## alone: the base "dmg" of every damage-dealing effect plus its rider
+## arithmetic (per, bonus) as the snapshot's terrain scores it. No sim call
+## and no clone, so it is affordable on every candidate action.
+## `target` is the tile the enemy stands on - for "dir" and "self" abilities
+## the caller passes the tile it expects to be hit, never the direction.
+func _est_dmg(aid: String, target: Vector2i, snap: Dictionary) -> int:
+	var adef: Dictionary = CONTENT.ABILITIES.get(aid, {})
+	if adef.is_empty():
+		return 0
+	var total := 0
+	for eff in adef.get("effects", []):
+		var op := String(eff["op"])
+		if not DMG_OPS.has(op):
+			continue
+		var dmg := int(eff.get("dmg", 0))
+		if op == "lance" and int(snap.get("dim", 0)) == 0:
+			dmg += int(eff.get("clear_smog_bonus", 0))
+		if eff.has("per"):
+			var per: Dictionary = eff["per"]
+			var add := int(per.get("add", {}).get("dmg", 0))
+			if add != 0:
+				var n := _per_count(per, target, snap)
+				var cap := int(per.get("cap", 0))
+				if cap > 0:
+					n = mini(n, cap)
+				dmg += add * n
+		if eff.has("bonus") and _bonus_holds(eff, target, snap):
+			dmg += int(eff["bonus"].get("dmg", 0))
+		total += dmg
+	return total
+
+
+## Game._rider_per over the snapshot, for the counts a bot can read off a
+## tile. Unknown counts read as 0, exactly like the sim's closed set.
+func _per_count(per: Dictionary, target: Vector2i, snap: Dictionary) -> int:
+	var n := 0
+	match String(per.get("count", "")):
+		"growth_adjacent_target":
+			n = _growth_adj_count(snap, target)
+		"enemies_adjacent_target":
+			for d in DIRS:
+				if _enemy_at(snap, target + d) != null:
+					n += 1
+	return n
+
+
+## Game._rider_if over the snapshot for an effect's "bonus" rider aimed at
+## `target`. One deliberate deviation: a cast that ignites lights the
+## flammable ground under the target before it rolls damage (aoe_damage and
+## lance run their ignite pass first), so oil under the target already counts
+## as fire here. Unknown predicates fail closed, like the sim.
+func _bonus_holds(eff: Dictionary, target: Vector2i, snap: Dictionary) -> bool:
+	var kind := String(snap["terrain"].get(target, {}).get("kind", ""))
+	for pred in eff["bonus"].get("if", []):
+		for key in pred:
+			match String(key):
+				"target_on":
+					var kinds: Array = pred[key]
+					if kinds.has(kind):
+						continue
+					if kinds.has("fire") and bool(eff.get("ignite", false)) \
+							and bool(CONTENT.terrain(kind, "flammable", false)):
+						continue
+					return false
+				"target_adjacent":
+					var near_kinds: Array = pred[key]
+					var found := false
+					for d in DIRS:
+						if near_kinds.has(String(snap["terrain"].get(target + d, {}).get("kind", ""))):
+							found = true
+					if not found:
+						return false
+				"self_on":
+					if String(snap["terrain"].get(snap["player"]["pos"], {}).get("kind", "")) != String(pred[key]):
+						return false
+				"dim":
+					if int(snap.get("dim", 0)) != int(pred[key]):
+						return false
+				_:
+					return false
+	return true
+
+
+## Best legal grow_spike cast: a target the estimate kills outright first,
+## then the biggest estimate (the rider pays per growth tile beside the
+## target). Empty dict when no spike is legal.
+func _best_spike(snap: Dictionary, abilities: Array) -> Dictionary:
+	var best: Dictionary = {}
+	var best_key := -999999
+	for a in abilities:
+		if _kit_id(snap, a["slot"]) != "grow_spike":
+			continue
+		var e = _enemy_at(snap, a["target"])
+		var est := _est_dmg(_kit_full_id(snap, a["slot"]), a["target"], snap)
+		var key := est + (1000 if e != null and est >= int(e["hp"]) else 0)
+		if best.is_empty() or key > best_key:
+			best_key = key
+			best = a
+	return best
+
+
+## Would this self-centred aoe finish something? True when the estimate kills
+## an enemy inside the first damaging effect's radius.
+func _aoe_finishes(snap: Dictionary, aid: String) -> bool:
+	var adef: Dictionary = CONTENT.ABILITIES.get(aid, {})
+	var radius := -1
+	for eff in adef.get("effects", []):
+		if DMG_OPS.has(String(eff["op"])):
+			radius = int(eff.get("radius", 0))
+			break
+	if radius <= 0:
+		return false
+	var ppos: Vector2i = snap["player"]["pos"]
+	for e in snap["enemies"]:
+		if absi(e["pos"].x - ppos.x) + absi(e["pos"].y - ppos.y) > radius:
+			continue
+		if _est_dmg(aid, e["pos"], snap) >= int(e["hp"]):
+			return true
+	return false
+
+
+## Seed on head: bomb the tile an enemy is standing on (enemy-occupied tiles
+## are legal "tile" targets). The bomb plants growth under and around it,
+## which both makes grow_spike legal against that enemy and feeds the spike's
+## growth-adjacent rider up to its cap, so the spike that follows on the next
+## decision - still this turn - lands for its maximum.
+## Trigger: the kit holds a spike and a bomb; the enemy's own tile is a legal
+## bomb target with fewer adjacent growth tiles than the spike's rider cap
+## (otherwise the seed adds nothing); the enemy outlives a plain punch; and
+## this turn's charge covers both casts. Ties break on fewest growth already
+## there, then the meatiest target. Empty dict when nothing qualifies.
+func _seed_on_head(snap: Dictionary, abilities: Array) -> Dictionary:
+	var kit: Array = snap["player"]["kit"]
+	var spike := ""
+	for i in kit.size():
+		if snap["player"]["gummed"].has(i):
+			continue
+		if CONTENT.base_id(String(kit[i])) == "grow_spike":
+			spike = String(kit[i])
+			break
+	if spike == "":
+		return {}
+	# a spike row with no per rider still gains legality from the seed, so it
+	# counts as cap 1: seed only when nothing grows beside the target yet
+	var effs: Array = CONTENT.ABILITIES.get(spike, {}).get("effects", [])
+	var cap := 1
+	if not effs.is_empty():
+		cap = maxi(1, int((effs[0] as Dictionary).get("per", {}).get("cap", 0)))
+	var charge := int(snap["player"]["charge"])
+	var spike_cost := _cast_cost(snap, spike)
+	var best: Dictionary = {}
+	var best_adj := 99
+	var best_hp := -1
+	for a in abilities:
+		var aid := String(kit[a["slot"]])
+		if CONTENT.base_id(aid) != "seed_bomb":
+			continue
+		if charge < _cast_cost(snap, aid) + spike_cost:
+			continue
+		var e = _enemy_at(snap, a["target"])
+		if e == null or int(e["hp"]) <= CONTENT.STRIKE_DMG:
+			continue
+		var adj := _growth_adj_count(snap, a["target"])
+		if adj >= cap:
+			continue
+		if best.is_empty() or adj < best_adj or (adj == best_adj and int(e["hp"]) > best_hp):
+			best_adj = adj
+			best_hp = int(e["hp"])
+			best = a
+	return best
 
 
 func _enemy_at(snap: Dictionary, pos: Vector2i) -> Variant:

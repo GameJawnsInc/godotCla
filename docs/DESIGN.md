@@ -124,6 +124,22 @@ The theme should do mechanical work, not just paint.
   — which is what riders read, so "lance the oil the enemy stands on, then the
   flare hits harder" is a data row rather than a special case in code. Riders
   emit a `rider` event so the harness can measure how often combos fire.
+- **Seven rows carry a rider today** (the rest are plain recipes). Two base
+  rows scale with the board: **Grow Spike** deals 3 and +1 for one adjacent
+  growth tile, **Sun Flare** deals 1 in a radius, ignites oil and adds +1 to
+  anything standing in fire. Five `+` forms - offered only once the base is
+  owned, so the base pool's balance is untouched - carry the sharper versions:
+  **Grow Spike+** takes the same count to two stacks at range 4 (3 to 5),
+  **Sun Flare+** flashes for 2 with the same fire bonus, **Water Jet+** roots
+  an enemy that was actually shoved *and* then hit something, **Vine Whip+**
+  stuns an enemy dragged across a burning tile, and **Seed Bomb+** roots
+  whoever is standing on the growth it just planted. Four combos fall out of
+  them, and each is a charge budget as much as a board state: *seed on head*
+  (bomb an enemy's own tile, then spike it for 5 - 2 + 1 = 3 charge, one turn),
+  *light then flare* (lance the oil line an enemy stands on, then flare it for
+  3 - 2 + 2 = 4, so it needs a surge or a capsule), *drag through embers*
+  (whip an enemy across fire: 3 + burn + stun for 1 charge), and *pin* (a jet
+  collision roots, so the lance line stays open next turn - 1 + 2 = 3).
 - Loadout: 4 ability slots + 1 mobility slot. Drafting while full = drop one.
 - Draft cadence: 1-of-3 at each descent; shrines/shops mid-floor spend Bloom.
 - Upgrades appear as draft options (e.g. cost reduction, bigger shape).

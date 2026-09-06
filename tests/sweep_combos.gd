@@ -158,7 +158,7 @@ func _run_lift(pairs: Array, seeds: Array, cfg: Dictionary, bot) -> void:
 	var single_ids: Array = []
 	for p in pairs:
 		for aid in p:
-			if not singles.has(aid):
+			if not single_ids.has(aid):
 				single_ids.append(aid)
 	single_ids.sort()
 	for aid in single_ids:

@@ -5,8 +5,9 @@ extends SceneTree
 ## hand-built effect dicts passed straight to Game._apply_effect on controlled
 ## states, plus the C1b rows: ash, the root cooldown and blocked advance/drag,
 ## spore add-stacking, items through _apply_status, spread fire inheriting
-## the bloom flag. No content row carries a rider yet, so nothing here depends
-## on the ability tables beyond the surge-cost identity check.
+## the bloom flag. The Block C2 content rows (grow_spike(+), sun_flare(+),
+## water_jet+, vine_whip+, seed_bomb+) are cast for real through Game.step on
+## controlled boards and their numbers, statuses and rider events asserted.
 ## Run: godot --headless --path . --script tests/test_grammar.gd
 
 const Content := preload("res://sim/content.gd")
@@ -42,6 +43,11 @@ func _init() -> void:
 	_check_spore_stack()
 	_check_items_through_table()
 	_check_context_counters()
+	_check_c2_grow_spike()
+	_check_c2_sun_flare()
+	_check_c2_water_jet()
+	_check_c2_vine_whip()
+	_check_c2_seed_bomb()
 	if failures.is_empty():
 		print("grammar: OK (%d checks)" % checks)
 		quit(0)
@@ -942,3 +948,284 @@ func _check_context_counters() -> void:
 	var g3 = g2.clone()
 	g3.casts_this_turn = 7
 	_ok(g2.state_hash() == g3.state_hash(), "counters never move state_hash")
+
+
+# --- Block C2 content rows, cast for real through step -------------------------
+
+## A fresh game on a custom room (same legend as ROOM) with the given kit.
+static func _game_on(rows: Array, kit: Array) -> RefCounted:
+	return Game.new(1, {"fixed_floor": {"gen": _gen(rows), "fdef": {}}, "kit": kit})
+
+
+## Cast kit slot `slot` at `target` with charge to spare; returns the step events.
+static func _cast(g, slot: int, target) -> Array:
+	g.player["charge"] = 10
+	return g.step({"type": "ability", "slot": slot, "target": target})
+
+
+## Damage events signed by `src` (an ability id) in `events`.
+static func _dmg(events: Array, src: String) -> Array:
+	var outl: Array = []
+	for ev in _evs(events, "damage"):
+		if String(ev.get("src", "")) == src:
+			outl.append(ev)
+	return outl
+
+
+## grow_spike+ {dmg 3, per growth_adjacent_target cap 2}: 3 / 4 / 5 with 0 / 1 / 2+
+## adjacent growth tiles; growth under the target does not count. Base row caps
+## at 1 (3 / 4 / 4) and keeps range 3 so the + form (range 4) stays an upgrade.
+func _check_c2_grow_spike() -> void:
+	var t := Vector2i(8, 3)
+	# 0 adjacent: growth under the enemy only makes it targetable, adds nothing
+	var g = _game(["grow_spike+", "seed_bomb", "mycelium_dash"])
+	var e = g._spawn("drill_bot", t)
+	e["hp"] = 10
+	g.terrain[t] = {"kind": "growth"}
+	var evs: Array = _cast(g, 0, t)
+	_ok(_evs(evs, "illegal").is_empty() and e["hp"] == 7 and _riders(evs, "per").is_empty(),
+		"grow_spike+ 0 adjacent (growth under only): hp %d %s" % [e["hp"], str(evs)])
+	_ok(_dmg(evs, "grow_spike+").size() == 1 and int(_dmg(evs, "grow_spike+")[0]["amt"]) == 3, "grow_spike+ base hit is 3: %s" % str(evs))
+	# 1 adjacent -> 4, rider per amt 1
+	g.terrain[Vector2i(8, 2)] = {"kind": "growth"}
+	evs = _cast(g, 0, t)
+	var per := _riders(evs, "per")
+	_ok(e["hp"] == 3 and per.size() == 1 and int(per[0]["amt"]) == 1 and String(per[0]["id"]) == "grow_spike+",
+		"grow_spike+ 1 adjacent -> 4 (rider per 1): hp %d %s" % [e["hp"], str(evs)])
+	# 2 adjacent -> 5, rider per amt 2
+	e["hp"] = 10
+	g.terrain[Vector2i(8, 4)] = {"kind": "growth"}
+	evs = _cast(g, 0, t)
+	per = _riders(evs, "per")
+	_ok(e["hp"] == 5 and per.size() == 1 and int(per[0]["amt"]) == 2, "grow_spike+ 2 adjacent -> 5 (rider per 2): hp %d %s" % [e["hp"], str(evs)])
+	# 3 adjacent (plus growth under): still 5, the cap holds
+	e["hp"] = 10
+	g.terrain[Vector2i(9, 3)] = {"kind": "growth"}
+	evs = _cast(g, 0, t)
+	per = _riders(evs, "per")
+	_ok(e["hp"] == 5 and per.size() == 1 and int(per[0]["amt"]) == 2, "grow_spike+ 3 adjacent capped at 5: hp %d %s" % [e["hp"], str(evs)])
+	# the whole cast is one ability + one damage event, and the growth stays
+	_ok(_evs(evs, "ability").size() == 1 and _dmg(evs, "grow_spike+").size() == 1 and int(_dmg(evs, "grow_spike+")[0]["amt"]) == 5
+		and g.terrain.has(t) and g.terrain.has(Vector2i(8, 2)), "grow_spike+ single 5-damage hit, growth kept: %s" % str(evs))
+	# range: the + form reaches 4 tiles, the base only 3
+	var far := Vector2i(9, 3)
+	var g4 = _game(["grow_spike+", "grow_spike", "mycelium_dash"])
+	var e4 = g4._spawn("drill_bot", far)
+	e4["hp"] = 10
+	g4.terrain[far] = {"kind": "growth"}
+	evs = _cast(g4, 1, far)
+	_ok(_evs(evs, "illegal").size() == 1 and e4["hp"] == 10, "grow_spike (range 3) cannot reach distance 4: %s" % str(evs))
+	evs = _cast(g4, 0, far)
+	_ok(_evs(evs, "illegal").is_empty() and e4["hp"] == 7, "grow_spike+ (range 4) reaches distance 4: hp %d" % e4["hp"])
+	# base row: 3 / 4 / 4
+	var gb = _game(["grow_spike", "seed_bomb", "mycelium_dash"])
+	var eb = gb._spawn("drill_bot", t)
+	eb["hp"] = 10
+	gb.terrain[t] = {"kind": "growth"}
+	evs = _cast(gb, 0, t)
+	_ok(_evs(evs, "illegal").is_empty() and eb["hp"] == 7 and _riders(evs, "per").is_empty(), "grow_spike 0 adjacent -> 3: hp %d %s" % [eb["hp"], str(evs)])
+	gb.terrain[Vector2i(8, 2)] = {"kind": "growth"}
+	evs = _cast(gb, 0, t)
+	per = _riders(evs, "per")
+	_ok(eb["hp"] == 3 and per.size() == 1 and int(per[0]["amt"]) == 1 and String(per[0]["id"]) == "grow_spike",
+		"grow_spike 1 adjacent -> 4 (rider per 1): hp %d %s" % [eb["hp"], str(evs)])
+	eb["hp"] = 10
+	gb.terrain[Vector2i(8, 4)] = {"kind": "growth"}
+	gb.terrain[Vector2i(7, 3)] = {"kind": "growth"}
+	evs = _cast(gb, 0, t)
+	per = _riders(evs, "per")
+	_ok(eb["hp"] == 6 and per.size() == 1 and int(per[0]["amt"]) == 1, "grow_spike 3 adjacent capped at 4: hp %d %s" % [eb["hp"], str(evs)])
+	# cost unchanged: 1 charge each
+	_ok(int(Content.ABILITIES["grow_spike"]["cost"]) == 1 and int(Content.ABILITIES["grow_spike+"]["cost"]) == 1, "grow_spike costs stay 1")
+
+
+## sun_flare(+) {aoe_damage, ignite, bonus dmg 1 if target_on fire}: an enemy on
+## oil is ignited by the same cast and then takes the bonus; bare enemies do not.
+func _check_c2_sun_flare() -> void:
+	for pair in [["sun_flare+", 2], ["sun_flare", 1]]:
+		var aid: String = pair[0]
+		var base: int = pair[1]
+		var g = _game([aid, "seed_bomb", "mycelium_dash"])
+		var bare = g._spawn("drill_bot", Vector2i(5, 1))    # distance 2, bare floor
+		var oiled = g._spawn("drill_bot", Vector2i(7, 3))   # distance 2, on oil
+		var burning = g._spawn("drill_bot", Vector2i(5, 5)) # distance 2, already on fire
+		var far = g._spawn("drill_bot", Vector2i(8, 3))     # distance 3, out of radius
+		for e in [bare, oiled, burning, far]:
+			e["hp"] = 10
+		g.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+		g.terrain[Vector2i(5, 5)] = {"kind": "fire", "ttl": 2}
+		var evs: Array = _cast(g, 0, g.player["pos"])
+		_ok(_evs(evs, "illegal").is_empty(), "%s cast is legal: %s" % [aid, str(evs)])
+		_ok(bare["hp"] == 10 - base, "%s bare enemy takes %d: hp %d" % [aid, base, bare["hp"]])
+		_ok(g._terrain_kind(Vector2i(7, 3)) == "fire" and _evs(evs, "ignite").size() == 1,
+			"%s ignites the oil first: %s %s" % [aid, g._terrain_kind(Vector2i(7, 3)), str(evs)])
+		_ok(oiled["hp"] == 10 - base - 1, "%s enemy on oil (ignited this cast) takes %d: hp %d" % [aid, base + 1, oiled["hp"]])
+		_ok(burning["hp"] == 10 - base - 1, "%s enemy already in fire takes %d: hp %d" % [aid, base + 1, burning["hp"]])
+		_ok(far["hp"] == 10, "%s radius 2 leaves distance 3 alone" % aid)
+		var bonus := _riders(evs, "bonus")
+		_ok(bonus.size() == 2 and int(bonus[0]["amt"]) == 1 and int(bonus[1]["amt"]) == 1
+			and String(bonus[0]["id"]) == aid and String(bonus[1]["id"]) == aid,
+			"%s emits one bonus rider per enemy in fire: %s" % [aid, str(_evs(evs, "rider"))])
+		_ok(_riders(evs, "per").is_empty() and _riders(evs, "then").is_empty(), "%s emits no per/then rider" % aid)
+		var hits := _dmg(evs, aid)
+		_ok(hits.size() == 3, "%s three damage events signed by it: %s" % [aid, str(hits)])
+		_ok(int(Content.ABILITIES[aid]["cost"]) == 2, "%s cost stays 2" % aid)
+
+
+## water_jet+ {wash_push 3 / 3, then root 1 if collided AND pushed}: the pin
+## lands only when the enemy moved at least a tile and then hit something;
+## the root cooldown refuses the second pin.
+func _check_c2_water_jet() -> void:
+	var kit := ["water_jet+", "seed_bomb", "mycelium_dash"]
+	# pin: enemy at (8,3) shoved to (9,3), wall at (10,3) -> pushed 1, collided 1
+	var g = _game(kit)
+	var e = g._spawn("drill_bot", Vector2i(8, 3))
+	e["hp"] = 10
+	var evs: Array = _cast(g, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "illegal").is_empty() and e["pos"] == Vector2i(9, 3) and e["hp"] == 7,
+		"water_jet+ pin: moved to (9,3), 3 collision dmg: %s hp %d" % [str(e["pos"]), e["hp"]])
+	_ok(int(e["status"].get("root", 0)) == 1 and int(e["status"].get("root_cd", 0)) == 3,
+		"water_jet+ pin roots 1 (cd 3): %s" % str(e["status"]))
+	var then := _riders(evs, "then")
+	_ok(then.size() == 1 and int(then[0]["amt"]) == 1 and String(then[0]["id"]) == "water_jet+",
+		"water_jet+ pin emits rider then 1: %s" % str(_evs(evs, "rider")))
+	var st := _evs(evs, "status")
+	_ok(st.size() == 1 and String(st[0]["status"]) == "root" and int(st[0]["id"]) == int(e["id"]), "water_jet+ pin status event: %s" % str(st))
+	_ok(_dmg(evs, "collision:water_jet+").size() == 1 and int(_dmg(evs, "collision:water_jet+")[0]["amt"]) == 3, "collision signed by water_jet+: %s" % str(evs))
+	# the root cooldown refuses the second pin: root expired, cd still running
+	e["status"]["root"] = 0
+	e["pos"] = Vector2i(8, 3)
+	evs = _cast(g, 0, Vector2i(1, 0))
+	_ok(e["pos"] == Vector2i(9, 3) and e["hp"] == 4 and int(e["status"].get("root", 0)) == 0,
+		"second pin: shoved and hit again, not rooted: %s %s" % [str(e["pos"]), str(e["status"])])
+	_ok(_evs(evs, "resisted").size() == 1 and _riders(evs, "then").is_empty() and _evs(evs, "status").is_empty(),
+		"second pin resisted, no rider then: %s" % str(evs))
+	# wall-pinned: enemy already against the wall -> collided, not pushed -> no root
+	var g2 = _game(kit)
+	g2.player["pos"] = Vector2i(6, 3)
+	var e2 = g2._spawn("drill_bot", Vector2i(9, 3))
+	e2["hp"] = 10
+	evs = _cast(g2, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "illegal").is_empty() and e2["pos"] == Vector2i(9, 3) and e2["hp"] == 7,
+		"wall-pinned enemy takes 3, does not move: %s hp %d" % [str(e2["pos"]), e2["hp"]])
+	_ok(not e2["status"].has("root") and _riders(evs, "then").is_empty() and _evs(evs, "status").is_empty(),
+		"wall-pinned (collided, not pushed) -> no root: %s %s" % [str(e2["status"]), str(evs)])
+	# blocked by another enemy: both take collision damage, neither is rooted
+	var g3 = _game(kit)
+	var e3 = g3._spawn("drill_bot", Vector2i(8, 3))
+	var wall = g3._spawn("drill_bot", Vector2i(9, 3))
+	e3["hp"] = 10
+	wall["hp"] = 10
+	evs = _cast(g3, 0, Vector2i(1, 0))
+	_ok(e3["hp"] == 7 and wall["hp"] == 7 and e3["pos"] == Vector2i(8, 3) and not e3["status"].has("root") and not wall["status"].has("root")
+		and _riders(evs, "then").is_empty(), "enemy-pinned: both hit, none rooted: %d %d %s" % [e3["hp"], wall["hp"], str(evs)])
+	# open lane: enemy at (6,3) travels the full 3 tiles -> pushed, not collided -> no root, no damage
+	var g4 = _game(kit)
+	var e4 = g4._spawn("drill_bot", Vector2i(6, 3))
+	e4["hp"] = 10
+	evs = _cast(g4, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "illegal").is_empty() and e4["pos"] == Vector2i(9, 3) and e4["hp"] == 10,
+		"open lane: shoved 3, no collision: %s hp %d" % [str(e4["pos"]), e4["hp"]])
+	_ok(not e4["status"].has("root") and _riders(evs, "then").is_empty() and _evs(evs, "status").is_empty() and _evs(evs, "staggered").size() == 1,
+		"open lane (pushed, not collided) -> no root, still staggered: %s %s" % [str(e4["status"]), str(evs)])
+	_ok(int(Content.ABILITIES["water_jet+"]["cost"]) == 1, "water_jet+ cost stays 1")
+
+
+## vine_whip+ {pull 3 / 3, then stun 1 if outcome_crossed fire}: the stun lands
+## only when the drag crossed a burning tile (the enemy's own start tile is
+## not crossed).
+func _check_c2_vine_whip() -> void:
+	var kit := ["vine_whip+", "seed_bomb", "mycelium_dash"]
+	# drag through embers: enemy at (9,3), fire at (7,3), pulled to (6,3)
+	var g = _game(kit)
+	var e = g._spawn("drill_bot", Vector2i(9, 3))
+	e["hp"] = 10
+	g.terrain[Vector2i(7, 3)] = {"kind": "fire", "ttl": 2}
+	var evs: Array = _cast(g, 0, Vector2i(9, 3))
+	_ok(_evs(evs, "illegal").is_empty() and e["pos"] == Vector2i(6, 3), "vine_whip+ pulls 3 to (6,3): %s %s" % [str(e["pos"]), str(evs)])
+	_ok(e["hp"] == 6 and _dmg(evs, "vine_whip+").size() == 1 and int(_dmg(evs, "vine_whip+")[0]["amt"]) == 3 and _dmg(evs, "fire:env").size() == 1,
+		"drag through embers: 3 lash + 1 fire: hp %d %s" % [e["hp"], str(evs)])
+	_ok(int(e["status"].get("stun", 0)) == 1, "crossed fire -> stun 1: %s" % str(e["status"]))
+	var then := _riders(evs, "then")
+	_ok(then.size() == 1 and int(then[0]["amt"]) == 1 and String(then[0]["id"]) == "vine_whip+", "vine_whip+ rider then 1: %s" % str(_evs(evs, "rider")))
+	var st := _evs(evs, "status")
+	_ok(st.size() == 1 and String(st[0]["status"]) == "stun", "stun status event: %s" % str(st))
+	_ok(g._terrain_kind(Vector2i(7, 3)) == "fire", "the fire tile survives the drag")
+	# oil on the path: crossed, but not fire -> no stun
+	var g2 = _game(kit)
+	var e2 = g2._spawn("drill_bot", Vector2i(9, 3))
+	e2["hp"] = 10
+	g2.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	evs = _cast(g2, 0, Vector2i(9, 3))
+	_ok(e2["pos"] == Vector2i(6, 3) and e2["hp"] == 7 and not e2["status"].has("stun") and _riders(evs, "then").is_empty() and _evs(evs, "status").is_empty(),
+		"crossed oil only -> no stun: %s %s %s" % [str(e2["pos"]), str(e2["status"]), str(evs)])
+	# fire under the enemy's start tile is not "crossed": no stun
+	var g3 = _game(kit)
+	var e3 = g3._spawn("drill_bot", Vector2i(9, 3))
+	e3["hp"] = 10
+	g3.terrain[Vector2i(9, 3)] = {"kind": "fire", "ttl": 2}
+	evs = _cast(g3, 0, Vector2i(9, 3))
+	_ok(e3["pos"] == Vector2i(6, 3) and e3["hp"] == 7 and not e3["status"].has("stun") and _riders(evs, "then").is_empty(),
+		"fire under the start tile is not crossed -> no stun: %s %s" % [str(e3["status"]), str(evs)])
+	# fire beside the path (not on it) -> no stun; bare path -> no rider at all
+	var g4 = _game(kit)
+	var e4 = g4._spawn("drill_bot", Vector2i(9, 3))
+	e4["hp"] = 10
+	g4.terrain[Vector2i(7, 2)] = {"kind": "fire", "ttl": 2}
+	evs = _cast(g4, 0, Vector2i(9, 3))
+	_ok(e4["hp"] == 7 and not e4["status"].has("stun") and _evs(evs, "rider").is_empty(), "fire beside the path -> no rider: %s" % str(evs))
+	_ok(int(Content.ABILITIES["vine_whip+"]["cost"]) == 1, "vine_whip+ cost stays 1")
+
+
+## seed_bomb+ {grow_radius 1, then root 1 who on_planted}: enemies standing on
+## tiles this cast planted are rooted a turn; pre-existing growth under an
+## enemy is not a planted tile. Seed-on-head: the same turn's grow_spike+ on
+## the seeded enemy hits for 5.
+func _check_c2_seed_bomb() -> void:
+	var g = _game(["seed_bomb+", "grow_spike+", "mycelium_dash"])
+	var head = g._spawn("drill_bot", Vector2i(7, 3))      # the target tile itself
+	var old = g._spawn("drill_bot", Vector2i(8, 3))       # on pre-existing growth
+	var beside = g._spawn("drill_bot", Vector2i(7, 4))    # on a tile the plus plants
+	var off = g._spawn("drill_bot", Vector2i(9, 4))       # outside the plus
+	for e in [head, old, beside, off]:
+		e["hp"] = 10
+	g.terrain[Vector2i(8, 3)] = {"kind": "growth"}
+	var evs: Array = _cast(g, 0, Vector2i(7, 3))
+	_ok(_evs(evs, "illegal").is_empty() and _evs(evs, "growth").size() == 1, "seed_bomb+ on an enemy's tile is legal: %s" % str(evs))
+	_ok(g._terrain_kind(Vector2i(7, 3)) == "growth" and g._terrain_kind(Vector2i(7, 2)) == "growth"
+		and g._terrain_kind(Vector2i(7, 4)) == "growth" and g._terrain_kind(Vector2i(6, 3)) == "growth" and g._terrain_kind(Vector2i(8, 3)) == "growth",
+		"the plus is planted around (7,3)")
+	_ok(int(head["status"].get("root", 0)) == 1 and int(beside["status"].get("root", 0)) == 1,
+		"enemies on planted tiles are rooted 1: %s %s" % [str(head["status"]), str(beside["status"])])
+	_ok(not old["status"].has("root") and not off["status"].has("root"),
+		"pre-existing growth / outside the plus -> no root: %s %s" % [str(old["status"]), str(off["status"])])
+	var then := _riders(evs, "then")
+	_ok(then.size() == 1 and int(then[0]["amt"]) == 1 and String(then[0]["id"]) == "seed_bomb+", "seed_bomb+ rider then fires once per cast: %s" % str(_evs(evs, "rider")))
+	var st := _evs(evs, "status")
+	_ok(st.size() == 2 and String(st[0]["status"]) == "root" and String(st[1]["status"]) == "root", "two root status events: %s" % str(st))
+	_ok(g.player["charge"] == 9, "seed_bomb+ still costs 1: charge %d" % g.player["charge"])
+	# seed-on-head, same turn: grow_spike+ on (7,3) sees 4 adjacent growth -> cap 2 -> 5
+	g.player["charge"] = 1
+	evs = g.step({"type": "ability", "slot": 1, "target": Vector2i(7, 3)})
+	var per := _riders(evs, "per")
+	_ok(_evs(evs, "illegal").is_empty() and head["hp"] == 5 and per.size() == 1 and int(per[0]["amt"]) == 2 and g.casts_this_turn == 2,
+		"seed-on-head: grow_spike+ for 5 the same turn: hp %d %s" % [head["hp"], str(evs)])
+	# a seed that plants nothing under anyone: no root, no rider
+	var g2 = _game(["seed_bomb+", "grow_spike+", "mycelium_dash"])
+	var e2 = g2._spawn("drill_bot", Vector2i(8, 3))
+	evs = _cast(g2, 0, Vector2i(5, 1))
+	_ok(_evs(evs, "illegal").is_empty() and not e2["status"].has("root") and _evs(evs, "rider").is_empty() and _evs(evs, "status").is_empty(),
+		"seed_bomb+ away from enemies: no root, no rider: %s" % str(evs))
+	# a seed on a fully grown tile set plants nothing: no then at all
+	var g3 = _game(["seed_bomb+", "grow_spike+", "mycelium_dash"])
+	var e3 = g3._spawn("drill_bot", Vector2i(7, 3))
+	for t in [Vector2i(7, 2), Vector2i(7, 4), Vector2i(6, 3), Vector2i(8, 3)]:
+		g3.terrain[t] = {"kind": "growth"}
+	# (7,3) is bare so the tile is a legal target; only it gets planted -> head rooted, count 1
+	evs = _cast(g3, 0, Vector2i(7, 3))
+	_ok(int(e3["status"].get("root", 0)) == 1 and _evs(evs, "status").size() == 1, "only the head tile was fresh: one root: %s" % str(evs))
+	# the base row plants and does nothing else
+	var g4 = _game(["seed_bomb", "grow_spike+", "mycelium_dash"])
+	var e4 = g4._spawn("drill_bot", Vector2i(7, 3))
+	evs = _cast(g4, 0, Vector2i(7, 3))
+	_ok(_evs(evs, "illegal").is_empty() and not e4["status"].has("root") and _evs(evs, "rider").is_empty(), "base seed_bomb carries no rider: %s" % str(evs))

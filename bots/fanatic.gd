@@ -154,6 +154,23 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 func _build_cast(snap: Dictionary, by: Dictionary) -> Variant:
 	if not by.has("ability"):
 		return null
+	# Seed on head leads for any build whose core holds both halves of the
+	# combo (gardener today): bomb the enemy's own tile so the spike that
+	# follows this same turn is both legal and rider-capped. Off-build kits
+	# never reach it - _wants gates both ids - and the parent's own
+	# seed-on-head branch still covers the generic ladder below.
+	if _wants("seed_bomb") and _wants("grow_spike"):
+		var head := _seed_on_head(snap, by["ability"])
+		if not head.is_empty():
+			return head
+	# ...and the payoff outbids more setup: once growth is down (usually from
+	# the seed above) the spike is the reason it went down, and the lead only
+	# pays if the spike lands the same turn instead of a second bomb.
+	# _best_spike reads the rider, so it takes the richest target.
+	if _wants("grow_spike"):
+		var spike_now := _best_spike(snap, by["ability"])
+		if not spike_now.is_empty():
+			return spike_now
 	var near2 := _enemies_within(snap, 2)
 	var near3 := _enemies_within(snap, 3)
 	var ppos: Vector2i = snap["player"]["pos"]
@@ -168,8 +185,6 @@ func _build_cast(snap: Dictionary, by: Dictionary) -> Variant:
 			"sun_flare", "pollen_burst":
 				if near2 >= 1:
 					return a
-			"grow_spike":
-				return a
 			"vine_whip":
 				if near2 >= 1:
 					return a

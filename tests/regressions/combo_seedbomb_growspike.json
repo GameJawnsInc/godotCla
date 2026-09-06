@@ -2,8 +2,8 @@
 "seed": 1,
 "config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#......>#","#.@..d..#","#.......#","#########"]},"kit":["seed_bomb","grow_spike","mycelium_dash"],"pool":["seed_bomb","grow_spike","mycelium_dash"]},
 "actions": [{"slot":0,"target":[4,2],"type":"ability"},{"slot":1,"target":[5,2],"type":"ability"}],
-"expect": {"events":[{"t":"growth"},{"amt":3,"src":"grow_spike","t":"damage","who":"drill_bot"},{"t":"death","who":"drill_bot"}],"floor":1,"timeout":true,"turns":0,"won":false},
-"note": "combo demo: seed_bomb grows a cross under the drill bot, grow_spike pays off the same turn (2+1 charge)",
-"sim_version": 3,
-"hash": "248d888b3d4085c6828b516c7c14073ed8d0b48bf7b6721cec4991eeeff85119"
+"expect": {"events":[{"t":"growth"},{"amt":1,"id":"grow_spike","kind":"per","t":"rider"},{"amt":4,"src":"grow_spike","t":"damage","who":"drill_bot"},{"t":"death","who":"drill_bot"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "combo demo: seed_bomb grows a cross under the drill bot, grow_spike pays off the same turn (2+1 charge); under C2 the spike carries a per rider (growth_adjacent_target, cap 1) so the seeded cross turns its base 3 into 4",
+"sim_version": 4,
+"hash": "42b896e80c69206069ae77bd46c41bc2853f3f8a306cc2c6ed1db975d24703b1"
 }

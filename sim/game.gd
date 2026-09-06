@@ -29,7 +29,9 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## alters replay behaviour (shell run saves, regression records and autopsy
 ## dumps all stamp this value). 3: C1b - ash, root cooldown and blocked
 ## advance/drag, spore add-stacking, spread fire inheriting the bloom flag.
-const SIM_VERSION := 3
+## 4: C2 - rider rows on grow_spike(+), sun_flare(+), water_jet+, vine_whip+
+## and seed_bomb+ (Content data only; every cast of those ids replays anew).
+const SIM_VERSION := 4
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 

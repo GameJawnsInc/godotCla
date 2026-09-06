@@ -2018,6 +2018,468 @@ absence checks live in `tests/test_economy.gd` section g.
   pending corruption that never arrives, and the floor would only re-clamp
   once the tile resolved. Flagged by review, not patched here.
 
+## 2026-09-06c - bump 4 (C2): riders on the + forms and two base rows
+
+Block C's second content commit from docs/PROGRESSION_REVIEW.md 6.3 ("C2").
+Seven ability rows gained a rider and nothing else in the sim changed: C1a's
+grammar (`Game._rider_if` / `_rider_per` / `_bonus_dmg` / `then` +
+`status_target`) already read every key these rows use, so this bump is
+`sim/content.gd` data plus a version constant. `tests/test_content.gd`'s lint
+accepted all seven unchanged ("8 rider rows -> 0 failures"). The instruments
+did not change (still v2), so this entry compares directly with the
+2026-09-06b revision above it, with the "bump 3 (C1b)" entry above that, and
+with nothing before 2026-09-05.
+
+**The seven rows, verbatim** (`sim/content.gd`; cost, tags, role, target shape
+and range untouched except where noted):
+
+```
+sun_flare    effects [{op: aoe_damage, dmg: 1, radius: 2, ignite: true,
+                       bonus: {dmg: 1, if: [{target_on: ["fire"]}]}}]
+grow_spike   effects [{op: damage, dmg: 3,
+                       per: {count: growth_adjacent_target, cap: 1, add: {dmg: 1}}}]
+seed_bomb+   effects [{op: grow_radius, radius: 1,
+                       then: [{op: status_target, status: root, turns: 1, who: on_planted}]}]
+vine_whip+   effects [{op: pull, dist: 3, dmg: 3,
+                       then: [{op: status_target, status: stun, turns: 1,
+                               if: [{outcome_crossed: fire}]}]}]
+water_jet+   effects [{op: wash_push, push: 3, collision_dmg: 3,
+                       then: [{op: status_target, status: root, turns: 1,
+                               if: [{outcome: collided}, {outcome: pushed}]}]}]
+sun_flare+   effects [{op: aoe_damage, dmg: 2, radius: 2, ignite: true,
+                       bonus: {dmg: 1, if: [{target_on: ["fire"]}]}}]
+grow_spike+  effects [{op: damage, dmg: 3,
+                       per: {count: growth_adjacent_target, cap: 2, add: {dmg: 1}}}]
+```
+
+`grow_spike+` is the one row whose *base* number moved: it was a flat `dmg: 4`
+and is now `3 + per` capped at 2, so with growth only under the target and none
+orthogonally adjacent it deals 3 where it used to deal 4, and 5 where the
+review wanted 5. `grow_spike` (base) keeps cap 1 and range 3 while the `+` form
+keeps cap 2 and range 4, so the upgrade stays an upgrade - a deliberate
+deviation from the 6.3 text, which gave the base row cap 2 as well. Each row's
+`ABILITY_DESC` entry names its rider in one clause.
+
+**Version.** `Game.SIM_VERSION := 4` (`sim/game.gd:34`). What it invalidates:
+**every pre-bump replay hash and every stored action log that casts one of the
+seven ids.** Before the corpus work `tests/test_regressions.gd` was
+"regressions: 0 ok, 32 failed", exit 1, every line "stale record: sim_version 3
+!= 4"; 8 of those 32 also diverged on content or on the new bot branches.
+Aggregate win rates still compare across the bump (same instruments, same seeds
+1..30, same bots), but per-seed pairing does not: a spike that now kills at 4
+ends a fight a turn earlier and the persona diverges from there.
+
+**Bots in the same block** (`bots/optimizer.gd`, `bots/fanatic.gd`): the
+optimizer's hardcoded damage guesses are replaced by `_est_dmg(aid, target,
+snap)`, which reads `Content` and estimates `per` / `bonus` off the snapshot
+terrain with no sim call, and it gained a seed-on-head branch (bomb an enemy's
+own tile, then spike it the same turn); fanatic's gardener leads with the same
+branch. Every before/after pair below therefore measures **row + bot together**,
+which is what ships; the one place they are separated is the locked
+`water_jet` / `vine_whip` blocks, which came back byte-identical.
+
+### Suite
+
+All green, gate included:
+
+- `tests/test_invariants.gd`: "invariants: 1400 generations, 0 violations",
+  "terrain kinds: ["oil", "goo", "growth", "rich_goo"] (0 violations)",
+  "floor_def invariants: 11 configs, 1540 generations, 0 violations"
+- `tests/test_determinism.gd`: "determinism: OK (55 checks, 7 personas)"
+- `tests/test_content.gd`: "effect-grammar self-test: 19 bad rows -> 19
+  failures; 8 rider rows -> 0 failures", "effect grammar: 39 ability rows over
+  22 ops; terrain 9, reactions 5, statuses 3", "content: OK" (row and op counts
+  unchanged - the seven rows are edits, not additions)
+- `tests/test_economy.gd`: "economy: OK (120 checks)" (unchanged)
+- `tests/test_grammar.gd`: "grammar: OK (273 checks)" (207 -> 273; five new
+  `_check_c2_*` sections cast the real abilities through `Game.step`)
+- `tests/test_regressions.gd`: "regressions: 39 ok, 0 failed" and, with
+  `REGRESS_STRICT=1`, "=== regressions | dir res://tests/regressions | 39
+  records | strict true | regen false ===" / "regressions: 39 ok, 0 failed"
+  (32 -> 39 records)
+- `tests/test_meta.gd`: "meta: OK"
+- `tests/test_shell.gd`: "shell smoke: OK"
+- `tests/playtest.gd` 30 seeds, gate ON: exit 0, "gate: all PASS"
+
+### Persona table
+
+Before = the 2026-09-06b revision entry above. After =
+`=== playtest | bot wanderer,sprout,magpie,fanatic,optimizer,deeproot |
+config {  } | seeds 1..30 (30) ===` and
+`=== playtest | bot deeproot_rollout | config {  } | seeds 1..30 (30) ===`.
+Both columns are seeds 1..30, tier 0, Wilson 95% as printed.
+
+| persona | 06b revision | this bump | moved outside CI? |
+|---|---|---|---|
+| wanderer | 0/30 = 0% [0, 11], floor 1.0 | 0/30 = 0% [0, 11], floor 1.0 | no |
+| sprout | 1/30 = 3% [1, 17], floor 3.5 | 1/30 = 3% [1, 17], floor 3.5 | no |
+| magpie | 5/30 = 17% [7, 34], floor 3.8 | 5/30 = 17% [7, 34], floor 4.1 | no |
+| fanatic | 9/30 = 30% [17, 48], floor 5.6 | 9/30 = 30% [17, 48], floor 5.6 | no |
+| optimizer | 11/30 = 37% [22, 54], floor 5.9 | 13/30 = 43% [27, 61], floor 5.8 | no |
+| deeproot | 23/30 = 77% [59, 88], floor 6.9 | 22/30 = 73% [56, 86], floor 6.9 | no |
+| deeproot_rollout | 29/30 = 97% [83, 99], floor 7.0 | 28/30 = 93% [79, 98], floor 7.0 | no |
+
+**No persona moved outside the other column's interval**, and four of seven win
+counts are identical. The two that moved are the two the bot work touched most
+(optimizer +2, deeproot -1, both well inside both intervals). Zero illegal
+actions for all seven personas. Timeouts are **not** unchanged: magpie went
+0 -> 1 over the same 30 seeds (seed 22, floor 4, the pre-existing two-tile
+oscillation loop the autopsy shows at (22,11)/(22,12) with the stairs
+reachable - not a combo loop). optimizer, deeproot and deeproot_rollout, the
+personas the gate binds, stayed at 0.
+
+Per-build fanatic (`FANATIC_SEEDS=30
+FANATIC_BUILDS=turtle,gardener,pyro,ember,pyro_nolance`, `=== measure_fanatic |
+bot fanatic | config {  } | seeds 1..30 (30) ===`), measured on the pristine
+pre-C2 tree and on this one:
+
+| build | pre-C2 | this bump |
+|---|---|---|
+| turtle | 1/30 [1, 17], floor 4.2, signature 0.06 | 1/30 [1, 17], floor 4.2, signature 0.06 |
+| gardener | 6/30 [10, 37], floor 5.6, signature 0.39 | 9/30 [17, 48], floor 5.6, signature 0.50 |
+| pyro | 8/30 [14, 44], floor 5.7, signature 0.04 | 9/30 [17, 48], floor 5.7, signature 0.05 |
+| ember | 5/30 [7, 34], floor 5.5, signature 0.46 | 6/30 [10, 37], floor 5.5, signature 0.46 |
+| pyro_nolance | 15/30 [33, 67], floor 6.3, signature 0.31 | 16/30 [36, 70], floor 6.3, signature 0.32 |
+| total | 35/150, timeouts: [] | 41/150, timeouts: [] |
+
+Every build is still above zero, no build moved outside the other interval, and
+the **turtle canary row is identical cell for cell** (1/30, floor 4.2,
+core-complete "never", signature 0.06, strike 0.57, 0 timeouts).
+
+### KPI block (playtest, 30 seeds, tier 0)
+
+Same derivation and columns as the 06b table: strike/sig/terr = shares of enemy
+damage, cmb = combos/run, conv = bloom spent/earned, ent = kit entropy bits,
+shrine = shrine turns/run, unspent = unspent charge per end_turn, stall = stall
+floors over 30 runs, qu = quota-unmet deaths, dmg = player damage per run.
+
+| persona | strike | sig | terr | cmb | conv | ent | shrine | unspent | stall | qu | dmg |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| wanderer | 0.32 | 0.00 | 0.02 | 30.33 | 0.00 | 0.00 | 0.77 | 0.10 | 20 | 25 | 42.4 |
+| sprout | 0.36 | 0.14 | 0.01 | 8.67 | 0.11 | 4.29 | 0.80 | 0.37 | 14 | 2 | 31.5 |
+| magpie | 0.26 | 0.57 | 0.01 | 20.50 | 0.50 | 4.22 | 29.60 | 0.49 | 23 | 3 | 43.6 |
+| fanatic | 0.19 | 0.25 | 0.05 | 17.20 | 0.26 | 3.54 | 1.50 | 0.94 | 9 | 3 | 25.7 |
+| optimizer | 0.34 | 0.36 | 0.01 | 12.10 | 0.29 | 4.05 | 2.07 | 0.59 | 4 | 1 | 21.9 |
+| deeproot | 0.09 | 0.39 | 0.16 | 16.70 | 0.01 | 4.08 | 0.23 | 0.73 | 8 | 0 | 11.0 |
+| deeproot_rollout | 0.07 | 0.32 | 0.11 | 14.03 | 0.00 | 3.87 | 0.33 | 0.86 | 3 | 0 | 3.4 |
+
+The riders line - `riders: 0.00/run` for every persona in every entry before
+this one, because no content row carried a rider:
+
+```
+wanderer   riders: 0.00/run  by kind {  }  by ability {  }
+sprout     riders: 2.10/run  by kind { "per": 60, "then": 3 }  by ability { "grow_spike": 59, "seed_bomb+": 3, "grow_spike+": 1 }
+magpie     riders: 17.10/run  by kind { "per": 507, "bonus": 6 }  by ability { "grow_spike": 375, "grow_spike+": 132, "sun_flare": 6 }
+fanatic    riders: 5.20/run  by kind { "then": 32, "per": 115, "bonus": 9 }  by ability { "seed_bomb+": 32, "grow_spike": 65, "grow_spike+": 50, "sun_flare+": 2, "sun_flare": 7 }
+optimizer  riders: 7.47/run  by kind { "per": 209, "bonus": 15 }  by ability { "grow_spike": 174, "grow_spike+": 35, "sun_flare+": 6, "sun_flare": 9 }
+deeproot   riders: 1.33/run  by kind { "then": 1, "per": 31, "bonus": 8 }  by ability { "water_jet+": 1, "grow_spike+": 7, "grow_spike": 24, "sun_flare": 4, "sun_flare+": 4 }
+deeproot_rollout  riders: 2.77/run  by kind { "then": 13, "per": 67, "bonus": 3 }  by ability { "seed_bomb+": 5, "grow_spike": 32, "water_jet+": 8, "sun_flare": 1, "grow_spike+": 35, "sun_flare+": 2 }
+```
+
+Read against the 06b KPI table: **signature share is the cell that moved**
+(magpie 0.27 -> 0.57, optimizer 0.12 -> 0.36, sprout 0.12 -> 0.14, fanatic 0.21
+-> 0.25, deeproot 0.38 -> 0.39) and it moved because `grow_spike` carries it -
+over these same 30 seeds, 375 of magpie's 507 `per` riders and 174 of the
+optimizer's 209 are the base spike. Combos/run rose with it (magpie 2.80 ->
+20.50, fanatic 12.23 -> 17.20, optimizer 4.13 -> 12.10, deeproot 15.27 ->
+16.70) - note that `riders`
+are counted inside `combo_rate`, so a large part of that rise *is* the rider
+counter, not new terrain play. Damage taken per run fell for the two personas
+that use the spike best (optimizer 23.4 -> 21.9, fanatic 26.4 -> 25.7) and rose
+for magpie (32.3 -> 43.6), which now stays alive longer at the shrine (avg
+turns 168.5, shrine turns 29.60 against 23.17). Stall floors: wanderer 20 -> 20,
+sprout 15 -> 14, magpie 19 -> 23, fanatic 9 -> 9, optimizer 5 -> 4, deeproot
+7 -> 8. Upcycles are still 0/0 for every persona and `quota reclamps 0`
+everywhere - four bumps with press, forge and the re-clamp dead in play.
+
+**`resisted` is no longer zero.** fanatic's terrain line reads `resisted 2
+statuses { "stun": 30, "root": 57 }` against `resisted 0 statuses { "stun": 30,
+"root": 23 }` in 06b, and sprout picked up `root: 4`. `seed_bomb+`'s root rider
+is the first content in the project to exercise root's cooldown in bot play -
+the bump-3 watch item that recorded 0 `resisted` events over 210 runs is now
+partly answered.
+
+### Shipping gate, row by row
+
+Gate text is docs/PROGRESSION_REVIEW.md 6.0: (i) a regression demo exists;
+(ii) the Tally shows the combo firing at least once per run in a forced kit at
+30 seeds; (iii) its locked lift CI is not below zero; (iv) signature-damage or
+terrain-derived share, or a continuous metric such as turns on wins or damage
+taken, moves in the intended direction; (v) magpie stays at or under 5% at 100
+seeds, the turtle canary and timeout count are unchanged, and wanderer at 100
+seeds shows zero script errors and zero illegal actions; (vi) shield / heal /
+thorns / cleanse riders need a deeproot-plan solo check - **not applicable, no
+row here grants any of those.**
+
+"Forced kit" below is the locked config `{kit: base3 + X, pool: base3 + X}`
+(`=== locked_kits(scratch) | bot optimizer | config { "locked": true } | seeds
+1..30 (30) ===`, base3 = `["solar_lance", "seed_bomb", "mycelium_dash"]`),
+because a locked pool offers only `+` upgrades and is the only configuration in
+which the `+` rows are reliably drafted. Column (ii) is that config's
+`riders: ... by ability` count divided by 30.
+
+| row | (i) demo | (ii) riders/run, forced kit | (iii) locked lift | (iv) metric moved | verdict |
+|---|---|---|---|---|---|
+| `grow_spike` | `c2_grow_spike_base.json`, `combo_seedbomb_growspike.json` | **1.73** (52/30, base3+grow_spike) | +7 (10/30 [19, 51] -> 17/30 [39, 73]) | sig 0.36 -> 0.83, dmg taken 19.1 -> 13.7 | **SHIP** |
+| `grow_spike+` | `c2_grow_spike_plus.json` | **23.87** (716/30) | shares the row above (the `+` is the drafted form) | signature damage is 0.83 of the kit's total | **SHIP** |
+| `seed_bomb+` | `c2_seed_bomb_plus_head.json` | **5.30** (159/30, base3+grow_spike = the seed-on-head kit); 0.07 in base3 alone | no single-row contrast exists (`seed_bomb` is in `STARTING_KIT`) | fanatic `root` 23 -> 57 and `resisted` 0 -> 2; seed_bomb casts/run 1.4 -> 9.0 | **SHIP** |
+| `sun_flare` | `c2_sun_flare_base.json` | **0.03** (1/30) | -1 (10/30 [19, 51] -> 9/30 [17, 48]); pre-C2 same config 12/30 [25, 58] | sig 0.05 -> 0.16, casts/run 1.1 -> 5.5, dmg taken 23.1 -> 22.3, turns(w) 89.8 -> 85.2, wins 12 -> 9 | **HOLD** (ii) |
+| `sun_flare+` | `c2_sun_flare_plus.json` | **0.63** (19/30) | shares the row above | as above | **HOLD** (ii) |
+| `water_jet+` | `c2_water_jet_pin.json` | **0.00** (0/30) | 0 (10/30 [19, 51], identical to pre-C2) | **nothing moved** - the whole 30-seed block is byte-identical to the pre-C2 tree | **HOLD** (ii, iv) |
+| `vine_whip+` | `c2_vine_whip_embers.json` | **0.00** (0/30) | +2 (12/30 [25, 58], identical to pre-C2) | **nothing moved** except one `seed_bomb+` root | **HOLD** (ii, iv) |
+
+Gate (v) is shared by all seven rows and is reported under "Canaries" below:
+wanderer clean, turtle unchanged, magpie's rise inside the standing trip line
+but its timeout count **not** unchanged (0 -> 1).
+
+**The four HOLD rows are held, not removed - that is the owner's call.** What
+the numbers say about each:
+
+- **`sun_flare` / `sun_flare+` fire, just not once per run.** The bonus needs an
+  enemy standing *in fire* at the moment the flare resolves, and the review's
+  own telemetry put that at "under 1% of sightings". In the forced kit the
+  optimizer casts the flare 5.5 times a run (up from 1.1 - the `_aoe_finishes`
+  branch is doing its job) and lands the bonus 0.63 times. Over every run in
+  this entry the bonus fired 20 times in the locked kit, 17 in the open-pool
+  forced kit, 15 for the optimizer and 6 for magpie in the playtest, and 18 for
+  magpie over 100 canary seeds. The rider works; the board rarely offers it.
+- **`water_jet+`'s pin is reachable but no heuristic bot reaches it.** The
+  `then` needs `collided` *and* `pushed`, i.e. the enemy actually moved and then
+  hit something. In the forced kit the optimizer collides 0.27 times a run and
+  every one of those is a wall-adjacent enemy that moved 0 tiles - `collided`
+  is true by construction on a collision event, so `pushed` is the only
+  conjunct that can fail, and it fails 8 times out of 8. It does fire for the two search personas that use the sim as a
+  forward model: **1 rider over 30 deeproot runs and 8 over 30
+  deeproot_rollout runs.** Across every run in this entry - 210 playtest, 100
+  magpie canary, 100 wanderer canary, 270 forced-kit - `water_jet+` fired 9
+  rider events, all of them from search.
+- **`vine_whip+`'s ember drag never fired at all.** 0 rider events over the same
+  680 runs, search personas included. Its `outcome_crossed: fire` needs a
+  burning tile on the pull path in the same cast, and no persona lines that up.
+- Neither of those two is a *broken* row: `tests/test_grammar.gd` casts both
+  through `Game.step` and `tests/regressions/c2_water_jet_pin.json` /
+  `c2_vine_whip_embers.json` replay them exactly. They are rows whose
+  opportunity rate in play is at or near zero, which is what gate (ii) is for.
+
+### Locked lift table (gate iii), verbatim
+
+`=== sweep_combos | bot optimizer | config { "tier": 0 } | seeds 1..30 (30) ===`,
+`mode lift | extras 12 -> 66 pairs, 3 selected | pairs
+grow_spike+sun_flare,water_jet+vine_whip,grow_spike+water_jet`, base3
+`["solar_lance", "seed_bomb", "mycelium_dash"]`:
+
+```
+baseline (base3 locked): 10/30    [19%, 51%]         3.43        90     25.8
+
+singles (base3 + X locked, 6 ids x 30 seeds):
+  ability            wins CI           combos/run  turns(w)      dmg
+  grow_spike     17/30    [39%, 73%]        33.43        76     13.7
+  grow_spike     17/30    [39%, 73%]        33.43        76     13.7
+  sun_flare       9/30    [17%, 48%]         6.73        85     22.3
+  vine_whip      12/30    [25%, 58%]         5.07        92     23.6
+  water_jet      10/30    [19%, 51%]         4.83        92     23.6
+  water_jet      10/30    [19%, 51%]         4.83        92     23.6
+
+pairs (base3 + X + Y locked, 3 pairs x 30 seeds), sorted by lift:
+  pair                               sx    sy  pair   max  lift   add  p-add discordant    cmb/r  t/o
+  grow_spike + sun_flare          17/30  9/30 22/30    17    +5    16     +6 10:5  p=0.30  33.17    0
+  grow_spike + water_jet          17/30 10/30 20/30    17    +3    17     +3  8:5  p=0.58  33.23    0
+  vine_whip + water_jet           12/30 10/30 10/30    12    -2    12     -2  7:9  p=0.80   7.20    0
+
+0/3 pairs flagged (pair CI excludes the max-single fraction AND sign_p < 0.05); discordant = seeds won by pair only : by best single only; sx/sy/pair are wins/30
+secondaries per pair (signature share / terrain share / turns on wins / dmg taken / avg floor):
+  grow_spike + sun_flare          sig 0.83  terrain 0.01  turns(w) 89  dmg 13.0  floor 6.4
+  grow_spike + water_jet          sig 0.80  terrain 0.01  turns(w) 89  dmg 15.4  floor 6.4
+  vine_whip + water_jet           sig 0.08  terrain 0.02  turns(w) 90  dmg 25.3  floor 6.0
+```
+
+Pair CIs (the pairs table does not print them; computed with the same
+`Sweep.wilson`, z = 1.96, and cross-checked against a runner that does print
+22/30): 22/30 = [56%, 86%], 20/30 = [49%, 81%], 10/30 = [19%, 51%]. No pair is
+flagged, so nothing here is a measured combo warp at 30 seeds. Read as
+directions: light-then-flare (`grow_spike + sun_flare`, +5) and the spike next
+to a shove (+3) both point up, and **pin-plus-drag (`vine_whip + water_jet`,
+-2, sig 0.08) is the worst locked row in the table** - the two rows that never
+fire their riders are also the two whose pair loses wins against holding
+`vine_whip` alone. Duplicate `grow_spike` / `water_jet` rows in the singles
+block are a display artefact of `sweep_combos._run_lift` (an id in two selected
+pairs is appended to `single_ids` twice); both copies are the same
+measurement.
+
+**A/B against the pristine pre-C2 tree.** Every locked config above was also
+run on `git archive HEAD` (commit 293020b, `SIM_VERSION` 3, pre-C2 content and
+pre-C2 bots), same seeds, same script:
+
+| locked kit | pre-C2 | this bump | riders/run |
+|---|---|---|---|
+| base3 | 10/30 [19, 51], turns(w) 90.2, dmg 25.8 | 10/30 [19, 51], turns(w) 90.2, dmg 25.8 | 0.00 -> 0.07 |
+| base3 + `grow_spike` | 10/30 [19, 51], turns(w) 73.3, dmg 19.1, sig 0.36 | 17/30 [39, 73], turns(w) 76.4, dmg 13.7, sig 0.83 | 0.00 -> 30.90 |
+| base3 + `sun_flare` | 12/30 [25, 58], turns(w) 89.8, dmg 23.1, sig 0.05 | 9/30 [17, 48], turns(w) 85.2, dmg 22.3, sig 0.16 | 0.00 -> 0.67 |
+| base3 + `water_jet` | 10/30 [19, 51], turns(w) 92.1, dmg 23.6, sig 0.01 | 10/30 [19, 51], turns(w) 92.1, dmg 23.6, sig 0.01 | 0.00 -> 0.00 |
+| base3 + `vine_whip` | 12/30 [25, 58], turns(w) 92.3, dmg 23.6, sig 0.04 | 12/30 [25, 58], turns(w) 92.3, dmg 23.6, sig 0.04 | 0.00 -> 0.03 |
+
+The `water_jet` block is **byte-identical** across the bump and the `vine_whip`
+block differs only in `combos/run 5.03 -> 5.07`, `riders 0.00 -> 0.03` and
+`statuses { "stun": 27 } -> { "stun": 27, "root": 1 }` - one `seed_bomb+` root
+that changed no other printed cell. That is the cleanest statement this entry
+can make: two of the seven rows cost nothing and bought nothing at 30 seeds.
+
+Open-pool forced kits (`VERIFY_EXTRAS=X`, `=== verify_kit | bot optimizer |
+config { "kit": [...] } | seeds 1..30 (30) ===`), same pre/post A/B, for the
+"base row plus its `+` via drafts" question the task asked:
+
+| VERIFY_EXTRAS | pre-C2 | this bump | riders/run by ability, this bump |
+|---|---|---|---|
+| `grow_spike` | 13/30 [27, 61], sig 0.34, dmg 18.3 | 22/30 [56, 86], sig 0.78, dmg 14.8 | 24.97: grow_spike 488, grow_spike+ 209, seed_bomb+ 48, sun_flare 4 |
+| `sun_flare` | 12/30 [25, 58], sig 0.17, dmg 26.6 | 13/30 [27, 61], sig 0.39, dmg 22.8 | 7.43: grow_spike 134, grow_spike+ 72, sun_flare+ 9, sun_flare 8 |
+| `water_jet` | 11/30 [22, 54], sig 0.14, dmg 26.0 | 15/30 [33, 67], sig 0.37, dmg 25.4 | 7.77: grow_spike 149, grow_spike+ 75, sun_flare 7, sun_flare+ 2 |
+| `vine_whip` | 11/30 [22, 54], sig 0.13, dmg 26.5 | 15/30 [33, 67], sig 0.37, dmg 27.0 | 7.70: grow_spike 156, grow_spike+ 67, sun_flare 6, sun_flare+ 2 |
+
+In an open pool the optimizer drafts `grow_spike` into every one of these kits,
+so the rise in the bottom three rows is the spike's, not the named extra's -
+`water_jet+` and `vine_whip+` contribute **zero** rider events to any of them.
+This is exactly why gate (ii) is measured on the locked config.
+
+### Canaries (gate v)
+
+- **magpie, 100 seeds.** `=== verify_kit | bot magpie | config {  } | seeds
+  1..100 (100) ===`: **19/100 = 19% wins, win CI [13%, 28%]**, avg floor 4.1,
+  turns on wins 215.2, damage taken 37.6/run, **1 timeout**, 0 illegal,
+  `riders: 15.97/run by kind { "per": 1563, "bonus": 18, "then": 16 } by
+  ability { "grow_spike": 1221, "grow_spike+": 342, "sun_flare": 13,
+  "seed_bomb+": 16, "sun_flare+": 5 }`, stall floors 62, quota-unmet deaths 7,
+  `quota reclamps 0`. The same 100 seeds on the pristine pre-C2 tree:
+  **13/100 = 13% [8%, 21%]**, avg floor 3.8, turns on wins 213.8, damage 33.0,
+  **0 timeouts** - i.e. the 06b number reproduced cell for cell, which is what
+  makes the A/B trustworthy. Against the 2026-09-05d rule ("the recorded rise
+  baseline is 10/100 = 10% [6, 17]; a 100-seed lower bound clearing 17% is the
+  signal"): the lower bound is 13%, which does not clear 17%, so **not a
+  signal**. Against the literal 6.0 gate text ("magpie stays at or under 5% at
+  100 seeds"), 19% fails - as 13%, 13% and 10% failed before it. The four
+  100-seed readings under instrument v2 now run 10/100 [6, 17] (2026-09-05c),
+  13/100 [8, 21] (bump 3), 13/100 [8, 21] (06b) and 19/100 [13, 28] here: the
+  highest yet, and the first whose whole interval sits above 10%. Compare the
+  next one against [6, 17], not against [13, 28].
+- **wanderer, 100 seeds.** `=== verify_kit | bot wanderer | config {  } | seeds
+  1..100 (100) ===`: **0/100 = 0% [0%, 4%]**, avg floor 1.0, **0 timeouts, 0
+  illegal actions, 0 SCRIPT ERROR lines**, `riders: 0.00/run`. Clean pass.
+- **turtle.** `FANATIC_BUILDS=turtle,...` at 30 seeds, both trees: **1/30 [1%,
+  17%], avg floor 4.2, core-complete "never", signature 0.06, strike 0.57, 0
+  timeouts** - identical before and after. Turtle is not at 0 wins and has not
+  been since the loop fixes (BALANCE.md Watch list records the canary baseline
+  as 5/25); the point of the canary is that it did not *rise*, and it did not
+  move at all.
+- **Timeouts.** Not unchanged: magpie 0 -> 1 at 30 seeds and 0 -> 1 at 100
+  seeds. Every other persona is 0 in every run in this entry (wanderer, sprout,
+  fanatic, optimizer, deeproot, deeproot_rollout at 30 seeds; all five fanatic
+  builds at 30 seeds; every locked and open-pool forced kit at 30 seeds;
+  wanderer at 100 seeds). magpie is not in `playtest.NO_TIMEOUT`, so the gate
+  does not bind it.
+
+### Gate verdict
+
+`tests/playtest.gd` at 30 seeds, gate ON: **exit 0, "gate: all PASS"**.
+
+```
+PASS wanderer 0 wins, avg floor <= 2: 0 wins, avg floor 1.00
+PASS wanderer illegal actions == 0: 0
+PASS sprout wins rare (<= 1 per 30 seeds): 1/30
+PASS sprout illegal actions == 0: 0
+PASS magpie canary <= 10% (design target 0-5%): 5/30 CI [7%, 34%] (fails when the lower bound clears the trip line)
+PASS magpie illegal actions == 0: 0
+PASS fanatic illegal actions == 0: 0
+PASS optimizer band 35-65%: 13/30 CI [27%, 61%]
+PASS optimizer timeouts == 0: 0
+PASS optimizer illegal actions == 0: 0
+PASS deeproot band 70-90%: 22/30 CI [56%, 86%]
+PASS deeproot timeouts == 0: 0
+PASS deeproot illegal actions == 0: 0
+gate: all PASS
+```
+
+`PLAYTEST_BOTS=deeproot_rollout PLAYTEST_SEEDS=30`: exit 0.
+
+```
+PASS deeproot_rollout illegal actions == 0: 0
+gate: all PASS
+```
+
+### Regression corpus
+
+**32 -> 39 records, all `sim_version: 4`.** Plain and `REGRESS_STRICT=1` both
+"regressions: 39 ok, 0 failed", exit 0. Before the corpus work the suite was
+"regressions: 0 ok, 32 failed", exit 1, all 32 "stale record: sim_version 3 !=
+4" - the expected shape of a version bump. What the corpus phase did, from its
+report:
+
+- **7 new hand-scripted records**, one per row and all 0-turn (ability casts
+  only, no `end_turn`, so no enemy-phase noise): `c2_grow_spike_plus`
+  (`rider per amt 2` -> `damage amt 5`), `c2_grow_spike_base` (`per amt 1` ->
+  `damage amt 4`, cap 1 holding at two adjacent growth), `c2_sun_flare_plus`
+  (ignite -> `bonus amt 1` -> `damage amt 3`), `c2_sun_flare_base`
+  (-> `damage amt 2`), `c2_water_jet_pin` (`collision:water_jet+ amt 3` ->
+  `status root turns 1` -> `then amt 1`), `c2_vine_whip_embers`
+  (`fire:env amt 1` -> lash 3 -> `status stun` -> `then amt 1`),
+  `c2_seed_bomb_plus_head` (growth -> root -> `seed_bomb+ then` ->
+  `grow_spike+ per amt 2` -> `damage amt 5` -> death, two actions, one turn).
+  Gate (i) is discharged by these seven.
+- **17 records re-stamped only** (expect and hash byte-identical), **1 changed
+  by content** (`combo_seedbomb_growspike`, hash `248d888b` -> `42b896e8`: the
+  seed's cross now leaves one growth tile beside the target, so the base spike
+  reads `rider grow_spike per amt 1` then `damage amt 4` where it read
+  `damage amt 3`; the event pattern was hand-edited because `REGEN=1` never
+  rewrites patterns), and **14 bot logs re-recorded** because their stored
+  action lists no longer replay against the new content and the new optimizer /
+  fanatic branches.
+- **One outcome flip in the whole corpus**: `det_optimizer_s42` went
+  `won false` -> `won true` (floor 7, turns 101 -> 88, 474 -> 390 actions), and
+  its new log fires 7 `per` and 4 `bonus` riders, so the flip is C2 plus the new
+  branches rather than a corpus error.
+- Riders across the re-recorded logs: `per` 94, `bonus` 8, `then` 0.
+- Recorded by the corpus phase and not caused by this bump:
+  `det_wanderer_s3` / `det_sprout_s3` / `det_sprout_s11` changed on re-record
+  although `bots/wanderer.gd` and `bots/sprout.gd` were not edited and reference
+  no `Content` symbol; a step-by-step probe on `det_wanderer_s3` reaches the
+  identical state hash and legal list at the divergence and still picks a
+  different index, so those three logs were already stale before this block.
+
+### Anything else that moved
+
+- **The two heaviest cells are `grow_spike`'s.** Locked, it is +7 wins
+  (10/30 [19, 51] -> 17/30 [39, 73]) and it takes over the kit: signature share
+  0.36 -> 0.83, `grow_spike` casts/run 14.0 -> 27.1, `solar_lance` casts/run
+  10.7 -> 3.4. Open-pool forced, it is 13/30 -> 22/30 [56, 86]. Neither number
+  breaks a band - the gated optimizer run is 13/30 [27, 61], inside 35-65% -
+  but a single cost-1 row that carries four fifths of a kit's damage is the
+  same shape `solar_core` shows in the graft table, and it is worth a 100-seed
+  look before C3 adds `compost` (kills leave growth) on top of it.
+- **`sun_flare`'s locked row lost 3 wins** (12/30 [25, 58] -> 9/30 [17, 48])
+  while every continuous metric moved the right way. The intervals overlap and
+  the paired sign test on the pair rows is p = 0.30, so this is inside noise at
+  30 seeds; it wants an out-of-sample re-check (`SWEEP_SEED_FROM=101`) before
+  anyone reads it as the rider costing wins. The likely mechanism is tempo, not
+  the rider: the optimizer's new `_aoe_finishes` branch fires the flare 5x more
+  often (1.1 -> 5.5 casts/run) for 2 charge a cast.
+- **magpie's damage taken rose 32.3 -> 43.6 per run** and its shrine turns
+  23.17 -> 29.60 on the same 5/30 wins, with avg turns 168.5. Greed now has a
+  cheap repeatable payoff (`grow_spike` 375 riders per 30 runs) and spends
+  longer standing in the smog to buy it. This is the mechanism behind the
+  100-seed canary rise; watch it before any further shop or growth content.
+- **deeproot's terrain share held at 0.16 and its collision damage is still the
+  largest in the roster** (`collision:water_jet` 248, `collision:water_jet+`
+  51 over 30 runs) - the pin rider is the one C2 row the search personas use
+  and the heuristics do not.
+- **Not measured for this bump:** no `sweep_grafts`, `sweep_packages`,
+  `sweep_tiers`, `measure_bosses` or `draft_oracle` run. Per-graft lift, tier
+  winnability, boss arrivals and draft regret are still the bump-3 numbers.
+  `sweep_tiers` in particular has not seen a `grow_spike` that scales with
+  growth, and the tier ladder is where a cost-1 payoff row would show up first.
+- **`quota_reclamp` has still never fired in a bot run** - 0 over the 680 runs
+  in this entry that print the counter (210 playtest, 200 canary, 270
+  forced-kit), on top of everything before it. The 150 `measure_fanatic` runs
+  cannot say either way: that runner prints its own per-build summary, not the
+  Tally block. Press and forge upcycles are still 0/0 for every persona.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from
@@ -2173,3 +2635,56 @@ absence checks live in `tests/test_economy.gd` section g.
   test loudly (intended) but the runtime-only list is a literal nobody
   generates from the table - a future runtime-only kind is silently allowed
   until someone edits it.
+
+### Bump-4 additions (2026-09-06c)
+
+- **Four of the seven C2 rows are on HOLD, and two of those never fire.**
+  `water_jet+`'s pin fired 9 rider events over the 680 runs in the 2026-09-06c
+  entry - 1 for deeproot, 8 for deeproot_rollout, 0 for every heuristic
+  persona - and `vine_whip+`'s ember drag fired **0**. Both are proven correct
+  by `tests/test_grammar.gd` and their `c2_*` records; what they lack is an
+  opportunity rate. Before re-judging them, decide whether the fix is the row
+  (drop the `pushed` conjunct so a wall pin also roots, widen
+  `outcome_crossed`), the bot (a lance-line-opening branch), or the board
+  (fires and pillars where a shove can use them). `sun_flare` (0.03
+  riders/run) and `sun_flare+` (0.63) fire but under gate 6.0's once-per-run
+  line; their opportunity rate matches the review's own "on fire under 1% of
+  sightings" telemetry, so the honest question is whether that gate line is
+  right for a terrain-conditional bonus.
+- **The magpie canary rose again: 13/100 [8, 21] -> 19/100 [13, 28]**, measured
+  as a same-seed A/B against the pristine pre-C2 tree (which reproduced the 06b
+  number exactly). By the 2026-09-05d rule this is not a signal - the lower
+  bound 13% does not clear the recorded rise baseline's 17% - but the v2 series
+  now reads 10/100, 13/100, 13/100, 19/100, so this is the highest reading yet
+  and the first whose whole interval clears 10%, and the 30-seed gate line
+  (`5/30 [7, 34]`) passes only because its trip line was re-derived to 10%.
+  **Compare the next 100-seed run against [6, 17].** If it clears 17%,
+  `grow_spike` is the first place to look: greed's rider count is 1,563 per
+  100 runs and 1,221 of them are that one row.
+- **magpie gained a timeout** (0 -> 1 at 30 seeds, 0 -> 1 at 100 seeds; seed 22,
+  floor 4, 400-turn cap). The autopsy shows the pre-existing two-tile
+  oscillation-plus-growth-heal loop at (22,11)/(22,12) with the stairs
+  reachable at (21,10), not a combo loop - but it is a stall that C2's cheap
+  repeatable heal-adjacent play made reachable on a seed where it was not
+  before. magpie is not in `playtest.NO_TIMEOUT` (optimizer and deeproot only),
+  so nothing gates this. Gate 6.0 (v) asks for an unchanged timeout count and
+  this bump does not deliver one.
+- **`grow_spike` is a one-lever kit.** Locked, it is +7 wins and 0.83 of the
+  kit's signature damage; open-pool forced, 22/30 [56, 86]. Verify at 100 seeds
+  and out of sample (`SWEEP_SEED_FROM=101`) before C3 ships `compost`, which
+  turns every kill into another growth tile and therefore another `per` stack.
+- **`resisted` is finally non-zero in play** (fanatic 2 over 30 runs, with
+  `root` 23 -> 57), so bump 3's "root's cooldown is unmeasured" watch item is
+  partly closed by `seed_bomb+`. `spore` statuses are still 0 everywhere.
+- **`sweep_combos` prints duplicate singles rows** when an id appears in more
+  than one selected pair (`_run_lift` appends to `single_ids` before the
+  `singles.has(aid)` guard takes effect for the *next* pair). Display only -
+  both copies are the same measurement - but it makes a `SWEEP_PAIRS` table
+  look like it measured an id twice.
+- **Two rows are the first things to revert if a later sweep dislikes this
+  bump**, per the bot phase: `optimizer.gd:216-219` fires `sun_flare` when
+  `_aoe_finishes` says the estimate kills inside the radius (delete the
+  `or _aoe_finishes(...)` clause), and `fanatic.gd:166-173` hoists the spike
+  above the remaining build casts so the seed-on-head lead is not eaten by a
+  second bomb. The flare branch is the likeliest cause of `sun_flare`'s locked
+  row losing 3 wins.

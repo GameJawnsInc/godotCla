@@ -190,7 +190,13 @@ architecture below is designed to bend rather than block.
   keys go into the `tests/test_content.gd` vocabulary constants in the same
   change, or the lint rejects them. Riders emit `{t: "rider", id, kind, amt}`,
   which `tests/tally.gd` counts (`riders_by_kind` / `riders_by_aid`) and folds
-  into the combo rate.
+  into the combo rate. Live rider rows (C2, `Game.SIM_VERSION` 4): `grow_spike`
+  and `grow_spike+` carry `per` (growth_adjacent_target over a base 3, cap 1 and
+  cap 2), `sun_flare` and `sun_flare+` a `bonus` (+1 on an enemy standing in
+  fire, which their own ignite pass can light under it), and `seed_bomb+`,
+  `vine_whip+` and `water_jet+` a `then` (root on freshly planted tiles, stun
+  when the drag crossed fire, root when the shove both pushed and collided) —
+  `tests/regressions/c2_*.json` demos one row each.
 - Sim run config: `Game.new(seed, {kit, pool, packages, tier, mutators, grafts,
   bloom})` for sweeps, meta-unlocks, and post-win difficulty tiers. `grafts` is
   a list of `Content.GRAFTS` ids installed before floor 1 (unknown ids are
@@ -209,9 +215,10 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (3
-  today: C1b ash, root blocks/cooldown, spore stacking, items through
-  `_apply_status`): bump it whenever a sim change alters replay behaviour.
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (4
+  today: C2 rider rows on `grow_spike(+)`, `sun_flare(+)`, `water_jet+`,
+  `vine_whip+` and `seed_bomb+`, so every cast of those ids replays anew):
+  bump it whenever a sim change alters replay behaviour.
   `shell/main.gd` RUN_SAVE_VERSION, `tests/regress_lib.gd` and
   `tests/autopsy.gd` all read it -
   live phone runs persist as replayable action logs and a stale log replayed

@@ -52,7 +52,7 @@ const ABILITIES := {
 	},
 	"sun_flare": {
 		"name": "Sun Flare", "cost": 2, "target": "self", "range": 2,
-		"effects": [{"op": "aoe_damage", "dmg": 1, "radius": 2, "ignite": true}],
+		"effects": [{"op": "aoe_damage", "dmg": 1, "radius": 2, "ignite": true, "bonus": {"dmg": 1, "if": [{"target_on": ["fire"]}]}}],
 		"tags": ["sun", "fire"], "role": "damage",
 	},
 	"thorn_shield": {
@@ -72,7 +72,7 @@ const ABILITIES := {
 	},
 	"grow_spike": {
 		"name": "Grow Spike", "cost": 1, "target": "enemy_near_growth", "range": 3,
-		"effects": [{"op": "damage", "dmg": 3}],
+		"effects": [{"op": "damage", "dmg": 3, "per": {"count": "growth_adjacent_target", "cap": 1, "add": {"dmg": 1}}}],
 		"tags": ["growth"], "role": "payoff",
 	},
 	"spore_cloud": {
@@ -143,17 +143,17 @@ const ABILITIES := {
 	},
 	"seed_bomb+": {
 		"name": "Seed Bomb+", "cost": 1, "target": "tile", "range": 3,
-		"effects": [{"op": "grow_radius", "radius": 1}],
+		"effects": [{"op": "grow_radius", "radius": 1, "then": [{"op": "status_target", "status": "root", "turns": 1, "who": "on_planted"}]}],
 		"tags": ["growth"], "role": "setup",
 	},
 	"vine_whip+": {
 		"name": "Vine Whip+", "cost": 1, "target": "enemy_line", "range": 4,
-		"effects": [{"op": "pull", "dist": 3, "dmg": 3}],
+		"effects": [{"op": "pull", "dist": 3, "dmg": 3, "then": [{"op": "status_target", "status": "stun", "turns": 1, "if": [{"outcome_crossed": "fire"}]}]}],
 		"tags": ["displace"], "role": "damage",
 	},
 	"water_jet+": {
 		"name": "Water Jet+", "cost": 1, "target": "dir", "range": 3,
-		"effects": [{"op": "wash_push", "push": 3, "collision_dmg": 3}],
+		"effects": [{"op": "wash_push", "push": 3, "collision_dmg": 3, "then": [{"op": "status_target", "status": "root", "turns": 1, "if": [{"outcome": "collided"}, {"outcome": "pushed"}]}]}],
 		"tags": ["water", "displace"], "role": "damage",
 	},
 	"mycelium_dash+": {
@@ -173,7 +173,7 @@ const ABILITIES := {
 	},
 	"sun_flare+": {
 		"name": "Sun Flare+", "cost": 2, "target": "self", "range": 2,
-		"effects": [{"op": "aoe_damage", "dmg": 2, "radius": 2, "ignite": true}],
+		"effects": [{"op": "aoe_damage", "dmg": 2, "radius": 2, "ignite": true, "bonus": {"dmg": 1, "if": [{"target_on": ["fire"]}]}}],
 		"tags": ["sun", "fire"], "role": "damage",
 	},
 	"thorn_shield+": {
@@ -193,7 +193,7 @@ const ABILITIES := {
 	},
 	"grow_spike+": {
 		"name": "Grow Spike+", "cost": 1, "target": "enemy_near_growth", "range": 4,
-		"effects": [{"op": "damage", "dmg": 4}],
+		"effects": [{"op": "damage", "dmg": 3, "per": {"count": "growth_adjacent_target", "cap": 2, "add": {"dmg": 1}}}],
 		"tags": ["growth"], "role": "payoff",
 	},
 	"bramble_coat+": {
@@ -307,21 +307,27 @@ const GRAFTS := {
 	"carapace": {"name": "Carapace", "desc": "start each floor with 2 shield"},
 }
 
-## One-line effect text per base ability (upgrades fall back to the base and
-## show slightly better numbers in play). UI-facing data; the sim ignores it.
+## One-line effect text per ability (a + form without its own entry falls back
+## to the base). Rider rows (docs/PROGRESSION_REVIEW.md 6.3 C2) name the rider
+## in one clause. UI-facing data; the sim ignores it.
 const ABILITY_DESC := {
 	"solar_lance": "Beam up to 3 tiles: 2 dmg, ignites oil (+: 3 dmg, 4 under clear skies)",
 	"seed_bomb": "Plant a patch of healing growth within 3 tiles",
+	"seed_bomb+": "Plant a patch of healing growth within 3 tiles; enemies on the fresh growth are rooted a turn",
 	"vine_whip": "Yank an enemy 2 tiles toward you, 2 dmg; moving it interrupts its attack",
+	"vine_whip+": "Yank an enemy 3 tiles toward you, 3 dmg; dragged through fire it is stunned a turn",
 	"water_jet": "Shove enemies 2 tiles, 2 dmg on impact; moving them interrupts",
+	"water_jet+": "Shove enemies 3 tiles, 3 dmg on impact; an enemy shoved into something is rooted a turn",
 	"mycelium_dash": "Teleport to any growth tile within 4",
 	"root_wall": "Raise a wall of roots that blocks enemies",
 	"pollen_burst": "Stun everything within 2 tiles for a turn",
-	"sun_flare": "Flash burn: 1 dmg to all within 2, ignites oil",
+	"sun_flare": "Flash burn: 1 dmg to all within 2, ignites oil; +1 dmg to enemies standing in fire",
+	"sun_flare+": "Flash burn: 2 dmg to all within 2, ignites oil; +1 dmg to enemies standing in fire",
 	"thorn_shield": "Raise 2 shield - blocks damage before HP",
 	"overgrowth": "Convert corruption around a tile into growth",
 	"sap_snare": "Root an enemy in place for 2 turns",
-	"grow_spike": "3 dmg to an enemy standing near growth",
+	"grow_spike": "3 dmg to an enemy standing near growth, +1 with growth beside it (4 max)",
+	"grow_spike+": "3 dmg to an enemy near growth within 4, +1 per adjacent growth tile (5 max)",
 	"spore_cloud": "Spore all within 2: 1 dmg a turn for 3 turns",
 	"fungal_ring": "Sprout growth on every tile around you",
 	"burrow": "Tunnel to any open tile within 3",
