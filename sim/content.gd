@@ -431,63 +431,78 @@ const SURGE_DEFAULT := {"cost": -1}
 ##   blocks          impassable (Game._open)
 ##   blocks_beam     stops lances and enemy_line targeting (Game._line_clear)
 ##   heal            hp the player regains per environment phase standing on it
-##   burns_to        what an expiring fire leaves behind ("" = nothing; C1b: ash)
+##   burns_to        what an expiring fire leaves behind ("" = nothing; fire
+##                   burns to ash: the REACTIONS fire_burns_out row mirrors it)
+##   convertible     a convert_radius (overgrowth) turns it into growth; every
+##                   corruption kind except rich_goo, whose bonus must be cleansed
+## Ash (C1b): what oil leaves once its fire burns out. Corruption for the
+## quota, room bloom and floor restore, cleansable and washable, but it never
+## shields the boss core and never burns again. Mapgen never places it; the
+## tile inherits the burnt oil's "bloom" flag, so enemy-made oil (bloom 0)
+## ends as bloom-0 ash.
 const TERRAIN := {
 	"oil": {
 		"corruption": true, "shields_core": true, "flammable": true, "washable": true,
 		"bloom": 1, "ttl": 0, "decays": false,
 		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "",
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": true,
 	},
 	"goo": {
 		"corruption": true, "shields_core": true, "flammable": false, "washable": false,
 		"bloom": 1, "ttl": 0, "decays": false,
 		"enter_dmg_player": 1, "enter_dmg_enemy": 0, "enter_src": "goo",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "",
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": true,
 	},
 	"rich_goo": {
 		"corruption": true, "shields_core": true, "flammable": false, "washable": false,
 		"bloom": RICH_GOO_BLOOM, "ttl": 0, "decays": false,
 		"enter_dmg_player": 1, "enter_dmg_enemy": 0, "enter_src": "goo",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "",
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": false,
 	},
 	"growth": {
 		"corruption": false, "shields_core": false, "flammable": false, "washable": false,
 		"bloom": 0, "ttl": 0, "decays": false,
 		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": false, "blocks_beam": false, "heal": 1, "burns_to": "",
+		"blocks": false, "blocks_beam": false, "heal": 1, "burns_to": "", "convertible": false,
 	},
 	"fire": {
 		"corruption": false, "shields_core": false, "flammable": false, "washable": true,
 		"bloom": 0, "ttl": 2, "decays": true,
 		"enter_dmg_player": 1, "enter_dmg_enemy": 1, "enter_src": "fire",
 		"tick_dmg_player": 1, "tick_dmg_enemy": 1,
-		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "",
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "ash", "convertible": false,
 	},
 	"smoke": {
 		"corruption": false, "shields_core": false, "flammable": false, "washable": false,
 		"bloom": 0, "ttl": 3, "decays": true,
 		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": false, "blocks_beam": true, "heal": 0, "burns_to": "",
+		"blocks": false, "blocks_beam": true, "heal": 0, "burns_to": "", "convertible": false,
 	},
 	"roots": {
 		"corruption": false, "shields_core": false, "flammable": false, "washable": false,
 		"bloom": 0, "ttl": 0, "decays": true,
 		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": true, "blocks_beam": false, "heal": 0, "burns_to": "",
+		"blocks": true, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": false,
 	},
 	"supply": {
 		"corruption": false, "shields_core": false, "flammable": false, "washable": false,
 		"bloom": 0, "ttl": 0, "decays": false,
 		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "",
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": false,
+	},
+	"ash": {
+		"corruption": true, "shields_core": false, "flammable": false, "washable": true,
+		"bloom": 1, "ttl": 0, "decays": false,
+		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
+		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": true,
 	},
 }
 
@@ -497,11 +512,13 @@ const TERRAIN := {
 ## `adjacent` tile into `result` (the first source in map order signs the new
 ## tile's "by"; the replaced tile's "bloom" flag is inherited; "" removes the
 ## tile). "on_expire": a decaying `from` tile whose ttl hits 0 becomes
-## `result` ("" = removed). "on_wash" is reserved for C1b (a wash over `from`);
-## no consumer reads it yet. Disabled rows are design intent kept as data.
+## `result` ("" = removed; the result inherits the "bloom" flag, and "by"
+## only when it decays itself) and emits `event` when one is named. "on_wash"
+## is reserved (a wash over `from`); no consumer reads it yet. Disabled rows
+## are design intent kept as data.
 const REACTIONS := [
 	{"id": "fire_spreads", "from": "fire", "adjacent": "oil", "result": "fire", "event": "ignite", "enabled": true},
-	{"id": "fire_burns_out", "from": "fire", "on_expire": true, "result": "", "event": "", "enabled": true},
+	{"id": "fire_burns_out", "from": "fire", "on_expire": true, "result": "ash", "event": "ash", "enabled": true},
 	{"id": "damp", "from": "goo", "on_wash": true, "result": "", "event": "damp", "enabled": false},
 	{"id": "roots_burn", "from": "fire", "adjacent": "roots", "result": "fire", "event": "ignite", "enabled": false},
 	{"id": "smoke_smother", "from": "smoke", "adjacent": "fire", "result": "", "event": "smothered", "enabled": false},
@@ -511,12 +528,18 @@ const REACTIONS := [
 ## at `cap` when cap > 0). blocks: intent types the status swallows ("*" =
 ## every intent); a blocked intent decrements the status and emits
 ## blocked_event. tick_dmg: damage per environment phase while it lasts
-## (source = the status name), decrementing the status each tick. The stagger
-## cooldown (status "stagger_cd") is an internal field, not a row here.
+## (source = the status name), decrementing the status each tick. cooldown
+## (optional, stagger-style): landing the status writes "<name>_cd" =
+## max(existing cd, resulting duration + cooldown) on the enemy, so a
+## re-application while it is active can extend but never shorten the
+## cooldown; the field drops by one each time the enemy acts, and while it is
+## above zero with the status itself expired a fresh application is refused
+## with {t: "resisted"}. The stagger cooldown
+## (status "stagger_cd") is an internal field, not a row here.
 const STATUSES := {
 	"stun": {"stack": "max", "blocks": ["*"], "tick_dmg": 0, "cap": 0, "blocked_event": "stunned"},
-	"root": {"stack": "max", "blocks": ["move"], "tick_dmg": 0, "cap": 0, "blocked_event": "rooted"},
-	"spore": {"stack": "max", "blocks": [], "tick_dmg": 1, "cap": 0},
+	"root": {"stack": "max", "blocks": ["move", "advance", "drag"], "tick_dmg": 0, "cap": 0, "blocked_event": "rooted", "cooldown": 2},
+	"spore": {"stack": "add", "blocks": [], "tick_dmg": 1, "cap": 6},
 }
 
 

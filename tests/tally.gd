@@ -66,6 +66,19 @@ var shield_absorb_hp := 0
 var riders_by_kind := {}
 var riders_by_aid := {}
 
+# --- terrain / status bookkeeping (Block C1b) ---------------------------------
+## Fires that burnt out into ash ({"t": "ash", tile}); every one leaves a
+## corruption tile behind, so ash_events is also "quota the fire handed back".
+var ash_events := 0
+## Which corruption kind each cleanse removed, from the cleanse event's "kind".
+var cleanses_by_kind := {}
+## Status applications refused by a Content.STATUSES cooldown ({"t": "resisted"}).
+var resisted_events := 0
+## Status applications that landed, by status name. Stacking is invisible in
+## the event itself (the sim reports the applied turns, not the total), so a
+## second spore on the same enemy shows up here as a second "spore".
+var status_by_kind := {}
+
 # --- damage by raw source string ---------------------------------------------
 var enemy_dmg_by_src := {}
 var player_dmg_by_src := {}
@@ -138,6 +151,7 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 			strikes += 1
 		"cleanse":
 			cleanses += 1
+			_inc(cleanses_by_kind, String(ev.get("kind", "")))
 		"move":
 			if String(ev.get("who", "player")) == "player":
 				moves += 1
@@ -196,6 +210,12 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 			floor_restored += 1
 		"seal_burst":
 			seal_burst += 1
+		"ash":
+			ash_events += 1
+		"resisted":
+			resisted_events += 1
+		"status":
+			_inc(status_by_kind, String(ev.get("status", "")))
 		"heal":
 			growth_heal_hp += int(ev.get("amt", 0))
 		"shield_absorb":
@@ -319,6 +339,10 @@ func merge(other) -> void:
 	shield_absorb_hp += other.shield_absorb_hp
 	_merge_dict(riders_by_kind, other.riders_by_kind)
 	_merge_dict(riders_by_aid, other.riders_by_aid)
+	ash_events += other.ash_events
+	_merge_dict(cleanses_by_kind, other.cleanses_by_kind)
+	resisted_events += other.resisted_events
+	_merge_dict(status_by_kind, other.status_by_kind)
 	_merge_dict(enemy_dmg_by_src, other.enemy_dmg_by_src)
 	_merge_dict(player_dmg_by_src, other.player_dmg_by_src)
 	_merge_dict(kills_by_kind, other.kills_by_kind)
@@ -447,6 +471,11 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 		"riders": riders,
 		"riders_by_kind": t.riders_by_kind.duplicate(),
 		"riders_by_aid": t.riders_by_aid.duplicate(),
+		# terrain / status bookkeeping (Block C1b)
+		"ash_events": t.ash_events,
+		"cleanses_by_kind": t.cleanses_by_kind.duplicate(),
+		"resisted_events": t.resisted_events,
+		"status_by_kind": t.status_by_kind.duplicate(),
 	}
 
 
@@ -481,6 +510,8 @@ func print_block(n_runs: int, kits: Array) -> void:
 		floor_restored / n, seal_burst / n])
 	print("           riders: %.2f/run  by kind %s  by ability %s" % [
 		float(_sum(riders_by_kind)) / n, str(riders_by_kind), str(riders_by_aid)])
+	print("           terrain: ash %d  cleanses by kind %s  resisted %d  statuses %s" % [
+		ash_events, str(cleanses_by_kind), resisted_events, str(status_by_kind)])
 	print("           bloom earned %.1f/run  spent %.1f/run  conversion %.2f  buys %s  grafts %s  ability buys %s  upcycles %d/%d  pickups %d  satchel_full %d" % [
 		bloom_earned / n, bloom_spent / n, k["bloom_conversion"], str(buys_by_kind), str(grafts_by_id),
 		str(ability_buys_by_id), upcycles, upcycle_abilities, item_pickups, satchel_full])

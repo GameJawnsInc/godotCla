@@ -9,7 +9,8 @@ extends SceneTree
 ##  e) the shrine ability card is only buyable with a free kit slot
 ##  f) press/forge: shop-gated, tier markup, forge once per floor, never
 ##     scraps mobility; Boarded shrines board every purchase and service
-##  g) quota re-clamp after bloomless corruption removal; enemy oil pays 0
+##  g) quota re-clamp after bloomless corruption removal; enemy oil pays 0;
+##     a burnout leaves ash (corruption: no re-clamp), washing ash re-clamps
 ##  h) config keys "grafts" and "bloom"
 ##  i) damage attribution: fire tiles carry "by", enemy-side sources are
 ##     "fire:<by>" / "collision:<aid>", player-side sources unchanged
@@ -398,6 +399,40 @@ func _check_quota_reclamp() -> void:
 	_ok(rci.size() == 1 and int(rci[0].get("need", -1)) == 0 and gi.green_need == 0, "ignite: reclamp %s need %d" % [str(rci), gi.green_need])
 	_ok(_events_of(evi, "stairs_awaken").size() == 1, "ignite: stairs_awaken missing")
 	_ok(gi.terrain[Vector2i(2, 1)].get("by", "") == "solar_lance", "ignite: fire by %s" % str(gi.terrain.get(Vector2i(2, 1))))
+	# burnout: the fires (ttl 2) become ash over two end_turns; ash is corruption
+	# again, so the count climbs back to 2 and no quota_reclamp fires on the way
+	var evb1: Array = gi.step({"type": "end_turn"})
+	var evb2: Array = gi.step({"type": "end_turn"})
+	_ok(_events_of(evb1, "quota_reclamp").is_empty() and _events_of(evb2, "quota_reclamp").is_empty(), "burnout: reclamp fired %s %s" % [str(evb1), str(evb2)])
+	_ok(_events_of(evb1, "ash").is_empty() and _events_of(evb2, "ash").size() == 2, "burnout: ash events %s / %s" % [str(_events_of(evb1, "ash")), str(_events_of(evb2, "ash"))])
+	_ok(gi.terrain.get(Vector2i(2, 1), {}) == {"kind": "ash"} and gi.terrain.get(Vector2i(3, 1), {}) == {"kind": "ash"},
+		"burnout: tiles %s %s" % [str(gi.terrain.get(Vector2i(2, 1))), str(gi.terrain.get(Vector2i(3, 1)))])
+	_ok(gi._count_corruption() == 2 and gi.green_need == 0, "burnout: count %d need %d (the quota never grows back)" % [gi._count_corruption(), gi.green_need])
+	# cleansing the mapgen-oil ash pays the table's 1 and counts greened; the event names the kind
+	var evca: Array = gi.step({"type": "cleanse", "target": Vector2i(2, 1)})
+	var cla := _events_of(evca, "cleanse")
+	_ok(cla.size() == 1 and cla[0].get("kind", "") == "ash" and gi.greened == 1 and gi.terrain[Vector2i(2, 1)]["kind"] == "growth",
+		"ash cleanse: %s greened %d" % [str(cla), gi.greened])
+	# washing ash is a bloomless removal like washing oil: the re-clamp still fires
+	var ga = Game.new(1, _fixed(rows, ["water_jet", "mycelium_dash"], {"fdef": {"green_need": 2}}))
+	ga.terrain[Vector2i(2, 1)] = {"kind": "ash", "bloom": 0}
+	ga.terrain[Vector2i(3, 1)] = {"kind": "ash"}
+	_ok(ga.green_need == 2 and ga._count_corruption() == 2, "ash wash setup: need %d count %d" % [ga.green_need, ga._count_corruption()])
+	var eva: Array = ga.step({"type": "ability", "slot": 0, "target": Vector2i(1, 0)})
+	var rca := _events_of(eva, "quota_reclamp")
+	_ok(_events_of(eva, "wash").size() == 2 and rca.size() == 1 and int(rca[0].get("need", -1)) == 0 and int(rca[0].get("was", -1)) == 2 and ga.green_need == 0,
+		"ash wash: %d washes, reclamp %s need %d" % [_events_of(eva, "wash").size(), str(rca), ga.green_need])
+	_ok(not ga.terrain.has(Vector2i(2, 1)) and not ga.terrain.has(Vector2i(3, 1)), "ash wash: tiles gone %s" % str(ga.terrain))
+	# enemy-made oil (bloom 0) ignited by the lance burns to bloom-0 ash: its cleanse pays 0 but counts
+	var gz = Game.new(1, _fixed(rows, ["solar_lance", "mycelium_dash"], {"fdef": {"green_need": 2}, "bloom": 5}))
+	gz.terrain[Vector2i(2, 1)] = {"kind": "oil", "bloom": 0}
+	gz.step({"type": "ability", "slot": 0, "target": Vector2i(1, 0)})
+	_ok(gz.terrain.get(Vector2i(2, 1), {}) == {"kind": "fire", "ttl": 2, "by": "solar_lance", "bloom": 0}, "enemy oil fire: %s" % str(gz.terrain.get(Vector2i(2, 1))))
+	gz.step({"type": "end_turn"})
+	gz.step({"type": "end_turn"})
+	_ok(gz.terrain.get(Vector2i(2, 1), {}) == {"kind": "ash", "bloom": 0}, "enemy oil ash: %s" % str(gz.terrain.get(Vector2i(2, 1))))
+	var evz: Array = gz.step({"type": "cleanse", "target": Vector2i(2, 1)})
+	_ok(_events_of(evz, "cleanse").size() == 1 and gz.bloom == 5 and gz.greened == 1, "bloom-0 ash cleanse: bloom %d (want 5) greened %d" % [gz.bloom, gz.greened])
 	# partial: one of three oil tiles washed -> need drops from 3 to 2, stairs stay dormant
 	var rows3 := [
 		"#########",
@@ -417,7 +452,7 @@ func _check_quota_reclamp() -> void:
 	var ge = Game.new(1, _fixed(rows, ["water_jet", "mycelium_dash"], {"fdef": {"green_need": 2}, "grafts": ["bloom_surge"], "bloom": 5}))
 	ge.terrain[Vector2i(2, 1)] = {"kind": "oil", "bloom": 0}
 	var eve: Array = ge.step({"type": "cleanse", "target": Vector2i(2, 1)})
-	_ok(_events_of(eve, "cleanse").size() == 1 and ge.bloom == 5 and ge.greened == 1,
+	_ok(_events_of(eve, "cleanse").size() == 1 and ge.bloom == 5 and ge.greened == 1 and _events_of(eve, "cleanse")[0].get("kind", "") == "oil",
 		"enemy oil cleanse: bloom %d (want 5) greened %d (want 1) events %s" % [ge.bloom, ge.greened, str(eve)])
 	_ok(ge.terrain[Vector2i(2, 1)]["kind"] == "growth", "enemy oil cleanse: tile %s" % str(ge.terrain.get(Vector2i(2, 1))))
 	# mapgen oil (no bloom key) still pays 1 + surge
@@ -442,7 +477,7 @@ func _check_quota_reclamp() -> void:
 	var trail_ok: bool = gs.terrain.has(Vector2i(6, 1)) and gs.terrain[Vector2i(6, 1)].get("kind", "") == "oil" \
 		and int(gs.terrain[Vector2i(6, 1)].get("bloom", 1)) == 0
 	_ok(trail_ok, "sludge trail: terrain at (6,1) %s" % str(gs.terrain.get(Vector2i(6, 1))))
-	print("quota reclamp: wash 2->0, ignite 2->0, partial 3->2; enemy oil pays 0 bloom, counts greened")
+	print("quota reclamp: wash 2->0, ignite 2->0, burnout to ash no reclamp, ash wash 2->0, partial 3->2; enemy oil / bloom-0 ash pay 0 bloom, count greened")
 
 
 # --- h) config keys -----------------------------------------------------------

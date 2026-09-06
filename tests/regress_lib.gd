@@ -262,7 +262,7 @@ static func event_matches(ev: Dictionary, pat: Dictionary) -> bool:
 		var a = ev[k]
 		var b = pat[k]
 		if a is String or b is String:
-			if String(a) != String(b):
+			if str(a) != str(b):
 				return false
 		elif a != b:
 			return false

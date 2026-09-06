@@ -19,6 +19,7 @@ const FDEF_MUTATORS := ["double_oil", "overtime"]
 func _init() -> void:
 	var gens := 0
 	var bad := 0
+	var kinds := {}
 	for s in range(1, SEEDS + 1):
 		for fi in range(Content.FLOORS.size()):
 			var rng := RandomNumberGenerator.new()
@@ -31,11 +32,34 @@ func _init() -> void:
 			if not fails.is_empty():
 				bad += 1
 				print("FAIL seed %d floor %d: %s" % [s, fi + 1, str(fails)])
+			for t in gen["terrain"]:
+				kinds[String(gen["terrain"][t]["kind"])] = true
 	print("invariants: %d generations, %d violations" % [gens, bad])
+	bad += _check_kinds(kinds)
 	var fd := _floor_def_sweep()
 	print("floor_def invariants: %d configs, %d generations, %d violations" % [fd["configs"], fd["gens"], fd["bad"]])
 	bad += int(fd["bad"])
 	quit(1 if bad > 0 else 0)
+
+
+## Every kind mapgen puts on a floor must be a Content.TERRAIN row (so every
+## renderer and rule can look it up). Runtime-only kinds - ash, fire, smoke,
+## roots - are legal terrain but must never be generated: mapgen makes the
+## corruption the player starts against, not the results of reactions.
+const GEN_ONLY_KINDS := ["ash", "fire", "smoke", "roots"]
+
+
+func _check_kinds(kinds: Dictionary) -> int:
+	var bad := 0
+	for k in kinds:
+		if not Content.TERRAIN.has(k):
+			bad += 1
+			print("FAIL mapgen emits kind %s, absent from Content.TERRAIN" % k)
+		if GEN_ONLY_KINDS.has(k):
+			bad += 1
+			print("FAIL mapgen emits runtime-only kind %s" % k)
+	print("terrain kinds: %s (%d violations)" % [str(kinds.keys()), bad])
+	return bad
 
 
 ## Validate every floor of Game.floor_def(n) for tiers 0..TIERS.size() and

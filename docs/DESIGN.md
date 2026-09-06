@@ -69,6 +69,13 @@ The theme should do mechanical work, not just paint.
   it; some abilities require or empower on growth).
 - Neutral: **fire** (ignited oil; damages everyone; burns out), water, rubble,
   destructible machinery.
+- **Ash** — what a fire leaves when its ttl runs out. Still corruption, so it
+  counts against the floor's green quota and cleansing it pays Bloom like any
+  other corrupt tile, but it never shields the Furnace core, never catches
+  fire again, and mapgen never places it: ash only exists where something was
+  set alight. Water washes it away and convert-radius abilities turn it into
+  growth, exactly as they do oil and goo. Burning a slick therefore trades a
+  cleanup job for a different cleanup job instead of erasing it.
 - Cleansing corrupted tiles (via abilities) yields **Bloom**.
 - Terrain is **data, not code**: `Content.TERRAIN` holds one row per kind
   (corruption, shields_core, flammable, washable, bloom yield, ttl/decays,
@@ -78,8 +85,15 @@ The theme should do mechanical work, not just paint.
   out; damp, roots-burn and smoke-smother present but disabled) are consumed
   by one `_terrain_react()` in the environment phase. Enemy statuses live in
   `Content.STATUSES` (stack rule, which intents the status blocks, the event a
-  blocked intent emits, per-turn tick damage). Adding a kind, a reaction or a
-  status means adding a row.
+  blocked intent emits, per-turn tick damage, an optional re-application
+  cooldown). Adding a kind, a reaction or a status means adding a row.
+- Status rows in play: **root** blocks `move`, `advance` *and* `drag` — a
+  rooted enemy cannot walk, cannot close, and cannot haul the player around —
+  and carries a stagger-style cooldown of 2 turns, so a snare cannot be
+  chain-cast on the same enemy; a refused re-application emits `resisted`.
+  **Spore** stacks by *addition* up to a cap of 6 turns, so re-dosing a
+  target deepens the poison instead of merely refreshing it. **Stun** does
+  neither. Massive enemies (every boss) are immune to all three.
 
 ### Abilities
 

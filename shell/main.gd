@@ -67,11 +67,12 @@ const LEGEND := [
 	["shrine", "Shrine", "stand here to open the shop"],
 	["vent", "Vent", "vents reinforcements as the smog rises"],
 	["supply", "Supply pod", "walk over it to stock your satchel (2 slots)"],
-	["oil", "Oil", "corruption - cleanse it (adjacent) for bloom"],
+	["oil", "Oil", "corruption - cleanse it (adjacent) for bloom; burns"],
 	["goo", "Goo", "corruption - cleansing yields bloom"],
 	["rich_goo", "Rich goo", "corruption - cleanses for extra bloom"],
+	["ash", "Ash", "burnt oil - still corruption, cleanse it for bloom; it never shields the boss core"],
 	["growth", "Growth", "heals 1 HP per turn while you stand on it"],
-	["fire", "Fire", "burns whoever stands in it"],
+	["fire", "Fire", "burns whoever stands in it; burns out into ash"],
 	["smoke", "Smoke", "blocks solar lances"],
 	["roots", "Roots", "blocks enemies for a while"],
 	["drill_bot", "Drill Bot", "melee - telegraphs its strike a turn ahead"],
@@ -1287,6 +1288,10 @@ func _ev_text(ev: Dictionary) -> String:
 			return "Staggered - it loses its wind-up"
 		"rooted":
 			return "Enemy rooted in place"
+		"resisted":
+			return "Still shaking off the last root - the snare slides off"
+		"ash":
+			return "The fire burns down to ash"
 		"floor":
 			return "— %s —" % str(ev.get("name", "next floor"))
 		"illegal":

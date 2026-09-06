@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"bloom":4,"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#######","#..>..#","#@+d.d#","#.....#","#######"]},"kit":["solar_lance","seed_bomb","mycelium_dash"],"pool":["solar_lance","seed_bomb","mycelium_dash"]},
+"actions": [{"dir":[1,0],"type":"move"},{"item":"item","type":"buy"},{"slot":0,"type":"use_item"}],
+"expect": {"events":[{"id":"spore_vial","item":"item","t":"buy"},{"status":"stun","t":"status","turns":1},{"id":"spore_vial","t":"item_use"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "C1b items through the table: spore_vial applies stun via _apply_status, so the stun now emits a status event; only the drill bot 2 tiles away is stunned (the one at 3 is untouched - pinned by the state hash, since regress_lib.event_matches cannot safely compare an int id in a pattern)",
+"sim_version": 3,
+"hash": "8aab8039a680d2b9d0f7f2436f25c0f22ee36ca00abfd34e691fadf17889c9b1"
+}

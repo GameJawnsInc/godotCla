@@ -1335,6 +1335,383 @@ its own balance question with its own 100-seed before/after.
 - Every other suite unchanged from 2026-09-05c (no code outside the gate
   constant and its label changed).
 
+## 2026-09-06 - bump 3 (C1b): ash, root semantics, spore stacking, item stun through the table
+
+Block C1's second commit from docs/PROGRESSION_REVIEW.md 6.3. C1a - the
+tables commit, which has no entry of its own here because it changed no
+behaviour and moved no hash (see the "Status (2026-09-05c)" paragraph in
+docs/PROGRESSION_REVIEW.md) - put every terrain, reaction and status literal
+behind `Content.TERRAIN` / `REACTIONS` / `STATUSES`; C1b changes behaviour by
+editing those rows. The instruments did not change (still v2), so this
+entry's numbers compare with the "bump 2 revision" (2026-09-05c) and "magpie
+canary" (2026-09-05d) entries above it, and with nothing older.
+
+What changed:
+
+- **Ash (1).** New `TERRAIN` row `ash`: corruption true, `shields_core`
+  false, not flammable, washable, `convertible` true, bloom 1, no ttl.
+  `TERRAIN.fire.burns_to` and `REACTIONS.fire_burns_out.result` are now
+  `ash`, so a fire tile whose ttl expires becomes `{kind: "ash"}` (carrying
+  the fire tile's bloom flag) and emits `{t: "ash", tile}` instead of
+  vanishing. Ash cleanses to growth like any corruption, counts toward
+  `greened` and the room-bloom check, and never gates the boss core
+  (`_corruption_adjacent` reads `shields_core`). The `convert_radius` literal
+  became a table read (`convertible`: oil, goo, ash true; `rich_goo` false).
+  Mapgen never emits ash - `test_invariants` reports the generated kind set
+  as `["oil", "goo", "growth", "rich_goo"]`.
+- **Root semantics (2).** `STATUSES.root.blocks` is `["move", "advance",
+  "drag"]` - a rooted enemy cannot walk, cannot close and cannot haul the
+  player - and the row gained `cooldown: 2`. Landing root writes
+  `root_cd = max(existing, resulting duration + cooldown)`; while that
+  cooldown stands and root is not active, a fresh application is refused and
+  emits `{t: "resisted", id, status}`. The cooldown decrements once per
+  `_execute_intent`, stagger-style. Massive enemies (every boss) stay immune
+  to every status.
+- **Spore stacking (3).** `STATUSES.spore` is `stack: "add"`, `cap: 6` - the
+  first row to use C1a's add-with-cap path. Re-dosing deepens the poison
+  instead of refreshing it.
+- **Items through the table (4).** `spore_vial` / `spore_vial+` apply stun
+  through `_apply_status` (radius and turns unchanged: 2 tiles 1 turn, 4
+  tiles 2 turns). The hardcoded boss exclusion became the table's massive
+  immunity - the same affected set, but the immune event now fires for bosses
+  in range and a `status` event now fires for every enemy the vial stuns
+  (C1a set the field silently).
+- **Spread fire inherits the bloom flag (5)** - the one C1a deviation, now
+  paid. `fire_spreads` and `_ignite` copy the source oil tile's `bloom` key,
+  so enemy-made oil burns into bloom-0 fire and bloom-0 ash: cleansing it
+  pays no bloom but still counts toward `greened`.
+- **Version (6).** `Game.SIM_VERSION := 3`. `shell/main.gd`
+  RUN_SAVE_VERSION, `tests/regress_lib.gd` and `tests/autopsy.gd` read the
+  same constant.
+- Consumers in the same block: `optimizer._dodge` reads
+  `Content.STATUSES.root.blocks` instead of the literal `"move"`; ash has an
+  SVG sprite, a shell legend row and the ASCII glyph `,`; `tests/tally.gd`
+  counts ash events, cleanses by kind (the `cleanse` event gained `kind`),
+  `resisted` events, and status events by status name.
+
+**The quota claim in the 6.3 spec does not hold, and was not made to hold.**
+The spec assumed ash would stop a burn from opening the green gate. It does
+not: `_reclamp_quota` fires at *ignition*, because fire is not corruption in
+`Content.TERRAIN`, and the clamp only ever lowers `green_need`. Ash restores
+the corruption count *after* the burn, so later re-clamps shrink the quota
+less, but lighting a slick still opens a dormant stairs exactly as it did in
+bump 2 (`test_economy`: "quota reclamp: wash 2->0, ignite 2->0, burnout to
+ash no reclamp, ash wash 2->0, partial 3->2"; the
+`blockb_quota_reclamp.json` record replays its `quota_reclamp need 1 was 2` /
+`stairs_awaken` / `descend` chain unchanged). Closing that line needs fire to
+count as pending corruption - a sim change nobody has made. Flagged, not
+patched; see the Watch addendum.
+
+What this invalidates: **every pre-bump replay hash.** All 32
+`tests/regressions/*.json` records carry `sim_version: 3`, and an action log
+recorded before the bump can desync outright - two did. Aggregate win rates
+still compare across the bump (same instruments, same seeds 1..30, same
+bots), but per-seed pairing does not: a burnt tile that used to disappear now
+stands as corruption, so the same bot makes different choices from that point
+on. Nothing before 2026-09-05 (instrument v1) compares at all.
+
+### Suite
+
+All green, gate included:
+
+- `tests/test_invariants.gd`: "invariants: 1400 generations, 0 violations",
+  "terrain kinds: ["oil", "goo", "growth", "rich_goo"] (0 violations)" (new
+  check), "floor_def invariants: 11 configs, 1540 generations, 0 violations"
+- `tests/test_determinism.gd`: "determinism: OK (55 checks, 7 personas)"
+- `tests/test_content.gd`: "effect grammar: 39 ability rows over 22 ops;
+  terrain 9, reactions 5, statuses 3" (terrain 8 -> 9), "content: OK"
+- `tests/test_meta.gd`: "meta: OK"
+- `tests/test_economy.gd`: "economy: OK (95 checks)" (84 -> 95)
+- `tests/test_grammar.gd`: "grammar: OK (195 checks)" (152 -> 195 over this
+  bump)
+- `tests/test_regressions.gd`: "regressions: 32 ok, 0 failed", and
+  `REGRESS_STRICT=1` "regressions: 32 ok, 0 failed" (27 -> 32 records)
+- `tests/test_shell.gd`: "shell smoke: OK"
+- `tests/playtest.gd` 30 seeds, gate ON: exit 0, "gate: all PASS"
+
+Before the corpus was regenerated, `test_regressions` was "regressions: 0 ok,
+27 failed", exit 1, every line "stale record: sim_version 2 != 3" - the
+expected shape of a version bump, and the reason the corpus phase exists.
+
+### Persona table
+
+Before = the 2026-09-05c revision (the last full playtest; 2026-09-05d
+changed only the gate constant). After =
+`=== playtest | bot wanderer,sprout,magpie,fanatic,optimizer,deeproot |
+config {  } | seeds 1..30 (30) ===` and
+`=== playtest | bot deeproot_rollout | config {  } | seeds 1..30 (30) ===`.
+Both columns are seeds 1..30, tier 0, Wilson 95% as printed.
+
+| persona | 2026-09-05c revision | this bump | moved outside CI? |
+|---|---|---|---|
+| wanderer | 0/30 = 0% [0, 11], floor 1.0 | 0/30 = 0% [0, 11], floor 1.0 | no |
+| sprout | 1/30 = 3% [1, 17], floor 3.5 | 1/30 = 3% [1, 17], floor 3.5 | no |
+| magpie | 4/30 = 13% [5, 30], floor 3.8 | 5/30 = 17% [7, 34], floor 3.8 | no |
+| fanatic (legacy seed-split) | 7/30 = 23% [12, 41], floor 5.4 | 9/30 = 30% [17, 48], floor 5.6 | no |
+| optimizer | 12/30 = 40% [25, 58], floor 5.9 | 11/30 = 37% [22, 54], floor 5.9 | no |
+| deeproot | 24/30 = 80% [63, 90], floor 6.9 | 23/30 = 77% [59, 88], floor 6.9 | no |
+| deeproot_rollout | 28/30 = 93% [79, 98], floor 7.0 | 29/30 = 97% [83, 99], floor 7.0 | no |
+
+Zero timeouts and zero illegal actions for all seven personas. Every point
+estimate lies inside the other column's interval in both directions, so the
+bump is win-rate neutral at 30 seeds by the Method rule. Note this is the
+*aggregate* comparison the instruments support; per-seed pairing is void
+across the bump (see above), and the corpus phase's two re-records
+(det_optimizer_s42 win -> floor-7 death, det_sprout_s42 floor 5 -> floor 4)
+are corpus assertions, not balance evidence.
+
+Against the Targets table: deeproot 77% sits inside the 70-90% band;
+optimizer 37% clears the gate's 35-65% band but sits under the Targets
+table's 45-65%, exactly as 40% did in 2026-09-05c - unchanged drift, not this
+bump's. sprout avg floor 3.5 is at the low edge of its 3.5-5 target, also
+unchanged from 05c. wanderer, fanatic (every build > 0, below) and the
+zero-timeout target all hold.
+
+### KPI block (playtest, 30 seeds, tier 0)
+
+Same derivation and columns as the 2026-09-05c table: strike/sig/terr =
+shares of enemy damage, cmb = combos/run, conv = bloom spent/earned, ent =
+kit entropy bits, shrine = shrine turns/run, unspent = unspent charge per
+end_turn, stall = stall floors over 30 runs, qu = quota-unmet deaths, dmg =
+player damage per run.
+
+| persona | strike | sig | terr | cmb | conv | ent | shrine | unspent | stall | qu | dmg |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| wanderer | 0.32 | 0.00 | 0.02 | 30.33 | 0.00 | 0.00 | 0.77 | 0.10 | 20 | 25 | 42.4 |
+| sprout | 0.38 | 0.12 | 0.01 | 6.40 | 0.11 | 4.29 | 1.00 | 0.36 | 15 | 2 | 34.4 |
+| magpie | 0.39 | 0.27 | 0.01 | 2.80 | 0.51 | 4.05 | 23.17 | 0.64 | 19 | 4 | 32.3 |
+| fanatic | 0.21 | 0.21 | 0.05 | 12.23 | 0.25 | 3.54 | 1.37 | 0.79 | 9 | 3 | 26.5 |
+| optimizer | 0.43 | 0.12 | 0.02 | 4.13 | 0.26 | 4.28 | 1.47 | 0.75 | 5 | 2 | 23.4 |
+| deeproot | 0.09 | 0.38 | 0.15 | 15.53 | 0.01 | 3.83 | 0.27 | 0.70 | 7 | 0 | 10.6 |
+| deeproot_rollout | 0.06 | 0.25 | 0.13 | 11.80 | 0.01 | 4.11 | 0.37 | 1.22 | 4 | 0 | 3.1 |
+
+`riders: 0.00/run` for every persona, as in C1a: no content row carries a
+rider yet, so the C2 vocabulary is still measured at zero. Upcycles are still
+0/0 everywhere - press and forge remain dead sinks across three bumps.
+Choice sinks, graft offers discarded over 30 runs (05c in brackets):
+wanderer 0 [0], sprout 10 [12], magpie 84 [83], fanatic 42 [40], optimizer 41
+[44], deeproot 0 [0], deeproot_rollout 0 [0].
+
+### The terrain line (new Tally counters)
+
+`tests/tally.gd` prints one new line per persona: ash events (fires that
+burnt out), cleanses split by the kind removed, `resisted` events, and status
+events by status name. Verbatim, 30 seeds each:
+
+```
+wanderer          terrain: ash 26  cleanses by kind { "ash": 6, "oil": 8, "goo": 5 }  resisted 0  statuses {  }
+sprout            terrain: ash 86  cleanses by kind { "oil": 316, "goo": 142, "rich_goo": 4, "ash": 40 }  resisted 0  statuses {  }
+magpie            terrain: ash 169  cleanses by kind { "oil": 686, "goo": 263, "rich_goo": 29, "ash": 42 }  resisted 0  statuses { "stun": 29, "root": 2 }
+fanatic           terrain: ash 261  cleanses by kind { "oil": 455, "goo": 230, "rich_goo": 23, "ash": 63 }  resisted 0  statuses { "stun": 30, "root": 23 }
+optimizer         terrain: ash 259  cleanses by kind { "oil": 515, "goo": 259, "rich_goo": 18, "ash": 20 }  resisted 0  statuses { "stun": 18 }
+deeproot          terrain: ash 539  cleanses by kind { "oil": 444, "goo": 262, "rich_goo": 32, "ash": 65 }  resisted 0  statuses { "stun": 22 }
+deeproot_rollout  terrain: ash 355  cleanses by kind { "oil": 445, "goo": 309, "rich_goo": 34, "ash": 52 }  resisted 0  statuses { "stun": 12 }
+```
+
+Read: **ash is a live mechanic in play** - 1,695 ash tiles created over 210
+runs, and every persona cleanses some of them (6 to 65 per 30 runs). It is
+not a majority of cleansing work anywhere; oil and goo still dominate. The
+deeproot row is the extreme: 539 burnouts, 65 ash cleanses, so the ceiling
+burns far more than it tidies.
+
+**Root and spore are close to unmeasured.** `resisted` is 0 in all 210
+playtest runs (3 in 100 magpie seeds, below) - no bot re-applies root to the
+same enemy inside the 2-turn cooldown. `root` statuses appear only for
+fanatic (23, the anchor/turtle builds) and magpie (2). `spore` never appears
+at all: no persona casts `spore_cloud` or stacks it, so the add-with-cap rule
+is exercised only by `tests/test_grammar.gd` and the hand-scripted
+`c1b_spore_stack.json` record. The same gap covers the whole bot-derived
+regression corpus: 0 rooted, 0 resisted, 0 spore events across all 27
+pre-existing records.
+
+### Magpie canary at 100 seeds
+
+`=== verify_kit | bot magpie | config {  } | seeds 1..100 (100) ===`:
+**13/100 = 13% wins, win CI [8%, 21%]**, avg floor 3.8, turns on wins 213.8,
+damage taken 33.0/run, **0 timeouts**, 0 illegal, ability buys 102.
+Its terrain line: `terrain: ash 444  cleanses by kind { "oil": 2247, "goo":
+932, "rich_goo": 136, "ash": 193 }  resisted 3  statuses { "stun": 157,
+"root": 32 }`.
+
+Against the 2026-09-05d rule ("the real canary is the 100-seed `verify_kit`
+line, and a rise whose lower bound clears the recorded [6, 17] is the
+signal"): the recorded baseline is 10/100 = 10% [6, 17]; this bump measures
+13/100 = 13% [8, 21]. The lower bound is 8%, which does not clear 17%, and
+each point estimate sits inside the other interval (13% in [6, 17], 10% in
+[8, 21]). **Not a signal.** The 0-5% design target is still unmet, as it has
+been since before bump 2.
+
+Two magpie numbers worth naming without a CI to judge them by: the 1 timeout
+in 100 runs recorded in 2026-09-05c is now 0, and this is the only run in the
+whole bump where `resisted` is non-zero (3 refusals in 100 runs).
+
+### Gate verdict
+
+`tests/playtest.gd` at 30 seeds, gate ON: **exit 0, "gate: all PASS"**.
+
+```
+PASS wanderer 0 wins, avg floor <= 2: 0 wins, avg floor 1.00
+PASS wanderer illegal actions == 0: 0
+PASS sprout wins rare (<= 1 per 30 seeds): 1/30
+PASS sprout illegal actions == 0: 0
+PASS magpie canary <= 10% (design target 0-5%): 5/30 CI [7%, 34%] (fails when the lower bound clears the trip line)
+PASS magpie illegal actions == 0: 0
+PASS fanatic illegal actions == 0: 0
+PASS optimizer band 35-65%: 11/30 CI [22%, 54%]
+PASS optimizer timeouts == 0: 0
+PASS optimizer illegal actions == 0: 0
+PASS deeproot band 70-90%: 23/30 CI [59%, 88%]
+PASS deeproot timeouts == 0: 0
+PASS deeproot illegal actions == 0: 0
+gate: all PASS
+```
+
+`PLAYTEST_BOTS=deeproot_rollout PLAYTEST_SEEDS=30`: exit 0.
+
+```
+PASS deeproot_rollout illegal actions == 0: 0
+gate: all PASS
+```
+
+### Fanatic archetypes
+
+`=== measure_fanatic | bot fanatic | config {  } | seeds 1..30 (30) ===`,
+"builds: pyro, gardener, turtle, shover, pyro_nolance, shover_nolance, ember,
+anchor  (pool 14 ids)". **Before = the 2026-09-05b table**, which is the last
+one recorded: 2026-09-05c removed the full-kit ability purchase without
+re-running `measure_fanatic`, so part of any move below belongs to that
+revision rather than to C1b. Both columns are FANATIC_SEEDS=30, seeds 1..30.
+
+| build | 2026-09-05b | this bump | avg floor | core-complete (never) | sig | strike |
+|---|---|---|---|---|---|---|
+| pyro | 5/30 [7, 34] | 8/30 [14, 44] | 5.7 | 3.3 (43%) | 0.04 | 0.08 |
+| pyro_nolance | 15/30 [33, 67] | 15/30 [33, 67] | 6.3 | 4.6 (47%) | 0.31 | 0.28 |
+| ember | 9/30 [17, 48] | 5/30 [7, 34] | 5.5 | 5.3 (77%) | 0.46 | 0.16 |
+| gardener | 6/30 [10, 37] | 6/30 [10, 37] | 5.6 | 4.6 (67%) | 0.39 | 0.32 |
+| shover | 6/30 [10, 37] | 5/30 [7, 34] | 5.7 | 5.3 (80%) | 0.19 | 0.03 |
+| shover_nolance | 5/30 [7, 34] | 4/30 [5, 30] | 4.5 | 4.5 (87%) | 0.64 | 0.12 |
+| anchor | 3/30 [3, 26] | 4/30 [5, 30] | 4.4 | never (100%) | 0.00 | 0.57 |
+| turtle | 1/30 [1, 17] | 1/30 [1, 17] | 4.2 | never (100%) | 0.06 | 0.57 |
+| total | 50/240 = 21% | 48/240 = 20% | - | - | - | - |
+
+Every build stays above zero, so the hard fanatic target holds, and the total
+is flat. No row moves outside both intervals: the two largest swings are
+`ember` 9/30 -> 5/30 (17% is the exact lower bound of the old [17, 48]) and
+`pyro` 5/30 -> 8/30, both borderline rather than clean. One timeout,
+`shover_nolance seed 1 floor 4` - the same timeout 2026-09-05b recorded, and
+it reproduces on the pristine pre-C1b tree, so it is not this bump's.
+
+### Graft sweep
+
+`=== sweep_grafts | bot optimizer | config {  } | seeds 1..30 (30) ===`,
+"grafts: deep_cells, verdant_pulse, thick_bark, bloom_surge, solar_core,
+carapace". Each row pre-installs its graft(s) before floor 1 on the same
+seeds as the base row; delta is against the base row and the sign test is
+paired. In-sample only, as instructed.
+
+| row | wins | CI | avg floor | delta | discordant | sign_p | cmb/run | conv | dmg | turns(w) | timeouts |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| (no graft) | 11/30 | [22, 54] | 5.9 | +0 | 0:0 | 1.00 | 4.13 | 0.26 | 23.4 | 82 | 0 |
+| deep_cells | 12/30 | [25, 58] | 5.9 | +1 | 3:2 | 1.00 | 4.13 | 0.32 | 20.8 | 85 | 0 |
+| verdant_pulse | 14/30 | [30, 64] | 6.3 | +3 | 4:1 | 0.38 | 4.03 | 0.29 | 31.8 | 95 | 0 |
+| thick_bark | 12/30 | [25, 58] | 6.0 | +1 | 2:1 | 1.00 | 4.30 | 0.29 | 22.5 | 87 | 0 |
+| bloom_surge | 12/30 | [25, 58] | 6.1 | +1 | 2:1 | 1.00 | 4.53 | 0.23 | 22.8 | 84 | 0 |
+| **solar_core** | **20/30** | **[49, 81]** | 6.6 | **+9** | **10:1** | **0.01** | 4.47 | 0.38 | 19.1 | 73 | 0 |
+| carapace | 12/30 | [25, 58] | 5.8 | +1 | 3:2 | 1.00 | 4.03 | 0.29 | 31.3 | 89 | 1 |
+| all 6 | 13/30 | [27, 61] | 6.3 | +2 | 6:4 | 0.75 | 3.33 | 0.03 | 31.5 | 70 | 1 |
+
+**`solar_core` now clears p < 0.05 in sample** (+9, 10:1 discordant, p=0.01,
+damage taken 23.4 -> 19.1, turns-on-wins 82 -> 73), where 2026-09-05b
+measured it at +7, 10:3, p=0.09. Its out-of-sample re-check already survived
+the Method rule in bump 2 (`SWEEP_SEED_FROM=101`: 25/30 [66, 93] vs 10/30
+[19, 51], 16:1, p=0.00). Two independent seed ranges and two bumps now say
+the same thing: a pre-installed +1 regen is worth roughly +30 to +50 points
+of optimizer win rate and the other five grafts sit inside noise. Nothing was
+patched here - graft values are Block C3's, and 6.3 lists them as data work.
+The "all 6" row is still not six grafts' worth of power: owning six drives
+`shop_cost("graft")` up, so the run buys nothing (conversion 0.03, grafts
+bought {}) and takes the most damage of any row.
+
+### Quota probe (before/after)
+
+Per the instruction to compare the quota counters against 2026-09-05c. Both
+columns are the 30-seed playtest, same seeds, same personas.
+
+| persona | quota reclamps 05c | this bump | quota-unmet deaths 05c | this bump |
+|---|---|---|---|---|
+| wanderer | 0 | 0 | 29 | 25 |
+| sprout | 0 | 0 | 3 | 2 |
+| magpie | 0 | 0 | 4 | 4 |
+| fanatic | 0 | 0 | 3 | 3 |
+| optimizer | 0 | 0 | 4 | 2 |
+| deeproot | 0 | 0 | 0 | 0 |
+| deeproot_rollout | 0 | 0 | 0 | 0 |
+
+Plus the 100-seed magpie canary: `quota reclamps 0`, quota-unmet deaths 8.
+
+**`quota_reclamp` has still never fired in a bot run** - 0 over the 210
+playtest runs, 0 over the 240 graft-sweep runs, 0 over the 100 magpie seeds.
+The counter is now three bumps old and entirely synthetic in its coverage
+(`tests/test_economy.gd` section g plus `blockb_quota_reclamp.json` and the
+new `blockb_quota_reclamp_wash.json`). C1b does not change that and, per the
+premise note above, ash makes the re-clamp shrink the quota *less* rather
+than not at all. Quota-unmet deaths drift down slightly on three personas
+(wanderer 29 -> 25, sprout 3 -> 2, optimizer 4 -> 2) and are flat on the
+rest; no interval attaches to a death-cause count, and the wanderer's own win
+rate did not move, so this is not evidence that ash eased the gate.
+
+### Regression corpus regen
+
+Numbers from the corpus phase, reproduced here because they are the bump's
+replay record. **27 -> 32 records.** Before the regen:
+"regressions: 0 ok, 27 failed", exit 1, every failure "stale record:
+sim_version 2 != 3". After: **"regressions: 32 ok, 0 failed"**, exit 0, plain
+and with `REGRESS_STRICT=1`.
+
+- 25 records re-stamped with `REGEN=1`, **zero outcome diffs** (won / floor /
+  turns / timeout identical everywhere); 10 of them moved their state hash,
+  15 came out byte-identical in outcome *and* hash.
+- 2 records re-recorded because their stored action log desynced under ash:
+  `det_optimizer_s42` (372 -> 467 actions, WON floor 7 -> died floor 7) and
+  `det_sprout_s42` (529 -> 389 actions, died floor 5 -> died floor 4).
+- 5 new hand-scripted records pin the new behaviour and all five fail against
+  the pre-C1b tree on exactly their own pattern: `c1b_ash_cleanse` (burnout ->
+  `ash` -> `cleanse kind ash` -> `room_bloom` -> `floor_restored`),
+  `c1b_root_drag` (root blocks two drags, a re-snare inside the cooldown is
+  `resisted`, the drag lands once root ends), `c1b_spore_stack` (3 + 3 = 6 at
+  the cap kills a 5-hp extractor that survives under max-stacking),
+  `c1b_spore_vial` (the vial now emits a `status` event), and
+  `blockb_quota_reclamp_wash` (the wash path, which is the removal that is
+  permanent under ash).
+- Ash events per replayed record run from 72 (`det_deeproot_s11`) down to 0;
+  `det_sprout_s11` earns 37 bloom instead of 39 because one ash tile left
+  standing costs that room its `room_bloom` bonus.
+- Items 2 and 3 fire zero times across all 27 bot-derived records, which is
+  why the hand-scripted ones exist.
+
+### Anything else that moved
+
+- **deeproot takes more damage: 7.5 -> 10.6 per run** (30 seeds, no CI on a
+  damage mean) while its combos/run rose 14.10 -> 15.53 and its stall floors
+  held at 7. `deeproot_rollout` moved the same way, 2.8 -> 3.1. The searcher
+  burns more and now stands next to what it burnt.
+- **The two cleanest personas more than doubled their stall floors:**
+  optimizer 2 -> 5 and deeproot_rollout 1 -> 4 over 30 runs (fanatic 6 -> 9 is
+  the same +3; wanderer 24 -> 20, sprout 14 -> 15, magpie 18 -> 19, deeproot
+  7 -> 7). Timeouts stayed 0 everywhere, so nothing loops on ash, but "the
+  floor is not finished when the fire goes out" is the shape that would
+  produce this.
+- **magpie shrine turns/run 22.70 -> 23.17** - the 2026-09-05c anomaly is
+  unchanged, not worsened; greed still loiters at a shrine it can spend
+  little at.
+- **fanatic signature share 0.24 -> 0.21 with combos/run 11.37 -> 12.23** and
+  23 `root` statuses, the only persona applying root at any volume.
+- Kit entropy moved most for magpie (4.28 -> 4.05), deeproot_rollout
+  (4.32 -> 4.11) and sprout (4.45 -> 4.29); wanderer, fanatic, optimizer and
+  deeproot are flat to within 0.05 bits. No persona changed which abilities it
+  builds around.
+- Nothing else left a CI.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from
@@ -1424,3 +1801,64 @@ its own balance question with its own 100-seed before/after.
   configs now start a seed from the same map and rng state as any open-pool
   config, so locked and open rows pair again; any older text saying the shop
   consumes a main-rng draw is wrong from bump 2 on.
+
+### Bump-3 additions (2026-09-06)
+
+- **Ash costs bloom through `room_bloom`, not only through the quota.** The
+  cheapest demonstration is in the corpus: `det_sprout_s11` earns 37 bloom
+  after the bump instead of 39, because one ash tile left standing keeps its
+  room uncleansed and cancels that room's bonus (room_bloom 6 -> 5). A bot
+  that ignites now forfeits room bonuses unless it comes back to cleanse the
+  burn. No CI attaches to this - it is one record - but it is the mechanism
+  behind every "burn then leave" line and it wants a 100-seed look before any
+  fire-pool content ships.
+- **Lighting oil still opens the green gate.** The 6.3 spec assumed ash would
+  close that line; it does not, because `_reclamp_quota` fires at ignition
+  (fire is not corruption per `Content.TERRAIN`) and the clamp only ever
+  lowers `green_need`. Ash restores the corruption count afterwards, so later
+  re-clamps shrink less, but the burn-to-open exploit is untouched. Closing it
+  needs fire to count as pending corruption - a sim change, not a table edit.
+  Flagged by the sim and corpus phases both; not made.
+- **Root's cooldown and spore's stacking are effectively unmeasured in play.**
+  `resisted` is 0 across all 210 playtest runs and 3 across 100 magpie seeds;
+  `root` statuses appear only for fanatic (23 per 30 runs) and magpie (2);
+  `spore` statuses are 0 everywhere, and the bot-derived regression corpus
+  produces 0 rooted, 0 resisted and 0 spore events. Both rules are pinned only
+  by `tests/test_grammar.gd` and two hand-scripted records. Measuring root
+  pressure needs a persona that spams `sap_snare` (fanatic anchor/turtle at
+  more seeds, or a `verify_kit` config that locks it in); measuring spore
+  needs any bot that casts `spore_cloud` twice.
+- **Stall floors rose on the two cleanest personas without a CI to judge it
+  by:** optimizer 2 -> 5 and deeproot_rollout 1 -> 4 over 30 runs (fanatic
+  6 -> 9; wanderer, sprout, magpie, deeproot flat or down). Timeouts stayed 0
+  everywhere, so nothing loops on ash, but "the floor is not finished when the
+  fire goes out" is exactly the shape that would produce this. Re-check at 100
+  seeds before treating it as a clock regression or patching anything.
+- **deeproot's damage taken rose 7.5 -> 10.6 per run** (rollout 2.8 -> 3.1)
+  with combos/run up 14.10 -> 15.53. The ceiling burns more than any persona
+  (539 burnouts per 30 runs) and now stands next to what it burnt. Watch it if
+  the deeproot band ever slips below 70%.
+- **`solar_core` has now cleared the Method rule twice.** In-sample this bump:
+  20/30 [49, 81] vs base 11/30 [22, 54], +9, 10:1 discordant, p=0.01;
+  out-of-sample in bump 2: 25/30 [66, 93] vs 10/30 [19, 51], 16:1, p=0.00.
+  Two seed ranges, two bumps, the same answer - the graft table is one lever
+  and five fillers, and 6.3's Block C3 owns the fix. Nothing here was patched.
+- **`quota_reclamp` has still never fired in a bot run** - 0 over this bump's
+  210 playtest runs, 240 graft-sweep runs and 100 magpie seeds, on top of the
+  550 runs bump 2 recorded. Its only coverage remains synthetic
+  (`test_economy` section g, `blockb_quota_reclamp.json`, and the new
+  `blockb_quota_reclamp_wash.json`). Three bumps is long enough that the honest
+  statement is: nobody has ever seen the strandable-gate fix work in play.
+- **The magpie canary's rise baseline stays 10/100 [6, 17].** This bump
+  measures 13/100 [8, 21], which does not clear it (2026-09-05d's rule), so no
+  signal - but it is the second consecutive 100-seed number whose interval sits
+  entirely above the 0-5% design target. Compare the next one against [6, 17],
+  not against [8, 21].
+- **New terrain now costs three consumer edits.** `tests/test_shell.gd`
+  asserts every `Content.TERRAIN` kind has an SVG sprite, an
+  `AsciiView.TERRAIN_CH` glyph and a shell legend row, and
+  `tests/test_invariants.gd` carries a hand-maintained `GEN_ONLY_KINDS` list
+  of kinds mapgen must never emit. Adding a row without those fails the shell
+  test loudly (intended) but the runtime-only list is a literal nobody
+  generates from the table - a future runtime-only kind is silently allowed
+  until someone edits it.

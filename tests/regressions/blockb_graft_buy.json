@@ -4,6 +4,6 @@
 "actions": [{"dir":[1,0],"type":"move"},{"item":"graft","pick":0,"type":"buy"}],
 "expect": {"events":[{"discarded":"verdant_pulse","id":"carapace","item":"graft","t":"buy"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "shrine grafts are a choice sink: two offers, buying one discards the other",
-"sim_version": 2,
+"sim_version": 3,
 "hash": "40b1cf54164f826af4903a24f78a8b51d0e4762f37a10c6c25bdd53efcd17c70"
 }

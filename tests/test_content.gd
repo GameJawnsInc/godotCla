@@ -65,8 +65,11 @@ const PER_RADIUS_COUNTS := ["fire_within_self"]  # the only count Game._rider_pe
 const TERRAIN_REQUIRED := [
 	"corruption", "shields_core", "flammable", "washable", "bloom", "ttl", "decays",
 	"enter_dmg_player", "enter_dmg_enemy", "enter_src", "tick_dmg_player", "tick_dmg_enemy",
-	"blocks", "blocks_beam", "heal", "burns_to",
+	"blocks", "blocks_beam", "heal", "burns_to", "convertible",
 ]
+## "cooldown" stays optional: only the rows that want stagger-style
+## immunity (root, since Block C1b) carry one, but where it appears it
+## must be a positive int - a 0 or a float would silently disable it.
 const STATUS_REQUIRED := ["stack", "blocks", "tick_dmg", "cap"]
 ## Every enemy intent type Game._execute_intent can be handed; a status may
 ## only block one of these (or "*", every intent).
@@ -388,6 +391,12 @@ func _lint_tables() -> Array:
 			out.append("TERRAIN %s: burns_to '%s' not in TERRAIN" % [kind, burns])
 		if bool(row.get("decays", false)) and int(row.get("ttl", 0)) < 0:
 			out.append("TERRAIN %s: decays with a negative ttl" % kind)
+		# convert_radius only ever turns corruption into growth, so a
+		# convertible row that is not corruption would be dead data
+		if row.has("convertible") and not (row["convertible"] is bool):
+			out.append("TERRAIN %s: convertible must be a bool" % kind)
+		elif bool(row.get("convertible", false)) and not bool(row.get("corruption", false)):
+			out.append("TERRAIN %s: convertible without corruption" % kind)
 	var seen := {}
 	for row in Content.REACTIONS:
 		var rid := String(row.get("id", ""))
@@ -423,6 +432,8 @@ func _lint_tables() -> Array:
 				out.append("STATUSES %s: blocks '%s', which is not an enemy intent type" % [sname, str(b)])
 		if not blocks.is_empty() and String(st.get("blocked_event", "")) == "":
 			out.append("STATUSES %s: blocks %s without a blocked_event" % [sname, str(blocks)])
+		if st.has("cooldown") and not (st["cooldown"] is int and int(st["cooldown"]) > 0):
+			out.append("STATUSES %s: cooldown must be a positive int" % sname)
 	out.append_array(_lint_surge("SURGE_DEFAULT", Content.SURGE_DEFAULT))
 	return out
 

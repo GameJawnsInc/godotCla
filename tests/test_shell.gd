@@ -13,6 +13,7 @@ const AudioKit := preload("res://shell/audio.gd")
 const Game := preload("res://sim/game.gd")
 const ImportRun := preload("res://tests/import_run.gd")
 const Regress := preload("res://tests/regress_lib.gd")
+const AsciiView := preload("res://sim/ascii_view.gd")
 
 ## A kit that fills every slot with slot 0 held by a mobility ability - the one
 ## the forge may never scrap (sim/game.gd _is_mobility).
@@ -38,6 +39,19 @@ func _init() -> void:
 		_check(Art.ART.has(kind), "enemy %s has a sprite" % kind)
 	for row in Shell.LEGEND:
 		_check(Art.ART.has(row[0]), "legend id %s has a sprite" % row[0])
+	# every terrain the sim can put on the map is drawable and printable -
+	# a new Content.TERRAIN row (C1b: ash) must not render as a blank tile
+	var legend_ids := {}
+	for row in Shell.LEGEND:
+		legend_ids[String(row[0])] = String(row[1])
+	for kind in Content.TERRAIN:
+		_check(Art.ART.has(kind), "terrain %s has a sprite" % kind)
+		_check(AsciiView.TERRAIN_CH.has(kind), "terrain %s has an ASCII glyph" % kind)
+		_check(legend_ids.has(kind), "terrain %s has a legend row" % kind)
+	_check(Art.ART.has("ash"), "ash has a sprite")
+	_check(Art.tex("ash", 36) != null, "ash sprite rasterizes")
+	_check(legend_ids.get("ash", "") == "Ash", "legend names ash")
+	_check(AsciiView.TERRAIN_CH.get("ash", "") == ",", "ash prints as ,")
 
 	# 1b. the whole audio bank synthesizes, and the music loop renders
 	var ak = AudioKit.new()

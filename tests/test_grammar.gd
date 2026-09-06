@@ -1,10 +1,12 @@
 extends SceneTree
-## Effect grammar checks (docs/PROGRESSION_REVIEW.md §6.3, Block C1a): the
+## Effect grammar checks (docs/PROGRESSION_REVIEW.md §6.3, Block C1a/C1b): the
 ## rider vocabulary (if / per / bonus / then), returned outcomes, and the data
 ## tables (Content.TERRAIN / REACTIONS / STATUSES / surge) are exercised with
 ## hand-built effect dicts passed straight to Game._apply_effect on controlled
-## states. No content row carries a rider yet, so nothing here depends on the
-## ability tables beyond the surge-cost identity check.
+## states, plus the C1b rows: ash, the root cooldown and blocked advance/drag,
+## spore add-stacking, items through _apply_status, spread fire inheriting
+## the bloom flag. No content row carries a rider yet, so nothing here depends
+## on the ability tables beyond the surge-cost identity check.
 ## Run: godot --headless --path . --script tests/test_grammar.gd
 
 const Content := preload("res://sim/content.gd")
@@ -35,6 +37,10 @@ func _init() -> void:
 	_check_terrain_helpers()
 	_check_statuses()
 	_check_reactions()
+	_check_ash()
+	_check_root_cooldown()
+	_check_spore_stack()
+	_check_items_through_table()
 	_check_context_counters()
 	if failures.is_empty():
 		print("grammar: OK (%d checks)" % checks)
@@ -469,7 +475,7 @@ func _check_surge_identity() -> void:
 # --- Content.terrain / is_corruption -------------------------------------------
 
 func _check_terrain_helpers() -> void:
-	for k in ["oil", "goo", "rich_goo"]:
+	for k in ["oil", "goo", "rich_goo", "ash"]:
 		_ok(Content.is_corruption(k), "is_corruption(%s)" % k)
 	for k in ["growth", "fire", "smoke", "roots", "supply", "", "nope"]:
 		_ok(not Content.is_corruption(k), "not is_corruption(%s)" % k)
@@ -479,14 +485,29 @@ func _check_terrain_helpers() -> void:
 	_ok(Content.terrain("", "blocks", false) == false and Content.terrain("nope", "x", 7) == 7, "unknown kind/key read as default")
 	_ok(Content.terrain("oil", "no_such_key") == null, "unknown key with no default is null")
 	var required := ["corruption", "shields_core", "flammable", "washable", "bloom", "ttl", "decays",
-		"enter_dmg_player", "enter_dmg_enemy", "tick_dmg_player", "tick_dmg_enemy", "blocks", "blocks_beam", "heal", "burns_to"]
+		"enter_dmg_player", "enter_dmg_enemy", "tick_dmg_player", "tick_dmg_enemy", "blocks", "blocks_beam", "heal", "burns_to", "convertible"]
 	var missing := 0
-	for k in ["oil", "goo", "rich_goo", "growth", "fire", "smoke", "roots", "supply"]:
+	for k in ["oil", "goo", "rich_goo", "growth", "fire", "smoke", "roots", "supply", "ash"]:
 		_ok(Content.TERRAIN.has(k), "TERRAIN has %s" % k)
 		for key in required:
 			if not Content.TERRAIN.get(k, {}).has(key):
 				missing += 1
 	_ok(missing == 0, "TERRAIN rows missing %d required keys" % missing)
+	# ash row: corruption that never shields the core, washable, not flammable
+	var ash: Dictionary = Content.TERRAIN["ash"]
+	_ok(ash["corruption"] == true and ash["shields_core"] == false and ash["flammable"] == false and ash["washable"] == true
+		and int(ash["bloom"]) == 1 and ash["decays"] == false and ash["blocks"] == false and ash["convertible"] == true,
+		"ash row: %s" % str(ash))
+	_ok(Content.terrain("fire", "burns_to", "") == "ash", "fire burns_to ash")
+	var conv: Array = []
+	for k in Content.TERRAIN:
+		if bool(Content.TERRAIN[k]["convertible"]):
+			conv.append(k)
+	_ok(conv == ["oil", "goo", "ash"], "convertible kinds: %s" % str(conv))
+	for k in Content.TERRAIN:
+		if bool(Content.TERRAIN[k]["convertible"]):
+			_ok(Content.is_corruption(k), "convertible %s is corruption" % k)
+	_ok(not bool(Content.TERRAIN["rich_goo"]["convertible"]), "rich_goo is not convertible")
 	# the lookups drive the sim: roots block, smoke stops beams, goo bites
 	var g = _game()
 	g.terrain[Vector2i(6, 3)] = {"kind": "roots", "ttl": 2}
@@ -558,9 +579,12 @@ func _check_statuses() -> void:
 	# table shape
 	for sname in ["stun", "root", "spore"]:
 		var sdef: Dictionary = Content.STATUSES[sname]
-		_ok(sdef.get("stack", "") == "max" and sdef.has("blocks") and sdef.has("tick_dmg") and sdef.has("cap"), "STATUSES row %s shape" % sname)
-	_ok(Content.STATUSES["stun"]["blocks"] == ["*"] and Content.STATUSES["root"]["blocks"] == ["move"] and Content.STATUSES["spore"]["blocks"] == [],
+		_ok(["max", "add"].has(sdef.get("stack", "")) and sdef.has("blocks") and sdef.has("tick_dmg") and sdef.has("cap"), "STATUSES row %s shape" % sname)
+	_ok(Content.STATUSES["stun"]["blocks"] == ["*"] and Content.STATUSES["root"]["blocks"] == ["move", "advance", "drag"] and Content.STATUSES["spore"]["blocks"] == [],
 		"STATUSES blocks lists")
+	_ok(Content.STATUSES["stun"]["stack"] == "max" and Content.STATUSES["root"]["stack"] == "max" and Content.STATUSES["spore"]["stack"] == "add"
+		and int(Content.STATUSES["spore"]["cap"]) == 6 and int(Content.STATUSES["root"]["cooldown"]) == 2,
+		"STATUSES stack/cap/cooldown rows")
 	_ok(Content.STATUSES["spore"]["tick_dmg"] == 1 and Content.STATUSES["stun"]["tick_dmg"] == 0, "STATUSES tick_dmg")
 
 
@@ -574,16 +598,24 @@ func _check_reactions() -> void:
 	g.terrain[Vector2i(4, 1)] = {"kind": "oil"}
 	g._step_events = []
 	g._environment_phase()
-	_ok(g.terrain.get(Vector2i(3, 1), {}) == {"kind": "fire", "ttl": 2, "by": "solar_lance"},
-		"spread inherits by (bloom flag deferred to C1b): %s" % str(g.terrain.get(Vector2i(3, 1))))
+	_ok(g.terrain.get(Vector2i(3, 1), {}) == {"kind": "fire", "ttl": 2, "by": "solar_lance", "bloom": 0},
+		"spread inherits by and the bloom flag: %s" % str(g.terrain.get(Vector2i(3, 1))))
 	_ok(g.terrain[Vector2i(4, 1)]["kind"] == "oil", "spread reaches adjacent tiles only")
 	_ok(int(g.terrain[Vector2i(2, 1)]["ttl"]) == 1, "source fire decayed to ttl 1")
 	var ign := _evs(g._step_events, "ignite")
 	_ok(ign.size() == 1 and ign[0]["tile"] == Vector2i(3, 1), "one ignite event: %s" % str(ign))
-	# fire_burns_out: an expiring fire vanishes (result "")
+	# fire_burns_out: an expiring fire leaves ash (no ttl, no by), one ash event
 	g._step_events = []
 	g._environment_phase()
-	_ok(not g.terrain.has(Vector2i(2, 1)) and g.terrain[Vector2i(4, 1)]["kind"] == "fire", "fire burns out, second spread: %s" % str(g.terrain))
+	_ok(g.terrain.get(Vector2i(2, 1), {}) == {"kind": "ash"} and g.terrain[Vector2i(4, 1)]["kind"] == "fire", "fire burns out to ash, second spread: %s" % str(g.terrain))
+	var ashes := _evs(g._step_events, "ash")
+	_ok(ashes.size() == 1 and ashes[0]["tile"] == Vector2i(2, 1), "one ash event: %s" % str(ashes))
+	# a mapgen-oil fire (no flag) burns to flagless ash; the spread fire's
+	# bloom-0 flag rides through to its ash
+	g._environment_phase()
+	g._environment_phase()
+	_ok(g.terrain.get(Vector2i(3, 1), {}) == {"kind": "ash", "bloom": 0} and g.terrain.get(Vector2i(4, 1), {}) == {"kind": "ash"},
+		"ash keeps the fire's bloom flag: %s %s" % [str(g.terrain.get(Vector2i(3, 1))), str(g.terrain.get(Vector2i(4, 1)))])
 	# first adjacent fire in map order signs the new tile
 	var g2 = _game()
 	g2.terrain[Vector2i(2, 1)] = {"kind": "fire", "ttl": 2, "by": "first"}
@@ -632,6 +664,240 @@ func _check_reactions() -> void:
 	for ev in _evs(g5._step_events, "damage"):
 		srcs.append([ev.get("who", ""), ev["src"], ev["amt"]])
 	_ok(srcs == [["player", "fire", 1], ["drill_bot", "fire:sun_flare", 1]], "hazard tick sources: %s" % str(srcs))
+
+
+# --- ash (C1b) ------------------------------------------------------------------
+
+func _check_ash() -> void:
+	# ttl expiry: fire -> {kind: ash} with the inherited bloom flag, ash events
+	var g = _game()
+	g.terrain[Vector2i(7, 3)] = {"kind": "fire", "ttl": 1, "by": "solar_lance", "bloom": 0}
+	g.terrain[Vector2i(8, 3)] = {"kind": "fire", "ttl": 1, "by": "cinder_mite"}
+	g._step_events = []
+	g._environment_phase()
+	_ok(g.terrain.get(Vector2i(7, 3), {}) == {"kind": "ash", "bloom": 0} and g.terrain.get(Vector2i(8, 3), {}) == {"kind": "ash"},
+		"fire expiry -> ash: %s %s" % [str(g.terrain.get(Vector2i(7, 3))), str(g.terrain.get(Vector2i(8, 3)))])
+	_ok(_evs(g._step_events, "ash").size() == 2, "two ash events: %s" % str(g._step_events))
+	_ok(g._count_corruption() == 2, "ash counts as corruption: %d" % g._count_corruption())
+	# boss gate: ash never shields the core (an enemy next to only ash is exposed)
+	_ok(not g._corruption_adjacent(Vector2i(7, 2)) and not g._corruption_adjacent(Vector2i(6, 3)), "ash does not shield the core")
+	var core = g._spawn("furnace_core", Vector2i(7, 2))
+	core["hp"] = 4
+	var r := _run(g, {"op": "damage", "dmg": 1}, TILE_ADEF, Vector2i(7, 2))
+	_ok(r[0]["hit"] == 1 and core["hp"] == 3 and _evs(r[1], "core_shielded").is_empty(), "core next to ash takes the hit: %s" % str(r[0]))
+	g.enemies.erase(core)
+	# cleansing ash plants growth, pays per the flag, emits cleanse with kind ash
+	g.player["pos"] = Vector2i(6, 3)
+	g.player["charge"] = 10
+	var bloom0: int = g.bloom
+	var evs: Array = g.step({"type": "cleanse", "target": Vector2i(7, 3)})
+	var cl := _evs(evs, "cleanse")
+	_ok(cl.size() == 1 and cl[0]["kind"] == "ash" and cl[0]["tile"] == Vector2i(7, 3), "cleanse event carries kind ash: %s" % str(cl))
+	_ok(g.terrain[Vector2i(7, 3)]["kind"] == "growth" and g.bloom == bloom0 and g.greened == 1, "bloom-0 ash cleanse: growth, +0 bloom, greened 1 (bloom %d)" % g.bloom)
+	g.player["pos"] = Vector2i(9, 3)
+	g.player["charge"] = 10
+	evs = g.step({"type": "cleanse", "target": Vector2i(8, 3)})
+	_ok(_evs(evs, "cleanse").size() == 1 and g.bloom == bloom0 + 1 and g.greened == 2 and g.terrain[Vector2i(8, 3)]["kind"] == "growth",
+		"flagless ash cleanse pays the table's 1: bloom %d" % g.bloom)
+	# cleanse of oil / goo names its kind too
+	var gk = _game()
+	gk.terrain[Vector2i(6, 3)] = {"kind": "goo"}
+	gk.player["charge"] = 10
+	var ck := _evs(gk.step({"type": "cleanse", "target": Vector2i(6, 3)}), "cleanse")
+	_ok(ck.size() == 1 and ck[0]["kind"] == "goo", "cleanse event kind goo: %s" % str(ck))
+	# convert_radius converts ash (table: convertible) and still not rich_goo
+	var g2 = _game()
+	g2.terrain[Vector2i(7, 3)] = {"kind": "ash", "bloom": 0}
+	g2.terrain[Vector2i(8, 3)] = {"kind": "rich_goo"}
+	g2.terrain[Vector2i(6, 3)] = {"kind": "oil"}
+	r = _run(g2, {"op": "convert_radius", "radius": 1}, {"target": "tile_any", "range": 3, "cost": 1}, Vector2i(7, 3))
+	_ok(r[0]["converted"] == 2 and g2.terrain[Vector2i(7, 3)]["kind"] == "growth" and g2.terrain[Vector2i(6, 3)]["kind"] == "growth"
+		and g2.terrain[Vector2i(8, 3)]["kind"] == "rich_goo", "convert ash + oil, never rich_goo: %s %s" % [str(r[0]), str(g2.terrain)])
+	# wash erases ash
+	var g3 = _game()
+	g3.terrain[Vector2i(6, 3)] = {"kind": "ash"}
+	g3.terrain[Vector2i(7, 3)] = {"kind": "goo"}
+	r = _run(g3, {"op": "wash_push", "push": 1, "collision_dmg": 1}, DIR_ADEF, Vector2i(1, 0))
+	_ok(r[0]["washed"] == 1 and not g3.terrain.has(Vector2i(6, 3)) and g3.terrain.has(Vector2i(7, 3)), "wash erases ash, not goo: %s" % str(g3.terrain))
+	# fire never spreads to ash, and ash never ignites
+	var g4 = _game()
+	g4.terrain[Vector2i(2, 1)] = {"kind": "fire", "ttl": 3, "by": "x"}
+	g4.terrain[Vector2i(3, 1)] = {"kind": "ash"}
+	g4._step_events = []
+	g4._environment_phase()
+	_ok(g4.terrain[Vector2i(3, 1)] == {"kind": "ash"} and _evs(g4._step_events, "ignite").is_empty(), "fire does not spread to ash: %s" % str(g4.terrain))
+	r = _run(g4, {"op": "aoe_damage", "dmg": 0, "radius": 5, "ignite": true}, SELF_ADEF, g4.player["pos"])
+	_ok(r[0]["ignited"] == 0 and g4.terrain[Vector2i(3, 1)]["kind"] == "ash", "ignite skips ash: %s" % str(r[0]))
+	# cleanse legality: ash is a cleanse target like any corruption
+	var g5 = _game()
+	g5.terrain[Vector2i(6, 3)] = {"kind": "ash"}
+	var can := false
+	for a in g5.legal_actions():
+		if String(a.get("type", "")) == "cleanse" and a.get("target", Vector2i(-1, -1)) == Vector2i(6, 3):
+			can = true
+	_ok(can, "cleanse of ash is a legal action")
+	# ignited enemy-made oil keeps bloom 0 through fire and ash; its cleanse pays 0
+	var g6 = _game()
+	g6.terrain[Vector2i(6, 3)] = {"kind": "oil", "bloom": 0}
+	g6.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	g6._ignite(Vector2i(6, 3), "solar_lance")
+	g6._ignite(Vector2i(7, 3), "solar_lance")
+	_ok(g6.terrain[Vector2i(6, 3)] == {"kind": "fire", "ttl": 2, "by": "solar_lance", "bloom": 0} and g6.terrain[Vector2i(7, 3)] == {"kind": "fire", "ttl": 2, "by": "solar_lance"},
+		"_ignite carries the bloom flag only when present: %s %s" % [str(g6.terrain[Vector2i(6, 3)]), str(g6.terrain[Vector2i(7, 3)])])
+	g6._environment_phase()
+	g6._environment_phase()
+	_ok(g6.terrain[Vector2i(6, 3)] == {"kind": "ash", "bloom": 0} and g6.terrain[Vector2i(7, 3)] == {"kind": "ash"}, "burnt enemy oil is bloom-0 ash: %s" % str(g6.terrain))
+	g6.player["charge"] = 10
+	var b6: int = g6.bloom
+	g6.step({"type": "cleanse", "target": Vector2i(6, 3)})
+	_ok(g6.bloom == b6 and g6.greened == 1, "bloom-0 ash from enemy oil pays 0: %d" % g6.bloom)
+	# igniter enemy walking onto enemy oil: same flag
+	var g7 = _game()
+	g7.terrain[Vector2i(8, 3)] = {"kind": "oil", "bloom": 0}
+	var mite = g7._spawn("cinder_mite", Vector2i(8, 3))
+	g7._enemy_enter_tile(mite)
+	_ok(g7.terrain[Vector2i(8, 3)] == {"kind": "fire", "ttl": 2, "by": "cinder_mite", "bloom": 0}, "igniter fire carries bloom 0: %s" % str(g7.terrain[Vector2i(8, 3)]))
+	# ash sits in the map's terrain like any kind: snapshot and clone keep it
+	var g8 = _game()
+	g8.terrain[Vector2i(6, 3)] = {"kind": "ash", "bloom": 0}
+	_ok(g8.snapshot()["terrain"][Vector2i(6, 3)] == {"kind": "ash", "bloom": 0} and g8.clone().terrain[Vector2i(6, 3)] == {"kind": "ash", "bloom": 0}, "ash survives snapshot/clone")
+
+
+# --- root cooldown / blocked intents (C1b) ---------------------------------------
+
+func _check_root_cooldown() -> void:
+	# drag (magnet_crane) is blocked, root ticks, root_cd was set to turns + cooldown
+	var g = _game()
+	var crane = g._spawn("magnet_crane", Vector2i(8, 3))
+	crane["intent"] = {"type": "drag"}
+	g._step_events = []
+	_ok(g._apply_status(crane, "root", 2) and int(crane["status"]["root"]) == 2 and int(crane["status"]["root_cd"]) == 4,
+		"root 2 lands with root_cd 4: %s" % str(crane["status"]))
+	g._step_events = []
+	g._execute_intent(crane)
+	_ok(g.player["pos"] == Vector2i(5, 3) and int(crane["status"]["root"]) == 1 and int(crane["status"]["root_cd"]) == 3
+		and _evs(g._step_events, "rooted").size() == 1 and _evs(g._step_events, "drag").is_empty(),
+		"root blocks drag: %s %s" % [str(crane["status"]), str(g._step_events)])
+	# re-application while root is active lands (max) and extends the cooldown
+	g._step_events = []
+	_ok(g._apply_status(crane, "root", 3) and int(crane["status"]["root"]) == 3 and int(crane["status"]["root_cd"]) == 5
+		and _evs(g._step_events, "status").size() == 1, "re-root while active: %s" % str(crane["status"]))
+	crane["status"]["root"] = 1
+	crane["status"]["root_cd"] = 3
+	crane["intent"] = {"type": "drag"}
+	g._execute_intent(crane)
+	_ok(int(crane["status"]["root"]) == 0 and int(crane["status"]["root_cd"]) == 2, "root expired, cd 2: %s" % str(crane["status"]))
+	# during the cooldown a fresh root is refused with a resisted event
+	g._step_events = []
+	_ok(not g._apply_status(crane, "root", 2) and int(crane["status"]["root"]) == 0, "root refused during cooldown: %s" % str(crane["status"]))
+	var res := _evs(g._step_events, "resisted")
+	_ok(res.size() == 1 and res[0]["id"] == crane["id"] and res[0]["status"] == "root" and _evs(g._step_events, "status").is_empty(),
+		"resisted event: %s" % str(g._step_events))
+	# the unrooted crane drags again, and the cd runs down once per action
+	crane["intent"] = {"type": "drag"}
+	g._step_events = []
+	g._execute_intent(crane)
+	_ok(g.player["pos"] == Vector2i(6, 3) and _evs(g._step_events, "drag").size() == 1 and int(crane["status"]["root_cd"]) == 1, "drag lands once root is gone: %s" % str(g._step_events))
+	crane["intent"] = {"type": "idle"}
+	g._execute_intent(crane)
+	_ok(int(crane["status"]["root_cd"]) == 0, "cd reaches 0: %s" % str(crane["status"]))
+	g._step_events = []
+	_ok(g._apply_status(crane, "root", 2) and int(crane["status"]["root"]) == 2 and int(crane["status"]["root_cd"]) == 4 and _evs(g._step_events, "status").size() == 1,
+		"root lands again after the cooldown: %s" % str(crane["status"]))
+	# advance is blocked too (driven directly: the intent executor does not
+	# check the kind); the same enemy advances once unrooted
+	var g2 = _game()
+	var e2 = g2._spawn("drill_bot", Vector2i(8, 3))
+	e2["intent"] = {"type": "advance", "steps": 2}
+	g2._apply_status(e2, "root", 1)
+	g2._step_events = []
+	g2._execute_intent(e2)
+	_ok(e2["pos"] == Vector2i(8, 3) and int(e2["status"]["root"]) == 0 and _evs(g2._step_events, "rooted").size() == 1, "root blocks advance: %s %s" % [str(e2["pos"]), str(e2["status"])])
+	e2["intent"] = {"type": "advance", "steps": 2}
+	g2._execute_intent(e2)
+	_ok(e2["pos"] == Vector2i(6, 3), "advance moves once the root is gone: %s" % str(e2["pos"]))
+	# root still does not swallow attacks, and only ticks when it blocks
+	var g3 = _game()
+	var e3 = g3._spawn("drill_bot", Vector2i(6, 3))
+	g3._apply_status(e3, "root", 2)
+	e3["intent"] = {"type": "attack", "tile": g3.player["pos"], "dmg": 1}
+	var hp: int = g3.player["hp"]
+	g3._execute_intent(e3)
+	_ok(g3.player["hp"] == hp - 1 and int(e3["status"]["root"]) == 2 and int(e3["status"]["root_cd"]) == 3, "attack through root; root stays, cd ticks: %s" % str(e3["status"]))
+	# a root that never blocked: once its cd is gone it can be re-applied while still active
+	# massive enemies stay immune (no cd written)
+	var g4 = _game()
+	var boss = g4._spawn("the_dredge", Vector2i(8, 3))
+	g4._step_events = []
+	_ok(not g4._apply_status(boss, "root", 2) and boss["status"].is_empty() and _evs(g4._step_events, "immune").size() == 1, "massive immune to root: %s" % str(boss["status"]))
+	# stun and spore carry no cooldown: no _cd field is ever written for them
+	var g5 = _game()
+	var e5 = g5._spawn("drill_bot", Vector2i(7, 3))
+	g5._apply_status(e5, "stun", 1)
+	g5._apply_status(e5, "spore", 1)
+	_ok(not e5["status"].has("stun_cd") and not e5["status"].has("spore_cd"), "no cd for stun/spore: %s" % str(e5["status"]))
+	# through the real cast path: sap_snare on a rooted-out enemy is resisted
+	var g6 = _game(["sap_snare", "seed_bomb", "mycelium_dash"])
+	var e6 = g6._spawn("drill_bot", Vector2i(7, 3))
+	e6["status"]["root_cd"] = 2
+	g6.player["charge"] = 10
+	var evs: Array = g6.step({"type": "ability", "slot": 0, "target": Vector2i(7, 3)})
+	_ok(_evs(evs, "resisted").size() == 1 and not e6["status"].has("root") and _evs(evs, "illegal").is_empty(), "sap_snare resisted through step: %s" % str(evs))
+	e6["status"]["root_cd"] = 0
+	g6.player["charge"] = 10
+	evs = g6.step({"type": "ability", "slot": 0, "target": Vector2i(7, 3)})
+	_ok(_evs(evs, "status").size() == 1 and int(e6["status"]["root"]) == 2 and int(e6["status"]["root_cd"]) == 4, "sap_snare lands through step: %s" % str(e6["status"]))
+
+
+# --- spore add-stacking (C1b) ----------------------------------------------------
+
+func _check_spore_stack() -> void:
+	var g = _game()
+	var e = g._spawn("drill_bot", Vector2i(6, 3))
+	e["hp"] = 20
+	g._apply_status(e, "spore", 3)
+	_ok(int(e["status"]["spore"]) == 3, "first spore 3: %s" % str(e["status"]))
+	g._apply_status(e, "spore", 3)
+	_ok(int(e["status"]["spore"]) == 6, "second spore adds to 6: %s" % str(e["status"]))
+	g._step_events = []
+	_ok(g._apply_status(e, "spore", 3) and int(e["status"]["spore"]) == 6 and _evs(g._step_events, "status").size() == 1,
+		"third spore capped at 6 (still a landed status): %s" % str(e["status"]))
+	g._apply_status(e, "spore", 1)
+	_ok(int(e["status"]["spore"]) == 6, "cap holds for smaller adds")
+	# two spore_cloud casts through step
+	var g2 = _game(["spore_cloud", "seed_bomb", "mycelium_dash"])
+	var e2 = g2._spawn("drill_bot", Vector2i(7, 3))
+	var far = g2._spawn("drill_bot", Vector2i(8, 3))
+	e2["hp"] = 20
+	for i in 3:
+		g2.player["charge"] = 10
+		g2.step({"type": "ability", "slot": 0, "target": g2.player["pos"]})
+	_ok(int(e2["status"]["spore"]) == 6 and not far["status"].has("spore"), "3 x spore_cloud -> 6 within radius 2 only: %s %s" % [str(e2["status"]), str(far["status"])])
+	# the tick still burns 1 a turn and drains one stack
+	g2._step_events = []
+	g2._environment_phase()
+	_ok(int(e2["status"]["spore"]) == 5 and _evs(g2._step_events, "damage").size() == 1, "spore tick from 6 to 5: %s" % str(e2["status"]))
+
+
+# --- items through _apply_status (C1b) ------------------------------------------
+
+func _check_items_through_table() -> void:
+	var g = _game()
+	var near = g._spawn("drill_bot", Vector2i(7, 3))   # distance 2
+	var far = g._spawn("drill_bot", Vector2i(8, 3))    # distance 3
+	var boss = g._spawn("furnace_core", Vector2i(5, 1)) # distance 2, massive
+	g.player["items"] = ["spore_vial", "spore_vial+"]
+	var evs: Array = g.step({"type": "use_item", "slot": 0})
+	var st := _evs(evs, "status")
+	_ok(st.size() == 1 and st[0]["id"] == near["id"] and st[0]["status"] == "stun" and int(st[0]["turns"]) == 1, "spore_vial status event: %s" % str(st))
+	_ok(int(near["status"].get("stun", 0)) == 1 and not far["status"].has("stun") and boss["status"].is_empty(), "spore_vial stuns within 2 only: %s %s" % [str(near["status"]), str(far["status"])])
+	var im := _evs(evs, "immune")
+	_ok(im.size() == 1 and im[0]["id"] == boss["id"], "boss in range gets the immune event: %s" % str(im))
+	_ok(_evs(evs, "item_use").size() == 1 and g.player["items"] == ["spore_vial+"], "item consumed: %s" % str(g.player["items"]))
+	# the + form reaches 4 tiles for 2 turns; stun stacks by max
+	evs = g.step({"type": "use_item", "slot": 0})
+	_ok(int(near["status"]["stun"]) == 2 and int(far["status"].get("stun", 0)) == 2 and boss["status"].is_empty() and _evs(evs, "status").size() == 2 and _evs(evs, "immune").size() == 1,
+		"spore_vial+ radius 4 turns 2: %s %s" % [str(near["status"]), str(far["status"])])
 
 
 # --- cast context counters ----------------------------------------------------

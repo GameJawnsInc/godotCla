@@ -27,8 +27,9 @@ const MapGen := preload("res://sim/mapgen.gd")
 
 ## Single source of truth for replay compatibility: bump whenever a sim change
 ## alters replay behaviour (shell run saves, regression records and autopsy
-## dumps all stamp this value).
-const SIM_VERSION := 2
+## dumps all stamp this value). 3: C1b - ash, root cooldown and blocked
+## advance/drag, spore add-stacking, spread fire inheriting the bloom flag.
+const SIM_VERSION := 3
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -465,7 +466,8 @@ func _base_item_ids() -> Array:
 
 ## The dormant-stairs quota can never demand more than what is still
 ## standing: greened plus the corruption left on the floor. Bloomless
-## removals (wash, ignite, burnout, convert, dredge, enemy churn) lower it.
+## removals (wash, ignite, convert, dredge, enemy churn) lower it; a burnout
+## does not, since fire leaves ash and ash is corruption.
 func _reclamp_quota() -> void:
 	var need: int = mini(green_need, greened + _count_corruption())
 	if need < green_need:
@@ -581,19 +583,29 @@ func _compute_intents() -> void:
 
 
 ## Stack rule from Content.STATUSES: "max" keeps the longer duration, "add"
-## sums (capped at `cap` when cap > 0). Returns true when the status landed.
+## sums (capped at `cap` when cap > 0). A row with `cooldown` is stagger-style:
+## landing it writes "<status>_cd" = duration + cooldown, and while that field
+## is above zero with the status itself expired the application is refused
+## ({t: "resisted"}). Returns true when the status landed.
 func _apply_status(e: Dictionary, status: String, turns: int) -> bool:
 	if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
 		_emit({"t": "immune", "id": e["id"]})
 		return false
 	var sdef: Dictionary = Content.STATUSES.get(status, {})
 	var have: int = int(e["status"].get(status, 0))
+	var cooldown: int = int(sdef.get("cooldown", 0))
+	var cd_key := status + "_cd"
+	if cooldown > 0 and have <= 0 and int(e["status"].get(cd_key, 0)) > 0:
+		_emit({"t": "resisted", "id": e["id"], "status": status})
+		return false
 	if String(sdef.get("stack", "max")) == "add":
 		var total: int = have + turns
 		var cap: int = int(sdef.get("cap", 0))
 		e["status"][status] = mini(total, cap) if cap > 0 else total
 	else:
 		e["status"][status] = maxi(have, turns)
+	if cooldown > 0:
+		e["status"][cd_key] = maxi(int(e["status"].get(cd_key, 0)), int(e["status"][status]) + cooldown)
 	_emit({"t": "status", "id": e["id"], "status": status, "turns": turns})
 	return true
 
@@ -669,6 +681,10 @@ func _stagger(e: Dictionary) -> void:
 func _execute_intent(e: Dictionary) -> void:
 	if int(e["status"].get("stagger_cd", 0)) > 0:
 		e["status"]["stagger_cd"] -= 1
+	# status cooldowns (Content.STATUSES cooldown) run down once per action
+	for sname in Content.STATUSES:
+		if int(Content.STATUSES[sname].get("cooldown", 0)) > 0 and int(e["status"].get(sname + "_cd", 0)) > 0:
+			e["status"][sname + "_cd"] -= 1
 	var it: Dictionary = e["intent"]
 	# Content.STATUSES blocks, in table order: the first status that swallows
 	# this intent ticks down and ends the enemy's turn
@@ -885,12 +901,10 @@ func _environment_phase() -> void:
 ##    and an expiring tile becomes its "on_expire" result, or vanishes;
 ## 3) the adjacency results are written ({kind, ttl, by}) and each emits the
 ##    row's event.
-## Reproduces the pre-table fire spread exactly: spreads computed from the
-## fires standing before decay, applied after it. The replaced tile's "bloom"
-## flag is NOT carried onto the new tile yet: doing so changes the terrain
-## dicts in the state hash (two strict regression records), so it lands with
-## ash and the SIM_VERSION bump in C1b (an expiring tile already hands its
-## flag to its on_expire result, which is inert while every result is "").
+## Spreads are computed from the fires standing before decay and applied
+## after it. Every new tile goes through _tile_dict, so the replaced tile's
+## "bloom" flag survives: enemy-made oil (bloom 0) burns into bloom-0 fire and
+## bloom-0 ash, and its cleanse still pays nothing.
 func _terrain_react() -> void:
 	var adj_rows: Array = []
 	var expire := {}
@@ -900,7 +914,7 @@ func _terrain_react() -> void:
 		if row.has("adjacent"):
 			adj_rows.append(row)
 		elif row.has("on_expire"):
-			expire[String(row["from"])] = String(row.get("result", ""))
+			expire[String(row["from"])] = row
 	var pending := {}
 	if not adj_rows.is_empty():
 		for t in terrain.keys():
@@ -918,23 +932,24 @@ func _terrain_react() -> void:
 			continue
 		terrain[t]["ttl"] = int(terrain[t].get("ttl", 0)) - 1
 		if terrain[t]["ttl"] <= 0:
-			var result := String(expire.get(k, ""))
+			var erow: Dictionary = expire.get(k, {})
+			var result := String(erow.get("result", ""))
 			if result == "":
 				terrain.erase(t)
 			else:
-				var made := {"kind": result, "ttl": int(Content.terrain(result, "ttl", 0))}
-				if terrain[t].has("by"):
-					made["by"] = terrain[t]["by"]
-				if terrain[t].has("bloom"):
-					made["bloom"] = terrain[t]["bloom"]
-				terrain[t] = made
+				# attribution follows hazards: a decaying result keeps "by"
+				var by := String(terrain[t].get("by", "")) if bool(Content.terrain(result, "decays", false)) else ""
+				terrain[t] = _tile_dict(result, by, terrain[t])
+				var eev := String(erow.get("event", ""))
+				if eev != "":
+					_emit({"t": eev, "tile": t})
 	for p in pending:
 		var row: Dictionary = pending[p]["row"]
 		var result := String(row.get("result", ""))
 		if result == "":
 			terrain.erase(p)
 		else:
-			terrain[p] = {"kind": result, "ttl": int(Content.terrain(result, "ttl", 0)), "by": pending[p]["by"]}
+			terrain[p] = _tile_dict(result, String(pending[p]["by"]), terrain.get(p, {}))
 		var ev := String(row.get("event", ""))
 		if ev != "":
 			_emit({"t": ev, "tile": p})
@@ -1043,7 +1058,7 @@ func _act_cleanse(action: Dictionary) -> void:
 		relief = Content.CLEANSE_SMOG_RELIEF
 	smog = maxi(smog - relief, 0)
 	greened += 1
-	_emit({"t": "cleanse", "tile": target, "bloom": bloom})
+	_emit({"t": "cleanse", "tile": target, "kind": k, "bloom": bloom})
 	if green_need > 0 and greened == green_need:
 		_emit({"t": "stairs_awaken", "tile": map["stairs"]})
 	_check_room_bloom(target)
@@ -1149,13 +1164,14 @@ func _act_use_item(action: Dictionary) -> void:
 		"balm_fruit+":
 			player["hp"] = player["max_hp"]
 		"spore_vial":
-			for e in enemies:
-				if _manhattan(e["pos"], player["pos"]) <= 2 and not Content.ENEMIES[e["kind"]]["traits"].has("boss"):
-					e["status"]["stun"] = maxi(int(e["status"].get("stun", 0)), 1)
+			# through _apply_status like any cast: massive (every boss) is immune
+			for e in enemies.duplicate():
+				if _manhattan(e["pos"], player["pos"]) <= 2:
+					_apply_status(e, "stun", 1)
 		"spore_vial+":
-			for e in enemies:
-				if _manhattan(e["pos"], player["pos"]) <= 4 and not Content.ENEMIES[e["kind"]]["traits"].has("boss"):
-					e["status"]["stun"] = maxi(int(e["status"].get("stun", 0)), 2)
+			for e in enemies.duplicate():
+				if _manhattan(e["pos"], player["pos"]) <= 4:
+					_apply_status(e, "stun", 2)
 		"clearair_pod":
 			smog = maxi(smog - 5, 0)
 		"clearair_pod+":
@@ -1658,7 +1674,7 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 						continue
 					var t: Vector2i = target + Vector2i(dx, dy)
 					var k := _terrain_kind(t)
-					if k == "oil" or k == "goo":
+					if bool(Content.terrain(k, "convertible", false)):
 						terrain[t] = {"kind": "growth"}
 						out["converted"] += 1
 						out["tiles"].append(t)
@@ -1884,9 +1900,26 @@ func _bonus_dmg(eff: Dictionary, ctx: Dictionary, e: Dictionary) -> int:
 	return amt
 
 
-## Light tile p as fire signed by `by` (an ability id or an enemy kind).
+## Light tile p as fire signed by `by` (an ability id or an enemy kind). The
+## burnt tile's "bloom" flag rides along (enemy-made oil -> bloom-0 fire).
 func _ignite(p: Vector2i, by: String) -> void:
-	terrain[p] = {"kind": "fire", "ttl": int(Content.terrain("fire", "ttl", 2)), "by": by}
+	terrain[p] = _tile_dict("fire", by, terrain.get(p, {}))
+
+
+## The dict for a `kind` tile written over `old` (the tile it replaces, {} for
+## none): ttl from Content.TERRAIN when the kind decays, "by" when given, and
+## the old tile's "bloom" flag when it carries one - the flag outlives every
+## oil -> fire -> ash transition so the eventual cleanse pays what the oil
+## would have.
+func _tile_dict(kind: String, by: String, old: Dictionary) -> Dictionary:
+	var made := {"kind": kind}
+	if bool(Content.terrain(kind, "decays", false)):
+		made["ttl"] = int(Content.terrain(kind, "ttl", 0))
+	if by != "":
+		made["by"] = by
+	if old.has("bloom"):
+		made["bloom"] = old["bloom"]
+	return made
 
 
 func _enemy_by_id(id: int):

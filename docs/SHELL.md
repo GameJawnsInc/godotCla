@@ -69,6 +69,28 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
 - tap shop cards at a shrine, draft options between floors
 - after a run: tap anywhere for the next seed
 
+## Legend
+
+HELP opens the legend sheet; holding a tile shows the same row as a
+tooltip. The rows are `shell/main.gd` `LEGEND` (sprite id, name, blurb) —
+one row per drawable thing, and every `Content.TERRAIN` kind must have
+one (`tests/test_shell.gd` checks it). The terrain rows:
+
+| tile | ASCII | what it is |
+|---|---|---|
+| Oil | `~` | corruption - cleanse it (adjacent) for bloom; burns |
+| Goo | `;` | corruption - cleansing yields bloom |
+| Rich goo | `&` | corruption - cleanses for extra bloom |
+| Ash | `,` | burnt oil - still corruption, cleanse it for bloom; it never shields the boss core |
+| Growth | `"` | heals 1 HP per turn while you stand on it |
+| Fire | `*` | burns whoever stands in it; burns out into ash |
+| Smoke | `%` | blocks solar lances |
+| Roots | `8` | blocks enemies for a while |
+| Supply pod | `+` | walk over it to stock your satchel (2 slots) |
+
+The ASCII column is `sim/ascii_view.gd` `TERRAIN_CH`, what the headless
+views (`tests/autopsy.gd`, `tests/playtest.gd`) print.
+
 ## Building the APK
 
 `export_presets.cfg` holds an Android preset (arm64, non-gradle). With
@@ -91,6 +113,9 @@ headless — the agent's way to see the shell:
 FRAME_SEED=3 FRAME_BOT=deeproot FRAME_ACTIONS=215 FRAME_OUT=/tmp/frame.svg \
   godot --headless --path . --script tests/render_frame.gd
 ```
+
+`FRAME_ASH=<n>` stamps n ash tiles beside the player before rendering, so
+the burnt-oil tile can be seen without waiting for a fire to expire.
 
 `tests/test_shell.gd` is the shell's headless smoke test (sprite
 rasterization, input handlers driving the sim, the whole tutorial script,

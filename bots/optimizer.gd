@@ -380,12 +380,15 @@ func _dodge(snap: Dictionary, by: Dictionary, threat: Dictionary) -> Dictionary:
 					best_dash = a
 		if not best_dash.is_empty():
 			return best_dash
-		# rooting only stops movement (the sim's root gate is on "move"
-		# intents), so a snare on an attacker mid-wind-up dodges nothing
+		# rooting only swallows the intents Content.STATUSES.root blocks
+		# (move / advance / drag today), so a snare on an attacker whose
+		# wind-up root cannot touch dodges nothing. Read the table, never
+		# the literal: a row edit re-aims the snare with no bot change.
+		var root_blocks: Array = CONTENT.STATUSES.get("root", {}).get("blocks", [])
 		for a in by["ability"]:
 			if _kit_id(snap, a["slot"]) == "sap_snare":
 				var se = _enemy_at(snap, a["target"])
-				if se != null and String(se["intent"].get("type", "")) == "move":
+				if se != null and root_blocks.has(String(se["intent"].get("type", ""))):
 					return a
 		for a in by["ability"]:
 			if _kit_id(snap, a["slot"]) == "gust" and _enemy_at(snap, ppos + a["target"]) != null:
