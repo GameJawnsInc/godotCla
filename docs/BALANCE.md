@@ -18,6 +18,7 @@ Reference numbers for TENDER's difficulty, and the discipline for changing them.
 | persona   | target                  | why |
 |-----------|-------------------------|-----|
 | deeproot  | 70–90% wins             | the search ceiling: near-perfect play should nearly always win |
+| deeproot_plan | **informational, no gate** | the combo-depth instrument (review 7.5): deeproot plus option-value terms, one-setup-ahead planning and shrine shopping. Measured 29/30 = 97% [83, 99] at tier 0 and 27/30 = 90% [74, 97] at tier 6 (2026-09-06f). Quote its **delta against deeproot**, never its absolute rate as a band — it is a measuring stick, and tier 0 is saturated for it |
 | optimizer | 45–65% wins             | skilled play should win often but never be safe (raised from 30–50 after the tempo fix — the old band measured a bot flaw) |
 | fanatic   | every build > 0 at 100 seeds (hard); 20–40% total (soft) | committing to a niche build must stay viable; the total tracks content difficulty and moves when content does |
 | magpie    | 0–5% design target, top bloom; gate trips at a 10% CI lower bound | full greed loses to the current game almost always; a RISE means greed got cheap (canary, like turtle). Under instrument v2 the recorded baseline is 10/100 [6, 17]; a 100-seed lower bound clearing 17% is the signal — see 2026-09-05d |
@@ -3533,6 +3534,335 @@ tamper-tested through `REGRESS_DIR` on copies (dropping the fourth
   invalidated by this bump (base-pool play is identical), but the graft tables
   and the tier ladder have never been measured with a package in the pool.
 
+## 2026-09-06f - deeproot_plan: the combo-depth instrument (review 7.5)
+
+Review 7.5's persona landed: `bots/deeproot_plan.gd`, one `bots/roster.gd`
+entry, `tests/test_bots.gd`. **No sim change** - `Game.SIM_VERSION` is still 6,
+`sim/` and `shell/` were not touched, and legacy `deeproot` is untouched, so
+every pair of columns below differs only by the bot. Instruments are still v2,
+so these numbers compare directly with the 06e entry above and with nothing
+recorded before 2026-09-05. Legacy's tier-0 playtest row reproduces 06e **cell
+for cell** (22/30, floor 6.9, combos/run 16.70, riders 1.33/run, shrine turns
+0.23, damage taken 11.0/run), which is what makes the deltas here readable as
+the persona's and not the harness's.
+
+### What the persona adds
+
+- **Layer 1, option value.** `_score` calls `super` and adds terms for what the
+  kit *could* do next turn, computed only for effect ops the kit currently
+  holds (read from `Content.ABILITIES`; no ability id appears in the file):
+  +6 per enemy the held `enemy_near_growth` damage op can already reach (cap 3),
+  +4 per flammable tile in an ignite op's reach with an enemy on or beside it
+  (cap 3), +5 per enemy a held push/pull op could drive into a non-open tile
+  (cap 2), +6 for standing on growth holding a cost-2 ability, +3 for roots
+  beside an enemy while a shove is held. Scale check, from the file: `end_turn`
+  banks unspent charge at 2 points per point, so a 2-charge setup gives up 4 and
+  one enemy beside growth returns 6; a realised 2-damage hit is 20 (10 per hp),
+  above every capped total (18 / 12 / 10 / 6 / 3), so the search never trades a
+  hit for a threat.
+- **Layer 2, plan mode.** A candidate whose first effect op is a setup op
+  (`grow_radius`, `grow_wall`, `convert_radius`, `apply_status`, `aoe_status`,
+  `create_terrain`, the push/pull family, `teleport`, `undim`) is stepped on a
+  clone, then each of up to 12 follow-up ability actions (round-robin across kit
+  slots, nearest target first) is cloned, stepped, forced to `end_turn` and
+  scored; the candidate's value is the max over the follow-ups and the plain
+  setup. A per-decision budget of 60 follow-up clones was added beyond 7.5's
+  per-setup cap of 12: `tests/test_bots.gd` measured 6.88x runtime without it
+  (297 s against 43 s over 5 seeds), above the 6x the test asserts.
+- **Shrine routing and shopping.** `_refresh_field` points the gradient at the
+  shrine while the player is off it, no enemy is within 3 and bloom covers the
+  cheapest useful buy; purchases are ordinary legal actions scored by the same
+  clone-and-score loop, with held grafts valued by a bot-side `GRAFT_WEIGHTS`
+  table (solar_core 12, compost 5, oil_tithe 4, ember_sap 3, the stat rows 1-2)
+  whose comment cites the 06d `sweep_grafts` rows, and a filled kit slot worth
+  20 points.
+- **Runtime.** `tests/test_bots.gd` re-run for this entry: "runtime: deeproot
+  43259 ms (wins 4/5 actions 1934), deeproot_plan 142347 ms (wins 5/5 actions
+  1556), **factor 3.29x** over 5 seeds" (the implementing run recorded 3.25x
+  and, on a second pass, 3.50x). Independently, the two acceptance jobs here,
+  run three-at-a-time on a 4-CPU box: playtest 30 seeds **277 s -> 852 s
+  (3.08x)**, `verify_kit` tier 6 30 seeds **326 s -> 1110 s (3.40x)**. 7.5
+  accepted "typical 2 to 3x"; measured is 3.1-3.4x, at the top of that.
+
+### Suite
+
+Run first-hand on this tree, all green:
+
+- `tests/test_bots.gd` (new): **"bots: OK (44 checks)"**, exit 0, 189 s. Its
+  five checks are 7.5's - seed-on-head (`seed on head: legacy deeproot opens
+  with { "type": "move", "dir": (1, 0) }; deeproot_plan opens with { "type":
+  "ability", "slot": 1, "target": (6, 3) } (seed_bomb)`), the wall-pin board,
+  shrine routing ("reached the shrine in 2 actions"), 40 identical steps from
+  two fresh instances on seed 3, and the runtime factor.
+- `tests/test_determinism.gd`: **"determinism: OK (61 checks, 8 personas)"**,
+  exit 0, **295 s** - it picks the persona up through `Roster.names()`
+  automatically, against a reported 113 s at 7 personas before the roster
+  entry, so the new persona's 3 seeds x 2 runs cost about +180 s and this is
+  now the slowest test in the suite.
+- `tests/test_meta.gd`: `roster: 8 personas, legacy ["wanderer", "sprout",
+  "magpie", "fanatic", "optimizer", "deeproot"]: OK`, "meta: OK", exit 0.
+  **`Roster.LEGACY` is unchanged**, which is why the default playtest run and
+  its gate are untouched by this persona.
+
+### Acceptance, tier 0 (`tests/playtest.gd`, 30 seeds, config `{}`)
+
+`=== playtest | bot deeproot | config {  } | seeds 1..30 (30) ===` and
+`=== playtest | bot deeproot_plan | config {  } | seeds 1..30 (30) ===`,
+`PLAYTEST_GATE=0`, same seeds 1..30.
+
+| metric | deeproot | deeproot_plan |
+|---|---|---|
+| wins | 22/30 = 73%, **win CI [56%, 86%]** | 29/30 = 97%, **win CI [83%, 99%]** |
+| deaths / timeouts | 8 / **0** | 0 / **1** |
+| avg floor / avg turns | 6.9 / 104.7 | 6.8 / 86.3 |
+| stall floors / quota-unmet / illegal | 8 / 0 / 0 | 2 / 0 / 0 |
+| shrine turns per run | 0.23 | **2.47** |
+| buys | `{ item: 5 }` | `{ item: 38, graft: 74, ability: 17, heal: 1 }` |
+| grafts bought | none | `ember_sap 15, compost 22, solar_core 21, oil_tithe 15, verdant_pulse 1` |
+| combos/run | 16.70 | **56.77** |
+| riders/run | 1.33 | **9.13** |
+| hooks/run | 0 (buys no grafts) | **12.27** (`compost` 319, `ember_sap` 49) |
+| strike / signature / terrain share | 0.09 / 0.39 / 0.16 | 0.04 / 0.64 / 0.16 |
+| damage taken per run | 11.0 (331 over 30) | 7.2 (216 over 30) |
+| bloom conversion / kit entropy | 0.01 / 4.08 bits | 0.47 / 4.35 bits |
+
+### Acceptance, tier 6 (`tests/verify_kit.gd`, 30 seeds)
+
+`=== verify_kit | bot deeproot | config { "tier": 6 } | seeds 1..30 (30) ===`
+and `=== verify_kit | bot deeproot_plan | config { "tier": 6 } | seeds 1..30
+(30) ===`. This is the re-judgement the review deferred to a grafted ceiling:
+the standing number for legacy at tier 6 was Block A's 18/30 = 60% [42, 75].
+
+| metric | deeproot | deeproot_plan |
+|---|---|---|
+| wins | 12/30 = 40%, **win CI [25%, 58%]** | 27/30 = 90%, **win CI [74%, 97%]** |
+| timeouts | **0** | **1** |
+| avg floor / turns on wins | 5.6 / 89.9 | 6.5 / 86.0 |
+| damage taken per run | 34.6 | 18.1 |
+| stall floors / quota-unmet | 14 / 2 | 5 / 0 |
+| shrine turns per run | 0.33 | **2.27** |
+| buys | `{ item: 7 }` | `{ item: 36, graft: 65, ability: 10, heal: 1 }` |
+| grafts bought | none | `ember_sap 10, oil_tithe 14, solar_core 22, compost 18, verdant_pulse 1` |
+| combos/run | 22.50 | **73.17** |
+| riders/run | 5.27 | **16.23** |
+| hooks/run | 0 | **11.40** (`compost` 290, `ember_sap` 52) |
+| strike / signature / terrain share | 0.06 / 0.51 / 0.13 | 0.02 / 0.75 / 0.11 |
+
+### Verdict against 7.5's acceptance bar
+
+7.5 asked for four things at 30 seeds on tiers 0 and 6.
+
+| criterion | tier 0 | tier 6 | verdict |
+|---|---|---|---|
+| wins within CI of legacy | 97% [83, 99] vs 73% [56, 86] | 90% [74, 97] vs 40% [25, 58] | **not met, in the safe direction**: the intervals are disjoint at both tiers and the planner is the one above. The bar was written to catch a planner that pays for depth with wins; nothing here does |
+| timeouts zero | 1 in 30 | 1 in 30 | **not met** (legacy is 0 in 60 over the same seeds). `playtest` and `verify_kit` do not print which seed timed out |
+| shrine stands >= 1.5 per run | 2.47 | 2.27 | met |
+| graft buys > 0 | 74 over 30 runs | 65 over 30 runs | met |
+
+Two of four met literally; the wins row misses upward and the timeout row is a
+real defect, 2 hung runs in 60. Everything else the persona was built for -
+shopping, planning, combo rate - moved in the intended direction at both tiers.
+
+### Tiers 7 and 8 (`tests/verify_kit.gd`, 20 seeds)
+
+`=== verify_kit | bot deeproot_plan | config { "tier": 7 } | seeds 1..20 (20)
+===` and the same at tier 8. 20 seeds is the compute compromise, so read these
+as winnability checks, not as tuning numbers; `sweep_tiers`' 10% gate needs 35
+seeds to bind and this is not that run.
+
+| tier | wins | win CI | timeouts | turns on wins | dmg taken/run | shrine turns | grafts bought | stall | quota-unmet |
+|---|---|---|---|---|---|---|---|---|---|
+| 6 (30 seeds) | 27/30 = 90% | [74%, 97%] | 1 | 86.0 | 18.1 | 2.27 | 65 | 5 | 0 |
+| 7 | 18/20 = 90% | [70%, 97%] | 0 | 71.6 | 15.8 | 1.95 | 42 | 2 | 0 |
+| 8 | 13/20 = 65% | [43%, 82%] | 0 | 88.2 | 28.1 | 3.30 | 42 | 8 | 1 |
+
+Every tier stays winnable at the grafted ceiling. Tiers 6 and 7 read the same
+90% (at n = 30 and n = 20) and tier 8 is the first drop, the first tier where
+the planner's damage taken (28.1), stall floors (8) and one quota-unmet death
+look like a real fight. Legacy deeproot has no tier 7 or 8 number under these
+instruments, so these rows have no comparison column.
+
+### HOLD rows re-tested under search (gate ii)
+
+06c held four rows at gate (ii) - "the Tally shows the combo firing at least
+once per run in a forced kit at 30 seeds" - and 06d held `undertow` on the same
+clause. The open question was whether those rows are unreachable content or
+content no heuristic bot reaches. This is the re-test with a searcher that
+plans one setup ahead. Forced kits are `VERIFY_EXTRAS=X`
+(`=== verify_kit | bot deeproot_plan | config { "kit": ["solar_lance",
+"seed_bomb", "mycelium_dash", X] } | seeds 1..20 (20) ===`, all three
+**20/20 wins, win CI [84%, 100%]**), `undertow` is
+`=== sweep_grafts | bot deeproot_plan | config {  } | seeds 1..20 (20) ===`
+with `SWEEP_GRAFTS=undertow`. The optimizer columns are 06c's open-pool
+`VERIFY_EXTRAS` table and 06d's `sweep_grafts` rows, both at 30 seeds. Note the
+configuration: gate (ii) was defined on 06c's *locked* forced kit, and both
+columns here are the *open-pool* forced kit, so the pair is like-for-like with
+06c's open-pool table and the locked figures are quoted only for reference.
+
+| row | optimizer, 06c/06d | deeproot_plan, now | clears once-per-run? | verdict |
+|---|---|---|---|---|
+| `sun_flare` + `sun_flare+` | 0.57/run open-pool (17 over 30); 0.03 + 0.63 locked | **0.45/run** (`sun_flare` 4 + `sun_flare+` 5 over 20) | no | **HOLD** |
+| `water_jet+` | **0.00/run** (0 over 30, open-pool and locked); 0.27/run for `deeproot_rollout` | **0.80/run** (16 over 20) | no, but 16 events where the heuristic bot had 0 | **HOLD** (nearest miss in the table) |
+| `vine_whip+` | 0.00/run (0 over 680 runs in 06c) | **0.00/run** (0 over 20, with `vine_whip` cast 29.9 times per run) | no | **HOLD**, unchanged |
+| `undertow` | 0.27/run (optimizer t0), 0.03/run (optimizer t6), 4.27/run (deeproot t0) | **2.60/run** (52 staggered hooks over 20) | yes | **SHIP-UNDER-SEARCH** |
+
+Read the table as the answer to 06c's own question. Three of the four rows are
+*not* unreachable: `water_jet+`'s pin goes from literally never firing for a
+heuristic bot to 0.80 times a run when a bot plans the shove and its follow-up
+in the same turn, and `undertow`'s stagger hook clears the bar outright. The
+one row that does not move at all is `vine_whip+`: a kit that casts the whip
+29.9 times per run over 20 runs lands its `outcome_crossed: fire` rider zero
+times, which is now measured on the strongest persona in the roster. If a row
+is going to be cut for being dead content, that is the row the evidence points
+at; the other three are reachable and gated on how much planning the player
+does. `undertow`'s own win column is 19/20 [76%, 99%] against the no-graft row
+20/20 [84%, 100%] (delta -1, sign p = 1.00, damage taken 0.5 -> 8.5 per run) -
+it clears (ii) without buying wins.
+
+### Locked lift table under the planner (20 seeds), verbatim
+
+`=== sweep_combos | bot deeproot_plan | config { "tier": 0 } | seeds 1..20 (20)
+===`, `mode lift | extras 12 -> 66 pairs, 3 selected | pairs
+grow_spike+sun_flare,water_jet+vine_whip,grow_spike+water_jet`, base3
+`["solar_lance", "seed_bomb", "mycelium_dash"]`. **20 seeds, not 30**: at
+28 s per run this table is 160 runs and 74 minutes of the box on its own, and
+that was the compute compromise. It therefore does not pair cell-for-cell with
+the 30-seed optimizer table in 06c; read the two as two personas' rankings of
+the same three pairs, not as a before/after.
+
+```
+baseline (base3 locked): 18/20    [70%, 97%]        37.10        65     25.0
+
+singles (base3 + X locked, 4 ids x 20 seeds):
+  ability            wins CI           combos/run  turns(w)      dmg
+  grow_spike     20/20    [84%, 100%]       48.55        60      0.9
+  sun_flare      20/20    [84%, 100%]       37.55        62      0.3
+  vine_whip      20/20    [84%, 100%]       31.45        56      0.8
+  water_jet      20/20    [84%, 100%]       45.95        59      1.3
+
+pairs (base3 + X + Y locked, 3 pairs x 20 seeds), sorted by lift:
+  pair                               sx    sy  pair   max  lift   add  p-add discordant    cmb/r  t/o
+  grow_spike + sun_flare          20/20 20/20 20/20    20    +0    22     -2  0:0  p=1.00  51.95    0
+  grow_spike + water_jet          20/20 20/20 20/20    20    +0    22     -2  0:0  p=1.00  50.50    0
+  vine_whip + water_jet           20/20 20/20 20/20    20    +0    22     -2  0:0  p=1.00  38.70    0
+
+0/3 pairs flagged (pair CI excludes the max-single fraction AND sign_p < 0.05); discordant = seeds won by pair only : by best single only; sx/sy/pair are wins/20
+secondaries per pair (signature share / terrain share / turns on wins / dmg taken / avg floor):
+  grow_spike + sun_flare          sig 0.86  terrain 0.01  turns(w) 57  dmg 3.0  floor 7.0
+  grow_spike + water_jet          sig 0.88  terrain 0.21  turns(w) 59  dmg 0.2  floor 7.0
+  vine_whip + water_jet           sig 0.78  terrain 0.18  turns(w) 60  dmg 0.9  floor 7.0
+```
+
+**The win-rate lift instrument is saturated at this ceiling and cannot be
+read.** Every locked config that holds a fourth ability wins 20/20 [84%, 100%],
+so every lift is +0, every sign test is `p=1.00` and every discordant count is
+`0:0` - the numbers are true and carry no information about the pairs. Only the
+baseline separates: base3 alone is 18/20 [70%, 97%] with 25.0 damage taken per
+run, against 0.3-1.3 for the four singles. The first thing this table says is
+about the starting kit, not about combos: for a bot that plans one setup ahead,
+adding *any* fourth ability to `solar_lance` / `seed_bomb` / `mycelium_dash`
+turns a run that takes 25 damage into one that takes about one.
+
+Next to the C2 optimizer rows (06c, 30 seeds, same script and pairs:
+baseline 10/30 [19%, 51%], `grow_spike` 17/30 [39%, 73%], `sun_flare`
+9/30 [17%, 48%], `vine_whip` 12/30 [25%, 58%], `water_jet` 10/30 [19%, 51%];
+pairs `grow_spike + sun_flare` 22/30 lift +5, `grow_spike + water_jet` 20/30
+lift +3, `vine_whip + water_jet` 10/30 lift -2), the continuous columns are the
+only place the same ranking survives:
+
+| pair | optimizer lift (wins, 06c) | planner combos/run vs best single | planner turns(w) vs best single | planner dmg taken |
+|---|---|---|---|---|
+| `grow_spike + sun_flare` | +5 (22/30 [56%, 86%]) | 51.95 vs 48.55 = **+3.40** | 57 vs 60 = **-3** | 3.0 |
+| `grow_spike + water_jet` | +3 (20/30 [49%, 81%]) | 50.50 vs 48.55 = **+1.95** | 59 vs 59 = 0 | 0.2 |
+| `vine_whip + water_jet` | -2 (10/30 [19%, 51%]) | 38.70 vs 45.95 = **-7.25** | 60 vs 56 = **+4** | 0.9 |
+
+The ordinal ranking of the three pairs is identical for the two personas -
+light-then-flare first, spike-beside-a-shove second, and pin-plus-drag last and
+negative on both metrics - which is the strongest statement available here,
+since none of the planner's rows is separable on wins. `vine_whip + water_jet`
+is the worst row in this table for the second entry running: at 20 seeds it
+also carries the lowest combo rate (38.70 against 51.95 and 50.50) and the only
+positive turns delta.
+
+### How much combo depth does the content contain?
+
+That was 7.5's own question, and the delta between the two personas is the
+answer. At tier 0 over the same 30 seeds: **combos/run 16.70 -> 56.77 (+40.07,
+3.4x)** and **riders/run 1.33 -> 9.13 (+7.80, 6.9x)**; at tier 6, 22.50 ->
+73.17 and 5.27 -> 16.23. That is the size of the pile of combos the shipped
+content will pay for and a 1-ply searcher never collects. But the shape matters
+more than the size: **32.74 of the +40.07 combo delta is one counter,
+`verdant` (2.83 -> 35.57 per run)**, and 214 of the +234 rider events per 30
+runs are `grow_spike` (24 -> 184) and `grow_spike+` (7 -> 61), with
+`seed_bomb+` adding 19 more. Collision moved 4.70 -> 6.33, ignite(ability)
+*fell* 3.57 -> 2.30, `water_jet+` moved 1 -> 4 events per 30 runs and
+`vine_whip+` stayed at 0. So the content's combo depth is real and large on
+exactly one axis - plant growth, then hit into it, with `compost` planting more
+growth on every kill (319 hooks per 30 runs) - and it is between thin and
+absent on the pin, drag and ignite axes. A second reading of the same fact:
+the planner's signature share is 0.64 at tier 0 and 0.75 at tier 6 against
+legacy's 0.39 and 0.51, while terrain share is flat (0.16 vs 0.16, 0.11 vs
+0.13). Depth here means more of the same ability, not more kinds of play.
+
+### Anything else that moved
+
+- **Legacy deeproot at tier 6 is 12/30 = 40% [25%, 58%]**, against the standing
+  Block A row of 18/30 = 60% [42%, 75%]. The intervals overlap but neither
+  contains the other's point estimate, and four content bumps (C1b, C2, C3, C4)
+  sit between the two runs with no tier-6 measurement in any of them. The
+  tier-6 line in the Watch list can now be replaced by this pair of numbers,
+  and the review's "tier 6-8 re-judgement deferred to a grafted ceiling" is
+  discharged by the tables above.
+- **Tier 0 is saturated for this persona.** 29/30 in the playtest, 20/20 in the
+  `sweep_grafts` base row, 20/20 in all four locked singles and all three
+  locked pairs, and damage taken of 0.1-1.3 per run in the forced kits. No
+  tier-0 win-rate comparison measured with `deeproot_plan` can separate
+  anything from now on; use tier 6 or higher, or a continuous metric.
+- **The planner is the first persona to spend bloom at the ceiling.** Bloom
+  conversion 0.01 -> 0.47 at tier 0 and 0.02 -> 0.50 at tier 6, 74 and 65 graft
+  purchases where legacy makes zero, and `satchel_full` drops from 37 to 6 per
+  30 runs because the bloom leaves the wallet. `solar_core` is bought in 21 of
+  30 tier-0 runs and 22 of 30 at tier 6, which is the graft table's own ranking
+  reproduced by a bot that was handed that ranking - not independent evidence
+  for it.
+- **Press and forge are still dead sinks**: `upcycles 0/0` on all nine runner
+  blocks in this entry that print the counter (both playtests, both tier-6
+  runs, tiers 7 and 8, and the three forced kits). Six bumps and a new persona;
+  nothing has ever pressed or forged in a scored run except one wanderer forge
+  in 06e.
+- **`quota_reclamp` has still never fired in a bot run** - 0 across all 260
+  `deeproot_plan` and `deeproot` runs in this entry that print the counter.
+- **`hook_capped` is still 0 everywhere**, including the tier-6 run where the
+  planner fires 342 hooks over 30 runs.
+- **Two timeouts in 60 planner runs** (one at tier 0, one at tier 6) against
+  zero in the same 60 legacy runs. Neither runner prints the seed, so the
+  autopsy is not written; `AUTOPSY_BOT=deeproot_plan` over seeds 1..30 is the
+  way to find them, and at 28 s per run that is a 15-minute job.
+
+### Runners in this entry, and what they cost
+
+All eleven measurement jobs ran three-at-a-time on a 4-CPU box, so the wall
+times include contention; the whole batch was 74 minutes of wall clock. The
+three suite runs quoted above ran afterwards on an idle box.
+
+| runner | config | wall |
+|---|---|---|
+| `playtest.gd` 30 seeds | `deeproot` / `deeproot_plan`, `PLAYTEST_GATE=0` | 277 s / 852 s |
+| `verify_kit.gd` 30 seeds | tier 6, `deeproot` / `deeproot_plan` | 326 s / 1110 s |
+| `verify_kit.gd` 20 seeds | tier 7 / tier 8, `deeproot_plan` | 622 s / 636 s |
+| `verify_kit.gd` 20 seeds | `VERIFY_EXTRAS=sun_flare` / `water_jet` / `vine_whip` | 541 s / 555 s / 543 s |
+| `sweep_grafts.gd` 20 seeds | `SWEEP_GRAFTS=undertow` | 1114 s |
+| `sweep_combos.gd` 20 seeds | 3 pairs, 8 configs, 160 runs | 4466 s |
+
+Not measured for this persona: `measure_fanatic` (fanatic owns the archetype
+columns), `sweep_packages`, `sweep_tiers` as a gate run at 35+ seeds,
+`measure_bosses`, `draft_oracle`, and any 100-seed canary. `deeproot_plan` is
+outside `Roster.LEGACY`, so it is not in the default gated playtest, and the
+gate carries no band and no timeout assertion for it - only the per-persona
+illegal-action check that applies to whatever personas a run names. It is not
+proposed for a band: a persona whose tier-0 interval is [83, 99] would gate on
+noise, and its value is the delta, not the level.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from
@@ -3854,3 +4184,41 @@ tamper-tested through `REGRESS_DIR` on copies (dropping the fourth
   casts over 30 runs, 2.75 per holding run), for the same reason as C2's
   `water_jet+` and C3's `undertow`. If a fourth block ships a rider with this
   profile, the pattern is worth a design decision rather than another HOLD.
+
+### deeproot_plan additions (2026-09-06f)
+
+- **The tier-6 ceiling number moved and nobody was watching.** Legacy deeproot
+  at tier 6 is **12/30 = 40% [25%, 58%]** now, against Block A's 18/30 = 60%
+  [42%, 75%]. Neither interval contains the other's point estimate. Four
+  content bumps sit between the two runs and none of them measured tier 6, so
+  the drop is unattributed. Re-measure tier 6 with legacy inside the next bump
+  that touches content, not four bumps later.
+- **"The ceiling wins X%" is now ambiguous.** deeproot 73% [56, 86] and
+  deeproot_plan 97% [83, 99] at tier 0 are disjoint intervals, and both
+  personas are "the search ceiling". Every future ceiling claim has to name the
+  persona; `deeproot_rollout` is a third one (90% [74, 97] in 06e).
+- **Two timeouts in 60 planner runs**, one at tier 0 and one at tier 6, where
+  legacy logs zero over the same 60 seeds. This is the standing "deeproot logs
+  occasional timeouts" item reappearing in the persona that searches deeper.
+  Neither runner prints the offending seed. If planner timeouts grow, the
+  suspect is plan mode holding a setup line open, not the shrine detour.
+- **Tier 0 win rate is a dead instrument for this persona** (29/30 playtest,
+  20/20 in the `sweep_grafts` base row, 20/20 in every locked single and pair,
+  0.1-1.3 damage taken per run in forced kits). The locked lift table it
+  produces is all `+0 / p=1.00 / 0:0`. Measure `deeproot_plan` at tier 6+ or on
+  continuous metrics (combos/run, turns on wins, damage taken); do not add
+  seeds to a saturated tier-0 row and expect separation.
+- **`vine_whip+` is the cut candidate.** Its `outcome_crossed: fire` rider has
+  now fired 0 times for every persona in every entry: 0 over 06c's 680 runs,
+  and 0 across all 260 runs here that print the rider counter - including the
+  20 forced-kit runs that cast the whip 29.9 times each and deal 336 damage
+  with the `+` form, driven by the strongest bot in the roster. Every other HOLD row moved under search
+  (`water_jet+` 0.00 -> 0.80 per run, `undertow` 0.27 -> 2.60). One row that
+  does not move when the instrument gets stronger is a different fact from a
+  row that was merely unreached.
+- **The planner's graft purchases are not independent evidence for the graft
+  table.** `GRAFT_WEIGHTS` is transcribed from the 06d sweep rows, so
+  "solar_core bought in 21 of 30 runs" restates 06d rather than confirming it.
+  Any future graft ranking has to come from `sweep_grafts`, and the weights
+  table has to be re-derived when it does - a stale weight silently biases
+  every planner measurement that follows it.

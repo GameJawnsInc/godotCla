@@ -57,9 +57,12 @@ architecture below is designed to bend rather than block.
   per floor, turns per depth, softlocks, and errors.
 - Current roster (`bots/`): wanderer (random, crash finder), sprout (cautious
   noob), magpie (greedy explorer), fanatic (commits to one build archetype per
-  run; reports per-build win rates), optimizer (heuristic skilled play), and
+  run; reports per-build win rates), optimizer (heuristic skilled play),
   deeproot (clone()-based 1-ply search; the measurable skill ceiling — bots
-  that need the sim as a forward model implement `set_sim(game)`).
+  that need the sim as a forward model implement `set_sim(game)`), and
+  deeproot_plan (deeproot plus option-value eval terms, one-setup-ahead plan
+  mode and shrine routing/shopping; the combo-depth instrument - its delta
+  against deeproot measures how much setup-then-payoff the content holds).
 
 ### 6. Data-driven content
 

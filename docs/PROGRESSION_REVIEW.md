@@ -390,6 +390,45 @@ changed every date's daily and no record covers it, and
 `tests/test_invariants.gd`'s `FDEF_MUTATORS` is a hardcoded pair rather than an
 enumeration of `Content.MUTATORS`.
 
+**Status (2026-09-06f).** **7.5 has landed**, as a bot-only change:
+`bots/deeproot_plan.gd`, one `bots/roster.gd` entry and `tests/test_bots.gd`,
+with no `sim/` or `shell/` edit, `Game.SIM_VERSION` still 6 and legacy
+`deeproot` untouched, so the two personas' columns differ only by the bot. The
+acceptance measurement is the "2026-09-06f" entry in `docs/BALANCE.md`. Two of
+the four acceptance criteria are met literally - shrine stands 2.47 and 2.27
+per run against a bar of 1.5, and 74 and 65 graft purchases against a bar of
+"above zero", at tiers 0 and 6 - one fails upward and one fails outright. Wins
+are **not** within CI of legacy: 29/30 = 97% [83, 99] against 22/30 = 73%
+[56, 86] at tier 0 and 27/30 = 90% [74, 97] against 12/30 = 40% [25, 58] at
+tier 6, disjoint at both tiers with the planner above, which is the direction
+that costs nothing. Timeouts are not zero: 1 in 30 at each tier, against 0 in
+60 for legacy on the same seeds, and neither runner prints the seed. Runtime is
+3.1 to 3.4x (`tests/test_bots.gd` reports 3.25x over 5 seeds; the two 30-seed
+acceptance jobs measured 277 s -> 852 s and 326 s -> 1110 s), at the top of the
+accepted 2 to 3x. The **tier 6-8 re-judgement 6.2 deferred to a grafted
+ceiling** is discharged here: the planner is 27/30 [74, 97] at tier 6, 18/20
+[70, 97] at tier 7 and 13/20 [43, 82] at tier 8, every tier winnable, and
+legacy at tier 6 has meanwhile fallen from Block A's 18/30 = 60% [42, 75] to
+**12/30 = 40% [25, 58]** with no tier-6 measurement in the four bumps between.
+7.5's own question - how much combo depth does the content contain - has a
+number: at tier 0 over the same 30 seeds the planner takes combos/run from
+**16.70 to 56.77** and riders/run from **1.33 to 9.13**, but **32.74 of that
++40.07 is the single `verdant` counter** (2.83 -> 35.57) and 214 of the +234
+rider events are `grow_spike` and `grow_spike+`, while ignite(ability) *falls*
+and `vine_whip+` stays at zero: the depth is real, large, and almost entirely
+one axis. Two instrument findings come with it. The locked lift table is
+**saturated** under this persona - every locked single and pair is 20/20
+[84, 100], so every lift is +0 with `p=1.00` - and only the continuous columns
+preserve the C2 ranking (`grow_spike + sun_flare` +3.40 combos/run over its
+best single, `grow_spike + water_jet` +1.95, `vine_whip + water_jet` -7.25,
+the same order as the optimizer's +5 / +3 / -2 in wins). And the C2/C3 HOLD
+rows re-tested under search split three ways: `undertow` clears gate (ii) at
+2.60 hooks per run (SHIP-UNDER-SEARCH), `water_jet+` moves from literally never
+firing to 0.80 riders per run but still misses the once-per-run bar,
+`sun_flare` sits at 0.45, and `vine_whip+` fires **zero** times in 20 forced-kit
+runs that cast the whip 29.9 times each - the one row a stronger instrument did
+not move.
+
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
 180 bot runs; a synergy-lift sweep of 7 hypothesised pairs at 24 seeds per

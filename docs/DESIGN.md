@@ -293,6 +293,9 @@ Both replay hooks, both implemented as data over the same sim:
   sometimes; measures teaching-curve fairness.
 - **Optimizer** (minmaxer) — searches for best lines; measures true difficulty
   ceiling and finds degenerate combos.
+- **Deeproot Plan** (search that plans one setup ahead) — scores what the kit
+  *could* do next turn and follows a setup with its payoff inside the same
+  turn; the instrument that measures how much combo depth the content holds.
 - Key metrics: win rate per persona, death cause distribution, floor-of-death,
   Bloom collected vs. smog deaths, per-ability draft-to-win correlation.
 

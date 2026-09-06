@@ -14,6 +14,7 @@ const BOTS := {
 	"optimizer": {"script": preload("res://bots/optimizer.gd"), "props": {}},
 	"deeproot": {"script": preload("res://bots/deeproot.gd"), "props": {}},
 	"deeproot_rollout": {"script": preload("res://bots/deeproot.gd"), "props": {"draft_mode": "rollout"}},
+	"deeproot_plan": {"script": preload("res://bots/deeproot_plan.gd"), "props": {}},
 }
 
 ## The six legacy personas, in the order BALANCE.md tables list them.
