@@ -310,15 +310,20 @@ func _fanatic_draft(snap: Dictionary, legal: Array) -> Dictionary:
 		return legal[legal.size() - 1]
 	if candidates.size() == 1:
 		return candidates[0]
-	# kit full: drop off-build first (never mobility), else least-used
+	# kit full: drop off-build first (never the escape button), else
+	# least-used. The escape button is the mobility half of the loadout's
+	# protect list (optimizer._protected_ids / _mobility_ids), so a loadout
+	# without mycelium_dash guards its own mobility ability instead; for the
+	# default "tender" loadout the guard is exactly mycelium_dash, as before.
 	var kit: Array = snap["player"]["kit"]
 	var uses: Dictionary = snap["player"]["uses"]
+	var protected := _mobility_ids(_protected_ids(snap))
 	var best_a: Dictionary = candidates[0]
 	var best_key := 999999
 	for a in candidates:
 		var slot: int = a["drop"]
 		var aid: String = Content.base_id(String(kit[slot]))
-		if aid == "mycelium_dash":
+		if protected.has(aid):
 			continue
 		var key: int = uses.get(kit[slot], 0) + (0 if not _wants(aid) else 100000)
 		if key < best_key:

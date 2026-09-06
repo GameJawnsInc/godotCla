@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[1,0],"type":"ability"}],
 "expect": {"events":[{"id":"solar_lance","t":"ability"},{"t":"ignite"},{"id":"ember_sap","on":"ignite","t":"hook"},{"amt":1,"src":"ember_sap","t":"damage","who":"drill_bot"},{"amt":2,"src":"solar_lance","t":"damage","who":"drill_bot"},{"t":"death","who":"drill_bot"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C3 ember_sap: the lance lights the oil the drill bot is standing on, so the ignite hook bills whoever holds that tile for 1 before the beam itself lands - 1 + 2 kills a 3-hp bot the bare lance would leave alive",
-"sim_version": 6,
+"sim_version": 7,
 "hash": "b6890189438802f3a5469997a601f32f46c46efa7c8c9d7da3c0bd9d6fffb2cf"
 }

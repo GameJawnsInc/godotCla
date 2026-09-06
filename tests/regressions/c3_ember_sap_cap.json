@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[4,3],"type":"ability"},{"type":"end_turn"}],
 "expect": {"events":[{"t":"ignite"},{"id":"ember_sap","on":"ignite","t":"hook"},{"t":"ignite"},{"id":"ember_sap","on":"ignite","t":"hook"},{"t":"ignite"},{"id":"ember_sap","on":"ignite","t":"hook"},{"t":"ignite"},{"amt":2,"src":"sun_flare","t":"damage","who":"drill_bot"},{"amt":1,"src":"fire:sun_flare","t":"damage","who":"drill_bot"},{"t":"death","who":"drill_bot"}],"floor":1,"timeout":true,"turns":1,"won":false},
 "note": "C3 ember_sap cap_per_turn 3: one sun_flare lights four oil tiles, the first three fire the hook and the fourth (the tile the drill bot stands on, ignited last in map order) is skipped - the bot survives the cast on 1 hp and dies to the fire tick next phase instead, which it could not do if the fourth hook had run",
-"sim_version": 6,
+"sim_version": 7,
 "hash": "7d63245cc8923c8b3f981f179daac315d6ce1d1d1def457480408f32209eb465"
 }

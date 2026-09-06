@@ -422,6 +422,101 @@ func _init() -> void:
 		rf.store_string(prof_before)
 		rf.close()
 
+	# 11. the title screen's run-setup rows (Block A): three cyclers gated by
+	# the career, the config PLAY builds out of them, the status line that
+	# names it, and the daily line that replaces the rows entirely
+	var cfg_before := FileAccess.get_file_as_string(Shell.CFG_PATH) if FileAccess.file_exists(Shell.CFG_PATH) else ""
+	var menu = _bare_shell()
+	menu.profile = Profile.new()
+	menu.seed_mode = "random"
+	menu._clamp_selection()
+	var rows0 := _rows(menu)
+	_check(rows0.has("LOADOUT: Tender") and rows0.has("PACKAGE: none") and rows0.has("MUTATOR: none"),
+		"a fresh career shows tender / none / none (%s)" % str(rows0))
+	menu._tap("set:loadout")
+	menu._tap("set:package")
+	menu._tap("set:mutator")
+	_check(menu.sel_loadout == "tender" and menu.sel_package == "" and menu.sel_mutator == "",
+		"with nothing unlocked the rows have nothing to cycle to")
+	_check(str(menu._run_config()) == str({"packages": [], "tier": 0, "mutators": [], "loadout": "tender"}),
+		"a fresh career still plays the default config (%s)" % str(menu._run_config()))
+	menu.profile.unlocked_packages = ["mycology", "hydraulics"]
+	menu.profile.unlocked_mutators = ["brittle"]
+	menu.profile.unlocked_loadouts = ["tidewarden"]
+	menu._tap("set:loadout")
+	menu._tap("set:package")
+	menu._tap("set:mutator")
+	_check(menu.sel_loadout == "tidewarden", "LOADOUT cycles onto the unlocked loadout (%s)" % menu.sel_loadout)
+	_check(menu.sel_package == "mycology", "PACKAGE cycles off none onto an unlocked package (%s)" % menu.sel_package)
+	_check(menu.sel_mutator == "brittle", "MUTATOR cycles off none onto an unlocked mutator (%s)" % menu.sel_mutator)
+	var rows1 := _rows(menu)
+	_check(rows1.has("LOADOUT: Tidewarden") and rows1.has("PACKAGE: Mycology")
+		and rows1.has("MUTATOR: Brittle Tender"), "the rows name what is selected (%s)" % str(rows1))
+	var cfg1: Dictionary = menu._run_config()
+	_check(String(cfg1["loadout"]) == "tidewarden" and cfg1["packages"] == ["mycology"]
+		and cfg1["mutators"] == ["brittle"], "the cyclers reach the config PLAY builds (%s)" % str(cfg1))
+	menu.seed_v = 4242
+	menu._new_game()
+	_check(menu.game.player["kit"] == Content.LOADOUTS["tidewarden"]["kit"],
+		"PLAY starts the run on the chosen loadout (%s)" % str(menu.game.player["kit"]))
+	_check(menu.game.packages == ["mycology"] and menu.game.mutators == ["brittle"],
+		"...with the chosen package and mutator")
+	_check(menu._config_line(menu.game.snapshot()) == "Tidewarden · Mycology · Brittle Tender",
+		"the status line names loadout, package and mutator (%s)" % menu._config_line(menu.game.snapshot()))
+	menu.profile.unlocked_loadouts = []
+	menu._clamp_selection()
+	_check(menu.sel_loadout == "tender", "losing the unlock drops the selection back to tender")
+	# daily mode: the seed's own config replaces the three rows
+	var day = _bare_shell()
+	day.profile = Profile.new()  # a daily needs nothing unlocked
+	day.seed_mode = "daily"
+	var dseed: int = day._daily_seed()
+	var dc: Dictionary = Profile.daily_config(dseed)
+	var drows := _rows(day)
+	var today := ""
+	for label in drows:
+		if label.begins_with("TODAY: "):
+			today = label
+	_check(today != "", "daily mode shows the day's config line (%s)" % str(drows))
+	_check(today.contains(String(Content.LOADOUTS[dc["loadout"]]["name"])),
+		"...naming the daily's loadout (%s)" % today)
+	for label in drows:
+		_check(not label.begins_with("LOADOUT:") and not label.begins_with("PACKAGE:")
+			and not label.begins_with("MUTATOR:"), "daily mode hides the cyclers (%s)" % label)
+	day._roll_seed()  # what PLAY does first: in daily mode the date is the seed
+	_check(day.seed_v == dseed, "daily mode rolls the day's seed (%d)" % day.seed_v)
+	_check(str(day._run_config()) == str(Profile.daily_game_config(dseed)),
+		"PLAY uses the daily config (%s)" % str(day._run_config()))
+	# a seed whose daily wants all three, played on a career that unlocked none
+	var dseed2 := 0
+	for s in range(1, 500):
+		var d2: Dictionary = Profile.daily_config(s)
+		if String(d2["package"]) != "" and String(d2["mutator"]) != "" and String(d2["loadout"]) != "tender":
+			dseed2 = s
+			break
+	_check(dseed2 > 0, "some daily seed wants a package, a mutator and a non-tender loadout")
+	if dseed2 > 0:
+		var d3: Dictionary = Profile.daily_config(dseed2)
+		day.seed_v = dseed2
+		day._new_game()
+		_check(day.game.loadout == String(d3["loadout"]) and day.game.packages == [String(d3["package"])]
+			and day.game.mutators == [String(d3["mutator"])],
+			"a daily run carries the seed's own config with nothing unlocked (%s)" % str(Profile.daily_config(dseed2)))
+		_check(day.game.player["kit"] == Content.LOADOUTS[d3["loadout"]]["kit"],
+			"...including its starting kit")
+	for sh in [menu, day]:
+		if sh._run_save != null:
+			sh._run_save.close()
+			sh._run_save = null
+		sh.free()
+	DirAccess.remove_absolute("user://tender_run.save")
+	if cfg_before == "":
+		DirAccess.remove_absolute(Shell.CFG_PATH)
+	else:
+		var cfgf := FileAccess.open(Shell.CFG_PATH, FileAccess.WRITE)
+		cfgf.store_string(cfg_before)
+		cfgf.close()
+
 	shell.free()
 	shell2.free()
 	print("FAILURES: %d" % fails if fails > 0 else "shell smoke: OK")
@@ -440,6 +535,14 @@ func _bare_shell():
 	sh.screen = "game"
 	sh.mode = "normal"
 	return sh
+
+
+## The title screen's row labels, in menu order.
+func _rows(sh) -> Array:
+	var out: Array = []
+	for row in sh._menu_rows():
+		out.append(String(row[0]))
+	return out
 
 
 ## The shrine sheet's tap tags, in sheet order.

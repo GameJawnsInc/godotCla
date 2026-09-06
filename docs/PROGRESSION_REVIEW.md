@@ -429,6 +429,115 @@ firing to 0.80 riders per run but still misses the once-per-run bar,
 runs that cast the whip 29.9 times each - the one row a stronger instrument did
 not move.
 
+**Status (2026-09-07).** **Block A (6.1) is closed** and **`Game.SIM_VERSION`
+is 7**. Four pieces landed together. (1) **`Content.LOADOUTS`**
+(`sim/content.gd:340-359`): six starting kits as data - `tender` (the current
+starter, `kit == STARTING_KIT`), `tidewarden`, `flarekeeper`, `spiker`,
+`lasher` and the package-gated `skyrunner` - each `{name, desc, kit, protect,
+requires}`, each keeping `seed_bomb` and exactly one `role == "mobility"`
+ability, both linted by `tests/test_content.gd` against 16 deliberately bad
+fixtures. `Game._init` (`sim/game.gd:113-118, 131-135`) takes the kit from the
+row unless a sweep passed an explicit `kit`, warns and plays `tender` on an
+unknown id, and applies `kit_ban` / `pool_ban` afterwards, so
+`tidewarden` + `no_lance` keeps three slots where `tender` + `no_lance` keeps
+two. (2) **One package per run**: `profile.game_config(tier, mutators, loadout,
+package)` (`meta/profile.gd:229`) returns `{packages: [pkg] or [], tier,
+mutators, loadout}` with **no `kit` key**, degrading a loadout that is locked
+or whose package requirement is unmet to `tender`, and a locked package to
+none, so the draft pool is 14 or 17 ids and never 23; the old width returns as
+the unlockable `open_pool` mutator (`sim/content.gd:550-551`, `MILESTONES` row
+at 606, `requires
+{wins: 1}`). (3) **The pickers and a career-agnostic daily**: the title screen
+gains LOADOUT / PACKAGE / MUTATOR rows persisted in `tender.cfg` beside the
+tier, the status line names the active loadout, packages and mutators, and
+`Profile.daily_config(seed)` (`meta/profile.gd:273`) derives the day's three
+choices from the seed alone over frozen lists (`DAILY_LOADOUTS` /
+`DAILY_PACKAGES` / `DAILY_MUTATORS`, lines 28-30) so growing a content table
+never moves an earlier date; `tests/daily_run.gd` and the shell read the same
+function. (4) **The harness axis**: `sweep_lib.tier_config` became
+`env_config`, adding `SWEEP_LOADOUT` and `SWEEP_UNLOCK=fresh|package:<id>|all`
+to every runner that goes through it, and the bots' drop guards read
+`Content.LOADOUTS[snapshot.loadout].protect` (fallback: held mobility
+abilities) instead of hardcoded ids.
+
+The measurement is the "2026-09-07 - Block A closure" entry in
+`docs/BALANCE.md`. Its headline is the same shape as C4's: **a player who never
+touches the new rows is playing the identical game.** The 30-seed six-persona
+playtest reproduces 06e/06f cell for cell (optimizer 14/30 [30, 64], deeproot
+22/30 [56, 86], magpie 5/30, fanatic 7/30, sprout 1/30, wanderer 0/30, every
+KPI and hook counter equal), the 100-seed magpie canary is unchanged at
+**17/100 [11, 26]** (the rise line is still [6, 17], so not a signal), and a
+`verify_kit` run of `config { }` against `config { "loadout": "tender" }`
+diffs **empty** below the header. Suite green including the gate ("gate: all
+PASS", "regressions: 60 ok, 0 failed" plain and `REGRESS_STRICT=1`, "meta: OK",
+"economy: OK (155 checks)", "loadouts: 6 rows, 5 package-free"), and the corpus
+re-stamp was clean: 57 records stale on `sim_version` alone, all "hash ok"
+before the bump, no bot log re-recorded, three new `c5_*` records taking the
+corpus to 60.
+
+**All six loadouts ship; none of them is a difficulty setting.** At the
+optimizer over 30 seeds, spiker 21/30 [52, 83], tidewarden and flarekeeper
+16/30 [36, 70], tender 14/30 [30, 64], lasher 12/30 [25, 58] and skyrunner
+11/30 [22, 54] with **zero timeouts anywhere**, which clears the winnability
+gate (3/30, no timeouts) on every row and clears skyrunner's separate 30-seed
+`verify_kit` bar. Under `deeproot_plan` at 20 seeds
+the five package-free rows are 18-20/20 (tender 18/20 [70, 97], the other
+four 20/20 [84, 100]) and `skyrunner` is 10/20 [30, 70]; that table is read on
+its continuous columns, where **each loadout's identity is the maximum of its
+own counter** - tidewarden 18.55 collisions per run, flarekeeper 3.65
+ability-ignites, lasher 12.25 staggers, spiker 25.00 riders, against tender's
+4.65 / 2.10 / 2.55 / 9.20. The loadouts do play differently; the heuristic bot
+simply cannot show it. The 6.1 probe's ranking did **not** survive: it was
+recorded before every sim bump from 2 to 7 and read tidewarden 8/20,
+flarekeeper 8/20, spiker 7/20 and lasher 6/20 against tender 9/20, where
+today's 20-seed rerun inside `tests/test_meta.gd` reads tidewarden 12/20,
+flarekeeper 10/20, spiker 15/20, lasher 9/20 and skyrunner 6/20 against the
+same tender 9/20. Spiker went from the bottom of the probe (7/20, below
+tender) to the top of both of today's tables (15/20 at 20 seeds, 21/30 at 30),
+and
+C2's growth-adjacency rider on `grow_spike` is the obvious suspect, but the
+two columns are separated by six bumps of content and nothing here pins the
+attribution. The measurement that matters more than the spread is
+*why* it is small: the optimizer **drops the loadout's signature ability**
+(`water_jet` 22 drops in 30 runs, `vine_whip` 22, `gust` 20) and rebuilds the
+same `grow_spike` + `seed_bomb` engine from every start, so its table measures
+distance-to-the-bot's-preferred-build. The planner, which keeps every kit, is
+where "this loadout plays differently" is actually visible.
+
+**The package commitment costs nothing measurable.** Optimizer, 30 seeds,
+`SWEEP_UNLOCK` axis: `fresh` 14/30 [30, 64], `package:mycology` 13/30 [27, 61],
+`package:hydraulics` 14/30 [30, 64], `package:aeolian` 14/30 [30, 64], `all`
+14/30 [30, 64] - every cell reproducing 06e's `sweep_packages` table, with kit
+entropy 3.86 -> 3.83 / 3.96 / 3.76 / 4.48 and `P(plus offered|draft)` 0.68 ->
+0.55 / 0.55 / 0.55 / 0.50. 06e's finding that this axis cannot judge package
+*content* stands unchanged and is if anything sharper: 104 package picks across
+the 120 package-carrying runs, and the only package ids that appear in any
+casts line are `gust` at 0.0/run and `spore_cloud` at 0.1/run.
+
+**What Block A leaves open.** Two consumers the C4 status called "written,
+saved and filtered, with nothing to consume" now have consumers -
+`unlocked_loadouts` is read by `available_loadouts` and the shell, and
+`open_pool` gives `unlocked_mutators` a second reason to exist - but
+`unlocked_grafts` still has no `MILESTONES` row and no `game_config` key, so
+that seam is the only one of the four left empty. New to the open list:
+`tests/verify_kit.gd`, `tests/measure_fanatic.gd`, `tests/draft_oracle.gd` and
+`tests/sweep_packages.gd` build their configs inline and therefore ignore
+`SWEEP_LOADOUT` / `SWEEP_UNLOCK` / `SWEEP_TIER` (every `verify_kit` row in the
+BALANCE entry was produced by a scratch copy that starts from
+`Sweep.env_config({})`); `open_pool` has no 30-seed win-rate row, only the
+structural checks and an 8-seed smoke row; and `skyrunner`, the one loadout
+that gives up `mycelium_dash`, is the only row where the ceiling drops as well
+as the heuristic (10/20 [30, 70] under the planner against 18-20/20 for the
+rest) - it casts its wind kit harder than any other row casts anything
+(`gust` 36.4 and `updraft` 37.3 per run, the table's top combo rate at 66.25)
+and loses to the clock instead: verdant surges 7.40/run against 25.65-31.45,
+turns per floor 21.7 against 8.1-11.0, 13 stall floors, 252 of its 299 damage
+points from smog. That is a measurement of the mobility slot, and it also
+retires 06e's "no persona casts a pure-mobility ability other than
+`mycelium_dash`" as a statement about the abilities rather than about the
+heuristic bot. Everything else outstanding is Block D (6.4) plus the carried
+items already listed at 06e.
+
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
 180 bot runs; a synergy-lift sweep of 7 hypothesised pairs at 24 seeds per

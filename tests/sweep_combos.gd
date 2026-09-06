@@ -55,7 +55,7 @@ func _init() -> void:
 	var mode := OS.get_environment("SWEEP_MODE")
 	if mode == "":
 		mode = "lift"
-	var cfg := Sweep.tier_config({"tier": 0})
+	var cfg := Sweep.env_config({"tier": 0})
 	print(Sweep.header("sweep_combos", bot_name, cfg, seeds))
 	if bot == null:
 		print("FAIL: unknown SWEEP_BOT")

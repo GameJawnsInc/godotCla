@@ -17,6 +17,11 @@ extends SceneTree
 ##  h) config keys "grafts" and "bloom"
 ##  i) damage attribution: fire tiles carry "by", enemy-side sources are
 ##     "fire:<by>" / "collision:<aid>", player-side sources unchanged
+##  j) loadouts (Block A, bump 7): config "loadout" picks the kit from
+##     Content.LOADOUTS, an explicit "kit" wins, an unknown id warns and plays
+##     tender, kit_ban applies after the loadout kit, open_pool adds every
+##     package id to the pool; rng.state after Game.new is the same for the
+##     default config, every loadout and open_pool
 ## Run: godot --headless --path . --script tests/test_economy.gd
 
 const Content := preload("res://sim/content.gd")
@@ -43,6 +48,7 @@ func _init() -> void:
 	_check_quota_reclamp()
 	_check_config_keys()
 	_check_attribution()
+	_check_loadouts()
 	if failures.is_empty():
 		print("economy: OK (%d checks)" % checks)
 		quit(0)
@@ -582,6 +588,76 @@ func _check_config_keys() -> void:
 	var c = g.clone()
 	_ok(c.player["grafts"] == ["carapace"] and c.snapshot()["player"]["grafts"] == ["carapace"], "clone drops config grafts")
 	print("config keys: grafts pre-install (carapace shield 2, unknown skipped), bloom 7")
+
+
+# --- j) loadouts ---------------------------------------------------------------
+
+func _check_loadouts() -> void:
+	# default config == tender == STARTING_KIT, byte-identical
+	var g0 = Game.new(1)
+	_ok(g0.loadout == "tender" and g0.player["kit"] == Content.STARTING_KIT
+		and g0.player["kit"] == Content.LOADOUTS["tender"]["kit"], "default loadout: %s %s" % [g0.loadout, str(g0.player["kit"])])
+	_ok(Game.new(1, {"loadout": "tender"}).state_hash() == g0.state_hash(), "explicit tender differs from default")
+	# every loadout row applies its kit, and only its kit
+	for lid in Content.LOADOUTS:
+		var g = Game.new(1, {"loadout": lid})
+		_ok(g.loadout == lid and g.player["kit"] == Content.LOADOUTS[lid]["kit"],
+			"loadout %s: got %s kit %s" % [lid, g.loadout, str(g.player["kit"])])
+		_ok(g.snapshot()["loadout"] == lid and g.clone().player["kit"] == Content.LOADOUTS[lid]["kit"], "loadout %s: snapshot/clone" % lid)
+		_ok(g.draft_pool == Content.DRAFT_POOL and g.player["hp"] == Content.PLAYER_HP, "loadout %s touched pool or hp" % lid)
+	# explicit kit wins over the loadout (sweeps pass {kit, pool})
+	var gk = Game.new(1, {"loadout": "spiker", "kit": ["vine_whip", "mycelium_dash"]})
+	_ok(gk.player["kit"] == ["vine_whip", "mycelium_dash"] and gk.loadout == "spiker", "explicit kit: %s %s" % [str(gk.player["kit"]), gk.loadout])
+	# unknown loadout id warns and plays tender
+	var gu = Game.new(1, {"loadout": "no_such_loadout"})
+	_ok(gu.loadout == "tender" and gu.player["kit"] == Content.STARTING_KIT, "unknown loadout: %s %s" % [gu.loadout, str(gu.player["kit"])])
+	_ok(gu.state_hash() == g0.state_hash(), "unknown loadout differs from default")
+	# an unmet requires is still applied by the sim (the profile enforces it)
+	var gs = Game.new(1, {"loadout": "skyrunner"})
+	_ok(gs.player["kit"] == ["gust", "seed_bomb", "updraft"] and gs.draft_pool == Content.DRAFT_POOL,
+		"skyrunner without aeolian: %s pool %d" % [str(gs.player["kit"]), gs.draft_pool.size()])
+	# kit_ban applies after the loadout kit is chosen
+	var gb = Game.new(1, {"loadout": "tender", "mutators": ["no_lance"]})
+	_ok(gb.player["kit"] == ["seed_bomb", "mycelium_dash"] and not gb.draft_pool.has("solar_lance"),
+		"no_lance after tender: %s" % str(gb.player["kit"]))
+	var gb2 = Game.new(1, {"loadout": "tidewarden", "mutators": ["no_lance"]})
+	_ok(gb2.player["kit"] == ["water_jet", "seed_bomb", "mycelium_dash"], "no_lance after tidewarden: %s" % str(gb2.player["kit"]))
+	# open_pool: every package id joins the pool, the base pool is unchanged
+	var go = Game.new(1, {"mutators": ["open_pool"]})
+	var expect_pool: Array = Content.DRAFT_POOL.duplicate()
+	for pkg in Content.PACKAGES.keys():
+		expect_pool.append_array(Content.PACKAGES[pkg])
+	_ok(go.draft_pool == expect_pool, "open_pool pool %s" % str(go.draft_pool))
+	_ok(go.player["kit"] == Content.STARTING_KIT and go.loadout == "tender", "open_pool touched the kit")
+	# open_pool with a committed package: no duplicate ids
+	var gop = Game.new(1, {"mutators": ["open_pool"], "packages": ["aeolian"]})
+	_ok(gop.draft_pool.size() == expect_pool.size() and gop.packages == ["aeolian"], "open_pool + aeolian pool %d" % gop.draft_pool.size())
+	# open_pool then no_lance: the ban still applies to the widened pool
+	var gol = Game.new(1, {"mutators": ["open_pool", "no_lance"]})
+	_ok(gol.draft_pool.size() == expect_pool.size() - 1 and not gol.draft_pool.has("solar_lance") and gol.draft_pool.has("gust"),
+		"open_pool + no_lance pool %s" % str(gol.draft_pool))
+	# the shrine ability stock follows the widened pool: nothing outside it
+	var outside := 0
+	for s in range(1, 41):
+		var gsh = Game.new(s, {"mutators": ["open_pool"]})
+		var aid: String = String(gsh.shop.get("ability", ""))
+		if aid != "" and not expect_pool.has(aid):
+			outside += 1
+	_ok(outside == 0, "open_pool shop stock outside the pool: %d" % outside)
+	# rng.state after Game.new: identical for every loadout and open_pool
+	var mismatches := 0
+	for s in range(1, RNG_SEEDS + 1):
+		var base_state: int = Game.new(s).rng.state
+		for lid in Content.LOADOUTS:
+			if Game.new(s, {"loadout": lid}).rng.state != base_state:
+				mismatches += 1
+		if Game.new(s, {"mutators": ["open_pool"]}).rng.state != base_state:
+			mismatches += 1
+		if Game.new(s, {"loadout": "skyrunner", "packages": ["aeolian"]}).rng.state != base_state:
+			mismatches += 1
+	_ok(mismatches == 0, "loadout rng independence: %d mismatches" % mismatches)
+	print("loadouts: %d rows apply their kit; explicit kit wins; unknown -> tender; kit_ban after loadout; open_pool %d ids; rng mismatches %d" % [
+		Content.LOADOUTS.size(), expect_pool.size(), mismatches])
 
 
 # --- i) attribution -----------------------------------------------------------

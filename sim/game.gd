@@ -37,7 +37,11 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## 6: C4 - the nine package "+" rows (forgeable and draftable once the base is
 ## held) and mutators as data (Content.MUTATORS[m]["config"] read through
 ## _mut; no_lance, wide_draft, upgrades_only join the table).
-const SIM_VERSION := 6
+## 7: Block A - the starting kit comes from Content.LOADOUTS[config.loadout]
+## (a run recorded with a non-default loadout replays with that kit from now
+## on; "tender" is STARTING_KIT so default runs are untouched) and the
+## open_pool mutator row.
+const SIM_VERSION := 7
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -106,15 +110,29 @@ func _init(seed_v: int, config: Dictionary = {}) -> void:
 	_fixed_floor = config.get("fixed_floor", {}).duplicate(true)
 	draft_pool = config.get("pool", Content.DRAFT_POOL).duplicate()
 	packages = config.get("packages", []).duplicate()
-	loadout = config.get("loadout", "tender")
+	# loadout (Content.LOADOUTS, Block A): an unknown id warns and plays as
+	# tender; the profile enforces requires, the sim only reads the kit.
+	loadout = String(config.get("loadout", "tender"))
+	if not Content.LOADOUTS.has(loadout):
+		push_warning("Game: unknown loadout id '%s' in config, playing tender" % loadout)
+		loadout = "tender"
 	for pkg in config.get("packages", []):
 		for aid in Content.PACKAGES[pkg]:
 			if not draft_pool.has(aid):
 				draft_pool.append(aid)
+	# open_pool mutator: every package ability joins the draft pool (before
+	# pool_ban so a ban still applies to it).
+	if bool(_mut("open_pool", false)):
+		for pkg in Content.PACKAGES.keys():
+			for aid in Content.PACKAGES[pkg]:
+				if not draft_pool.has(aid):
+					draft_pool.append(aid)
+	# an explicit "kit" (sweeps, fixtures) wins over the loadout's kit
+	var start_kit: Array = config.get("kit", Content.LOADOUTS[loadout]["kit"])
 	player = {
 		"pos": Vector2i.ZERO, "hp": Content.PLAYER_HP, "max_hp": Content.PLAYER_HP,
 		"charge": 0, "bank": 0, "shield": 0,
-		"kit": config.get("kit", Content.STARTING_KIT).duplicate(),
+		"kit": start_kit.duplicate(),
 		"uses": {}, "grafts": [], "gummed": {}, "items": [],
 		"thorns_dmg": 0, "thorns_turns": 0, "anchor_turns": 0,
 	}

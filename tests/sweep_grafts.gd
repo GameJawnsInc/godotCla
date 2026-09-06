@@ -32,7 +32,7 @@ func _init() -> void:
 	if gids.is_empty():
 		quit(1)
 		return
-	var base_cfg := Sweep.tier_config({})
+	var base_cfg := Sweep.env_config({})
 	var bloom := int(OS.get_environment("SWEEP_BLOOM"))
 	if bloom > 0:
 		base_cfg["bloom"] = bloom

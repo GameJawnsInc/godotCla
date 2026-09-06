@@ -22,11 +22,6 @@ const DRAFT_PREF := [
 	"mycelium_dash",
 ]
 
-## Kit slots the draft refuses to drop when the kit is full: mobility is the
-## escape button and seed_bomb is the growth engine that makes the Furnace
-## core killable.
-const NEVER_DROP := ["mycelium_dash", "seed_bomb"]
-
 ## Effect ops that put damage on an enemy tile. _est_dmg reads their "dmg"
 ## (plus the rider arithmetic around it) and ignores every other op - a bot
 ## guess, not a sim call, so it stays cheap enough for every candidate.
@@ -302,15 +297,17 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 		return legal[legal.size() - 1]
 	if candidates.size() == 1:
 		return candidates[0]
-	# kit is full: drop the least-used ability. Never drop mobility, and never
-	# drop the growth engine - the Furnace core is only vulnerable near growth.
+	# kit is full: drop the least-used ability that the run's loadout does not
+	# protect (_protected_ids) - for "tender" that is mobility, the escape
+	# button, and seed_bomb, the growth engine the Furnace core needs.
 	var uses: Dictionary = snap["player"]["uses"]
 	var kit: Array = snap["player"]["kit"]
+	var protected := _protected_ids(snap)
 	var best_a: Dictionary = candidates[0]
 	var best_u := 999999
 	for a in candidates:
 		var slot: int = a["drop"]
-		if NEVER_DROP.has(String(kit[slot]).trim_suffix("+")):
+		if protected.has(CONTENT.base_id(String(kit[slot]))):
 			continue
 		var u: int = uses.get(kit[slot], 0)
 		if u < best_u:
@@ -327,6 +324,34 @@ func _pref_rank(aid: String) -> int:
 	if r == -1:
 		r = DRAFT_PREF.size()
 	return r * 2 - (1 if String(aid).ends_with("+") else 0)
+
+
+## Base ids this persona never drops or scraps, from the run's loadout row
+## (Content.LOADOUTS[snapshot.loadout].protect - loadout data, not a bot
+## literal, so a new loadout protects its own escape button with no bot
+## change). Fallback for an unknown/absent loadout id (a hand-built snapshot,
+## or a save from before the loadout table): every held ability whose
+## Content.ABILITIES role is "mobility".
+func _protected_ids(snap: Dictionary) -> Array:
+	var lid := String(snap.get("loadout", ""))
+	if not CONTENT.LOADOUTS.has(lid):
+		return _mobility_ids(snap["player"]["kit"])
+	var out: Array = []
+	for aid in CONTENT.LOADOUTS[lid]["protect"]:
+		out.append(CONTENT.base_id(String(aid)))
+	return out
+
+
+## The mobility half of an id list: the entries whose Content.ABILITIES role
+## is "mobility", as base ids. Used by fanatic, whose drop guard protects only
+## the escape button (an off-build seed_bomb is fair game for the build).
+func _mobility_ids(ids: Array) -> Array:
+	var out: Array = []
+	for aid in ids:
+		var base := CONTENT.base_id(String(aid))
+		if String(CONTENT.ABILITIES.get(base, {}).get("role", "")) == "mobility":
+			out.append(base)
+	return out
 
 
 ## Shrine purchase, in the old order (graft, heal, ability, item), from the

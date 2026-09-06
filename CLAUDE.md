@@ -125,11 +125,28 @@ architecture below is designed to bend rather than block.
 - Bots live in one registry, `bots/roster.gd` (`Roster.names()/make(name, seed)`);
   every runner resolves persona names through it, and an unknown name fails
   loudly. `deeproot_rollout` is deeproot with rollout drafting (a separate
-  persona so the legacy ceiling column survives).
+  persona so the legacy ceiling column survives). No persona names a protected
+  ability id: the draft drop guards read the run's loadout row through
+  `optimizer._protected_ids(snap)` (`Content.LOADOUTS[snap.loadout].protect`,
+  falling back to every held `role == "mobility"` ability when the id is
+  unknown), and fanatic narrows that to its mobility half with
+  `_mobility_ids()` — under `tender` the two reproduce the old
+  `["mycelium_dash", "seed_bomb"]` and `["mycelium_dash"]` exactly.
 - Balance sweeps (on demand; run before shipping new content, and verify any
   outlier at 30+ seeds before patching — 10-seed spreads are noisy). Shared env:
   `SWEEP_BOT=<roster name>` (default optimizer), `SWEEP_SEEDS` (default 30),
-  `SWEEP_SEED_FROM` (out-of-sample checks), `SWEEP_TIER`:
+  `SWEEP_SEED_FROM` (out-of-sample checks), plus the three config axes every
+  runner that builds its config through `Sweep.env_config()` (the old
+  `tier_config`) gets for free: `SWEEP_TIER=<int>`, `SWEEP_LOADOUT=<id>` (a
+  `Content.LOADOUTS` id) and `SWEEP_UNLOCK=fresh|package:<id>|all` (the
+  unlock-state axis: no packages, the one committed package, or every
+  package). An unknown loadout/unlock value is a `push_error` and the key is
+  left alone, so the printed header always names the config that actually ran.
+  Callers today: `sweep_combos`, `sweep_grafts`, `sweep_tiers` (which sweeps
+  the tier axis itself, so it drops `tier` from the base config and keeps the
+  other two) and `measure_bosses`; `verify_kit`, `measure_fanatic`,
+  `draft_oracle` and `sweep_packages` still build their configs inline and
+  ignore the three:
   - `tests/sweep_combos.gd` — locked-kit lift: every config is `{kit: K, pool: K}`,
     `lift = pair - max(single_x, single_y)` with Wilson CIs and a paired sign
     test; `SWEEP_PAIRS=a+b,c+d` selects pairs, `SWEEP_SHARD=i/n` slices the
@@ -254,18 +271,22 @@ architecture below is designed to bend rather than block.
   concatenate. There is no `mutators.has("...")` left in `sim/game.gd`. The
   config keys are the closed set `Content.MUTATOR_CONFIG_KEYS`: `kit_max`,
   `max_hp_delta`, `bank_cap`, `oil_mult`, `extra_common_enemy`, `shop`,
-  `pool_ban`, `kit_ban`, `draft_offers`, `draft_upgrades_only`. Nine rows —
-  the six originals (`kit_of_3`, `brittle`, `parched`, `double_oil`,
-  `overtime`, `boarded`) reproduce their old numbers exactly, plus three new
-  ones: `no_lance` (`pool_ban: ["solar_lance"]` + `kit_ban` — the lance leaves
-  the starting kit and the draft pool, and the shrine stock follows the pool),
-  `wide_draft` (`draft_offers: 4`) and `upgrades_only`
+  `pool_ban`, `kit_ban`, `draft_offers`, `draft_upgrades_only`, `open_pool`.
+  Ten rows — the six originals (`kit_of_3`, `brittle`, `parched`,
+  `double_oil`, `overtime`, `boarded`) reproduce their old numbers exactly,
+  plus the three C4 rows: `no_lance` (`pool_ban: ["solar_lance"]` + `kit_ban`
+  — the lance leaves the starting kit and the draft pool, and the shrine stock
+  follows the pool), `wide_draft` (`draft_offers: 4`) and `upgrades_only`
   (`draft_upgrades_only` — candidates are only the `+` forms of held
-  abilities; with none available the draft is skipped as before). Adding a
-  mutator means adding a row; one that needs a new number needs a new config
-  key, a `_mut` read at the site and the key in `MUTATOR_CONFIG_KEYS` (which
-  `tests/test_content.gd` lints). `tests/regressions/c4_no_lance.json`,
-  `c4_wide_draft.json` and `c4_upgrades_only.json` demo the three.
+  abilities; with none available the draft is skipped as before), plus the one
+  Block A row: `open_pool` (`open_pool: true` — every `Content.PACKAGES`
+  ability joins the draft pool, the old all-packages variety kept as a
+  deliberate choice now that a package is a one-per-run commitment; the
+  profile unlocks it at one win). Adding a mutator means adding a row; one
+  that needs a new number needs a new config key, a `_mut` read at the site
+  and the key in `MUTATOR_CONFIG_KEYS` (which `tests/test_content.gd` lints).
+  `tests/regressions/c4_no_lance.json`, `c4_wide_draft.json` and
+  `c4_upgrades_only.json` demo the three C4 rows.
 - Run summary and effective casts (C4): `Game.effective_uses` (base id -> int)
   counts a cast only when something happened — an effect outcome fired or a
   rider ran — while `player.uses` stays the raw count. It is copied by
@@ -278,8 +299,23 @@ architecture below is designed to bend rather than block.
   meta layer; the sim never consumes it. `uses_by_base` takes the max of a
   base and its `+` key rather than the sum, because the draft and the forge
   seed the `+` key with the base's count.
+- Starting loadouts are data (Block A, `docs/PROGRESSION_REVIEW.md` §6.1):
+  `Content.LOADOUTS` rows are `{name, desc, kit: [3 ids], protect: [ids],
+  requires: {packages: [...]}}` and `Content.loadouts_for(unlocked_packages)`
+  filters by `requires`. Six rows — `tender` (the starter, its kit IS
+  `STARTING_KIT`, so a default-config run is byte-identical to before),
+  `tidewarden`, `flarekeeper`, `spiker`, `lasher` (each swaps the lance for one
+  other ability) and `skyrunner` (`requires {packages: ["aeolian"]}`). Every
+  row keeps `seed_bomb` and exactly one `role == "mobility"` ability
+  (`tests/test_content.gd` lints both). Three consumers, one key each: the sim
+  reads `kit` only, the bots read `protect` (never an id literal), and
+  `meta/profile.gd` enforces `requires` — the sim applies whatever loadout id
+  it is handed and only warns on an unknown one.
 - Sim run config: `Game.new(seed, {kit, pool, packages, tier, mutators, grafts,
-  bloom})` for sweeps, meta-unlocks, and post-win difficulty tiers. `grafts` is
+  bloom, loadout})` for sweeps, meta-unlocks, and post-win difficulty tiers.
+  `loadout` is a `Content.LOADOUTS` id (default `tender`; unknown -> warning +
+  tender) and picks the starting kit, but an explicit `kit` still wins, so
+  every locked-kit sweep config is unaffected. `grafts` is
   a list of `Content.GRAFTS` ids installed before floor 1 (unknown ids are
   skipped with a warning; owned grafts raise the shrine's graft price) and
   `bloom` is the starting balance — neither touches the main rng.
@@ -294,13 +330,27 @@ architecture below is designed to bend rather than block.
   counting as its base), `wins_without: [base ids]`, `casts: {base id: n}`
   (cumulative effective casts) and `grafts_owned_at_win: n`. A row's `kind`
   dispatches explicitly to `unlocked_packages` / `unlocked_mutators` /
-  `unlocked_loadouts` / `unlocked_grafts` (the last two have no consumer yet);
-  an unknown kind is a `push_error` and is skipped. `load_from` filters every
+  `unlocked_loadouts` / `unlocked_grafts` (Block A gave `unlocked_loadouts` a
+  consumer — `game_config` / `available_loadouts`; `unlocked_grafts` still has
+  none); an unknown kind is a `push_error` and is skipped. `load_from` filters every
   stored id against `Content`, so renamed content cannot brick a profile.
   Daily runs go through `record_daily(summary)` into `daily_best[str(seed)]`
   and never touch the career.
+- One package per run (Block A): `profile.game_config(tier, mutators, loadout,
+  package)` hands back a kit-free `{packages, tier, mutators, loadout}` — the
+  package is a run-scoped commitment, so the draft pool is 14 or 17 ids, never
+  23; a locked/unknown package degrades to none and a locked loadout (or one
+  whose `requires.packages` are unmet) degrades to `tender`. The old
+  everything-at-once pool is the `open_pool` mutator. `available_loadouts()`
+  is the menu list. The daily is career-agnostic: static
+  `Profile.daily_config(seed)` -> `{loadout, package, mutator, tier: 0}` is a
+  pure function of the seed over the FROZEN `DAILY_LOADOUTS` /
+  `DAILY_PACKAGES` / `DAILY_MUTATORS` lists (frozen so a growing content table
+  never moves an earlier date), and `daily_game_config(seed)` spells the same
+  choice as a `Game.new` config.
 - Balance targets and the measurement discipline live in `docs/BALANCE.md`;
-  `tests/daily_run.gd` generates the date-seeded daily challenge.
+  `tests/daily_run.gd` generates the date-seeded daily challenge through
+  `Profile.daily_config`.
 - Death autopsy (`tests/autopsy.gd`): `AUTOPSY_BOT=<persona> AUTOPSY_SEED=<n>`
   reruns a game and prints the last `AUTOPSY_LAST` ASCII frames — use it to
   "watch" any death a sweep or playtest flags. `AUTOPSY_TIER`/`AUTOPSY_MUTATORS`/
@@ -310,12 +360,17 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (6
-  today: C4 — the nine package `+` rows (those bases became forgeable at the
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (7
+  today: Block A — the starting loadout (`Content.LOADOUTS`, config key
+  `loadout`) and the `open_pool` mutator. A default-config run is untouched
+  (`tender` is `STARTING_KIT` and the pool is unchanged), so the 7 re-stamp
+  rewrote only `sim_version` across the corpus with no outcome or hash diff;
+  a run recorded with a non-default loadout would replay with a different kit,
+  which is what the bump buys. Bump 6 was C4 — the nine package `+` rows (those
+  bases became forgeable at the
   shrine and draftable-as-upgrade once held) and mutator numbers moving into
-  `Content.MUTATORS[...].config`; neither changes a default-config run, so the
-  6 re-stamp rewrote only `sim_version` across the corpus with no outcome or
-  hash diff and no bot log needed re-recording. Bump 5 was C3 grafts-as-data
+  `Content.MUTATORS[...].config`; neither changed a default-config run either.
+  Bump 5 was C3 grafts-as-data
   and the hook dispatcher — the shrine stocks from ten grafts, so the
   `shop_graft` side draw and every bot's graft pick shifted and any bot log
   recorded at 4 desyncs from its first shrine on; bump 4 was the C2 rider rows

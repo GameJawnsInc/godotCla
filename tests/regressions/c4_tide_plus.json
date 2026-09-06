@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[1,3],"type":"ability"}],
 "expect": {"events":[{"id":"tide+","t":"ability"},{"amt":2,"src":"collision:tide+","t":"damage","who":"smokestack"},{"status":"root","t":"status","turns":1},{"amt":1,"id":"tide+","kind":"then","t":"rider"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C4 tide+ push 2 -> 3, collision 1 -> 2: the wave carries the smokestack from (2,3) to (4,3) and its third step drives it into the pillar at (5,3) for 2 - the base row spends its push on those same two tiles and never collides, so the then rider (pushed AND collided, water_jet+'s vocabulary) roots only under the + form; one enemy on the board, so the four-way wash merge cannot blur which outcome the then reads",
-"sim_version": 6,
+"sim_version": 7,
 "hash": "92ad7d181cf9d64cb2d69ce4c9c750379e249e8770077056d5d1dc00479c1e08"
 }

@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[1,3],"type":"ability"}],
 "expect": {"events":[{"id":"fungal_ring+","t":"ability"},{"t":"growth","tile":"(1, 3)"},{"status":"root","t":"status","turns":1},{"amt":1,"id":"fungal_ring+","kind":"then","t":"rider"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C4 fungal_ring+ rider: grow_radius ignores its radius key (sim/game.gd grow_radius is the target plus the four DIRS), so the + form takes the seed_bomb+ growth rider instead - the drill bot standing where the ring sprouts is rooted for a turn (who on_planted); the base row plants the same ring and roots nobody",
-"sim_version": 6,
+"sim_version": 7,
 "hash": "08d84d424aa119bdeec1cf95613e71b95972459f858fbc556dfb97216e8ef033"
 }

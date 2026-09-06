@@ -326,6 +326,54 @@ static func archetypes_for(pool: Array) -> Array:
 			out.append(arch_id)
 	return out
 
+
+## Starting loadouts (docs/PROGRESSION_REVIEW.md 6.1, Block A): the run-start
+## choice. Data: {id: {name, desc, kit: [3 ids], protect: [ids], requires:
+## {packages: [...]}}}. The sim reads exactly one key, "kit" (Game._init takes
+## player.kit from LOADOUTS[config.loadout] when no explicit "kit" is given;
+## "tender" is STARTING_KIT so a default-config run is byte-identical to
+## before). "protect" is bot data - the ids a persona never drops or scraps -
+## and "requires" is profile data (meta/profile.gd game_config enforces it;
+## the sim only warns on an unknown id). Every row keeps seed_bomb (the
+## boss-gate key) and exactly one role == "mobility" ability
+## (tests/test_content.gd lints both).
+const LOADOUTS := {
+	"tender": {"name": "Tender", "desc": "the starter: lance, seed bomb, dash",
+		"kit": ["solar_lance", "seed_bomb", "mycelium_dash"],
+		"protect": ["mycelium_dash", "seed_bomb"], "requires": {}},
+	"tidewarden": {"name": "Tidewarden", "desc": "water jet shoves in place of the lance",
+		"kit": ["water_jet", "seed_bomb", "mycelium_dash"],
+		"protect": ["mycelium_dash", "seed_bomb"], "requires": {}},
+	"flarekeeper": {"name": "Flarekeeper", "desc": "sun flare lights the oil in place of the lance",
+		"kit": ["sun_flare", "seed_bomb", "mycelium_dash"],
+		"protect": ["mycelium_dash", "seed_bomb"], "requires": {}},
+	"spiker": {"name": "Spiker", "desc": "grow spike pays off growth in place of the lance",
+		"kit": ["grow_spike", "seed_bomb", "mycelium_dash"],
+		"protect": ["mycelium_dash", "seed_bomb"], "requires": {}},
+	"lasher": {"name": "Lasher", "desc": "vine whip drags in place of the lance",
+		"kit": ["vine_whip", "seed_bomb", "mycelium_dash"],
+		"protect": ["mycelium_dash", "seed_bomb"], "requires": {}},
+	"skyrunner": {"name": "Skyrunner", "desc": "gust and updraft: wind positioning, no lance, no dash",
+		"kit": ["gust", "seed_bomb", "updraft"],
+		"protect": ["updraft", "seed_bomb"], "requires": {"packages": ["aeolian"]}},
+}
+
+
+## Loadout ids whose requires.packages are all in `unlocked_packages`.
+## Preserves LOADOUTS key order, so the result is deterministic; "tender"
+## (no requirements) is always first.
+static func loadouts_for(unlocked_packages: Array) -> Array:
+	var out: Array = []
+	for lid in LOADOUTS.keys():
+		var ok := true
+		for pkg in LOADOUTS[lid]["requires"].get("packages", []):
+			if not unlocked_packages.has(pkg):
+				ok = false
+				break
+		if ok:
+			out.append(lid)
+	return out
+
 ## Grafts: passive run-long modifiers (the relic analog). Pure data; the sim
 ## consults owned grafts at the relevant decision points.
 ## One-use consumables: harvested when a room blooms, or bought at shrines.
@@ -479,9 +527,13 @@ const CLEANSE_SMOG_RELIEF := 1  # a cleanse pauses the smog clock, never rewinds
 ##   draft_offers         offers per descent draft (default 3)
 ##   draft_upgrades_only  draft candidates are only the + forms of held
 ##                        abilities (no candidate = the draft is skipped)
+##   open_pool            true adds every PACKAGES ability to the draft pool
+##                        (the pre-Block-A all-packages variety as a choice;
+##                        the profile's one-package-per-run commitment is the
+##                        default). Applied before pool_ban.
 const MUTATOR_CONFIG_KEYS := [
 	"kit_max", "max_hp_delta", "bank_cap", "oil_mult", "extra_common_enemy", "shop",
-	"pool_ban", "kit_ban", "draft_offers", "draft_upgrades_only",
+	"pool_ban", "kit_ban", "draft_offers", "draft_upgrades_only", "open_pool",
 ]
 const MUTATORS := {
 	"kit_of_3": {"name": "Kit of Three", "desc": "ability kit capped at 3", "config": {"kit_max": 3}},
@@ -495,6 +547,8 @@ const MUTATORS := {
 	"wide_draft": {"name": "Wide Draft", "desc": "four offers in every descent draft", "config": {"draft_offers": 4}},
 	"upgrades_only": {"name": "Upgrades Only", "desc": "drafts offer only + forms of what you hold",
 		"config": {"draft_upgrades_only": true}},
+	"open_pool": {"name": "Open Pool", "desc": "draft from every package at once",
+		"config": {"open_pool": true}},
 }
 
 ## Post-win difficulty tiers. Tier N applies the first N modifiers, stacking.
@@ -545,6 +599,16 @@ const MILESTONES := [
 	{"id": "no_lance", "kind": "mutator", "requires": {"wins_without": ["solar_lance"]}, "desc": "Win with no Solar Lance in your kit"},
 	{"id": "wide_draft", "kind": "mutator", "requires": {"casts": {"grow_spike": 60}}, "desc": "Land 60 Grow Spikes"},
 	{"id": "upgrades_only", "kind": "mutator", "requires": {"won_with": ["seed_bomb+"]}, "desc": "Win holding Seed Bomb+"},
+	# Block A: the run-start choices. `open_pool` hands back the old
+	# everything-at-once draft pool (a run now commits to one package), and the
+	# loadout rows open the starting kits in LOADOUTS - each earned by playing
+	# the thing it hands you.
+	{"id": "open_pool", "kind": "mutator", "requires": {"wins": 1}, "desc": "Draft from every package at once"},
+	{"id": "tidewarden", "kind": "loadout", "requires": {"best_floor": 3}, "desc": "Reach the Refinery Gate"},
+	{"id": "flarekeeper", "kind": "loadout", "requires": {"best_floor": 4}, "desc": "Reach the Cracking Yard"},
+	{"id": "spiker", "kind": "loadout", "requires": {"casts": {"grow_spike": 30}}, "desc": "Land 30 Grow Spikes"},
+	{"id": "lasher", "kind": "loadout", "requires": {"won_with": ["vine_whip"]}, "desc": "Win holding Vine Whip"},
+	{"id": "skyrunner", "kind": "loadout", "requires": {"wins": 1}, "desc": "Shut down the Furnace"},
 ]
 
 ## Terrain vaults: hand-authored set-pieces stamped into a room. Terrain-only

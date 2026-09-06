@@ -11,12 +11,23 @@ extends RefCounted
 ## casts summed across every recorded run. Milestone predicates read those.
 ##
 ## Daily-challenge runs never touch the career: `record_daily` files the best
-## result per daily seed in `daily_best` and records nothing else.
+## result per daily seed in `daily_best` and records nothing else, and
+## `daily_config` derives a daily's whole run config from its seed alone -
+## no career state, no live content tables (see DAILY_* below).
 
 const Content := preload("res://sim/content.gd")
 
 ## Per-run records kept for the history predicates; older entries are dropped.
 const HISTORY_MAX := 50
+
+## Frozen daily lists (docs/PROGRESSION_REVIEW.md §6.1, Block A). A daily's
+## loadout / package / mutator are picked off THESE lists, never off the live
+## Content tables: a table that grows later must not move an earlier date's
+## challenge onto different content (or onto content that did not exist when
+## the date was played). "" means "none" on the package and mutator axes.
+const DAILY_LOADOUTS := ["tender", "tidewarden", "flarekeeper", "spiker", "lasher"]
+const DAILY_PACKAGES := ["mycology", "hydraulics", "aeolian", ""]
+const DAILY_MUTATORS := ["kit_of_3", "double_oil", "brittle", "parched", "overtime", "boarded", ""]
 
 var runs := 0
 var wins := 0
@@ -25,8 +36,11 @@ var best_floor := 0
 var unlocked_tier := 0
 var unlocked_packages: Array = []
 var unlocked_mutators: Array = []
-## Milestone buckets with no consumer yet (kinds "loadout" and "graft").
+## Starting loadouts the career has earned (Content.LOADOUTS ids); "tender"
+## is always playable and is never listed here. Read by game_config and by
+## the shell's LOADOUT row.
 var unlocked_loadouts: Array = []
+## Milestone bucket with no consumer yet (kind "graft").
 var unlocked_grafts: Array = []
 ## Compact per-run records {won, floor, tier, turns, seed, kit, grafts},
 ## newest last, at most HISTORY_MAX of them.
@@ -204,17 +218,87 @@ static func _holds(kit: Array, want: String) -> bool:
 	return false
 
 
-## Config for the next run at the requested tier (clamped to what is unlocked).
-func game_config(req_tier: int = 0, req_mutators: Array = []) -> Dictionary:
+## Config for the next run: the tier, mutators, loadout and single package the
+## menu asked for, each clamped to what the career has actually unlocked. The
+## sim gets no "kit" key - the loadout carries the starting kit.
+##
+## One package per run (docs/PROGRESSION_REVIEW.md §6.1, Block A): a package is
+## a run-scoped commitment, so the draft pool is 14 or 17 ids, never 23. The
+## old everything-at-once pool is now a deliberate choice, the `open_pool`
+## mutator. An unknown or locked package is simply dropped ("none").
+func game_config(req_tier: int = 0, req_mutators: Array = [], req_loadout: String = "tender", req_package: String = "") -> Dictionary:
 	var muts: Array = []
 	for m in req_mutators:
 		if unlocked_mutators.has(m):
 			muts.append(m)
+	var pkgs: Array = []
+	if unlocked_packages.has(req_package):
+		pkgs.append(String(req_package))
 	return {
-		"packages": unlocked_packages.duplicate(),
+		"packages": pkgs,
 		"tier": clampi(req_tier, 0, unlocked_tier),
 		"mutators": muts,
+		"loadout": _pick_loadout(String(req_loadout)),
 	}
+
+
+## `want` when the career may play it, else "tender". The id must be known,
+## must be tender or unlocked, and its Content.LOADOUTS requires.packages must
+## all be unlocked - the sim applies whatever loadout it is handed and only
+## warns on an unknown id, so the requirement gate lives here.
+func _pick_loadout(want: String) -> String:
+	if not Content.LOADOUTS.has(want):
+		return "tender"
+	if want != "tender" and not unlocked_loadouts.has(want):
+		return "tender"
+	for pkg in Content.LOADOUTS[want]["requires"].get("packages", []):
+		if not unlocked_packages.has(pkg):
+			return "tender"
+	return want
+
+
+## The loadout ids a menu may offer: tender plus every unlocked loadout whose
+## package requirements this career has met. Preserves LOADOUTS order.
+func available_loadouts() -> Array:
+	var out: Array = []
+	for lid in Content.loadouts_for(unlocked_packages):
+		if lid == "tender" or unlocked_loadouts.has(lid):
+			out.append(lid)
+	return out
+
+
+## The daily challenge's choices, a pure function of the seed over the frozen
+## DAILY_* lists: {loadout, package, mutator, tier}. Career-agnostic by
+## construction - a daily needs nothing unlocked and unlocks nothing.
+static func daily_config(seed_v: int) -> Dictionary:
+	return {
+		"loadout": DAILY_LOADOUTS[_daily_pick(seed_v, "loadout", DAILY_LOADOUTS.size())],
+		"package": DAILY_PACKAGES[_daily_pick(seed_v, "package", DAILY_PACKAGES.size())],
+		"mutator": DAILY_MUTATORS[_daily_pick(seed_v, "mutator", DAILY_MUTATORS.size())],
+		"tier": 0,
+	}
+
+
+## That same daily as a sim run config (`Game.new(seed, ...)`): the three
+## choices spelled the way the sim reads them. One place, so the shell and
+## tests/daily_run.gd cannot drift apart on what today's run is.
+static func daily_game_config(seed_v: int) -> Dictionary:
+	var d := daily_config(seed_v)
+	var out := {
+		"packages": [], "tier": int(d["tier"]), "mutators": [],
+		"loadout": String(d["loadout"]),
+	}
+	if String(d["package"]) != "":
+		out["packages"] = [String(d["package"])]
+	if String(d["mutator"]) != "":
+		out["mutators"] = [String(d["mutator"])]
+	return out
+
+
+## Index for one daily axis: a hash of (seed, axis name), so the three picks
+## are independent - lengthening one list never shifts the others.
+static func _daily_pick(seed_v: int, axis: String, n: int) -> int:
+	return (hash("%d:%s" % [seed_v, axis]) & 0x7FFFFFFF) % n
 
 
 func to_dict() -> Dictionary:
@@ -269,7 +353,7 @@ static func load_from(path: String):  # -> Profile (or fresh if missing)
 	profile.unlocked_packages = _known_ids(data.get("unlocked_packages", []), Content.PACKAGES)
 	profile.unlocked_mutators = _known_ids(data.get("unlocked_mutators", []), Content.MUTATORS)
 	profile.unlocked_grafts = _known_ids(data.get("unlocked_grafts", []), Content.GRAFTS)
-	profile.unlocked_loadouts = _known_ids(data.get("unlocked_loadouts", []), {})  # no Content.LOADOUTS yet
+	profile.unlocked_loadouts = _known_ids(data.get("unlocked_loadouts", []), Content.LOADOUTS)
 	var casts: Dictionary = {}
 	var stored_casts = data.get("casts_by_base", {})
 	if stored_casts is Dictionary:

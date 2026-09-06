@@ -252,6 +252,26 @@ func _init() -> void:
 	print("mutators: %d rows over %d of %d config keys" % [
 		Content.MUTATORS.size(), mut_keys.size(), Content.MUTATOR_CONFIG_KEYS.size()])
 
+	# 11) loadouts as data (Block A): the live table, then the lint's own self-test
+	failures.append_array(_lint_loadouts(Content.LOADOUTS))
+	failures.append_array(_lint_loadout_selftest())
+	if Content.LOADOUTS.get("tender", {}).get("kit", []) != Content.STARTING_KIT:
+		failures.append("loadout tender: kit %s != STARTING_KIT %s" % [
+			str(Content.LOADOUTS.get("tender", {}).get("kit")), str(Content.STARTING_KIT)])
+	var free_loadouts: Array = Content.loadouts_for([])
+	var all_loadouts: Array = Content.loadouts_for(Content.PACKAGES.keys())
+	if free_loadouts.is_empty() or free_loadouts[0] != "tender":
+		failures.append("loadouts_for([]) = %s, expected tender first" % str(free_loadouts))
+	if all_loadouts != Content.LOADOUTS.keys():
+		failures.append("loadouts_for(every package) = %s, expected every row" % str(all_loadouts))
+	for lid in Content.LOADOUTS:
+		var pkgs: Array = Content.LOADOUTS[lid].get("requires", {}).get("packages", [])
+		if free_loadouts.has(lid) != pkgs.is_empty():
+			failures.append("loadouts_for([]) %s %s (requires %s)" % [
+				"has" if free_loadouts.has(lid) else "lacks", lid, str(pkgs)])
+	print("loadouts: %d rows, %d package-free (%s)" % [
+		Content.LOADOUTS.size(), free_loadouts.size(), str(free_loadouts)])
+
 	if failures.is_empty():
 		print("content: OK")
 		quit(0)
@@ -759,7 +779,7 @@ func _lint_graft_selftest() -> Array:
 
 # --- 10) mutator lint -----------------------------------------------------------
 
-const MUTATOR_BOOL_KEYS := ["shop", "kit_ban", "draft_upgrades_only"]
+const MUTATOR_BOOL_KEYS := ["shop", "kit_ban", "draft_upgrades_only", "open_pool"]
 const MUTATOR_ARRAY_KEYS := ["pool_ban"]
 
 
@@ -839,4 +859,116 @@ func _lint_mutator_selftest() -> Array:
 		out.append("mutator lint self-test: good fixture rejected: %s" % f)
 	print("mutator lint self-test: %d bad rows -> %d failures; %d good rows -> %d failures" % [
 		BAD_MUTATORS.size(), bad.size(), GOOD_MUTATORS.size(), good.size()])
+	return out
+
+
+# --- 11) loadout lint -----------------------------------------------------------
+
+const LOADOUT_ROW_KEYS := ["name", "desc", "kit", "protect", "requires"]
+const LOADOUT_KIT_SIZE := 3
+
+
+## Lints a LOADOUTS-shaped table; failure strings start with the loadout id.
+## A row needs name, desc, a kit of exactly three known base ability ids with
+## exactly one role == "mobility" id and seed_bomb among them, protect a
+## subset of the kit, and requires.packages all known PACKAGES ids.
+func _lint_loadouts(loadouts: Dictionary) -> Array:
+	var out: Array = []
+	for lid in loadouts:
+		var row = loadouts[lid]
+		var where := "loadout %s" % str(lid)
+		if not (row is Dictionary):
+			out.append("%s: row is not a Dictionary" % where)
+			continue
+		for k in ["name", "desc"]:
+			if not (row.get(k, null) is String) or String(row[k]).is_empty():
+				out.append("%s: missing or empty %s" % [where, k])
+		var kit = row.get("kit", null)
+		if not (kit is Array) or kit.size() != LOADOUT_KIT_SIZE:
+			out.append("%s: kit must be an Array of %d ids, got %s" % [where, LOADOUT_KIT_SIZE, str(kit)])
+			kit = [] if not (kit is Array) else kit
+		var mobility := 0
+		var seen := {}
+		for aid in kit:
+			if not (aid is String) or not Content.ABILITIES.has(aid):
+				out.append("%s: kit id %s not in ABILITIES" % [where, str(aid)])
+				continue
+			if Content.base_id(aid) != aid:
+				out.append("%s: kit id '%s' is a '+' form" % [where, aid])
+			if seen.has(aid):
+				out.append("%s: kit repeats '%s'" % [where, aid])
+			seen[aid] = true
+			if String(Content.ABILITIES[aid].get("role", "")) == "mobility":
+				mobility += 1
+		if mobility != 1:
+			out.append("%s: kit holds %d mobility abilities, need exactly 1" % [where, mobility])
+		if not kit.has("seed_bomb"):
+			out.append("%s: kit lacks seed_bomb" % where)
+		var protect = row.get("protect", null)
+		if not (protect is Array):
+			out.append("%s: protect must be an Array" % where)
+		else:
+			for aid in protect:
+				if not kit.has(aid):
+					out.append("%s: protect id %s is not in the kit" % [where, str(aid)])
+		var req = row.get("requires", null)
+		if not (req is Dictionary):
+			out.append("%s: requires must be a Dictionary" % where)
+		else:
+			for k in req:
+				if k != "packages":
+					out.append("%s: unknown requires key '%s'" % [where, str(k)])
+			var pkgs = req.get("packages", [])
+			if not (pkgs is Array):
+				out.append("%s: requires.packages must be an Array" % where)
+			else:
+				for pkg in pkgs:
+					if not Content.PACKAGES.has(pkg):
+						out.append("%s: required package '%s' not in PACKAGES" % [where, str(pkg)])
+		for k in row:
+			if not LOADOUT_ROW_KEYS.has(k):
+				out.append("%s: unknown row key '%s'" % [where, str(k)])
+	return out
+
+
+const BAD_LOADOUTS := {
+	"no_name": {"desc": "x", "kit": ["solar_lance", "seed_bomb", "mycelium_dash"], "protect": [], "requires": {}},
+	"no_desc": {"name": "x", "kit": ["solar_lance", "seed_bomb", "mycelium_dash"], "protect": [], "requires": {}},
+	"two_ids": {"name": "x", "desc": "x", "kit": ["seed_bomb", "mycelium_dash"], "protect": [], "requires": {}},
+	"four_ids": {"name": "x", "desc": "x", "kit": ["solar_lance", "seed_bomb", "mycelium_dash", "vine_whip"], "protect": [], "requires": {}},
+	"unknown_id": {"name": "x", "desc": "x", "kit": ["laser_lance", "seed_bomb", "mycelium_dash"], "protect": [], "requires": {}},
+	"plus_form": {"name": "x", "desc": "x", "kit": ["solar_lance+", "seed_bomb", "mycelium_dash"], "protect": [], "requires": {}},
+	"no_mobility": {"name": "x", "desc": "x", "kit": ["solar_lance", "seed_bomb", "vine_whip"], "protect": [], "requires": {}},
+	"two_mobility": {"name": "x", "desc": "x", "kit": ["updraft", "seed_bomb", "mycelium_dash"], "protect": [], "requires": {}},
+	"no_seed_bomb": {"name": "x", "desc": "x", "kit": ["solar_lance", "vine_whip", "mycelium_dash"], "protect": [], "requires": {}},
+	"repeat_id": {"name": "x", "desc": "x", "kit": ["seed_bomb", "seed_bomb", "mycelium_dash"], "protect": [], "requires": {}},
+	"protect_outside": {"name": "x", "desc": "x", "kit": ["solar_lance", "seed_bomb", "mycelium_dash"], "protect": ["vine_whip"], "requires": {}},
+	"protect_not_array": {"name": "x", "desc": "x", "kit": ["solar_lance", "seed_bomb", "mycelium_dash"], "protect": "seed_bomb", "requires": {}},
+	"no_requires": {"name": "x", "desc": "x", "kit": ["solar_lance", "seed_bomb", "mycelium_dash"], "protect": []},
+	"bad_package": {"name": "x", "desc": "x", "kit": ["solar_lance", "seed_bomb", "mycelium_dash"], "protect": [], "requires": {"packages": ["alchemy"]}},
+	"bad_requires_key": {"name": "x", "desc": "x", "kit": ["solar_lance", "seed_bomb", "mycelium_dash"], "protect": [], "requires": {"wins": 1}},
+	"extra_row_key": {"name": "x", "desc": "x", "kit": ["solar_lance", "seed_bomb", "mycelium_dash"], "protect": [], "requires": {}, "hooks": []},
+}
+const GOOD_LOADOUTS := {
+	"starter": {"name": "x", "desc": "x", "kit": ["solar_lance", "seed_bomb", "mycelium_dash"], "protect": ["mycelium_dash", "seed_bomb"], "requires": {}},
+	"gated": {"name": "x", "desc": "x", "kit": ["gust", "seed_bomb", "updraft"], "protect": ["updraft"], "requires": {"packages": ["aeolian"]}},
+	"bare": {"name": "x", "desc": "x", "kit": ["burrow", "seed_bomb", "tide"], "protect": [], "requires": {"packages": ["mycology", "hydraulics"]}},
+}
+
+
+func _lint_loadout_selftest() -> Array:
+	var out: Array = []
+	var bad: Array = _lint_loadouts(BAD_LOADOUTS)
+	for lid in BAD_LOADOUTS.keys():
+		var hit := false
+		for f in bad:
+			if String(f).begins_with("loadout %s" % lid):
+				hit = true
+		if not hit:
+			out.append("loadout lint self-test: bad fixture '%s' was accepted" % lid)
+	var good: Array = _lint_loadouts(GOOD_LOADOUTS)
+	for f in good:
+		out.append("loadout lint self-test: good fixture rejected: %s" % f)
+	print("loadout lint self-test: %d bad rows -> %d failures; %d good rows -> %d failures" % [
+		BAD_LOADOUTS.size(), bad.size(), GOOD_LOADOUTS.size(), good.size()])
 	return out

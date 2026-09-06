@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[5,3],"type":"ability"}],
 "expect": {"events":[{"id":"burrow+","t":"ability","target":"(5, 3)"},{"t":"teleport","to":"(5, 3)"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C4 burrow+ range 3 -> 4: teleport reads its reach from adef.range through the \"tile\" target list, so the tunnel lands 4 tiles east of the start at (1,3) - a target the base row cannot legally take",
-"sim_version": 6,
+"sim_version": 7,
 "hash": "9c42e37d83890bc6e924655710193d3f16dbafe540064254932f220dc5a0cf2c"
 }

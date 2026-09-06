@@ -1,28 +1,32 @@
 extends SceneTree
-## Daily run: seed and mutator derived from today's date (UTC), full pool.
-## Deterministic sim means everyone playing today's date plays the same run;
-## the optimizer replay hash doubles as a verification fingerprint.
+## Daily run: the seed comes from today's date (UTC) and the run's config comes
+## from that seed alone - `Profile.daily_config` picks the loadout, the one
+## package and the mutator off the profile's frozen DAILY_* lists, so a content
+## table that grows later never moves an earlier date's challenge. Deterministic
+## sim means everyone playing today's date plays the same run; the optimizer
+## replay hash doubles as a verification fingerprint.
 ## Run: godot --headless --path . --script tests/daily_run.gd
 
 const Content := preload("res://sim/content.gd")
 const Game := preload("res://sim/game.gd")
 const Sweep := preload("res://tests/sweep_lib.gd")
 const Roster := preload("res://bots/roster.gd")
-
-## The daily draws from the six launch mutators, in their original table order.
-const DAILY_MUTATORS := ["kit_of_3", "double_oil", "brittle", "parched", "overtime", "boarded"]
+const Profile := preload("res://meta/profile.gd")
 
 
 func _init() -> void:
 	var date := Time.get_date_string_from_system(true)
 	var seed_v: int = hash(date) & 0x7FFFFFFF
-	# a frozen list, not Content.MUTATORS.keys(): a table that grows would move
-	# every date's daily onto a different mutator (and onto ones no career has)
-	var muts: Array = DAILY_MUTATORS
-	var mut: String = muts[seed_v % muts.size()]
-	var config := {"mutators": [mut], "packages": Content.PACKAGES.keys()}
-	print("TENDER daily %s — seed %d, mutator: %s (%s)" % [
-		date, seed_v, mut, Content.MUTATORS[mut]["desc"]])
+	# career-agnostic: the daily needs nothing unlocked and unlocks nothing
+	var daily: Dictionary = Profile.daily_config(seed_v)
+	var config: Dictionary = Profile.daily_game_config(seed_v)
+	var mut := String(daily["mutator"])
+	var pkg := String(daily["package"])
+	print("TENDER daily %s — seed %d" % [date, seed_v])
+	print("  loadout: %s (%s)" % [
+		Content.LOADOUTS[daily["loadout"]]["name"], str(Content.LOADOUTS[daily["loadout"]]["kit"])])
+	print("  package: %s" % ("none" if pkg == "" else "%s %s" % [pkg, str(Content.PACKAGES[pkg])]))
+	print("  mutator: %s" % ("none" if mut == "" else "%s (%s)" % [mut, Content.MUTATORS[mut]["desc"]]))
 	print(Sweep.header("daily_run", ",".join(Roster.names()), config, [seed_v]))
 	for bot_name in Roster.names():
 		var game = Game.new(seed_v, config)

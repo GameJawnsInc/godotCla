@@ -31,7 +31,12 @@ func _init() -> void:
 	var bot := Sweep.pick_bot()
 	var bot_name := Sweep.pick_bot_name()
 	var seeds := Sweep.seed_list(SEEDS)
-	print(Sweep.header("sweep_tiers", bot_name, {}, seeds))
+	# this runner sweeps the tier axis itself, so SWEEP_TIER is dropped from
+	# the base config (it still picks the extra reference-row tier below);
+	# SWEEP_LOADOUT / SWEEP_UNLOCK ride along on every tier's config.
+	var base_cfg := Sweep.env_config({})
+	base_cfg.erase("tier")
+	print(Sweep.header("sweep_tiers", bot_name, base_cfg, seeds))
 	if bot == null:
 		print("FAIL: unknown SWEEP_BOT")
 		quit(1)
@@ -45,7 +50,9 @@ func _init() -> void:
 			seeds.size(), 100.0 * zero_upper, 100.0 * MIN_UPPER])
 	var unwinnable := 0
 	for t in range(Content.TIERS.size() + 1):
-		var m := Sweep.measure(seeds, {"tier": t}, bot)
+		var cfg := base_cfg.duplicate(true)
+		cfg["tier"] = t
+		var m := Sweep.measure(seeds, cfg, bot)
 		var label: String = "base" if t == 0 else Content.TIERS[t - 1]["name"]
 		var ci: Vector2 = m["ci"]
 		var judged: bool = t <= HEURISTIC_BAND or ceiling
@@ -65,7 +72,7 @@ func _init() -> void:
 ## Locked reference kits at tier 0 and (when different) at SWEEP_TIER.
 func _reference_rows(seeds: Array, bot) -> void:
 	var tiers: Array = [0]
-	var sweep_tier: int = int(Sweep.tier_config({"tier": 0})["tier"])
+	var sweep_tier: int = int(Sweep.env_config({"tier": 0})["tier"])
 	if sweep_tier != 0:
 		tiers.append(sweep_tier)
 	print("\nreference rows (locked {kit: K, pool: K}, %d seeds):" % seeds.size())

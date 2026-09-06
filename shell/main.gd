@@ -158,7 +158,14 @@ const FX_MS := 700
 var _fx: Array = []  # transient map effects {kind, pos: Vector2 tile, text, col, t0}
 var _floor_fade_ms := -99999  # descend wipe: new floor fades in from dark
 var profile  # meta career: unlocks tiers/packages across runs (meta/profile.gd)
-var sel_tier := 0  # difficulty picked on the menu, clamped to what is unlocked
+## The four run choices the title screen makes, all persisted in tender.cfg
+## and all clamped to what the career unlocked (_clamp_selection). PLAY turns
+## them into a run config through profile.game_config; in daily seed mode the
+## seed's own Profile.daily_config replaces them for that run.
+var sel_tier := 0        # difficulty, clamped to profile.unlocked_tier
+var sel_loadout := "tender"  # Content.LOADOUTS id: the starting kit
+var sel_package := ""    # the one package committed to the run ("" = none)
+var sel_mutator := ""    # the one mutator the run carries ("" = none)
 var run_tier := 0  # tier the live run actually started at
 var _run_recorded := false
 var _run_unlocks: Array = []
@@ -176,6 +183,7 @@ func _ready() -> void:
 	audio = AudioKit.new()
 	add_child(audio)
 	_load_settings()
+	_clamp_selection()
 	audio.sfx_on = sfx_on
 	audio.music_on = music_on
 	set_process(true)
@@ -189,17 +197,47 @@ func _ready() -> void:
 	queue_redraw()
 
 
+## Today's daily seed (UTC date): the same number for everyone, so the menu
+## can show today's config before PLAY rolls the seed.
+func _daily_seed() -> int:
+	return hash(Time.get_date_string_from_system(true)) & 0x7FFFFFFF
+
+
 func _roll_seed() -> void:
 	if seed_mode == "daily":
-		seed_v = hash(Time.get_date_string_from_system(true)) & 0x7FFFFFFF
+		seed_v = _daily_seed()
 	else:
 		seed_v = (int(Time.get_unix_time_from_system()) * 1103515245 + Time.get_ticks_msec()) % 1000000
 
 
-func _new_game() -> void:
+## Keep the menu's run choices inside what the career actually unlocked: the
+## cfg file is written by whatever build ran last, and load_from can drop an
+## unlock when content is renamed. Called on boot, on every menu draw and
+## before a run starts, so an impossible selection can never reach the sim.
+func _clamp_selection() -> void:
 	sel_tier = clampi(sel_tier, 0, int(profile.unlocked_tier))
-	run_tier = sel_tier
-	var cfg: Dictionary = profile.game_config(sel_tier)
+	if not profile.available_loadouts().has(sel_loadout):
+		sel_loadout = "tender"
+	if not profile.unlocked_packages.has(sel_package):
+		sel_package = ""
+	if not profile.unlocked_mutators.has(sel_mutator):
+		sel_mutator = ""
+
+
+## The config PLAY starts a run with: the menu's own choices through the
+## career gate, or - in daily seed mode - the seed's own frozen daily config,
+## which no career unlock touches (a daily needs nothing unlocked).
+func _run_config() -> Dictionary:
+	if seed_mode == "daily":
+		return Profile.daily_game_config(seed_v)
+	var muts: Array = [] if sel_mutator == "" else [sel_mutator]
+	return profile.game_config(sel_tier, muts, sel_loadout, sel_package)
+
+
+func _new_game() -> void:
+	_clamp_selection()
+	var cfg: Dictionary = _run_config()
+	run_tier = int(cfg.get("tier", 0))
 	game = Game.new(seed_v, cfg)
 	_game_is_run = true
 	_run_recorded = false
@@ -351,6 +389,10 @@ func _load_settings() -> void:
 		intro_mode = String(cf.get_value("ui", "intro_mode", "once"))
 		sfx_on = bool(cf.get_value("ui", "sfx_on", true))
 		music_on = bool(cf.get_value("ui", "music_on", true))
+		sel_tier = int(cf.get_value("ui", "tier", 0))
+		sel_loadout = String(cf.get_value("ui", "loadout", "tender"))
+		sel_package = String(cf.get_value("ui", "package", ""))
+		sel_mutator = String(cf.get_value("ui", "mutator", ""))
 
 
 func _save_settings() -> void:
@@ -360,6 +402,10 @@ func _save_settings() -> void:
 	cf.set_value("ui", "intro_mode", intro_mode)
 	cf.set_value("ui", "sfx_on", sfx_on)
 	cf.set_value("ui", "music_on", music_on)
+	cf.set_value("ui", "tier", sel_tier)
+	cf.set_value("ui", "loadout", sel_loadout)
+	cf.set_value("ui", "package", sel_package)
+	cf.set_value("ui", "mutator", sel_mutator)
 	cf.save(CFG_PATH)
 
 
@@ -1142,6 +1188,12 @@ func _tap(tag: String) -> void:
 				audio.set_music(music_on)
 			"tier":
 				sel_tier = (sel_tier + 1) % (int(profile.unlocked_tier) + 1)
+			"loadout":
+				sel_loadout = String(_cycle(profile.available_loadouts(), sel_loadout))
+			"package":
+				sel_package = String(_cycle(_with_none(profile.unlocked_packages), sel_package))
+			"mutator":
+				sel_mutator = String(_cycle(_with_none(profile.unlocked_mutators), sel_mutator))
 			"hold":
 				hold_ms = {300: 420, 420: 650, 650: 300}.get(hold_ms, 420)
 			"seed":
@@ -1150,6 +1202,66 @@ func _tap(tag: String) -> void:
 				intro_mode = {"once": "always", "always": "never", "never": "once"}.get(intro_mode, "once")
 		_save_settings()
 		queue_redraw()
+
+
+## The entry after `cur` in `opts`, wrapping round; the first entry when `cur`
+## has fallen out of the list (an unlock the career no longer has).
+static func _cycle(opts: Array, cur):
+	if opts.is_empty():
+		return cur
+	return opts[(opts.find(cur) + 1) % opts.size()]
+
+
+## `ids` with the "none" choice ("") in front - the package and mutator rows
+## always offer opting out.
+static func _with_none(ids: Array) -> Array:
+	var out: Array = [""]
+	out.append_array(ids)
+	return out
+
+
+## Display name for a run choice: loadouts and mutators carry one in Content,
+## a package is just its id, and "" is the opted-out row.
+static func _choice_name(kind: String, id: String) -> String:
+	if id == "":
+		return "none"
+	match kind:
+		"loadout":
+			return String(Content.LOADOUTS[id]["name"]) if Content.LOADOUTS.has(id) else id
+		"mutator":
+			return String(Content.MUTATORS[id]["name"]) if Content.MUTATORS.has(id) else id
+	return id.capitalize()
+
+
+## The title screen's row stack as data: [label, tap tag, highlighted]. A row
+## with an empty tag is a line of text, not a button (the daily config line).
+## Built here so a headless test can read exactly what the menu offers.
+func _menu_rows() -> Array:
+	var rows: Array = []
+	var has_resume: bool = (game != null and not game.over and _game_is_run) \
+		or FileAccess.file_exists(RUN_SAVE_PATH)
+	if has_resume:
+		rows.append(["RESUME RUN", "resume", true])
+	rows.append(["PLAY", "play", true])
+	if int(profile.unlocked_tier) > 0:
+		var tn := "base run" if sel_tier == 0 else String(Content.TIERS[sel_tier - 1]["name"])
+		rows.append(["DIFFICULTY %d: %s" % [sel_tier, tn], "set:tier", false])
+	if seed_mode == "daily":
+		# a daily's loadout, package and mutator come from the seed, not from
+		# the menu: one line saying what today hands everyone
+		var d: Dictionary = Profile.daily_config(_daily_seed())
+		rows.append(["TODAY: %s · %s · %s" % [
+			_choice_name("loadout", String(d["loadout"])),
+			_choice_name("package", String(d["package"])),
+			_choice_name("mutator", String(d["mutator"]))], "", false])
+	else:
+		rows.append(["LOADOUT: %s" % _choice_name("loadout", sel_loadout), "set:loadout", false])
+		rows.append(["PACKAGE: %s" % _choice_name("package", sel_package), "set:package", false])
+		rows.append(["MUTATOR: %s" % _choice_name("mutator", sel_mutator), "set:mutator", false])
+	rows.append(["TUTORIAL", "tutorial", false])
+	rows.append(["SETTINGS", "settings", false])
+	rows.append(["QUIT", "quit", false])
+	return rows
 
 
 func _draft_key(k: int) -> void:
@@ -1617,29 +1729,20 @@ func _draw_menu(vw: float, vh: float) -> void:
 
 	var bw := vw * 0.62
 	var bx := (vw - bw) / 2.0
-	var has_resume: bool = (game != null and not game.over and _game_is_run) \
-		or FileAccess.file_exists(RUN_SAVE_PATH)
-	var has_tier: bool = int(profile.unlocked_tier) > 0
-	sel_tier = clampi(sel_tier, 0, int(profile.unlocked_tier))
 	# build the row list first, then size the stack to the space above the footer
-	var rows: Array = []
-	if has_resume:
-		rows.append(["RESUME RUN", "resume", true])
-	rows.append(["PLAY", "play", true])
-	if has_tier:
-		var tn := "base run" if sel_tier == 0 else String(Content.TIERS[sel_tier - 1]["name"])
-		rows.append(["DIFFICULTY %d: %s" % [sel_tier, tn], "set:tier", false])
-	rows.append(["TUTORIAL", "tutorial", false])
-	rows.append(["SETTINGS", "settings", false])
-	rows.append(["QUIT", "quit", false])
+	_clamp_selection()
+	var rows: Array = _menu_rows()
 	var top := vh * 0.46
 	var bottom := vh * 0.935
-	var gap := vh * 0.02
+	var gap := vh * 0.016
 	var bh := minf(vh * 0.072, (bottom - top - gap * (rows.size() - 1)) / rows.size())
 	var y := top + (bottom - top - (bh * rows.size() + gap * (rows.size() - 1))) / 2.0
 	for row in rows:
-		_button(Rect2(bx, y, bw, bh), String(row[0]), String(row[1]), int(bh * 0.38),
-			COL_GOLD if bool(row[2]) else COL_DIM_TEXT)
+		if String(row[1]) == "":
+			_txt_c_fit(vw / 2.0, y + bh * 0.66, String(row[0]), COL_CREAM, int(bh * 0.30), bw)
+		else:
+			_button(Rect2(bx, y, bw, bh), String(row[0]), String(row[1]), int(bh * 0.38),
+				COL_GOLD if bool(row[2]) else COL_DIM_TEXT)
 		y += bh + gap
 	var career := "seed mode: %s" % seed_mode
 	if int(profile.runs) > 0:
@@ -1718,6 +1821,18 @@ func _chip(x: float, ypos: float, icon: String, value: String, vw: float, vh: fl
 	return x + isz + vw * 0.008 + font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x + vw * 0.035
 
 
+## The run's config in one line, from the sim's own snapshot: which loadout is
+## being played, then the package and the mutator that shaped the run. Drawn
+## under the skies bar so what a run is set to is never a mystery mid-floor.
+func _config_line(snap: Dictionary) -> String:
+	var parts: Array = [_choice_name("loadout", String(snap.get("loadout", "tender")))]
+	for pkg in snap.get("packages", []):
+		parts.append(_choice_name("package", String(pkg)))
+	for m in snap.get("mutators", []):
+		parts.append(_choice_name("mutator", String(m)))
+	return " · ".join(parts)
+
+
 func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	var pl: Dictionary = snap["player"]
 	var pad := _safe_top(vh)
@@ -1744,6 +1859,8 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	var span := choke * 1.15
 	var frac: float = clampf(snap["smog"] / span, 0.0, 1.0)
 	_txt(Vector2(mx, y2 + mh + vh * 0.0155), "SKIES", COL_DIM_TEXT, int(vh * 0.0125))
+	_txt_fit(Vector2(mx + vw * 0.075, y2 + mh + vh * 0.0155), _config_line(snap),
+		COL_DIM_TEXT, int(vh * 0.0125), vw * 0.55)
 	draw_rect(Rect2(mx, y2, mw, mh), Color("6fae9c"))
 	draw_rect(Rect2(mx, y2, mw, mh * 0.45), Color("8cc7ae"))
 	draw_circle(Vector2(mx + mw * 0.93, y2 + mh * 0.42), mh * 0.30, Color("f2e4a0"))

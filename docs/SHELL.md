@@ -3,10 +3,12 @@
 ## Menu, settings, tutorial
 
 The shell boots to a main menu: PLAY (fresh run), RESUME (when a run is
-live), TUTORIAL, SETTINGS, QUIT. Settings persist to `user://tender.cfg`:
-hold-to-inspect delay, run seed mode (random / daily — everyone playing a
-daily gets the same run), and intro-tips frequency. The sheet also prints
-where finished run logs are kept. The `=` button in the status strip returns
+live), the run-setup rows (see *Setting up a run*), TUTORIAL, SETTINGS,
+QUIT. Settings persist to `user://tender.cfg`: hold-to-inspect delay, run
+seed mode (random / daily — everyone playing a daily gets the same run),
+and intro-tips frequency, alongside the run choices the title screen makes
+(difficulty, loadout, package, mutator). The sheet also prints where
+finished run logs are kept. The `=` button in the status strip returns
 to the menu mid-run without losing the run.
 
 The tutorial is **entirely data** in `shell/tutorial.gd`: an ASCII-drawn
@@ -68,6 +70,47 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
 - CLEANSE / DESCEND / HELP buttons bottom-right
 - tap shop cards at a shrine, draft options between floors
 - after a run: tap anywhere for the next seed
+
+## Setting up a run
+
+Under PLAY (and under DIFFICULTY, once a win has opened the ladder) the
+title screen carries three cycling rows — tap one to step to the next
+choice. They persist in `user://tender.cfg` alongside the difficulty, and
+every one of them is clamped to what the career has actually unlocked, so
+a profile that unlocked nothing shows `tender / none / none`:
+
+| row | cycles through | comes from |
+|---|---|---|
+| LOADOUT | Tender plus every unlocked loadout whose package requirement is met | `Content.LOADOUTS`, filtered by `profile.available_loadouts()` |
+| PACKAGE | none, then each unlocked tech package | `profile.unlocked_packages` |
+| MUTATOR | none, then each unlocked mutator | `profile.unlocked_mutators` |
+
+A **loadout** is the starting kit: Tender is the familiar lance / seed
+bomb / dash, and each of the others swaps one ability for another way to
+open a fight (every loadout keeps a seed bomb and a mobility ability).
+A **package** is now a run-scoped commitment, not a permanent pool
+addition: a run drafts from the base pool plus at most one package (14 or
+17 ids), and the old draft-from-everything pool is a deliberate choice
+again — the `open_pool` mutator, unlocked by the first win.
+
+PLAY builds the run config with `profile.game_config(tier, [mutator],
+loadout, package)`, so the career gate lives in one place: a locked
+loadout falls back to Tender and a locked package to none, however the
+cfg file got written.
+
+In daily seed mode the three rows are replaced by a single line —
+`TODAY: <loadout> · <package> · <mutator>` — and PLAY uses exactly that.
+A daily's config is `Profile.daily_config(seed)`, derived from the seed
+alone over frozen lists in the profile, so today's challenge is the same
+for everyone and a content table that grows later cannot move an earlier
+date's run. Dailies ignore career unlocks entirely, and still score only
+to the daily board.
+
+The status strip names the live run's config under the skies bar —
+loadout, then package, then mutator (`Tidewarden · Aeolian · Brittle`) —
+read straight off the sim's snapshot, so a run never hides what it was
+set up as. Run saves already carry the whole config in their header, so
+none of this changes the save format.
 
 ## Legend
 
@@ -134,7 +177,9 @@ pipeline, no binary assets, diffable art. Edit the string, rerun.
 The shell persists a career profile (`user://tender_profile.json`,
 `meta/profile.gd`). Finished runs are recorded automatically; the first
 win unlocks the difficulty ladder and a DIFFICULTY cycler appears on the
-menu (tiers from `Content.TIERS`, clamped to what is unlocked). The win
+menu (tiers from `Content.TIERS`, clamped to what is unlocked). Milestones
+also unlock packages, mutators and **loadouts** — the LOADOUT / PACKAGE /
+MUTATOR rows above are what a career spends its unlocks on. The win
 screen lists newly unlocked tiers/packages/mutators, and the menu footer
 shows runs / wins / best floor. Daily runs are scored but never counted
 toward the career: a finished daily is filed as that seed's best result

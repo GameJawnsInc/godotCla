@@ -14,6 +14,10 @@ extends SceneTree
 ## 5) profile bookkeeping the summary made possible (review §6.3, C4): the
 ##    history cap, every milestone predicate on constructed summaries, the
 ##    unknown-kind dispatch path, and dailies staying out of the career
+## 6) the Block A run-setup layer (review §6.1): the loadout rows, the
+##    loadout/package/requires rules game_config enforces, daily_config as a
+##    pure function of the seed over frozen lists, and every loadout actually
+##    being winnable by the optimizer
 ## Run: godot --headless --path . --script tests/test_meta.gd
 
 const Content := preload("res://sim/content.gd")
@@ -25,16 +29,24 @@ const Roster := preload("res://bots/roster.gd")
 const CAREER_RUNS := 40
 const TIER0_CAREER_RUNS := 20
 const MUTATOR_SEEDS := 8
-## Milestones a career that never leaves tier 0 cannot reach: everything gated
-## on tier_wins (Content.MILESTONES), plus `no_lance`. The two C4 milestones
-## that are NOT here are the reachability witnesses - a tier-0 optimizer career
-## lands `upgrades_only` (a win holding Seed Bomb+) and `wide_draft` (60
-## effective Grow Spikes; 20 tier-0 runs cast ~160) on its own. `no_lance`
-## wants a win whose final kit dropped Solar Lance, which the optimizer never
-## does: intentionally hard, not unreachable - a draft pick over a full kit can
-## drop it (sim/game.gd _act_draft), and the predicate is covered directly in
-## _check_predicates below.
-const TIER0_UNREACHABLE := ["aeolian", "brittle", "parched", "no_lance"]
+## Winnability floor per starting loadout (review §6.1 item 7): the optimizer
+## over seeds 1..LOADOUT_SEEDS must clear LOADOUT_MIN_WINS with each
+## package-free loadout, and SKYRUNNER_MIN_WINS with skyrunner (which only
+## exists with its package). These are "is this playable at all" gates, not
+## balance targets - docs/BALANCE.md owns the bands, and the 30-seed measure
+## of each loadout is the Measure phase's job, not this suite's.
+const LOADOUT_SEEDS := 20
+const LOADOUT_MIN_WINS := 3
+const SKYRUNNER_MIN_WINS := 1
+## Milestones a career that never leaves tier 0 cannot reach: exactly the ones
+## gated on tier_wins (Content.MILESTONES). Everything else is a reachability
+## witness - 20 tier-0 optimizer runs land `upgrades_only` (a win holding Seed
+## Bomb+), `wide_draft` (60 effective Grow Spikes; the career casts ~180),
+## `no_lance` and `lasher` (wins whose final kit dropped Solar Lance / kept
+## Vine Whip - a draft pick over a full kit can do both, sim/game.gd
+## _act_draft), and every Block A loadout row. An exact set, so a milestone
+## that quietly becomes unreachable fails here.
+const TIER0_UNREACHABLE := ["aeolian", "brittle", "parched"]
 
 ## Fixture milestone table for the dispatch check (Content.MILESTONES is
 ## const, so the profile's `milestone_rows` seam stands in for it): one row per
@@ -57,7 +69,7 @@ func _init() -> void:
 	var unlock_log: Array = []
 	for s in range(1, CAREER_RUNS + 1):
 		var t: int = profile.unlocked_tier
-		var summary := _career_summary(s, profile.game_config(t))
+		var summary := _career_summary(s, _career_config(profile, t))
 		var news: Array = profile.record_run(summary)
 		for id in news:
 			unlock_log.append("run %d: %s" % [s, id])
@@ -139,7 +151,7 @@ func _init() -> void:
 		_fail("game_config(9, ...) tier %d, unlocked %d" % [int(clamped["tier"]), profile.unlocked_tier])
 	if not clamped["mutators"].is_empty():
 		_fail("game_config(9, ['nonexistent']) returned mutators %s" % str(clamped["mutators"]))
-	if clamped.keys() != ["packages", "tier", "mutators"]:
+	if clamped.keys() != ["packages", "tier", "mutators", "loadout"]:
 		_fail("game_config shape changed: %s" % str(clamped.keys()))
 	var fresh: Dictionary = Profile.new().game_config(9, ["kit_of_3"])
 	if int(fresh["tier"]) != 0 or not fresh["mutators"].is_empty() or not fresh["packages"].is_empty():
@@ -149,7 +161,7 @@ func _init() -> void:
 	# 4d) a career that never leaves tier 0: the unreachable set is exact
 	var p0 = Profile.new()
 	for s in range(1, TIER0_CAREER_RUNS + 1):
-		p0.record_run(_career_summary(s, p0.game_config(0)))
+		p0.record_run(_career_summary(s, _career_config(p0, 0)))
 	var unreachable: Array = []
 	for m in Content.MILESTONES:
 		var id := String(m["id"])
@@ -185,6 +197,12 @@ func _init() -> void:
 	_check_dispatch()
 	_check_daily()
 
+	# 6) Block A run setup
+	_check_loadouts()
+	_check_game_config()
+	_check_daily_config()
+	_check_loadout_winnable()
+
 	if failures == 0:
 		print("meta: OK")
 	quit(1 if failures > 0 else 0)
@@ -199,6 +217,14 @@ func _fail(msg: String) -> void:
 func _expect(got, want, label: String) -> void:
 	if got != want:
 		_fail("%s: got %s, expected %s" % [label, str(got), str(want)])
+
+
+## The config a career plays at `tier`: the tender loadout and the first
+## package it owns - a run commits to ONE package now (review §6.1 item 3),
+## so the simulated career exercises the same shape a real one does.
+func _career_config(profile, tier: int) -> Dictionary:
+	var pkg := "" if profile.unlocked_packages.is_empty() else String(profile.unlocked_packages[0])
+	return profile.game_config(tier, [], "tender", pkg)
 
 
 ## One optimizer run, handing back the sim's own end-of-run record. Same loop
@@ -217,7 +243,7 @@ func _check_load_filters() -> void:
 		"unlocked_packages": ["mycology", "ghost_package"],
 		"unlocked_mutators": ["kit_of_3", "ghost_mutator"],
 		"unlocked_grafts": ["deep_cells", "ghost_graft"],
-		"unlocked_loadouts": ["ghost_loadout"],
+		"unlocked_loadouts": ["tidewarden", "ghost_loadout"],
 		"casts_by_base": {"grow_spike": 12, "ghost_ability": 99},
 		"daily_best": {"42": {"won": true, "floor": 9, "turns": 100}},
 		"history": [{
@@ -234,7 +260,7 @@ func _check_load_filters() -> void:
 	_expect(p.unlocked_packages, ["mycology"], "load_from drops an unknown package")
 	_expect(p.unlocked_mutators, ["kit_of_3"], "load_from drops an unknown mutator")
 	_expect(p.unlocked_grafts, ["deep_cells"], "load_from drops an unknown graft")
-	_expect(p.unlocked_loadouts, [], "load_from drops loadouts (no Content.LOADOUTS yet)")
+	_expect(p.unlocked_loadouts, ["tidewarden"], "load_from keeps a known loadout and drops an unknown one")
 	_expect(str(p.casts_by_base), str({"grow_spike": 12}), "load_from drops casts for an unknown ability")
 	_expect(p.history.size(), 1, "load_from keeps a history entry with unknown ids")
 	_expect(p.history[0]["kit"], ["solar_lance", "seed_bomb+"], "load_from filters the ids inside a history entry")
@@ -363,6 +389,136 @@ func _check_daily() -> void:
 	print("daily records: OK (%d seeds filed, career untouched)" % p.daily_best.size())
 
 
+# --- 6) Block A: loadouts, run setup, dailies ---------------------------------
+
+## Every Content.LOADOUTS row as the meta layer reads it: three known
+## abilities, exactly one of them mobility, and tender still the starting kit
+## (tests/test_content.gd lints the rest of the row).
+func _check_loadouts() -> void:
+	for lid in Content.LOADOUTS:
+		var kit: Array = Content.LOADOUTS[lid]["kit"]
+		_expect(kit.size(), 3, "loadout %s kit size" % lid)
+		var mob := 0
+		for aid in kit:
+			if not Content.ABILITIES.has(String(aid)):
+				_fail("loadout %s names unknown ability %s" % [lid, str(aid)])
+			elif String(Content.ABILITIES[String(aid)]["role"]) == "mobility":
+				mob += 1
+		_expect(mob, 1, "loadout %s mobility abilities" % lid)
+	_expect(Content.LOADOUTS["tender"]["kit"], Content.STARTING_KIT, "tender plays the starting kit")
+	print("loadouts: %d rows, each 3 known abilities with exactly one mobility" % Content.LOADOUTS.size())
+
+
+## The career gate around a run config: a loadout must be tender or unlocked
+## AND have its package requirement met, and a run commits to at most one
+## unlocked package (never the whole shelf).
+func _check_game_config() -> void:
+	var p = Profile.new()
+	var c0: Dictionary = p.game_config(0, [], "tidewarden", "mycology")
+	_expect(String(c0["loadout"]), "tender", "game_config: a locked loadout falls back to tender")
+	_expect(c0["packages"], [], "game_config: a locked package is dropped")
+	_expect(c0.has("kit"), false, "game_config never sends a kit (the loadout carries it)")
+	_expect(String(p.game_config(0, [], "no_such_loadout")["loadout"]), "tender",
+		"game_config: an unknown loadout id plays tender")
+	p.unlocked_loadouts = ["tidewarden", "skyrunner"]
+	p.unlocked_packages = ["mycology"]
+	_expect(String(p.game_config(0, [], "tidewarden")["loadout"]), "tidewarden",
+		"game_config: an unlocked loadout is played")
+	_expect(String(p.game_config(0, [], "skyrunner")["loadout"]), "tender",
+		"game_config: an unlocked loadout with an unmet package requirement falls back")
+	_expect(p.available_loadouts(), ["tender", "tidewarden"], "available_loadouts hides the unmet one")
+	p.unlocked_packages = ["mycology", "aeolian"]
+	_expect(String(p.game_config(0, [], "skyrunner")["loadout"]), "skyrunner",
+		"game_config: the requirement met, the loadout is played")
+	_expect(p.available_loadouts(), ["tender", "tidewarden", "skyrunner"],
+		"available_loadouts: tender plus the unlocked loadouts whose requires are met")
+	_expect(p.game_config(0, [], "tender", "mycology")["packages"], ["mycology"],
+		"game_config commits the asked-for package")
+	_expect(p.game_config(0, [], "tender", "hydraulics")["packages"], [],
+		"game_config drops a locked package")
+	_expect(p.game_config(0, [], "tender", "")["packages"], [], "game_config: no package asked, none committed")
+	# one package per run: the pool is base + 3, never base + every package
+	var pool: Array = Game.new(1, p.game_config(0, [], "tender", "mycology")).draft_pool
+	_expect(pool.size(), Content.DRAFT_POOL.size() + Content.PACKAGES["mycology"].size(),
+		"a committed package pools 3 ids, not every package's")
+	var kit: Array = Game.new(1, p.game_config(0, [], "skyrunner", "aeolian")).player["kit"]
+	_expect(kit, Content.LOADOUTS["skyrunner"]["kit"], "the config's loadout reaches the sim's kit")
+	print("game_config: OK (loadout gate, one package per run)")
+
+
+## The daily is career-agnostic and frozen: `daily_config` is a pure function
+## of the seed, every pick comes off the profile's own DAILY_* lists (never a
+## live Content table), and the config it makes plays in the sim.
+func _check_daily_config() -> void:
+	var d1: Dictionary = Profile.daily_config(12345)
+	_expect(d1.keys(), ["loadout", "package", "mutator", "tier"], "daily_config shape")
+	_expect(int(d1["tier"]), 0, "a daily is always tier 0")
+	_expect(str(Profile.daily_config(12345)), str(d1), "daily_config is a pure function of the seed")
+	var off_list := 0
+	var loadouts := {}
+	var packages := {}
+	var mutators := {}
+	for s in range(1, 401):
+		var d: Dictionary = Profile.daily_config(s)
+		if not Profile.DAILY_LOADOUTS.has(String(d["loadout"])) \
+			or not Profile.DAILY_PACKAGES.has(String(d["package"])) \
+			or not Profile.DAILY_MUTATORS.has(String(d["mutator"])) or int(d["tier"]) != 0:
+			off_list += 1
+		loadouts[d["loadout"]] = true
+		packages[d["package"]] = true
+		mutators[d["mutator"]] = true
+	_expect(off_list, 0, "every daily picks off the frozen lists at tier 0")
+	_expect(loadouts.size(), Profile.DAILY_LOADOUTS.size(), "400 seeds reach every daily loadout")
+	_expect(packages.size(), Profile.DAILY_PACKAGES.size(), "...every package choice, none included")
+	_expect(mutators.size(), Profile.DAILY_MUTATORS.size(), "...every mutator choice, none included")
+	# the frozen lists name real content, and nothing on them needs an unlock
+	for lid in Profile.DAILY_LOADOUTS:
+		if not Content.LOADOUTS.has(lid):
+			_fail("DAILY_LOADOUTS names unknown loadout %s" % lid)
+		elif not Content.LOADOUTS[lid]["requires"].get("packages", []).is_empty():
+			_fail("daily loadout %s needs a package unlock" % lid)
+	for pkg in Profile.DAILY_PACKAGES:
+		if pkg != "" and not Content.PACKAGES.has(String(pkg)):
+			_fail("DAILY_PACKAGES names unknown package %s" % str(pkg))
+	for mut in Profile.DAILY_MUTATORS:
+		if mut != "" and not Content.MUTATORS.has(String(mut)):
+			_fail("DAILY_MUTATORS names unknown mutator %s" % str(mut))
+	# and the run config it makes is exactly those three choices
+	for s in [7, 99, 4242]:
+		var d: Dictionary = Profile.daily_config(s)
+		var g = Game.new(s, Profile.daily_game_config(s))
+		_expect(g.loadout, String(d["loadout"]), "daily seed %d: the sim plays its loadout" % s)
+		_expect(g.player["kit"], Content.LOADOUTS[d["loadout"]]["kit"], "daily seed %d: its kit" % s)
+		_expect(g.packages, [] if String(d["package"]) == "" else [String(d["package"])],
+			"daily seed %d: its package" % s)
+		_expect(g.mutators, [] if String(d["mutator"]) == "" else [String(d["mutator"])],
+			"daily seed %d: its mutator" % s)
+		_expect(g.tier, 0, "daily seed %d: tier 0" % s)
+	print("daily_config: OK (pure over %d loadouts x %d packages x %d mutators, frozen)" % [
+		Profile.DAILY_LOADOUTS.size(), Profile.DAILY_PACKAGES.size(), Profile.DAILY_MUTATORS.size()])
+
+
+## Every loadout has to be playable, not just legal: the optimizer over seeds
+## 1..LOADOUT_SEEDS must win with each of them. A loadout that needs a package
+## is measured with that package committed, at the lower skyrunner bar.
+func _check_loadout_winnable() -> void:
+	var seeds := Sweep.seed_list_from(LOADOUT_SEEDS, 1)
+	for lid in Content.LOADOUTS:
+		var cfg := {"loadout": lid}
+		var need := LOADOUT_MIN_WINS
+		var reqs: Array = Content.LOADOUTS[lid]["requires"].get("packages", [])
+		if not reqs.is_empty():
+			cfg["packages"] = reqs.duplicate()
+			need = SKYRUNNER_MIN_WINS
+		var m := Sweep.measure(seeds, cfg, "optimizer")
+		print("loadout %-12s %d/%d wins, avg floor %.1f%s" % [lid, int(m["wins"]), seeds.size(),
+			float(m["avg_floor"]), "" if reqs.is_empty() else "  (packages %s)" % str(reqs)])
+		if int(m["wins"]) < need:
+			_fail("loadout %s: %d/%d optimizer wins over seeds 1..%d, needs %d" % [
+				lid, int(m["wins"]), seeds.size(), LOADOUT_SEEDS, need])
+	print("loadout winnability: %d loadouts, optimizer seeds 1..%d" % [Content.LOADOUTS.size(), LOADOUT_SEEDS])
+
+
 ## "" when `pool` is DRAFT_POOL followed by the package's ids (each present
 ## exactly once), else a description of the problem.
 func _package_pool_problem(pkg: String, pool: Array) -> String:
@@ -475,6 +631,28 @@ func _mutator_invariant_problem(mut: String) -> String:
 				var gs = Game.new(s, cfg)
 				if String(gs.shop.get("ability", "")) == "solar_lance":
 					return "seed %d: boarded-free shrine still stocks solar_lance" % s
+		"open_pool":
+			# the old draft-from-everything pool, now a deliberate choice: every
+			# package ability joins the pool and nothing else changes
+			var g = Game.new(1, cfg)
+			var extra: Array = []
+			for pkg in Content.PACKAGES:
+				for aid in Content.PACKAGES[pkg]:
+					if not g.draft_pool.has(aid):
+						return "draft_pool lacks package id %s" % aid
+					extra.append(aid)
+			var base_ids: Array = []
+			for aid in g.draft_pool:
+				if not extra.has(aid):
+					base_ids.append(aid)
+			if base_ids != Content.DRAFT_POOL:
+				return "pool minus the package ids %s != DRAFT_POOL" % str(base_ids)
+			if g.draft_pool.size() != Content.DRAFT_POOL.size() + extra.size():
+				return "draft_pool size %d, expected %d" % [g.draft_pool.size(), Content.DRAFT_POOL.size() + extra.size()]
+			var base_g = Game.new(1)
+			for aid in extra:
+				if base_g.draft_pool.has(aid):
+					return "base game already pools %s (check proves nothing)" % aid
 		"wide_draft":
 			var offers := _first_draft_offers(2, cfg)
 			if offers.size() != 4:

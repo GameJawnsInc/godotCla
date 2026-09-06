@@ -6,9 +6,12 @@ extends RefCounted
 ##   SWEEP_BOT       roster persona (default optimizer; unknown -> push_error)
 ##   SWEEP_SEEDS     seed count for runners that call seed_list()
 ##   SWEEP_SEED_FROM first seed (default 1) - out-of-sample checks
-##   SWEEP_TIER      difficulty tier merged into configs via tier_config()
+##   SWEEP_TIER      difficulty tier merged into configs via env_config()
+##   SWEEP_LOADOUT   starting loadout id (Content.LOADOUTS), via env_config()
+##   SWEEP_UNLOCK    unlock state, via env_config(): fresh | package:<id> | all
 
 const Game := preload("res://sim/game.gd")
+const Content := preload("res://sim/content.gd")
 const Roster := preload("res://bots/roster.gd")
 const Tally := preload("res://tests/tally.gd")
 
@@ -190,12 +193,42 @@ static func seed_list(default_count: int) -> Array:
 	return seed_list_from(count, seed_from())
 
 
-## `cfg` with SWEEP_TIER merged in when the env var is set.
-static func tier_config(cfg: Dictionary) -> Dictionary:
+## `cfg` with the run-config env vars merged in - the axes every runner that
+## calls this gains for free (docs/PROGRESSION_REVIEW.md 6.1 Block A):
+##   SWEEP_TIER=<int>       difficulty tier
+##   SWEEP_LOADOUT=<id>     starting loadout, a Content.LOADOUTS id
+##   SWEEP_UNLOCK=<state>   unlock state: "fresh" (packages []),
+##                          "package:<id>" (packages [id] - the one-package
+##                          run-scoped commitment), "all" (every package)
+## An unset var leaves `cfg` untouched, so a runner with no env vars behaves
+## exactly as before. An unknown loadout id or SWEEP_UNLOCK value is a
+## push_error and the key is left alone, so the printed header always names
+## the config the runs actually used.
+static func env_config(cfg: Dictionary) -> Dictionary:
 	var out := cfg.duplicate(true)
 	var v := OS.get_environment("SWEEP_TIER")
 	if v != "":
 		out["tier"] = int(v)
+	var lo := OS.get_environment("SWEEP_LOADOUT")
+	if lo != "":
+		if Content.LOADOUTS.has(lo):
+			out["loadout"] = lo
+		else:
+			push_error("unknown SWEEP_LOADOUT '%s' (have: %s)" % [lo, ", ".join(Content.LOADOUTS.keys())])
+	var un := OS.get_environment("SWEEP_UNLOCK")
+	if un != "":
+		if un == "fresh":
+			out["packages"] = []
+		elif un == "all":
+			out["packages"] = Content.PACKAGES.keys()
+		elif un.begins_with("package:"):
+			var pkg := un.substr(8)
+			if Content.PACKAGES.has(pkg):
+				out["packages"] = [pkg]
+			else:
+				push_error("unknown SWEEP_UNLOCK package '%s' (have: %s)" % [pkg, ", ".join(Content.PACKAGES.keys())])
+		else:
+			push_error("bad SWEEP_UNLOCK '%s' (want fresh | package:<id> | all)" % un)
 	return out
 
 

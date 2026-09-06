@@ -268,6 +268,40 @@ tests a different build muscle so no single draft strategy trivializes it.
   named ability, land N of a cast, win with N grafts. Daily runs are scored
   into their own best-per-seed table and never touch the career.
 
+### Run-start choices
+
+Three picks open a run, on top of the difficulty tier: a **loadout**, at most
+**one tech package**, and at most one **mutator**. All three are data the
+career unlocks, and all three are visible on the status line while the run is
+being played.
+
+- **Loadouts are the starting kit as data.** Six rows: **Tender** (the starter
+  — Solar Lance, Seed Bomb, Mycelium Dash), **Tidewarden** (Water Jet shoves in
+  place of the lance), **Flarekeeper** (Sun Flare lights the oil),
+  **Spiker** (Grow Spike pays off growth), **Lasher** (Vine Whip drags) and
+  **Skyrunner** (Gust, Seed Bomb, Updraft — wind positioning, no lance and no
+  dash, the one row that needs a package unlocked). Every row keeps **Seed
+  Bomb**, the boss-gate key, and exactly **one mobility ability**, so no
+  loadout can strand a run; the ids a persona may never drop or scrap travel
+  with the row instead of living in bot code.
+- **Each loadout is earned by playing the thing it hands you**: reach the
+  Refinery Gate for Tidewarden, the Cracking Yard for Flarekeeper, land 30 Grow
+  Spikes for Spiker, win a run holding Vine Whip for Lasher, shut down the
+  Furnace for Skyrunner.
+- **A package is a run-scoped commitment, not a permanent widening.** A run
+  drafts from the base pool plus at most one package — 14 ids or 17, never 23 —
+  so unlocking the third package deepens the choice instead of diluting every
+  draft. The old everything-at-once pool survives as a deliberate choice, the
+  **Open Pool** mutator, unlocked by the first win.
+- **The daily challenge derives all three from the date seed alone**, over
+  frozen lists, so growing a content table never moves an earlier date and
+  everyone plays the same run. Daily results are scored into their own
+  best-per-seed table and never touch the career.
+
+A loadout is a starting position, not a difficulty setting: the harness gates
+each one on being bot-winnable, and the spread between them is a balance
+number in `docs/BALANCE.md`, not a design promise.
+
 ### Post-win
 
 Both replay hooks, both implemented as data over the same sim:

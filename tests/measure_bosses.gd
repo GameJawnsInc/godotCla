@@ -27,7 +27,7 @@ func _init() -> void:
 	var seeds := 45
 	if OS.get_environment("BOSS_SEEDS") != "":
 		seeds = int(OS.get_environment("BOSS_SEEDS"))
-	var cfg := Sweep.tier_config({})
+	var cfg := Sweep.env_config({})
 	if OS.get_environment("BOSS_KIT") != "":
 		var kit: Array = Array(OS.get_environment("BOSS_KIT").split(","))
 		cfg = Sweep.locked_config(kit, cfg)
