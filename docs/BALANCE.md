@@ -3655,12 +3655,13 @@ the standing number for legacy at tier 6 was Block A's 18/30 = 60% [42, 75].
 | criterion | tier 0 | tier 6 | verdict |
 |---|---|---|---|
 | wins within CI of legacy | 97% [83, 99] vs 73% [56, 86] | 90% [74, 97] vs 40% [25, 58] | **not met, in the safe direction**: the intervals are disjoint at both tiers and the planner is the one above. The bar was written to catch a planner that pays for depth with wins; nothing here does |
-| timeouts zero | 1 in 30 | 1 in 30 | **not met** (legacy is 0 in 60 over the same seeds). `playtest` and `verify_kit` do not print which seed timed out |
+| timeouts zero | 1 in 30 | 1 in 30 | **not met as measured; fixed in the same commit** (legacy is 0 in 60 over the same seeds). A scratch seed finder named both: tier 0 seed 23 stalled 400 turns on floor 2 with the quota met, dashing between two growth tiles while the field goal flipped between the shrine (an oil sludge parked in the corridor was four tiles away) and the stairs (three tiles away); tier 6 was the same shape with a stocked ability at tier markup that the search refused to buy. Two routing guards close both: the ability and heal branches apply the search's own worth test before they count as a reason to detour, and a detour abandoned because an enemy closed to three is not retried on that floor; past the floor's choke there is no detour at all. Re-run after the fix: 0 timeouts over seeds 1..30 at tier 0 and at tier 6 |
 | shrine stands >= 1.5 per run | 2.47 | 2.27 | met |
 | graft buys > 0 | 74 over 30 runs | 65 over 30 runs | met |
 
-Two of four met literally; the wins row misses upward and the timeout row is a
-real defect, 2 hung runs in 60. Everything else the persona was built for -
+Three of four met after the routing fix; the wins row misses upward and the
+timeout row was a real defect, 2 hung runs in 60, closed before the commit
+(see the row). Everything else the persona was built for -
 shopping, planning, combo rate - moved in the intended direction at both tiers.
 
 ### Tiers 7 and 8 (`tests/verify_kit.gd`, 20 seeds)
@@ -3835,9 +3836,10 @@ legacy's 0.39 and 0.51, while terrain share is flat (0.16 vs 0.16, 0.11 vs
 - **`hook_capped` is still 0 everywhere**, including the tier-6 run where the
   planner fires 342 hooks over 30 runs.
 - **Two timeouts in 60 planner runs** (one at tier 0, one at tier 6) against
-  zero in the same 60 legacy runs. Neither runner prints the seed, so the
-  autopsy is not written; `AUTOPSY_BOT=deeproot_plan` over seeds 1..30 is the
-  way to find them, and at 28 s per run that is a 15-minute job.
+  zero in the same 60 legacy runs: both were shrine-routing goal flips and
+  both are closed (acceptance table row). The 30-seed win counts above were
+  measured before that fix; the fix only touches when the bot walks to a
+  shrine, but the next planner sweep re-measures them.
 
 ### Runners in this entry, and what they cost
 

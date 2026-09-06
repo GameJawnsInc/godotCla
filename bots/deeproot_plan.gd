@@ -108,6 +108,18 @@ const NO_GOAL := Vector2i(-99, -99)
 ## value ({} when the plain setup-then-end_turn line was the best). Read by
 ## tests; never by the bot itself.
 var last_plan := {}
+## Floor on which a shrine detour was abandoned because an enemy closed to
+## SHRINE_SAFE_RADIUS mid-walk: one detour attempt per floor, or the goal
+## flips between shrine and stairs every time the bot steps toward and away
+## from an enemy parked in the corridor (seed 23 tier 0 oscillated on two
+## growth tiles for 400 turns that way).
+var _shrine_abandoned_floor := -1
+
+
+func reset(seed_v: int) -> void:
+	super.reset(seed_v)
+	_shrine_abandoned_floor = -1
+	last_plan = {}
 
 
 func get_bot_name() -> String:
@@ -459,7 +471,16 @@ func _shrine_goal(snap: Dictionary) -> Vector2i:
 	var shrine: Vector2i = snap["map"]["shrine"]
 	if shrine == Vector2i(-1, -1) or snap["player"]["pos"] == shrine:
 		return NO_GOAL
+	var floor_n := int(snap["floor"])
+	if floor_n == _shrine_abandoned_floor:
+		return NO_GOAL
+	# past the floor's choke the clock bites every turn: no shopping detours
+	if _sim != null and int(snap["smog"]) >= int(_sim.floor_def(floor_n).get("smog_choke", 0)) \
+			and int(_sim.floor_def(floor_n).get("smog_choke", 0)) > 0:
+		return NO_GOAL
 	if _enemies_within(snap, SHRINE_SAFE_RADIUS) > 0:
+		if _field_floor == floor_n and _field_goal == shrine:
+			_shrine_abandoned_floor = floor_n
 		return NO_GOAL
 	var cheapest := _cheapest_useful_buy(snap)
 	if cheapest < 0 or int(snap["bloom"]) < cheapest:
