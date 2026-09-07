@@ -4693,6 +4693,269 @@ lances on the next turn proving the +1 regen landed).
   "shop_cost("graft") is 4 + 2 per owned graft". The runner's numbers are fine
   (it never calls `shop_cost`), the sentence is not.
 
+## 2026-09-07c - bump 8 follow-up: detour gates read the counter, hash view
+
+Housekeeping over the three items 2026-09-07b (bump 8, graft prices as data)
+left on its watch list, plus a confirmation on a fourth. **No sim rule changed
+and `Game.SIM_VERSION` stays 8**: a bot's routing gate is not sim behaviour,
+and `state_hash()`'s *view* of the state is not replay behaviour - every
+stored log replays to the same actions, the same events and the same outcome
+as before. What moved is 16 corpus records (12 hash-only re-stamps, 4
+re-recorded bot logs) and the routing of the three personas that shop through
+`optimizer._path_step` - optimizer, magpie and fanatic. The instrument is
+unchanged (still v2), so this entry compares directly with 07b, 07 and 06d -
+**except** for those three, whose pre-07c numbers are off-instrument from
+here.
+
+### 1) The shrine detour gate reads the cheapest offer, not a flat purse
+
+`bots/optimizer.gd:830-845`, new `_graft_worth_detour(snap)`: an absent or
+empty `snap.shop.graft_prices` reads false, otherwise the test is
+`bloom >= min(prices)`. It replaces the flat `snap.shop.has("grafts") and
+bloom >= 5` at `bots/optimizer.gd:852` and `bots/magpie.gd:54`. The ability
+(4) and heal (3) branches are untouched, and magpie and fanatic both extend
+optimizer, so all three personas move. Nothing else does: wanderer and sprout
+route on their own `bot_base` code, and deeproot / `deeproot_plan`, though
+they extend optimizer, override `choose_action` outright and never reach
+`_path_step`.
+
+Measured one persona at a time against a `git archive` copy of the bump-8 tree
+(`3758f98`) driven through the same `sweep_lib` loop. The optimizer's first
+divergence is **seed 4, action 17** - turn 4, floor 1, purse **4 bloom**,
+offers `[deep_cells, verdant_pulse]` priced `[3, 3]`. The old gate refused the
+detour at 4 < 5 and descended; the new gate steps onto the shrine and buys
+`deep_cells` for 3. The old flat 5 was both too strict (a cheap counter it
+could afford) and too loose (a dear one it could not), which is why this lands
+in **both** directions:
+
+| persona | bump-8 tree, seeds won (1..30) | this tree | net |
+|---|---|---|---|
+| optimizer | 13/30 `[1, 3, 4, 5, 11, 13, 14, 20, 21, 24, 27, 28, 29]` | 13/30 `[1, 3, 5, 11, 13, 14, 16, 20, 21, 24, 27, 28, 29]` | **0** - seed 4 lost, seed 16 gained |
+| fanatic | 8/30 `[1, 4, 5, 12, 20, 22, 23, 29]` | 7/30 `[1, 5, 12, 20, 22, 23, 29]` | **-1** - seed 4, the same run the optimizer lost |
+| magpie | 5/30 `[1, 5, 16, 17, 23]` | 5/30 `[1, 5, 16, 17, 23]` | **0** - the identical win set; only the internals moved |
+
+The bump-8 column reproduces 07b's recorded win counts exactly (13/30, 8/30,
+5/30), which is what makes the pairing trustworthy. One win changes hands on
+the optimizer and one is lost on the fanatic: **routing noise, not a balance
+move** - every interval below still covers both columns.
+
+### 2) `state_hash()` hashes stored state only
+
+`sim/game.gd:457-467`. `snapshot()["shop"]` carries `graft_prices`, recomputed
+per snapshot from the stock, the owned grafts and the tier; `state_hash()` now
+swaps the raw stored `shop` dict into the snapshot before hashing, with the
+rule stated in the comment: **derived snapshot keys never enter the hash**. A
+hash that moves because a price *table* moved reports a state change that never
+happened. `tests/test_economy.gd:426` (`_check_state_hash_view`) pins it and
+prints "**state_hash: 59 priced / 0 graftless shrines over 59 seeds; derived
+keys stay out**".
+
+Bump 8 moved 22 corpus hashes: 4 logs re-recorded there and 18 hash-only
+re-stamps. Reading the 18 against `git show` of the pre-bump-8 tree
+(`a223f93`), the bump-8 tree (`3758f98`) and this one:
+
+| the 18 bump-8 hash-only records | this pass | reading |
+|---|---|---|
+| 10 - `blockb_forge_once`, `c1b_spore_vial`, `c5_open_pool`, `det_deeproot_s42`, `det_magpie_s3`, `det_sprout_s3`, `det_sprout_s42`, `det_wanderer_s3`, `det_wanderer_s11`, `det_wanderer_s42` | re-stamped, back to their **exact pre-bump-8 hash** | the derived key was the whole reason they moved |
+| 2 - `det_fanatic_s11`, `det_fanatic_s42` | re-stamped, **not** back to pre-bump-8 | their logs buy grafts whose price changed at bump 8, so the stored state genuinely differs (actions and outcome identical) |
+| 4 - `blockb_graft_buy`, `det_magpie_s11`, `det_optimizer_s11`, `det_sprout_s11` | untouched | their final shrine stocks no grafts, so the derived key was never in their hash |
+| 2 - `det_fanatic_s3`, `det_optimizer_s3` | re-recorded (item 1) | superseded by the routing change |
+
+So 07b's attribution ("a derived field moved 18 hashes") was close but not
+exact: **10 of the 18 were purely the derived field, and those 10 came home**.
+The rule is now enforced by a test rather than by care.
+
+### 3) The comment, and the fanatic canary
+
+`sim/content.gd:420` cited bump 3's "+9 wins at tier 0" for `solar_core`; it
+now reads "+12 wins at tier 0 (06d; +13 at 07b)" - the two re-baselined
+figures. `tests/sweep_grafts.gd`'s header, the other comment 07b flagged, was
+already rewritten for the per-offer sheet in that pass.
+
+`canary_fanatic_s1` is **confirmed and left alone**. Its note is "stall canary:
+fanatic seed 1 must finish (timeout false) within the run caps" and its
+`expect` is `{won: true, floor: 7, timeout: false, turns: 143}`. A win finishes
+as well as a death does, so the record still demonstrates exactly what it was
+recorded for; 07b's "pick a new seed for that canary" reads as optional polish,
+not a defect. Its hash did not move in this pass and its persona still
+reproduces its stored action log.
+
+### Suite after the change
+
+Every line verbatim, all exit 0:
+
+- `tests/playtest.gd`, 30 seeds, gate ON: "**gate: all PASS**" (the persona
+  table and the verdict block are below)
+- `tests/test_bots.gd`: "**bots: OK (63 checks)**" (49 at 07b), with the new
+  "detour gate optimizer bloom 5 -> (0, -1), bloom 6 -> (1, 0)" and "detour
+  gate magpie    bloom 5 -> (0, -1), bloom 6 -> (1, 0)" from
+  `_check_shop_detour_gates` (`tests/test_bots.gd:328`)
+- `tests/test_economy.gd`: "**economy: OK (175 checks)**" (170 at 07b), with
+  the `state_hash` line quoted above
+- `tests/test_regressions.gd`: "=== regressions | dir res://tests/regressions |
+  62 records | strict false | regen false ===" / "**regressions: 62 ok, 0
+  failed**", and with `REGRESS_STRICT=1` "strict true" / "regressions: 62 ok,
+  0 failed"
+- `tests/test_determinism.gd`: "**determinism: OK (61 checks, 8 personas)**"
+- `tests/test_meta.gd`: "**meta: OK**", "tier-0 career: 22 runs, 11 wins, best
+  floor 7, grow_spike casts 245, locked milestones ["aeolian", "brittle",
+  "parched"]"
+- `tests/test_invariants.gd`: "invariants: 1400 generations, 0 violations",
+  "floor_def invariants: 11 configs, 1540 generations, 0 violations"
+- `tests/test_content.gd` "content: OK", `tests/test_grammar.gd` "grammar: OK
+  (529 checks)", `tests/test_shell.gd` "shell smoke: OK"
+
+One suite constant moved with the bots, and one 20-seed row; both are recorded
+rather than papered over. **`TIER0_CAREER_RUNS` 20 -> 22**
+(`tests/test_meta.gd:30`): the tier-0 career asserts an *exact*
+locked-milestone set, so every reachable milestone needs a witness inside the
+run budget, and the new routing moved which seed witnesses `no_lance` (a win
+whose final kit dropped Solar Lance). Measured on the same career loop in a
+scratch tree, the locked set is `[aeolian, brittle, no_lance, parched]`
+through run 20 and `[aeolian, brittle, parched]` from run **21** - a win kitted
+`[water_jet, seed_bomb+, mycelium_dash, grow_spike+, spore_cloud]` - holding
+through run 24. So 21 is the minimum and 22, the count the suite now runs,
+ships with one run of margin. `no_lance` deliberately did **not** go into
+`TIER0_UNREACHABLE`: it is reachable at tier 0, it just lands later, and moving
+it would turn a reachability gate into a record of the current bot. And the
+20-seed loadout winnability row moved three cells -
+flarekeeper 10/20 -> **9/20**, spiker 15/20 -> **14/20**, skyrunner 6/20 ->
+**5/20**, with tender 8/20, tidewarden 12/20 and lasher 9/20 unchanged. Those
+are 20-seed smoke gates, not bands; the loadout bands stay owned by a 30-seed
+measure.
+
+### Persona table (playtest, 30 seeds, tier 0, gate ON)
+
+Before = the 2026-09-07b entry. After =
+`=== playtest | bot wanderer,sprout,magpie,fanatic,optimizer,deeproot | config
+{  } | seeds 1..30 (30) ===`. Both columns seeds 1..30, tier 0, Wilson 95% as
+printed by the runner.
+
+| persona | 2026-09-07b | this commit | moved outside CI? |
+|---|---|---|---|
+| wanderer | 0/30 = 0% [0, 11], floor 1.0, turns 83.5 | 0/30 = 0% [0, 11], floor 1.0, turns 83.5 | no - **identical** |
+| sprout | 1/30 = 3% [1, 17], floor 3.5, turns 100.2 | 1/30 = 3% [1, 17], floor 3.5, turns 100.2 | no - **identical** |
+| magpie | 5/30 = 17% [7, 34], floor 4.1, turns 178.9 | 5/30 = 17% [7, 34], floor 4.0, turns 171.1 | no |
+| fanatic | 8/30 = 27% [14, 44], floor 5.6, turns 105.5 | **7/30** = 23% [12, 41], floor 5.5, turns 102.4 | no |
+| optimizer | 13/30 = 43% [27, 61], floor 6.1, turns 96.5 | 13/30 = 43% [27, 61], floor 6.1, turns 96.8 | no |
+| deeproot | 22/30 = 73% [56, 86], floor 6.9, turns 104.7 | 22/30 = 73% [56, 86], floor 6.9, turns 104.7 | no - **identical** |
+
+**The three personas the gate cannot reach are bit-identical and the three it
+can all moved.** wanderer, sprout and deeproot reproduce 07b to the last
+decimal of every KPI cell - including sprout, which shops but routes on its
+own code, and deeproot, which inherits `_path_step` and never calls it.
+Damage per run: magpie 57.7 -> **53.6**, fanatic 25.7 -> **24.0**, optimizer
+23.0 -> **22.8**, everyone else equal. Combos/run: magpie 22.13 ->
+21.53, fanatic 16.77 -> 15.80, optimizer 14.50 -> 14.17.
+
+### What the gate did at the shrine
+
+Same 30-seed run. `bloom spent on grafts` is the choice-sinks counter bump 8
+added.
+
+| persona | shrine turns/run | graft buys | bloom on grafts | `solar_core` buys |
+|---|---|---|---|---|
+| optimizer | 1.17 -> **1.10** | 48 -> **51** | 272 (9.1/run) -> **283 (9.4/run)** | 6 -> **5** |
+| magpie | 27.27 -> **25.13** | 93 -> **91** | 656 (21.9/run) -> **637 (21.2/run)** | 10 -> 10 |
+| fanatic | 1.67 -> **1.93** | 49 -> **52** | 283 (9.4/run) -> **291 (9.7/run)** | 4 -> **3** |
+| sprout / wanderer / deeproot | 0.97 / 0.77 / 0.23, unchanged | 10 / 0 / 0, unchanged | 48 (1.6/run) / 0 / 0, unchanged | 0 / 0 / 0 |
+
+By id, after: optimizer `{ember_sap 7, verdant_pulse 8, carapace 3, oil_tithe
+8, deep_cells 5, compost 2, bloom_surge 8, undertow 3, solar_core 5,
+thick_bark 2}` (07b: `{ember_sap 7, verdant_pulse 7, carapace 2, oil_tithe 7,
+compost 3, solar_core 6, bloom_surge 7, deep_cells 5, undertow 3, thick_bark
+1}`); magpie `{bloom_surge 14, solar_core 10, verdant_pulse 13, compost 14,
+carapace 3, oil_tithe 6, deep_cells 9, ember_sap 11, thick_bark 5, undertow
+6}` (07b: `{bloom_surge 13, solar_core 10, verdant_pulse 14, compost 15,
+carapace 3, oil_tithe 7, deep_cells 9, ember_sap 11, thick_bark 5, undertow
+6}`).
+
+**The direction is what the fix predicted and the size is small.** The two
+shallow shoppers buy *more* grafts for slightly more bloom - the cheap 3-cost
+rows are now worth a short walk at a purse that used to buy nothing - and
+their shrine time moves in the last decimal either way (optimizer 1.17 ->
+1.10, fanatic 1.67 -> 1.93, both against a magpie that spends 25 turns a run
+there). magpie, which detours for everything anyway, loses two buys and 2.14
+shrine turns a run: a dear counter it cannot clear no longer pulls it off the
+route. The mix barely moves - one `solar_core` each for optimizer and
+fanatic - which is 07b's finding again: **price gates these personas, it does
+not steer them**.
+
+### Canary (magpie, 100 seeds)
+
+`=== verify_kit | bot magpie | config {  } | seeds 1..100 (100) ===`:
+**10/100 = 10% wins, win CI [6%, 17%]**, avg floor 3.6, turns on wins 228.0,
+damage taken 41.1/run, **0 timeouts, 0 illegal actions**, stall floors 67,
+quota-unmet deaths 10, `quota reclamps 0`, shrine turns/run 20.13, kit entropy
+5.14 bits, 286 graft buys, bloom spent on grafts 1896 (19.0/run), conversion
+0.53, hooks `{compost 1316, ember_sap 63, undertow 4}` capped 0.
+
+The rule (2026-09-05d) asks whether the **lower bound clears 17%**. It is
+**6%**, so **not a signal** - and the reading is 07b's to the cell: 10/100
+[6, 17] then and now, 20.01 -> 20.13 shrine turns, 285 -> 286 graft buys,
+18.8 -> 19.0 bloom a run on grafts. Greed's 100-seed number did not notice the
+gate at all. **Compare the next reading against [6, 17]**, as before.
+
+### Gate verdict
+
+`tests/playtest.gd` at 30 seeds, gate ON: **exit 0**, verbatim:
+
+```
+PASS wanderer 0 wins, avg floor <= 2: 0 wins, avg floor 1.00
+PASS wanderer illegal actions == 0: 0
+PASS sprout wins rare (<= 1 per 30 seeds): 1/30
+PASS sprout illegal actions == 0: 0
+PASS magpie canary <= 10% (design target 0-5%): 5/30 CI [7%, 34%] (fails when the lower bound clears the trip line)
+PASS magpie illegal actions == 0: 0
+PASS fanatic illegal actions == 0: 0
+PASS optimizer band 35-65%: 13/30 CI [27%, 61%]
+PASS optimizer timeouts == 0: 0
+PASS optimizer illegal actions == 0: 0
+PASS deeproot band 70-90%: 22/30 CI [56%, 86%]
+PASS deeproot timeouts == 0: 0
+PASS deeproot illegal actions == 0: 0
+gate: all PASS
+```
+
+### Corpus
+
+62 records, 16 files touched, "regressions: 62 ok, 0 failed" plain and strict
+afterwards. Before any corpus edit the plain run was already "62 ok, 0 failed"
+with 13 records printing "hash CHANGED", and `REGRESS_STRICT=1` was "49 ok, 13
+failed", **every failure a state-hash mismatch and not one outcome or
+event-pattern failure** - the shape you expect when the hash view changes and
+replay behaviour does not.
+
+- **4 re-recorded on their own persona** (the stored log is no longer what the
+  changed bot produces - the log still replayed fine): `canary_magpie_s2`
+  (acts 221 -> 217, turns 64 -> 63, still died floor 2), `det_fanatic_s3`
+  (338 -> 340 acts, still died floor 5 turn 98), `det_optimizer_s3` (421 ->
+  423, still won floor 7 turn 113), `det_optimizer_s42` (431 -> 423, turns
+  121 -> 119, still won floor 7). **Zero outcome flips.**
+- **12 hash-only `REGEN=1` re-stamps**, the 10 + 2 of the table above; a second
+  `REGEN` pass rewrote nothing.
+- **46 untouched**, `canary_fanatic_s1` among them.
+
+A method note for whoever repeats this: comparing `str(actions)` between a
+stored record and a fresh bot run is useless - the JSON round-trip reorders
+dict keys, so every bot record reads as desynced. Canonicalise each action by
+sorted keys after `Regress.ints_from_json` first.
+
+### Watch list
+
+- **optimizer, magpie and fanatic route differently from 07c on.** The 30-seed
+  table and the 100-seed magpie canary above are the new baselines for those
+  three; any older persona-keyed number (sweep rows, oracle regret, archetype
+  tables) is off-instrument until re-measured on this tree. wanderer, sprout
+  and deeproot are untouched and their history carries forward unbroken.
+- **`deeproot_plan`'s tier-0 damage taken (7.2 -> 26.4 between 06f and 07b) is
+  still unattributed.** This pass did not touch the planner - it routes through
+  its own search and `_cheapest_useful_buy`, which has priced per offer since
+  bump 8 - so the 30-seed tier-0 re-measure 07b asked for is still owed.
+- **`TIER0_CAREER_RUNS` is a reachability budget with one run of slack.** A bot
+  change moves which seed witnesses which milestone, so the next one should
+  expect to raise the count rather than to edit `TIER0_UNREACHABLE`.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from
@@ -5134,6 +5397,12 @@ lances on the next turn proving the +1 regen landed).
   was left out of this pass on purpose so it would not confound the pricing
   measurement, and it will change optimizer and magpie routing in both
   directions when it lands.
+  **Closed 2026-09-07c**: `optimizer._graft_worth_detour` is
+  `bloom >= min(shop.graft_prices)` and magpie (and fanatic, which also
+  extends optimizer) inherit it. It did land in both directions - at 30 seeds
+  the optimizer trades seed 4 for seed 16 at the same 13/30 [27, 61], magpie
+  keeps the identical win set at 5/30 [7, 34], and the fanatic loses seed 4
+  (8/30 -> 7/30 [12, 41]). Gate still "all PASS".
 - **A derived snapshot field moved 18 corpus hashes.** `snapshot().shop
   .graft_prices` is a pure function of the stock and the graft count, but
   `state_hash()` hashes the snapshot, so 18 records that were byte-identical
@@ -5141,6 +5410,13 @@ lances on the next turn proving the +1 regen landed).
   consumer-convenience field in `snapshot()` costs a corpus pass; if the hash
   is meant to be state-only, that is the argument for excluding derived keys
   from whatever `state_hash()` reads.
+  **Closed 2026-09-07c**: `state_hash()` hashes the snapshot with the raw
+  stored `shop` dict swapped in ("derived snapshot keys never enter the hash",
+  `sim/game.gd:457`), pinned by `tests/test_economy.gd:426` over 59 seeds. 10
+  of the 18 came back to their exact pre-bump-8 hash on a hash-only `REGEN`;
+  the other 8 did not - 2 re-stamped to a genuinely different stored state, 4
+  never carried the derived key in their hash at all, and 2 were superseded by
+  the routing re-record.
 - **`canary_fanatic_s1` now encodes a win, not a loss** (floor 5 death ->
   floor 7 win) because the fanatic pays 13 for `ember_sap` + `compost` where
   it used to pay 10. The record is still a valid replay; it just no longer
@@ -5152,6 +5428,9 @@ lances on the next turn proving the +1 regen landed).
   entry measures +13; and `tests/sweep_grafts.gd`'s header still describes the
   flat "4 + 2 per owned graft" sheet. Neither affects a number, both will
   mislead the next reader.
+  **Closed 2026-09-07c**: `sim/content.gd:420` now reads "+12 wins at tier 0
+  (06d; +13 at 07b)"; the `sweep_grafts` header was already rewritten for the
+  per-offer sheet inside 07b itself.
 - **Adding or removing a `GRAFTS` row now moves prices relative to each
   other**, on top of the side-rng shop draw that 06d already flagged. Any
   future graft edit is a `sweep_grafts` re-run, a `SIM_VERSION` bump and a

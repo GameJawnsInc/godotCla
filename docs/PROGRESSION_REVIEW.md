@@ -576,7 +576,13 @@ trip line. Suite green throughout ("regressions: 62 ok, 0 failed" plain and
 corpus went 60 -> 62 with 38 records stale on `sim_version` alone, 18 hash-only
 (the derived `graft_prices` sits inside the snapshot the state hash reads),
 four bot logs re-recorded because a logged graft buy is no longer affordable,
-and two new `c6_*` demos.
+and two new `c6_*` demos. The follow-up entry "2026-09-07c" (bots and the hash
+view only, **no `SIM_VERSION` bump**) closes the three items this pass left
+open - the optimizer/magpie shrine detour now gates on
+`bloom >= min(shop.graft_prices)`, `state_hash()` hashes the stored `shop`
+dict so derived snapshot keys stay out of it, and the stale `solar_core`
+comment cites 06d/07b - at an unchanged 30-seed gate ("gate: all PASS") and an
+unchanged 100-seed magpie canary (10/100 [6, 17]).
 
 **What the pass deliberately did not decide.** `solar_core` is **priced, not
 nerfed**: this tree measures it at +13 [70, 95] at tier 0 and +19 [63, 90] at
