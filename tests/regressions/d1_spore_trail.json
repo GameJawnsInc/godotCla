@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["###########","#........>#","#.........#","#@........#","#.........#","#.........#","###########"],"terrain":[{"kind":"growth","pos":[5,3]}]},"kit":["mycelium_dash+","seed_bomb","solar_lance"],"pool":["mycelium_dash+","seed_bomb","solar_lance"]},
+"actions": [{"slot":0,"target":[5,3],"type":"ability"},{"slot":0,"target":[1,3],"type":"ability"}],
+"expect": {"events":[{"id":"mycelium_dash+","t":"ability"},{"t":"teleport","to":"(5, 3)"},{"kind":"growth","t":"terrain","tile":"(1, 3)"},{"id":"mycelium_dash+","t":"ability"},{"t":"teleport","to":"(1, 3)"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "D1 Spore Trail: mycelium_dash+ carries plant_origin, so the tile the tender leaves becomes growth once it is empty - the dash to the lone growth at (5,3) leaves a fresh growth tile at (1,3) behind it, and the second dash proves it by hopping straight back onto it (a growth-target ability can only aim at real growth). A dash that plants is an effective cast, so effective_uses counts mycelium_dash for the first hop; the return hop finds (5,3) still occupied by the growth it landed on and plants nothing",
+"sim_version": 9,
+"hash": "068561482063479263df1db1b0d7a0f33e2dcb65c3208ec4ed327f0408bc92f0"
+}

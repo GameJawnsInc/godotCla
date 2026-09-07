@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[4,3],"type":"ability"},{"slot":1,"target":[4,3],"type":"ability"}],
 "expect": {"events":[{"t":"growth"},{"status":"root","t":"status","turns":1},{"amt":1,"id":"seed_bomb+","kind":"then","t":"rider"},{"amt":2,"id":"grow_spike+","kind":"per","t":"rider"},{"amt":5,"src":"grow_spike+","t":"damage","who":"smokestack"},{"t":"death","who":"smokestack"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C2 seed-on-head: seed_bomb+ planted on the smokestack's own tile roots it for a turn (then rider, who on_planted) and the same turn's grow_spike+ reads four fresh adjacent growth tiles for a capped 5 - 2 charge, one turn",
-"sim_version": 8,
+"sim_version": 9,
 "hash": "b1b1e1053f434481db414fbe306599c4a64705768136be0240d147e8d9a1c0ea"
 }

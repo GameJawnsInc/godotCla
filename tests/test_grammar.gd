@@ -20,6 +20,14 @@ extends SceneTree
 ## run_summary() shape, and mutators as data - Game._mut over
 ## Content.MUTATORS[m]["config"]: the six legacy rows reproduce their numbers,
 ## no_lance / wide_draft / upgrades_only hold their invariants on fresh games.
+## Block D1: per-ability stat surges and Spore Trail. Every surged row
+## (grow_spike(+), water_jet(+), sun_flare(+), seed_bomb+) is cast for real
+## through Game.step standing on growth and off it: the stat delta, the
+## consumed tile (verdant), the {t: surge} event and the unchanged cost are
+## asserted; a cost-1 row with the default surge never consumes growth;
+## grow_radius reads its radius key (1 = the old plus, 2 = the 13-tile
+## diamond); mycelium_dash+ plants the departure tile through plant_origin
+## only when it is bare floor with nobody on it, and that cast is effective.
 ## Run: godot --headless --path . --script tests/test_grammar.gd
 
 const Content := preload("res://sim/content.gd")
@@ -78,6 +86,13 @@ func _init() -> void:
 	_check_c4_effective_uses()
 	_check_c4_run_summary()
 	_check_c4_mutator_config()
+	_check_d1_surge_rule()
+	_check_d1_grow_spike()
+	_check_d1_water_jet()
+	_check_d1_sun_flare()
+	_check_d1_seed_bomb()
+	_check_d1_grow_radius()
+	_check_d1_spore_trail()
 	if failures.is_empty():
 		print("grammar: OK (%d checks)" % checks)
 		quit(0)
@@ -502,8 +517,19 @@ func _check_surge_identity() -> void:
 		if g.ability_cost(aid) != want:
 			bad_on += 1
 	_ok(bad_off == 0, "surge: %d abilities cost != base off growth" % bad_off)
-	_ok(bad_on == 0, "surge default: %d abilities differ from the pre-rule base-1 formula on growth" % bad_on)
-	_ok(with_key == 0, "no content row carries an explicit surge key yet (%d do)" % with_key)
+	_ok(bad_on == 0, "surge cost: %d abilities differ from the base-1 formula on growth (no shipped row changes the cost delta)" % bad_on)
+	# Block D1: exactly the seven surged rows carry the key; sun_flare(+) keeps the -1
+	var keyed: Array = []
+	for aid in Content.ABILITIES:
+		if Content.ABILITIES[aid].has("surge"):
+			keyed.append(aid)
+	keyed.sort()
+	var want := ["grow_spike", "grow_spike+", "seed_bomb+", "sun_flare", "sun_flare+", "water_jet", "water_jet+"]
+	_ok(with_key == 7 and keyed == want, "the seven D1 rows carry a surge key: %s" % str(keyed))
+	_ok(Content.ABILITIES["grow_spike"]["surge"] == {"dmg": 1} and Content.ABILITIES["grow_spike+"]["surge"] == {"dmg": 1}
+		and Content.ABILITIES["water_jet"]["surge"] == {"push": 1, "collision_dmg": 1} and Content.ABILITIES["water_jet+"]["surge"] == {"push": 1, "collision_dmg": 1}
+		and Content.ABILITIES["sun_flare"]["surge"] == {"cost": -1, "radius": 1} and Content.ABILITIES["sun_flare+"]["surge"] == {"cost": -1, "radius": 1}
+		and Content.ABILITIES["seed_bomb+"]["surge"] == {"radius": 1}, "D1 surge dicts as specified")
 	_ok(Content.SURGE_DEFAULT == {"cost": -1}, "SURGE_DEFAULT is {cost: -1}: %s" % str(Content.SURGE_DEFAULT))
 	print("surge identity: %d abilities, all match base-1 on growth / base off growth" % Content.ABILITIES.size())
 
@@ -1668,9 +1694,10 @@ func _check_c4_spore_cloud() -> void:
 	_ok(int(e2["status"].get("spore", 0)) == 6, "two spore_cloud+ casts stack to the cap of 6: %s" % str(e2["status"]))
 
 
-## fungal_ring+ {grow_radius 1, then root 1 who on_planted}: grow_radius never
-## reads its radius key (a fixed plus around the target), so the bump is the
-## seed_bomb+ rider - enemies standing where the ring sprouted are rooted a turn.
+## fungal_ring+ {grow_radius 1, then root 1 who on_planted}: radius 1 is the
+## plus around the target (grow_radius reads the key since D1, and the row
+## keeps 1), so the bump is the seed_bomb+ rider - enemies standing where the
+## ring sprouted are rooted a turn.
 func _check_c4_fungal_ring() -> void:
 	var g = _game(["fungal_ring+", "seed_bomb", "mycelium_dash"])
 	var east = g._spawn("drill_bot", Vector2i(6, 3))    # bare tile the ring plants
@@ -2108,3 +2135,352 @@ func _check_c4_mutator_config() -> void:
 				if String(ev.get("t", "")) == "error":
 					bad = true
 		_ok(not bad and gm.snapshot()["mutators"] == [m], "mutator %s runs five end_turns clean" % m)
+
+
+# --- Block D1: per-ability stat surges and Spore Trail --------------------------
+
+## Fresh game on ROOM with the kit, the tender standing on growth when `on`.
+static func _game_on_growth(kit: Array, on: bool) -> RefCounted:
+	var g = _game(kit)
+	if on:
+		g.terrain[g.player["pos"]] = {"kind": "growth"}
+	return g
+
+
+## Game._surges is the one rule: growth underfoot AND a surge dict that applies
+## (a cost delta on cost >= 2, or any stat key). The cost formula is unchanged
+## for every row on and off growth; a default-surge cost-1 row never surges and
+## never consumes the tile; a default-surge cost-2 row surges (verdant) with no
+## surge event; a stat surge emits {t: surge, id, keys} once with only the stat keys.
+func _check_d1_surge_rule() -> void:
+	var g = _game_on_growth(["solar_lance", "seed_bomb", "sap_snare"], true)
+	var p: Vector2i = g.player["pos"]
+	# off growth nothing surges
+	g.terrain.erase(p)
+	var none := 0
+	for aid in Content.ABILITIES:
+		if g._surges(Content.ABILITIES[aid]):
+			none += 1
+	_ok(none == 0, "off growth no row surges (%d did)" % none)
+	# on growth: cost >= 2 rows and the seven stat rows surge, default cost-1 rows do not
+	g.terrain[p] = {"kind": "growth"}
+	var bad: Array = []
+	for aid in Content.ABILITIES:
+		var adef: Dictionary = Content.ABILITIES[aid]
+		var want: bool = int(adef["cost"]) >= 2 or adef.has("surge")
+		if g._surges(adef) != want:
+			bad.append(aid)
+	_ok(bad.is_empty(), "on growth surges == (cost >= 2 or a D1 stat row): wrong for %s" % str(bad))
+	# hand-built rows pin the rule's edges: {cost: 0} on a cost-2 row lowers nothing
+	# -> no surge; a stat key on a cost-1 row -> surge; the default on cost 1 -> no
+	_ok(not g._surges({"cost": 2, "surge": {"cost": 0}, "effects": []}), "a cost delta that lowers nothing does not surge")
+	_ok(g._surges({"cost": 1, "surge": {"dmg": 1}, "effects": []}), "a stat key on a cost-1 row surges")
+	_ok(not g._surges({"cost": 1, "effects": []}), "the default surge on a cost-1 row never surges")
+	_ok(g._surges({"cost": 3, "effects": []}), "the default surge on a cost-3 row surges")
+	_ok(g._surge_stats({"cost": -1, "radius": 1, "dmg": 2}) == {"radius": 1, "dmg": 2}, "_surge_stats drops cost")
+	# cost-1 default row (sap_snare) cast on growth: no verdant, growth stays, cost 1
+	var e = g._spawn("drill_bot", Vector2i(8, 3))
+	var evs: Array = _cast(g, 2, Vector2i(8, 3))
+	_ok(_evs(evs, "illegal").is_empty() and _evs(evs, "verdant").is_empty() and _evs(evs, "surge").is_empty()
+		and g._terrain_kind(p) == "growth" and g.player["charge"] == 9 and int(e["status"].get("root", 0)) == 2,
+		"sap_snare (cost 1, default surge) on growth: no verdant, growth kept, cost 1: %s" % str(evs))
+	# cost-2 default row (solar_lance) on growth: verdant, cost 1, no surge event
+	evs = _cast(g, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "illegal").is_empty() and _evs(evs, "verdant").size() == 1 and _evs(evs, "surge").is_empty()
+		and g._terrain_kind(p) == "" and g.player["charge"] == 9,
+		"solar_lance on growth: verdant, cost 1, no surge event: %s" % str(evs))
+	# ability_cost is the same function on and off growth for every row
+	var cost_bad: Array = []
+	for aid in Content.ABILITIES:
+		var base := int(Content.ABILITIES[aid]["cost"])
+		g.terrain.erase(p)
+		if g.ability_cost(aid) != base:
+			cost_bad.append(aid)
+		g.terrain[p] = {"kind": "growth"}
+		if g.ability_cost(aid) != (maxi(1, base - 1) if base >= 2 else base):
+			cost_bad.append(aid)
+	_ok(cost_bad.is_empty(), "ability_cost unchanged on/off growth: %s" % str(cost_bad))
+	print("D1 surge rule: %d abilities checked" % Content.ABILITIES.size())
+
+
+## grow_spike {dmg 3, per cap 1, surge dmg 1}: 3 off growth, 4 on growth (tile
+## consumed, surge event keys [dmg]); with adjacent growth 4 off / 5 on. The +
+## form (cap 2) reaches 6 on growth with two adjacent growth tiles. Cost stays 1.
+func _check_d1_grow_spike() -> void:
+	var t := Vector2i(8, 3)
+	var p := Vector2i(5, 3)
+	# off growth: 3, no verdant, no surge
+	var g = _game_on_growth(["grow_spike", "seed_bomb", "mycelium_dash"], false)
+	var e = g._spawn("drill_bot", t)
+	e["hp"] = 10
+	g.terrain[t] = {"kind": "growth"}
+	var evs: Array = _cast(g, 0, t)
+	_ok(_evs(evs, "illegal").is_empty() and e["hp"] == 7 and _evs(evs, "verdant").is_empty() and _evs(evs, "surge").is_empty(),
+		"grow_spike off growth: 3, no verdant/surge: hp %d %s" % [e["hp"], str(evs)])
+	# on growth: 4, tile consumed, one surge event, cost 1
+	g.terrain[p] = {"kind": "growth"}
+	evs = _cast(g, 0, t)
+	var sg := _evs(evs, "surge")
+	_ok(_evs(evs, "illegal").is_empty() and e["hp"] == 3, "grow_spike on growth: 4: hp %d %s" % [e["hp"], str(evs)])
+	_ok(_evs(evs, "verdant").size() == 1 and g._terrain_kind(p) == "" and g._terrain_kind(t) == "growth",
+		"grow_spike on growth consumes the tile underfoot only: %s" % str(evs))
+	_ok(sg.size() == 1 and String(sg[0]["id"]) == "grow_spike" and sg[0]["keys"] == ["dmg"], "one surge event, keys [dmg]: %s" % str(sg))
+	_ok(g.player["charge"] == 9, "grow_spike still costs 1 on growth: charge %d" % g.player["charge"])
+	_ok(_dmg(evs, "grow_spike").size() == 1 and int(_dmg(evs, "grow_spike")[0]["amt"]) == 4, "a single 4-damage event")
+	_ok(int(g.effective_uses.get("grow_spike", 0)) == 2, "both casts effective: %s" % str(g.effective_uses))
+	# adjacent growth: per rides on top of the surge (3 + 1 surge + 1 per = 5), cap 1 holds with two
+	e["hp"] = 10
+	g.terrain[p] = {"kind": "growth"}
+	g.terrain[Vector2i(8, 2)] = {"kind": "growth"}
+	g.terrain[Vector2i(8, 4)] = {"kind": "growth"}
+	evs = _cast(g, 0, t)
+	var per := _riders(evs, "per")
+	_ok(e["hp"] == 5 and per.size() == 1 and int(per[0]["amt"]) == 1 and _evs(evs, "surge").size() == 1,
+		"grow_spike on growth with 2 adjacent: 5 (cap 1): hp %d %s" % [e["hp"], str(evs)])
+	# + form: 3 + 1 surge + 2 per = 6
+	var g2 = _game_on_growth(["grow_spike+", "seed_bomb", "mycelium_dash"], true)
+	var e2 = g2._spawn("drill_bot", t)
+	e2["hp"] = 10
+	g2.terrain[t] = {"kind": "growth"}
+	g2.terrain[Vector2i(8, 2)] = {"kind": "growth"}
+	g2.terrain[Vector2i(8, 4)] = {"kind": "growth"}
+	evs = _cast(g2, 0, t)
+	per = _riders(evs, "per")
+	_ok(_evs(evs, "illegal").is_empty() and e2["hp"] == 4 and per.size() == 1 and int(per[0]["amt"]) == 2,
+		"grow_spike+ on growth with 2 adjacent: 6: hp %d %s" % [e2["hp"], str(evs)])
+	_ok(_evs(evs, "surge").size() == 1 and String(_evs(evs, "surge")[0]["id"]) == "grow_spike+" and _evs(evs, "verdant").size() == 1
+		and g2._terrain_kind(p) == "" and g2.player["charge"] == 9, "grow_spike+ surge event, verdant, cost 1: %s" % str(evs))
+	# off growth the + form is the C2 5
+	e2["hp"] = 10
+	evs = _cast(g2, 0, t)
+	_ok(e2["hp"] == 5 and _evs(evs, "surge").is_empty() and _evs(evs, "verdant").is_empty(), "grow_spike+ off growth: 5, no surge: hp %d" % e2["hp"])
+
+
+## water_jet {wash_push 2 / 2, surge push 1 / collision_dmg 1}: an enemy two
+## tiles out is shoved 2 to the wall's neighbour off growth (no hit); on growth
+## the shove is 3 and collides for 3. water_jet+ (3 / 3) becomes 4 / 4 and its
+## then-root still lands. Cost stays 1, the tile is consumed.
+func _check_d1_water_jet() -> void:
+	var p := Vector2i(5, 3)
+	var g = _game_on_growth(["water_jet", "seed_bomb", "mycelium_dash"], false)
+	var e = g._spawn("drill_bot", Vector2i(7, 3))
+	e["hp"] = 10
+	var evs: Array = _cast(g, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "illegal").is_empty() and e["pos"] == Vector2i(9, 3) and e["hp"] == 10 and _evs(evs, "surge").is_empty(),
+		"water_jet off growth: shoved 2 to (9,3), no collision: %s hp %d" % [str(e["pos"]), e["hp"]])
+	e["pos"] = Vector2i(7, 3)
+	e["status"] = {}
+	g.terrain[p] = {"kind": "growth"}
+	evs = _cast(g, 0, Vector2i(1, 0))
+	var sg := _evs(evs, "surge")
+	_ok(_evs(evs, "illegal").is_empty() and e["pos"] == Vector2i(9, 3) and e["hp"] == 7,
+		"water_jet on growth: shoved 3 into the wall, 3 collision dmg: %s hp %d %s" % [str(e["pos"]), e["hp"], str(evs)])
+	_ok(sg.size() == 1 and String(sg[0]["id"]) == "water_jet" and sg[0]["keys"] == ["push", "collision_dmg"],
+		"water_jet surge event keys [push, collision_dmg]: %s" % str(sg))
+	_ok(_evs(evs, "verdant").size() == 1 and g._terrain_kind(p) == "" and g.player["charge"] == 9,
+		"water_jet on growth: verdant, tile consumed, cost 1: %s" % str(evs))
+	_ok(_dmg(evs, "collision:water_jet").size() == 1 and int(_dmg(evs, "collision:water_jet")[0]["amt"]) == 3, "collision signed by water_jet for 3: %s" % str(evs))
+	# + form: 4 / 4 from (6,3): (7,3) (8,3) (9,3) then the wall -> collided 4, then-root
+	var g2 = _game_on_growth(["water_jet+", "seed_bomb", "mycelium_dash"], true)
+	var e2 = g2._spawn("drill_bot", Vector2i(6, 3))
+	e2["hp"] = 10
+	evs = _cast(g2, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "illegal").is_empty() and e2["pos"] == Vector2i(9, 3) and e2["hp"] == 6 and int(e2["status"].get("root", 0)) == 1,
+		"water_jet+ on growth: shoved 3 (push 4) into the wall for 4, rooted: %s hp %d %s" % [str(e2["pos"]), e2["hp"], str(e2["status"])])
+	_ok(_evs(evs, "surge").size() == 1 and _riders(evs, "then").size() == 1 and _evs(evs, "verdant").size() == 1 and g2.player["charge"] == 9,
+		"water_jet+ surge + then rider + verdant, cost 1: %s" % str(evs))
+	# off growth the + form from (6,3) stops at (9,3) without a hit (push 3)
+	var g3 = _game_on_growth(["water_jet+", "seed_bomb", "mycelium_dash"], false)
+	var e3 = g3._spawn("drill_bot", Vector2i(6, 3))
+	e3["hp"] = 10
+	evs = _cast(g3, 0, Vector2i(1, 0))
+	_ok(e3["pos"] == Vector2i(9, 3) and e3["hp"] == 10 and not e3["status"].has("root") and _evs(evs, "surge").is_empty(),
+		"water_jet+ off growth: push 3, no collision, no root: %s hp %d" % [str(e3["pos"]), e3["hp"]])
+
+
+## sun_flare {aoe_damage 1 radius 2, surge cost -1 radius 1}: on growth it costs
+## 1 and reaches distance 3 (distance 4 never); off growth cost 2, distance 3
+## untouched. The surge event names only the stat key (radius), the cost half
+## is the verdant discount. Same for the + form (dmg 2).
+func _check_d1_sun_flare() -> void:
+	for pair in [["sun_flare", 1], ["sun_flare+", 2]]:
+		var aid: String = pair[0]
+		var base: int = pair[1]
+		var g = _game_on_growth([aid, "seed_bomb", "mycelium_dash"], false)
+		var near = g._spawn("drill_bot", Vector2i(7, 3))   # distance 2
+		var edge = g._spawn("drill_bot", Vector2i(8, 3))   # distance 3
+		var far = g._spawn("drill_bot", Vector2i(9, 3))    # distance 4
+		for e in [near, edge, far]:
+			e["hp"] = 10
+		var evs: Array = _cast(g, 0, g.player["pos"])
+		_ok(_evs(evs, "illegal").is_empty() and near["hp"] == 10 - base and edge["hp"] == 10 and far["hp"] == 10,
+			"%s off growth: radius 2, cost 2: hp %d %d %d" % [aid, near["hp"], edge["hp"], far["hp"]])
+		_ok(g.player["charge"] == 8 and _evs(evs, "surge").is_empty() and _evs(evs, "verdant").is_empty(), "%s off growth costs 2, no surge" % aid)
+		for e in [near, edge, far]:
+			e["hp"] = 10
+		g.terrain[g.player["pos"]] = {"kind": "growth"}
+		evs = _cast(g, 0, g.player["pos"])
+		var sg := _evs(evs, "surge")
+		_ok(_evs(evs, "illegal").is_empty() and near["hp"] == 10 - base and edge["hp"] == 10 - base and far["hp"] == 10,
+			"%s on growth: radius 3 reaches distance 3, not 4: hp %d %d %d" % [aid, near["hp"], edge["hp"], far["hp"]])
+		_ok(g.player["charge"] == 9 and _evs(evs, "verdant").size() == 1 and g._terrain_kind(g.player["pos"]) == "",
+			"%s on growth costs 1 and consumes the tile: charge %d" % [aid, g.player["charge"]])
+		_ok(sg.size() == 1 and String(sg[0]["id"]) == aid and sg[0]["keys"] == ["radius"], "%s surge event keys [radius]: %s" % [aid, str(sg)])
+		_ok(g.ability_cost(aid) == 2, "%s ability_cost is 2 again off growth" % aid)
+
+
+## seed_bomb+ {grow_radius 1, then root on_planted, surge radius 1}: on growth
+## the cast plants the 13-tile diamond (the consumed tile underfoot included
+## when it lies inside), roots an enemy at distance 2 from the target, costs 1
+## and consumes the tile; off growth it is the C2 plus. Base seed_bomb keeps the
+## default: plus shape on growth too, with the verdant discount and no surge event.
+func _check_d1_seed_bomb() -> void:
+	var p := Vector2i(5, 3)
+	var target := Vector2i(7, 3)
+	var g = _game_on_growth(["seed_bomb+", "grow_spike+", "mycelium_dash"], true)
+	var ring = g._spawn("drill_bot", Vector2i(9, 3))     # distance 2: diamond only
+	var beside = g._spawn("drill_bot", Vector2i(7, 4))   # distance 1: plus
+	var evs: Array = _cast(g, 0, target)
+	_ok(_evs(evs, "illegal").is_empty() and _evs(evs, "growth").size() == 1, "seed_bomb+ on growth cast legal: %s" % str(evs))
+	var planted := 0
+	for t in g.terrain:
+		if g.terrain[t]["kind"] == "growth":
+			planted += 1
+	_ok(planted == 13, "seed_bomb+ on growth plants 13 tiles (diamond, consumed tile re-planted): %d" % planted)
+	for t in [Vector2i(7, 1), Vector2i(7, 5), Vector2i(5, 3), Vector2i(9, 3), Vector2i(6, 2), Vector2i(8, 4)]:
+		_ok(g._terrain_kind(t) == "growth", "diamond tile %s planted" % str(t))
+	_ok(g._terrain_kind(Vector2i(6, 1)) == "" and g._terrain_kind(Vector2i(4, 3)) == "", "manhattan 3 is outside the diamond")
+	_ok(int(ring["status"].get("root", 0)) == 1 and int(beside["status"].get("root", 0)) == 1,
+		"enemies on fresh diamond tiles are rooted: %s %s" % [str(ring["status"]), str(beside["status"])])
+	var sg := _evs(evs, "surge")
+	_ok(sg.size() == 1 and String(sg[0]["id"]) == "seed_bomb+" and sg[0]["keys"] == ["radius"], "seed_bomb+ surge event keys [radius]: %s" % str(sg))
+	_ok(_evs(evs, "verdant").size() == 1 and g.player["charge"] == 9, "seed_bomb+ on growth: verdant, cost 1: charge %d" % g.player["charge"])
+	_ok(_riders(evs, "then").size() == 1 and _evs(evs, "status").size() == 2, "then rider once, two roots: %s" % str(_evs(evs, "status")))
+	# off growth: the plus, distance 2 untouched, no verdant / surge
+	var g2 = _game_on_growth(["seed_bomb+", "grow_spike+", "mycelium_dash"], false)
+	var ring2 = g2._spawn("drill_bot", Vector2i(9, 3))
+	evs = _cast(g2, 0, target)
+	_ok(_evs(evs, "illegal").is_empty() and g2.terrain.size() == 5 and g2._terrain_kind(Vector2i(9, 3)) == "" and not ring2["status"].has("root")
+		and _evs(evs, "surge").is_empty() and _evs(evs, "verdant").is_empty() and g2.player["charge"] == 9,
+		"seed_bomb+ off growth: plus of 5, no surge: %d tiles %s" % [g2.terrain.size(), str(evs)])
+	# base seed_bomb on growth: plus (5 new tiles), verdant discount to 1, no surge event
+	var g3 = _game_on_growth(["seed_bomb", "grow_spike+", "mycelium_dash"], true)
+	evs = _cast(g3, 0, target)
+	_ok(_evs(evs, "illegal").is_empty() and g3.terrain.size() == 5 and g3._terrain_kind(p) == "" and g3._terrain_kind(Vector2i(9, 3)) == "",
+		"base seed_bomb on growth: plus only, tile underfoot consumed: %d tiles" % g3.terrain.size())
+	_ok(_evs(evs, "verdant").size() == 1 and _evs(evs, "surge").is_empty() and g3.player["charge"] == 9,
+		"base seed_bomb on growth: verdant, cost 1, no surge event: %s" % str(evs))
+	# base seed_bomb off growth: plus, cost 2
+	var g4 = _game_on_growth(["seed_bomb", "grow_spike+", "mycelium_dash"], false)
+	evs = _cast(g4, 0, target)
+	_ok(g4.terrain.size() == 5 and g4.player["charge"] == 8 and _evs(evs, "verdant").is_empty(), "base seed_bomb off growth: plus, cost 2")
+
+
+## grow_radius reads eff.radius: 1 is exactly the old plus (target + DIRS, in
+## that insertion order - terrain.keys() and the state hash see it), 2 adds
+## the 8-tile ring dy then dx ascending; walls and held tiles are skipped;
+## planted counts the fresh tiles only.
+func _check_d1_grow_radius() -> void:
+	var g = _game()
+	var target := Vector2i(7, 3)
+	var r1 := _run(g, {"op": "grow_radius", "radius": 1}, "seed_bomb", target)
+	var want1: Array = [target]
+	for d in g.DIRS:
+		want1.append(target + d)
+	want1.sort()
+	var got1: Array = r1[0]["tiles"].duplicate()
+	got1.sort()
+	_ok(int(r1[0]["planted"]) == 5 and got1 == want1, "grow_radius 1 = the plus: %s" % str(r1[0]["tiles"]))
+	_ok(r1[0]["tiles"] == [Vector2i(7, 3), Vector2i(7, 2), Vector2i(8, 3), Vector2i(7, 4), Vector2i(6, 3)],
+		"grow_radius 1 plants target then DIRS (the pre-D1 insertion order, hash-visible): %s" % str(r1[0]["tiles"]))
+	_ok(_evs(r1[1], "growth").size() == 1, "one growth event per cast")
+	# radius 2 on a fresh board: 13 tiles, first (7,1) last (7,5)
+	var g2 = _game()
+	var r2 := _run(g2, {"op": "grow_radius", "radius": 2}, "seed_bomb", target)
+	var tiles2: Array = r2[0]["tiles"]
+	_ok(int(r2[0]["planted"]) == 13 and tiles2.size() == 13 and tiles2.slice(0, 5) == r1[0]["tiles"]
+		and tiles2.slice(5) == [Vector2i(7, 1), Vector2i(6, 2), Vector2i(8, 2), Vector2i(5, 3), Vector2i(9, 3), Vector2i(6, 4), Vector2i(8, 4), Vector2i(7, 5)],
+		"grow_radius 2 = the plus first, then the 8-tile ring dy then dx: %s" % str(tiles2))
+	var outside := 0
+	for t in tiles2:
+		if g2._manhattan(t, target) > 2:
+			outside += 1
+	_ok(outside == 0, "every diamond tile is within manhattan 2")
+	# radius 2 near the wall: the wall tiles and a held tile are skipped
+	var g3 = _game()
+	g3.terrain[Vector2i(8, 3)] = {"kind": "oil"}
+	var r3 := _run(g3, {"op": "grow_radius", "radius": 2}, "seed_bomb", Vector2i(9, 3))
+	_ok(int(r3[0]["planted"]) == 8 and not r3[0]["tiles"].has(Vector2i(8, 3)) and g3._terrain_kind(Vector2i(8, 3)) == "oil",
+		"grow_radius 2 at (9,3): 9 in-room tiles minus the held one = 8: %s" % str(r3[0]["tiles"]))
+	# the shipped rows all carry radius 1 except none: seed_bomb, seed_bomb+, fungal_ring(+)
+	for aid in ["seed_bomb", "seed_bomb+", "fungal_ring", "fungal_ring+"]:
+		_ok(int(Content.ABILITIES[aid]["effects"][0]["radius"]) == 1, "%s grow_radius radius stays 1" % aid)
+
+
+## mycelium_dash+ {teleport, plant_origin growth}: the departure tile becomes
+## growth when it is bare floor once the tender has left; a tile holding
+## terrain, a wall, or a tile with an enemy on it (only reachable through
+## _apply_effect directly) is left alone. The planting makes the cast
+## effective and counts as planted; the base dash plants nothing.
+func _check_d1_spore_trail() -> void:
+	var p := Vector2i(5, 3)
+	var g = _game(["mycelium_dash+", "seed_bomb", "mycelium_dash"])
+	g.terrain[Vector2i(8, 3)] = {"kind": "growth"}
+	var evs: Array = _cast(g, 0, Vector2i(8, 3))
+	_ok(_evs(evs, "illegal").is_empty() and g.player["pos"] == Vector2i(8, 3) and _evs(evs, "teleport").size() == 1, "mycelium_dash+ teleports: %s" % str(evs))
+	_ok(g._terrain_kind(p) == "growth" and g.terrain[p] == {"kind": "growth"}, "the departure tile is growth: %s" % str(g.terrain.get(p)))
+	var ter := _evs(evs, "terrain")
+	_ok(ter.size() == 1 and String(ter[0]["kind"]) == "growth" and ter[0]["tile"] == p, "terrain event for the planted origin: %s" % str(ter))
+	_ok(int(g.effective_uses.get("mycelium_dash", 0)) == 1 and int(g.player["uses"].get("mycelium_dash+", 0)) == 1,
+		"a dash that plants is an effective cast: %s" % str(g.effective_uses))
+	_ok(g.player["charge"] == 9 and _evs(evs, "verdant").is_empty() and _evs(evs, "surge").is_empty(), "cost 1, no surge (default surge on cost 1)")
+	# dashing from growth: the origin holds terrain -> nothing planted, the growth stays (no consumption either)
+	g.terrain[Vector2i(2, 3)] = {"kind": "growth"}
+	evs = _cast(g, 0, Vector2i(2, 3))
+	_ok(_evs(evs, "illegal").is_empty() and g.player["pos"] == Vector2i(2, 3) and g._terrain_kind(Vector2i(8, 3)) == "growth"
+		and _evs(evs, "terrain").is_empty() and _evs(evs, "verdant").is_empty(), "from a growth tile: origin kept as growth, nothing planted: %s" % str(evs))
+	_ok(int(g.effective_uses.get("mycelium_dash", 0)) == 1, "that dash was not effective: %s" % str(g.effective_uses))
+	# origin on oil: the oil stays
+	g.terrain[g.player["pos"]] = {"kind": "oil"}
+	evs = _cast(g, 0, Vector2i(5, 3))
+	_ok(_evs(evs, "illegal").is_empty() and g.player["pos"] == Vector2i(5, 3) and g._terrain_kind(Vector2i(2, 3)) == "oil" and _evs(evs, "terrain").is_empty(),
+		"origin holding oil is not overwritten: %s" % g._terrain_kind(Vector2i(2, 3)))
+	# direct op: an enemy on the origin tile, or a wall, or the player's own tile -> nothing
+	var g2 = _game(["mycelium_dash+", "seed_bomb", "mycelium_dash"])
+	var e = g2._spawn("drill_bot", Vector2i(7, 3))
+	var eff := {"op": "plant_origin", "kind": "growth"}
+	var d: Dictionary = Content.ABILITIES["mycelium_dash+"]
+	for origin in [Vector2i(7, 3), Vector2i(0, 3), g2.player["pos"]]:
+		var ctx := _ctx(g2, d, Vector2i(8, 3))
+		ctx["origin"] = origin
+		g2._step_events = []
+		var out: Dictionary = g2._apply_effect(eff, d, Vector2i(8, 3), "mycelium_dash+", ctx)
+		_ok(int(out["planted"]) == 0 and out["tiles"].is_empty() and not g2.terrain.has(origin) and g2._step_events.is_empty(),
+			"plant_origin skips origin %s (enemy / wall / tender still there)" % str(origin))
+	_ok(g2._enemy_at(Vector2i(7, 3)) == e, "the enemy is untouched")
+	# a bare origin through the op: planted 1, tiles [origin], growth_planted hook tile = origin (compost-free: no hook rows)
+	var ctx2 := _ctx(g2, d, Vector2i(8, 3))
+	ctx2["origin"] = Vector2i(3, 3)
+	g2._step_events = []
+	var out2: Dictionary = g2._apply_effect(eff, d, Vector2i(8, 3), "mycelium_dash+", ctx2)
+	_ok(int(out2["planted"]) == 1 and out2["tiles"] == [Vector2i(3, 3)] and g2._terrain_kind(Vector2i(3, 3)) == "growth",
+		"plant_origin on a bare origin: planted 1, tiles [origin]: %s" % str(out2))
+	# on_planted riders see the origin: a then status_target roots an enemy standing there
+	# (only constructible through the op, since the tender's own tile never holds an enemy)
+	var g3 = _game(["mycelium_dash+", "seed_bomb", "mycelium_dash"])
+	var e3 = g3._spawn("drill_bot", Vector2i(3, 3))
+	var eff3 := {"op": "plant_origin", "kind": "growth", "then": [{"op": "status_target", "status": "root", "turns": 1, "who": "on_planted"}]}
+	var ctx3 := _ctx(g3, d, Vector2i(8, 3))
+	ctx3["origin"] = Vector2i(3, 3)
+	var out3: Dictionary = g3._apply_effect(eff3, d, Vector2i(8, 3), "probe", ctx3)
+	_ok(int(out3["planted"]) == 0 and not e3["status"].has("root"), "an occupied origin is never planted, so on_planted finds nothing")
+	# the base dash never plants and is never effective
+	var g4 = _game(["mycelium_dash", "seed_bomb", "mycelium_dash+"])
+	g4.terrain[Vector2i(8, 3)] = {"kind": "growth"}
+	evs = _cast(g4, 0, Vector2i(8, 3))
+	_ok(_evs(evs, "illegal").is_empty() and g4.player["pos"] == Vector2i(8, 3) and not g4.terrain.has(p) and g4.effective_uses.is_empty(),
+		"base mycelium_dash: no planting, not effective: %s" % str(evs))
+	# the row as shipped
+	_ok(Content.ABILITIES["mycelium_dash+"]["effects"] == [{"op": "teleport"}, {"op": "plant_origin", "kind": "growth"}]
+		and int(Content.ABILITIES["mycelium_dash+"]["cost"]) == 1 and int(Content.ABILITIES["mycelium_dash+"]["range"]) == 7,
+		"mycelium_dash+ row: teleport + plant_origin growth, cost 1, range 7")

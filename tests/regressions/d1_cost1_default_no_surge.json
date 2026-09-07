@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["###########","#........>#","#.........#","#@..k.....#","#.........#","#.........#","###########"],"terrain":[{"kind":"growth","pos":[1,3]},{"kind":"growth","pos":[4,3]}]},"kit":["sap_snare","grow_spike","mycelium_dash"],"pool":["sap_snare","grow_spike","mycelium_dash"]},
+"actions": [{"slot":0,"target":[4,3],"type":"ability"},{"slot":1,"target":[4,3],"type":"ability"}],
+"expect": {"events":[{"id":"sap_snare","t":"ability"},{"status":"root","t":"status","turns":2},{"t":"verdant","tile":"(1, 3)"},{"id":"grow_spike","t":"ability"},{"id":"grow_spike","keys":["dmg"],"t":"surge"},{"amt":4,"src":"grow_spike","t":"damage","who":"smokestack"},{"t":"death","who":"smokestack"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "D1 the one surge rule, negative half: sap_snare is cost 1 and carries only the default {cost: -1}, which cannot lower a cost-1 price, so casting it from growth is not a surge - no verdant, no surge event, and the tile is still standing. The grow_spike cast right after it on the same turn is the proof: it surges on that same tile (verdant (1,3), keys [dmg], 3 + 1 = 4). The pre-D1 rule left the tile alone too (a cost-1 cast never consumed growth); what D1 adds is that the cost-1 grow_spike beside it now does eat it",
+"sim_version": 9,
+"hash": "233ae108e7715000d10d6489b4ddb1e9aeff652c36cc273220278d79717e7320"
+}

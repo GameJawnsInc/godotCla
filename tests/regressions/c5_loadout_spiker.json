@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[4,3],"type":"ability"},{"slot":1,"target":[3,3],"type":"ability"},{"type":"end_turn"},{"slot":2,"target":[3,3],"type":"ability"}],
 "expect": {"events":[{"id":"grow_spike","t":"ability","target":"(4, 3)"},{"src":"grow_spike","t":"damage","who":"smokestack"},{"id":"seed_bomb","t":"ability"},{"t":"growth","tile":"(3, 3)"},{"id":"mycelium_dash","t":"ability"},{"t":"teleport","to":"(3, 3)"}],"floor":1,"timeout":true,"turns":1,"won":false},
 "note": "Block A loadout spiker: config carries no kit, only {loadout: spiker}, so the three slots come from Content.LOADOUTS - slot 0 casts grow_spike where the tender kit would hold solar_lance, slots 1 and 2 are the shared seed_bomb and mycelium_dash; the state hash pins the whole kit",
-"sim_version": 8,
+"sim_version": 9,
 "hash": "ab167dacb1f8d4306aeae7017e668aa290de38b95069f153698ef028de156ae5"
 }

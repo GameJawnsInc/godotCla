@@ -211,7 +211,8 @@ architecture below is designed to bend rather than block.
   (growth_adjacent_target, fire_within_self, oil_in_line, enemies_adjacent_target),
   `bonus` (per-enemy damage) and `then` (sub-effects, never nested), evaluated
   only by `Game._rider_if` / `_rider_per` / `_bonus_dmg`; an ability row may
-  carry `surge` (default `{cost: -1}`). New ops, predicates, counts or terrain
+  carry `surge` (a row-level key, never an effect key — see the surge bullet
+  below). New ops, predicates, counts or terrain
   keys go into the `tests/test_content.gd` vocabulary constants in the same
   change, or the lint rejects them. Riders emit `{t: "rider", id, kind, amt}`,
   which `tests/tally.gd` counts (`riders_by_kind` / `riders_by_aid`) and folds
@@ -222,6 +223,46 @@ architecture below is designed to bend rather than block.
   `vine_whip+` and `water_jet+` a `then` (root on freshly planted tiles, stun
   when the drag crossed fire, root when the shove both pushed and collided) —
   `tests/regressions/c2_*.json` demos one row each.
+- Verdant surges are data (D1, `docs/PROGRESSION_REVIEW.md` §6.4; bump 9):
+  an ability row's optional `surge` dict (default `Content.SURGE_DEFAULT`,
+  `{cost: -1}`) says what standing on growth buys that cast. One rule,
+  `Game._surges(adef)`: a cast SURGES when the tender stands on growth and the
+  surge dict carries something that applies to it — a cost delta that actually
+  lowers a cost >= 2 (`maxi(1, base + surge.cost) < base`), or any stat key. A
+  surged cast erases the growth tile underfoot and emits `verdant`, exactly as
+  before. A cost-1 ability with only the default surge therefore never surges
+  and never eats the tile (pre-D1 it did not either); a cost-1 ability with a
+  stat surge does eat it, and gets the stat. The closed surge key set is
+  `{cost, dmg, push, collision_dmg, radius, dist, turns, ttl}`, each an int;
+  `cost` prices the cast (`ability_cost`, unchanged in shape, and
+  `legal_actions` through it) while every other key is a stat delta added by
+  `Game._apply_effect` to the matching key of every effect of that cast that
+  carries it — on a duplicated effect, before `per` grows it and before the op
+  runs, and `then` sub-effects inherit it through ctx. A surged cast that
+  applied at least one stat delta emits `{t: "surge", id, keys: [...]}` once,
+  after its `ability` event (event order: `verdant`, `ability`, `surge`, then
+  the effects). The lint requires every surge stat key to be carried by some
+  effect of the row — a surge that touches nothing is a data error — and
+  rejects `surge` on an effect dict. Seven rows carry one today: `grow_spike`
+  and `grow_spike+` `{dmg: 1}`, `water_jet` and `water_jet+`
+  `{push: 1, collision_dmg: 1}`, `sun_flare` and `sun_flare+`
+  `{cost: -1, radius: 1}` (the discount they always had, plus reach) and
+  `seed_bomb+` `{radius: 1}` (base `seed_bomb` keeps the default).
+  Two grammar changes ride along: `grow_radius` now READS its `radius` key
+  (review defect 16) — radius 1 is the plus it always drew, radius 2 the
+  13-tile diamond a surged `seed_bomb+` reaches — and the new positional op
+  `plant_origin {kind}` (kind closed to `Content.TERRAIN`) writes that kind on
+  `ctx.origin` when the tile the cast left is floor, terrain-free and empty of
+  enemies, counting as planted so `status_target who: on_planted`, the
+  `growth_planted` hook and `effective_uses` all see it. `mycelium_dash+` is
+  Spore Trail: `[{op: teleport}, {op: plant_origin, kind: growth}]`, cost and
+  range unchanged. Terrain insertion order is hash-visible (`terrain.keys()`
+  feeds the growth target list and `state_hash` hashes `str(snapshot())`), so
+  `grow_radius` keeps its pre-D1 target-then-DIRS order for the plus and only
+  the outer rings iterate dy-then-dx — a radius-1 cast is byte-identical to
+  before. `tests/regressions/d1_*.json` demos six cases: the three stat
+  surges, the `seed_bomb+` diamond, Spore Trail, and a cost-1 default-surge
+  ability leaving the tile standing.
 - Grafts are data (`docs/PROGRESSION_REVIEW.md` §6.3 C3): every `Content.GRAFTS`
   row is `{name, desc, tags, price}` (tags a `Content.TAGS` subset, `price` an
   int >= 1 — both lint-enforced) plus exactly one of
@@ -310,7 +351,10 @@ architecture below is designed to bend rather than block.
   rider ran — while `player.uses` stays the raw count. It is copied by
   `clone()` and deliberately not in `snapshot()`, so it never churns the state
   hash. Teleport, dash, clear_smoke and self-only ops set no outcome counter
-  and so never count as effective; `create_terrain` counts (planted). `Game.run_summary()`
+  and so never count as effective; `create_terrain` counts (planted), and
+  since D1 so does `plant_origin` — a `mycelium_dash+` hop that leaves growth
+  behind it is an effective cast, so `effective_uses["mycelium_dash"]` is
+  non-zero where the base dash's bare teleport never counted. `Game.run_summary()`
   is the compact end-of-run dict — `{won, floor, turns, kit, grafts,
   uses_by_base, effective_uses_by_base, bloom, death_cause, seed, tier,
   mutators, packages, loadout}` — read by the shell's game-over site and the
@@ -378,8 +422,24 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (8
-  today: the graft pricing pass — every `Content.GRAFTS` row carries a `price`
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (9
+  today: Block D1 — per-ability stat surges and Spore Trail. The surge rule
+  moved to `Game._surges` (a cost-1 row with a stat surge now surges and eats
+  the tile; a cost-1 row with only the default surge still leaves it alone),
+  seven rows gained a `surge` dict, `grow_radius` reads its `radius` key and
+  `mycelium_dash+` plants the tile it left, so any log that cast one of those
+  from growth diverges from that cast on. The corpus went 62 -> 68 records
+  (the six `d1_*` demos are new); the 9 re-stamp rewrote `sim_version` across
+  all 62 old records with 56 replaying byte-identical, and seven bot logs
+  (`canary_fanatic_s1`, `canary_magpie_s2`, `det_deeproot_s3`,
+  `det_deeproot_s11`, `det_deeproot_s42`, `det_magpie_s3`,
+  `det_optimizer_s42`) were re-recorded on their personas — the personas read
+  costs, damage and clone() outcomes from the sim, so two of those seven
+  diverged even though their stale action lists still replayed legally.
+  `blockb_quota_reclamp_wash` is the one hand-authored record the bump moved:
+  its water_jet is cast from the growth the cleanse left, so it now surges —
+  same quota outcome, new hash. Bump 8 was the graft pricing pass — every
+  `Content.GRAFTS` row carries a `price`
   and `Game.shop_cost(item, id)` charges it, so a log that bought a graft at the
   old flat 4 now finds that buy illegal and diverges from there, and
   `snapshot().shop` gained `graft_prices`. The 8 re-stamp rewrote `sim_version`

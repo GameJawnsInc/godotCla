@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[1,0],"type":"ability"},{"slot":2,"target":[3,2],"type":"ability"}],
 "expect": {"events":[{"amt":2,"src":"solar_lance","t":"damage","who":"leech_drone"},{"t":"death","who":"leech_drone"},{"id":"compost","on":"kill","t":"hook"},{"kind":"growth","t":"terrain"},{"id":"mycelium_dash","t":"ability"},{"t":"teleport"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C3 compost: the lance kills the leech drone and the kill hook plants growth on the tile it fell on (the enemy is erased before the hook, so terrain_at sees a free tile) - real growth, not decoration: mycelium_dash teleports onto it the same turn",
-"sim_version": 8,
+"sim_version": 9,
 "hash": "9a6f1d620e6c8245c02de4df3ac80f778737284ad578397133bb6bafca1919d0"
 }

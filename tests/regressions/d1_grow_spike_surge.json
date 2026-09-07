@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["###########","#........>#","#.........#","#@..k.....#","#.........#","#k........#","###########"],"terrain":[{"kind":"growth","pos":[1,3]},{"kind":"growth","pos":[4,3]},{"kind":"growth","pos":[1,5]}]},"kit":["grow_spike","seed_bomb","mycelium_dash"],"pool":["grow_spike","seed_bomb","mycelium_dash"]},
+"actions": [{"slot":0,"target":[4,3],"type":"ability"},{"slot":0,"target":[1,5],"type":"ability"}],
+"expect": {"events":[{"t":"verdant","tile":"(1, 3)"},{"id":"grow_spike","t":"ability"},{"id":"grow_spike","keys":["dmg"],"t":"surge"},{"amt":4,"src":"grow_spike","t":"damage","who":"smokestack"},{"t":"death","who":"smokestack"},{"id":"grow_spike","t":"ability"},{"amt":3,"src":"grow_spike","t":"damage","who":"smokestack"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "D1 grow_spike surge {dmg: 1}: a cost-1 ability now surges too - standing on the growth at (1,3) the spike deals 3 + 1 = 4 and kills a 4-hp smokestack, and the same cast eats the tile (verdant), so the second spike of the same turn - same charge, same board, an enemy that is also standing on growth - lands the bare 3. Neither target has growth beside it, so the per rider adds nothing either way",
+"sim_version": 9,
+"hash": "6fba57624f1258cb614524f57333575dd3b8845eff59c68120aca4317a1e7abd"
+}

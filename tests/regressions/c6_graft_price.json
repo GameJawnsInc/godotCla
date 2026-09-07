@@ -4,6 +4,6 @@
 "actions": [{"target":[1,1],"type":"cleanse"},{"dir":[1,0],"type":"move"},{"item":"graft","pick":0,"type":"buy"},{"target":[3,2],"type":"cleanse"}],
 "expect": {"events":[{"bloom":7,"t":"cleanse","tile":"(1, 1)"},{"discarded":"solar_core","id":"compost","item":"graft","t":"buy"},{"bloom":2,"t":"cleanse","tile":"(3, 2)"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "bump 8 graft prices are data: this shrine stocks compost (its Content.GRAFTS row price 6) beside solar_core (8) and the purse is 7 - between the two, so legal_actions offers pick 0 only and the buy deducts compost's own 6. The flat SHOP_COSTS fallback 4 would have left 3 and made pick 1 legal too; the two cleanse events pin the purse either side of the buy (6 +1 = 7, then 7 - 6 = 1, +1 = 2)",
-"sim_version": 8,
+"sim_version": 9,
 "hash": "1e828dd65a7d4c5c1857729a29be7749a29314772480f38738019abb5ba3da30"
 }

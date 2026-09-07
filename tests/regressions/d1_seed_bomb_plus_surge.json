@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["###########","#........>#","#.........#","#@....k...#","#.........#","#...k.....#","###########"],"terrain":[{"kind":"growth","pos":[1,3]}]},"kit":["seed_bomb+","grow_spike","mycelium_dash"],"pool":["seed_bomb+","grow_spike","mycelium_dash"]},
+"actions": [{"slot":0,"target":[4,3],"type":"ability"}],
+"expect": {"events":[{"t":"verdant","tile":"(1, 3)"},{"id":"seed_bomb+","t":"ability"},{"id":"seed_bomb+","keys":["radius"],"t":"surge"},{"t":"growth","tile":"(4, 3)"},{"status":"root","t":"status","turns":1},{"status":"root","t":"status","turns":1},{"amt":1,"id":"seed_bomb+","kind":"then","t":"rider"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "D1 seed_bomb+ surge {radius: 1}: grow_radius now reads its radius key (review defect 16), so the surged bomb plants the 13-tile diamond instead of the 5-tile plus. Both smokestacks stand at manhattan 2 from the target - (6,3) on the axis, (4,5) two rows down - so only the wider ring reaches them, and the on_planted then rider roots both where the unsurged bomb would have touched neither",
+"sim_version": 9,
+"hash": "26b2c2aa27bc69c6cbeed4f0303db65f9d36d15b3aff90aa56a23214bc313d75"
+}

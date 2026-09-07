@@ -603,34 +603,54 @@ func _kit_full_id(snap: Dictionary, slot: int) -> String:
 
 
 ## What a cast costs right now: Game.ability_cost mirrored over the snapshot -
-## standing on growth surges a cost-2+ ability by its own "surge" rule.
+## standing on growth applies the cost delta of the ability's own "surge" rule
+## to a cost-2+ cast. The stat half of a surge (Block D1) never moves a price;
+## _surge_stat reads that half for the estimates.
 func _cast_cost(snap: Dictionary, aid: String) -> int:
 	var adef: Dictionary = CONTENT.ABILITIES.get(aid, {})
 	if adef.is_empty():
 		return 99
 	var base := int(adef["cost"])
 	if base >= 2 and String(snap["terrain"].get(snap["player"]["pos"], {}).get("kind", "")) == "growth":
+		# Game._surge_cost_delta: an explicit dict without "cost" moves no price
 		var surge: Dictionary = adef.get("surge", CONTENT.SURGE_DEFAULT)
-		return maxi(1, base + int(surge.get("cost", -1)))
+		return maxi(1, base + int(surge.get("cost", 0)))
 	return base
 
 
+## The `key` delta a cast of `adef` would surge by right now (Block D1): the
+## row's "surge" dict is read only while the tender stands on growth, which is
+## the sim's own condition for a stat surge (Game._surges - any stat key makes
+## the cast surge, whatever the cost). 0 anywhere else, and 0 for a row whose
+## surge carries no such key. Read from the row, never from an id.
+func _surge_stat(adef: Dictionary, key: String, snap: Dictionary) -> int:
+	if String(snap["terrain"].get(snap["player"]["pos"], {}).get("kind", "")) != "growth":
+		return 0
+	return int(adef.get("surge", CONTENT.SURGE_DEFAULT).get(key, 0))
+
+
 ## Damage `aid` would land on an enemy standing at `target`, read from Content
-## alone: the base "dmg" of every damage-dealing effect plus its rider
-## arithmetic (per, bonus) as the snapshot's terrain scores it. No sim call
-## and no clone, so it is affordable on every candidate action.
+## alone: the base "dmg" of every damage-dealing effect, the surge delta the
+## sim adds to that key while the tender stands on growth (Block D1), plus the
+## rider arithmetic (per, bonus) as the snapshot's terrain scores it. No sim
+## call and no clone, so it is affordable on every candidate action.
 ## `target` is the tile the enemy stands on - for "dir" and "self" abilities
 ## the caller passes the tile it expects to be hit, never the direction.
 func _est_dmg(aid: String, target: Vector2i, snap: Dictionary) -> int:
 	var adef: Dictionary = CONTENT.ABILITIES.get(aid, {})
 	if adef.is_empty():
 		return 0
+	# the sim adds a stat surge to every effect that carries the key, before
+	# the riders grow it - so it lands on the base "dmg" here too
+	var surge_dmg := _surge_stat(adef, "dmg", snap)
 	var total := 0
 	for eff in adef.get("effects", []):
 		var op := String(eff["op"])
 		if not DMG_OPS.has(op):
 			continue
 		var dmg := int(eff.get("dmg", 0))
+		if eff.has("dmg"):
+			dmg += surge_dmg
 		if op == "lance" and int(snap.get("dim", 0)) == 0:
 			dmg += int(eff.get("clear_smog_bonus", 0))
 		if eff.has("per"):

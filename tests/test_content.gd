@@ -14,6 +14,11 @@ extends SceneTree
 ##    self-consistent. A self-test feeds the same lint deliberately bad rows
 ##    (they must be rejected) and the Block C2 rider rows from the review
 ##    (they must pass), so this check cannot rot into "accepts everything".
+##    Block D1: an ability row's "surge" dict keeps to the closed SURGE_KEYS
+##    set, every value an int, and every stat key (anything but "cost") must
+##    exist on at least one effect of the row (a surge that touches nothing is
+##    a data error); "surge" is a row key, never an effect key. plant_origin
+##    {kind} joins the op vocabulary with kind closed to Content.TERRAIN.
 ## 9) grafts as data (Block C3, section D): every GRAFTS row has name, desc,
 ##    tags from TAGS, a "price" int >= 1 (the shrine's per-graft price, read by
 ##    Game.shop_cost("graft", id)) and exactly one of stat / mod / hooks; stat
@@ -46,6 +51,7 @@ const OP_KEYS := {
 	"create_terrain": ["kind", "ttl"],
 	"clear_smoke": ["radius"],
 	"teleport": [],
+	"plant_origin": ["kind"],
 	"grow_wall": ["ttl"],
 	"shield": ["amount"],
 	"thorns": ["dmg", "turns"],
@@ -58,9 +64,14 @@ const OP_KEYS := {
 	"damage": ["dmg"],
 	"status_target": ["status", "turns", "who"],
 }
-## Optional keys any effect may carry ("surge" is an ability-level key that the
-## review's grammar lists with the riders; accepted either way, shape-checked).
-const RIDER_KEYS := ["if", "per", "bonus", "then", "surge"]
+## Optional keys any effect may carry. "surge" is an ability-row key only
+## (Game._surges reads adef["surge"], never an effect's), so on an effect it
+## fails as a stray key.
+const RIDER_KEYS := ["if", "per", "bonus", "then"]
+## Closed key set of an ability row's "surge" dict (Block D1): "cost" is the
+## price delta Game.ability_cost applies to a cost-2+ cast on growth, the rest
+## are the numeric effect keys a stat surge may add to (Game._apply_effect).
+const SURGE_KEYS := ["cost", "dmg", "push", "collision_dmg", "radius", "dist", "turns", "ttl"]
 ## Ops whose damage runs through Game._bonus_dmg.
 const BONUS_OPS := ["aoe_damage", "lance", "damage", "wash_push", "wash_all", "push_line", "push_all", "pull"]
 ## Ops that read the parent outcome and are therefore legal only inside "then".
@@ -300,7 +311,7 @@ func _lint_effects(abilities: Dictionary) -> Array:
 	for aid in abilities.keys():
 		var adef: Dictionary = abilities[aid]
 		if adef.has("surge"):
-			out.append_array(_lint_surge("%s: surge" % aid, adef["surge"]))
+			out.append_array(_lint_surge("%s: surge" % aid, adef["surge"], adef.get("effects", [])))
 		var effs = adef.get("effects", [])
 		if not (effs is Array) or (effs as Array).is_empty():
 			out.append("%s: missing or empty effects" % aid)
@@ -332,10 +343,11 @@ func _lint_effect(eff, where: String, in_then: bool) -> Array:
 		out.append("%s: status '%s' not in Content.STATUSES" % [where, str(eff.get("status", ""))])
 	if op == "status_target" and not WHO_VALUES.has(String(eff.get("who", "affected"))):
 		out.append("%s: who '%s' not in %s" % [where, str(eff.get("who")), str(WHO_VALUES)])
-	if op == "create_terrain" and not Content.TERRAIN.has(String(eff.get("kind", ""))):
-		out.append("%s: create_terrain kind '%s' not in Content.TERRAIN" % [where, str(eff.get("kind", ""))])
-	if eff.has("surge"):
-		out.append_array(_lint_surge("%s surge" % where, eff["surge"]))
+	if (op == "create_terrain" or op == "plant_origin") and not Content.TERRAIN.has(String(eff.get("kind", ""))):
+		out.append("%s: %s kind '%s' not in Content.TERRAIN" % [where, op, str(eff.get("kind", ""))])
+	# grow_radius always draws the plus, so its radius is honoured from 1 up
+	if op == "grow_radius" and not (eff.get("radius", 0) is int and int(eff.get("radius", 0)) >= 1):
+		out.append("%s: grow_radius radius must be an int >= 1" % where)
 	if eff.has("if"):
 		out.append_array(_lint_if(eff["if"], "%s if" % where, in_then))
 	if eff.has("per"):
@@ -442,16 +454,39 @@ func _lint_bonus(bonus, op: String, where: String) -> Array:
 	return out
 
 
-func _lint_surge(where: String, surge) -> Array:
+## A surge dict: keys from SURGE_KEYS, every value an int, and when `effects`
+## (the row's effect list) is given, every stat key must appear on at least one
+## effect of the row - top level or inside a then - or the surge is dead data.
+## SURGE_DEFAULT is linted without effects (it belongs to no row).
+func _lint_surge(where: String, surge, effects = null) -> Array:
 	if not (surge is Dictionary):
 		return ["%s: surge must be a dictionary" % where]
 	var out: Array = []
 	for k in surge:
-		if String(k) != "cost":
-			out.append("%s: unknown key '%s' (only 'cost')" % [where, str(k)])
-	if not (surge.get("cost", 0) is int):
-		out.append("%s: cost must be an int" % where)
+		var key := String(k)
+		if not SURGE_KEYS.has(key):
+			out.append("%s: unknown key '%s' (not in %s)" % [where, key, str(SURGE_KEYS)])
+			continue
+		if not (surge[k] is int):
+			out.append("%s: %s must be an int" % [where, key])
+		if key != "cost" and effects is Array and not _effects_carry(effects, key):
+			out.append("%s: stat key '%s' touches no effect of the row" % [where, key])
 	return out
+
+
+## Whether any effect in `effects` (or a member of its then-list) carries `key`.
+static func _effects_carry(effects: Array, key: String) -> bool:
+	for eff in effects:
+		if not (eff is Dictionary):
+			continue
+		if eff.has(key):
+			return true
+		var subs = eff.get("then", [])
+		if subs is Array:
+			for sub in subs:
+				if sub is Dictionary and sub.has(key):
+					return true
+	return false
 
 
 ## The data tables themselves: complete TERRAIN rows, REACTIONS that reference
@@ -535,6 +570,7 @@ func _lint_tables() -> Array:
 const BAD_ROWS := {
 	"xa_unknown_op": {"effects": [{"op": "melt", "dmg": 1}]},
 	"xb_stray_key": {"effects": [{"op": "damage", "dmg": 1, "radius": 2}]},
+	"xb2_grow_radius_zero": {"effects": [{"op": "grow_radius", "radius": 0}]},
 	"xc_status_name": {"effects": [{"op": "apply_status", "status": "curse", "turns": 1}]},
 	"xd_terrain_kind": {"effects": [{"op": "create_terrain", "kind": "lava", "ttl": 2}]},
 	"xe_pred_name": {"effects": [{"op": "damage", "dmg": 1, "if": [{"target_near": ["oil"]}]}]},
@@ -557,6 +593,13 @@ const BAD_ROWS := {
 		{"op": "status_target", "status": "root", "turns": 1, "who": "everyone"}]}]},
 	"xr_surge": {"surge": {"cost": "free"}, "effects": [{"op": "damage", "dmg": 1}]},
 	"xs_no_effects": {"effects": []},
+	# Block D1 surge lint
+	"xt_surge_key": {"surge": {"chance": 1}, "effects": [{"op": "damage", "dmg": 1}]},
+	"xu_surge_untouched": {"surge": {"radius": 1}, "effects": [{"op": "damage", "dmg": 1}]},
+	"xv_surge_float": {"surge": {"dmg": 1.5}, "effects": [{"op": "damage", "dmg": 1}]},
+	"xw_surge_on_effect": {"effects": [{"op": "damage", "dmg": 1, "surge": {"dmg": 1}}]},
+	"xx_plant_origin_kind": {"effects": [{"op": "teleport"}, {"op": "plant_origin", "kind": "lava"}]},
+	"xy_plant_origin_key": {"effects": [{"op": "plant_origin", "kind": "growth", "ttl": 2}]},
 }
 
 ## Rows the lint MUST accept: the Block C2 rider rows exactly as the review
@@ -580,6 +623,18 @@ const GOOD_ROWS := {
 	"gh_enemies_adjacent": {"effects": [{"op": "damage", "dmg": 1, "per": {
 		"count": "enemies_adjacent_target", "cap": 2, "add": {"dmg": 1}}, "bonus": {"dmg": 1,
 		"if": [{"target_adjacent": ["growth", "roots"]}]}}]},
+	# Block D1: the surged rows as shipped, plus a stat key that only a then carries
+	"gi_grow_spike_surge": {"surge": {"dmg": 1}, "effects": [{"op": "damage", "dmg": 3, "per": {
+		"count": "growth_adjacent_target", "cap": 1, "add": {"dmg": 1}}}]},
+	"gj_water_jet_surge": {"surge": {"push": 1, "collision_dmg": 1}, "effects": [
+		{"op": "wash_push", "push": 2, "collision_dmg": 2}]},
+	"gk_sun_flare_surge": {"surge": {"cost": -1, "radius": 1}, "effects": [{"op": "aoe_damage",
+		"dmg": 1, "radius": 2, "ignite": true, "bonus": {"dmg": 1, "if": [{"target_on": ["fire"]}]}}]},
+	"gl_seed_bomb_plus_surge": {"surge": {"radius": 1}, "effects": [{"op": "grow_radius", "radius": 1, "then": [
+		{"op": "status_target", "status": "root", "turns": 1, "who": "on_planted"}]}]},
+	"gm_surge_then_only": {"surge": {"turns": 1}, "effects": [{"op": "grow_radius", "radius": 1, "then": [
+		{"op": "status_target", "status": "root", "turns": 1, "who": "on_planted"}]}]},
+	"gn_spore_trail": {"effects": [{"op": "teleport"}, {"op": "plant_origin", "kind": "growth"}]},
 }
 
 

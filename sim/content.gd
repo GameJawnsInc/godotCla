@@ -33,6 +33,7 @@ const ABILITIES := {
 	"water_jet": {
 		"name": "Water Jet", "cost": 1, "target": "dir", "range": 2,
 		"effects": [{"op": "wash_push", "push": 2, "collision_dmg": 2}],
+		"surge": {"push": 1, "collision_dmg": 1},
 		"tags": ["water", "displace"], "role": "damage",
 	},
 	"mycelium_dash": {
@@ -53,6 +54,7 @@ const ABILITIES := {
 	"sun_flare": {
 		"name": "Sun Flare", "cost": 2, "target": "self", "range": 2,
 		"effects": [{"op": "aoe_damage", "dmg": 1, "radius": 2, "ignite": true, "bonus": {"dmg": 1, "if": [{"target_on": ["fire"]}]}}],
+		"surge": {"cost": -1, "radius": 1},
 		"tags": ["sun", "fire"], "role": "damage",
 	},
 	"thorn_shield": {
@@ -73,6 +75,7 @@ const ABILITIES := {
 	"grow_spike": {
 		"name": "Grow Spike", "cost": 1, "target": "enemy_near_growth", "range": 3,
 		"effects": [{"op": "damage", "dmg": 3, "per": {"count": "growth_adjacent_target", "cap": 1, "add": {"dmg": 1}}}],
+		"surge": {"dmg": 1},
 		"tags": ["growth"], "role": "payoff",
 	},
 	"spore_cloud": {
@@ -144,6 +147,7 @@ const ABILITIES := {
 	"seed_bomb+": {
 		"name": "Seed Bomb+", "cost": 1, "target": "tile", "range": 3,
 		"effects": [{"op": "grow_radius", "radius": 1, "then": [{"op": "status_target", "status": "root", "turns": 1, "who": "on_planted"}]}],
+		"surge": {"radius": 1},
 		"tags": ["growth"], "role": "setup",
 	},
 	"vine_whip+": {
@@ -154,11 +158,14 @@ const ABILITIES := {
 	"water_jet+": {
 		"name": "Water Jet+", "cost": 1, "target": "dir", "range": 3,
 		"effects": [{"op": "wash_push", "push": 3, "collision_dmg": 3, "then": [{"op": "status_target", "status": "root", "turns": 1, "if": [{"outcome": "collided"}, {"outcome": "pushed"}]}]}],
+		"surge": {"push": 1, "collision_dmg": 1},
 		"tags": ["water", "displace"], "role": "damage",
 	},
+	# Spore Trail (Block D1): the departure tile becomes growth once the tender
+	# has left it (plant_origin - floor, no terrain, no enemy standing there).
 	"mycelium_dash+": {
 		"name": "Mycelium Dash+", "cost": 1, "target": "growth", "range": 7,
-		"effects": [{"op": "teleport"}],
+		"effects": [{"op": "teleport"}, {"op": "plant_origin", "kind": "growth"}],
 		"tags": ["mobility"], "role": "mobility",
 	},
 	"root_wall+": {
@@ -174,6 +181,7 @@ const ABILITIES := {
 	"sun_flare+": {
 		"name": "Sun Flare+", "cost": 2, "target": "self", "range": 2,
 		"effects": [{"op": "aoe_damage", "dmg": 2, "radius": 2, "ignite": true, "bonus": {"dmg": 1, "if": [{"target_on": ["fire"]}]}}],
+		"surge": {"cost": -1, "radius": 1},
 		"tags": ["sun", "fire"], "role": "damage",
 	},
 	"thorn_shield+": {
@@ -194,6 +202,7 @@ const ABILITIES := {
 	"grow_spike+": {
 		"name": "Grow Spike+", "cost": 1, "target": "enemy_near_growth", "range": 4,
 		"effects": [{"op": "damage", "dmg": 3, "per": {"count": "growth_adjacent_target", "cap": 2, "add": {"dmg": 1}}}],
+		"surge": {"dmg": 1},
 		"tags": ["growth"], "role": "payoff",
 	},
 	"bramble_coat+": {
@@ -486,21 +495,22 @@ const HOOK_STEP_CAP := 12
 const ABILITY_DESC := {
 	"solar_lance": "Beam up to 3 tiles: 2 dmg, ignites oil (+: 3 dmg, 4 under clear skies)",
 	"seed_bomb": "Plant a patch of healing growth within 3 tiles",
-	"seed_bomb+": "Plant a patch of healing growth within 3 tiles; enemies on the fresh growth are rooted a turn",
+	"seed_bomb+": "Plant a patch of healing growth within 3 tiles; enemies on the fresh growth are rooted a turn; on growth: plants a 13-tile diamond",
 	"vine_whip": "Yank an enemy 2 tiles toward you, 2 dmg; moving it interrupts its attack",
 	"vine_whip+": "Yank an enemy 3 tiles toward you, 3 dmg; dragged through fire it is stunned a turn",
-	"water_jet": "Shove enemies 2 tiles, 2 dmg on impact; moving them interrupts",
-	"water_jet+": "Shove enemies 3 tiles, 3 dmg on impact; an enemy shoved into something is rooted a turn",
+	"water_jet": "Shove enemies 2 tiles, 2 dmg on impact; moving them interrupts; on growth: pushes 1 further, hits 1 harder",
+	"water_jet+": "Shove enemies 3 tiles, 3 dmg on impact; an enemy shoved into something is rooted a turn; on growth: pushes 1 further, hits 1 harder",
 	"mycelium_dash": "Teleport to any growth tile within 4",
+	"mycelium_dash+": "Teleport to any growth tile within 7; leaves growth where you stood",
 	"root_wall": "Raise a wall of roots that blocks enemies",
 	"pollen_burst": "Stun everything within 2 tiles for a turn",
-	"sun_flare": "Flash burn: 1 dmg to all within 2, ignites oil; +1 dmg to enemies standing in fire",
-	"sun_flare+": "Flash burn: 2 dmg to all within 2, ignites oil; +1 dmg to enemies standing in fire",
+	"sun_flare": "Flash burn: 1 dmg to all within 2, ignites oil; +1 dmg to enemies standing in fire; on growth: costs 1 less and reaches 3",
+	"sun_flare+": "Flash burn: 2 dmg to all within 2, ignites oil; +1 dmg to enemies standing in fire; on growth: costs 1 less and reaches 3",
 	"thorn_shield": "Raise 2 shield - blocks damage before HP",
 	"overgrowth": "Convert corruption around a tile into growth",
 	"sap_snare": "Root an enemy in place for 2 turns",
-	"grow_spike": "3 dmg to an enemy standing near growth, +1 with growth beside it (4 max)",
-	"grow_spike+": "3 dmg to an enemy near growth within 4, +1 per adjacent growth tile (5 max)",
+	"grow_spike": "3 dmg to an enemy standing near growth, +1 with growth beside it (4 max); on growth: +1 dmg",
+	"grow_spike+": "3 dmg to an enemy near growth within 4, +1 per adjacent growth tile (5 max); on growth: +1 dmg",
 	"spore_cloud": "Spore all within 2: 1 dmg a turn for 3 turns",
 	"fungal_ring": "Sprout growth on every tile around you",
 	"burrow": "Tunnel to any open tile within 3",
@@ -657,8 +667,17 @@ const ELITE_BOUNTY := 4
 ## later blocks flip rows (ash, root blocking advance/drag, spore add-stack).
 
 ## Per-ability surge rule (key "surge" on an ABILITIES row; this is the default
-## when the row has none): a cast of base cost >= 2 made while standing on
-## growth costs maxi(1, base + cost) and consumes the growth tile.
+## when the row has none). A cast made while standing on growth SURGES when the
+## dict carries anything that applies to it (Game._surges): a "cost" delta on
+## a base cost >= 2 (the cast costs maxi(1, base + cost)) or any stat key.
+## Stat keys - dmg, push, collision_dmg, radius, dist, turns, ttl (the closed
+## set tests/test_content.gd lints) - are int deltas added to the matching key
+## of every effect of the cast that carries it, before riders run. A surged
+## cast consumes the growth tile (event verdant) and a stat surge emits
+## {t: "surge", id, keys}. So a cost-1 row with only this default never surges
+## and never consumes growth; grow_spike(+) {dmg: 1}, water_jet(+) {push: 1,
+## collision_dmg: 1} and seed_bomb+ {radius: 1} do, and sun_flare(+) keeps its
+## discount and reaches 3 ({cost: -1, radius: 1}). Block D1.
 const SURGE_DEFAULT := {"cost": -1}
 
 ## Terrain kinds. Required keys (tests/test_content.gd lints them):

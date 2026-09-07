@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[1,0],"type":"ability"}],
 "expect": {"events":[{"id":"gust+","t":"ability"},{"t":"smoke_cleared","tile":"(2, 3)"},{"amt":1,"src":"collision:gust+","t":"damage","who":"smokestack"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C4 gust+ range 3 -> 4, dist 3 -> 4: the line clears the smoke at (2,3) and walks one tile further than the base row to find the smokestack at (5,3), then shoves it to (8,3) and drives the fourth step into the pillar at (9,3) - the base row neither reaches the enemy nor lands the collision",
-"sim_version": 8,
+"sim_version": 9,
 "hash": "9fb6e8e1f2dba8347b694a839ed3892d01fcc9bbd1feb1d990d22f7598d63658"
 }

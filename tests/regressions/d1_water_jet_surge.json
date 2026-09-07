@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["###########","#........>#","#.........#","#@k..#....#","#.........#","#.........#","###########"],"terrain":[{"kind":"growth","pos":[1,3]}]},"kit":["water_jet","seed_bomb","mycelium_dash"],"pool":["water_jet","seed_bomb","mycelium_dash"]},
+"actions": [{"slot":0,"target":[1,0],"type":"ability"}],
+"expect": {"events":[{"t":"verdant","tile":"(1, 3)"},{"id":"water_jet","t":"ability"},{"id":"water_jet","keys":["push","collision_dmg"],"t":"surge"},{"amt":3,"src":"collision:water_jet","t":"damage","who":"smokestack"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "D1 water_jet surge {push: 1, collision_dmg: 1}: from the growth at (1,3) the jet shoves the smokestack three tiles instead of two, and it is the third step that drives it into the pillar at (5,3) for 3 - the base row spends both its pushes on (3,3) and (4,3) and never collides at all, so the surge buys the collision and its extra point in one cast",
+"sim_version": 9,
+"hash": "93ba29fac11f200f964541ab9f4cd74a160b933d8993564c81cfa682645d71b4"
+}

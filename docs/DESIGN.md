@@ -118,7 +118,7 @@ The theme should do mechanical work, not just paint.
   `enemies_adjacent_target`, capped); `bonus` adds damage per affected enemy
   when that enemy's tile satisfies its predicates; `then` runs sub-effects once
   when the parent actually did something, never nested. An ability row may also
-  carry `surge` (default `{cost: -1}`: casting from growth is a charge cheaper).
+  carry a `surge` dict — what standing on growth buys that cast (below).
   Every effect returns an outcome — hit / ignited / pushed / collided /
   converted / planted / washed / statused, the enemies affected, the terrain they crossed
   — which is what riders read, so "lance the oil the enemy stands on, then the
@@ -141,6 +141,32 @@ The theme should do mechanical work, not just paint.
   (whip an enemy across fire: 3 + burn + stun for 1 charge), and *pin* (a jet
   collision roots, so the lance line stays open next turn - 1 + 2 = 3).
   Three more riders live on the package `+` forms below.
+- **Surge: the tile you stand on is ammunition.** One rule, one place — a cast
+  *surges* when the tender stands on growth and the row's `surge` dict carries
+  something that applies to it: a `cost` delta that actually lowers a cost-2+
+  cast, or any stat delta. A surged cast eats the growth tile underfoot (event
+  `verdant`). The default dict is `{cost: -1}`, so most rows behave exactly as
+  they always did: a cost-2+ cast from growth is a charge cheaper, a cost-1
+  cast leaves the tile alone. Seven rows now spend that same tile on shape
+  instead: **Grow Spike** and **Grow Spike+** `{dmg: 1}` (3 → 4 *before* the
+  growth-adjacent rider, so a spike from your own garden beside the enemy's
+  lands for 5), **Water Jet** and **Water Jet+** `{push: 1, collision_dmg: 1}`
+  (shoves a tile further and slams a point harder — a jet that could not reach
+  the wall now can), **Sun Flare** and **Sun Flare+** `{cost: -1, radius: 1}`
+  (the discount they always had, plus reach 3) and **Seed Bomb+**
+  `{radius: 1}` (a 13-tile diamond instead of the plus). Stat keys are int
+  deltas — `dmg`, `push`, `collision_dmg`, `radius`, `dist`, `turns`, `ttl` —
+  added to the matching key of every effect of that cast that carries it,
+  before the riders scale it; the cast emits a `surge` event so the harness
+  counts them. The point is the tension: growth heals you while you stand on
+  it, and every surge trades that heal for a sharper cast.
+- **Spore Trail.** **Mycelium Dash+** leaves growth where you stood — the
+  `plant_origin` op writes growth on the departure tile once the tender is
+  gone, if that tile is bare floor with nothing standing on it. The mobility
+  slot lays its own network as it travels: the tile you left is a tile you can
+  dash back to, spike from, or surge off, so a dash is a setup rather than only
+  an escape (and a dash that plants counts as an effective cast in the run
+  summary).
 - Loadout: 4 ability slots + 1 mobility slot. Drafting while full = drop one.
 - Draft cadence: 1-of-3 at each descent; shrines/shops mid-floor spend Bloom.
 - Upgrades appear as draft options (e.g. cost reduction, bigger shape).
@@ -150,7 +176,8 @@ The theme should do mechanical work, not just paint.
   - Vine Whip — pull enemy 2 tiles.
   - Root Wall — create blocking terrain, 2-turn life.
   - Water Jet — push + washes oil/extinguishes fire.
-  - Mycelium Dash (mobility) — teleport between growth tiles.
+  - Mycelium Dash (mobility) — teleport between growth tiles (its `+` form
+    leaves growth behind: Spore Trail).
 
 ### Enemies
 

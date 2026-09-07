@@ -4,6 +4,6 @@
 "actions": [{"target":[1,1],"type":"cleanse"},{"dir":[1,0],"type":"move"},{"item":"graft","pick":1,"type":"buy"},{"target":[3,2],"type":"cleanse"},{"type":"end_turn"},{"slot":0,"target":[1,0],"type":"ability"},{"slot":0,"target":[1,0],"type":"ability"}],
 "expect": {"events":[{"bloom":12,"t":"cleanse","tile":"(1, 1)"},{"discarded":"carapace","id":"solar_core","item":"graft","t":"buy"},{"bloom":1,"t":"cleanse","tile":"(3, 2)"},{"id":"solar_lance","t":"ability"},{"id":"solar_lance","t":"ability"}],"floor":1,"timeout":true,"turns":1,"won":false},
 "note": "bump 8: solar_core is the one lever at price 8 and GRAFT_PRICE_STEP still stacks on top of the row price - two grafts already installed make it 8 + 2*2 = 12 (carapace beside it 3 + 4 = 7), and the run buys it at exactly 12 bloom for exactly 0 left, the first cleanse topping the purse up from 11 to 12. The two solar_lance casts after the end_turn prove the graft landed: regen 3 + 1 pays 4 charge, enough for two 2-cost lances where the bare regen 3 pays one",
-"sim_version": 8,
+"sim_version": 9,
 "hash": "60f3f0695e66fd110579849cdba68a0bae7dfeb69db39c26e19e14c80a53f697"
 }

@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["###########","#........>#","#.........#","#@..k.....#","#.........#","#.........#","###########"],"terrain":[{"kind":"growth","pos":[1,3]}]},"kit":["sun_flare","seed_bomb","mycelium_dash"],"pool":["sun_flare","seed_bomb","mycelium_dash"]},
+"actions": [{"slot":0,"target":[1,3],"type":"ability"},{"slot":0,"target":[1,3],"type":"ability"}],
+"expect": {"events":[{"t":"verdant","tile":"(1, 3)"},{"id":"sun_flare","t":"ability"},{"id":"sun_flare","keys":["radius"],"t":"surge"},{"amt":1,"src":"sun_flare","t":"damage","who":"smokestack"},{"id":"sun_flare","t":"ability"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "D1 sun_flare surge {cost: -1, radius: 1}: the growth tile pays for both halves of the surge at once - the flare costs 1 instead of 2 AND reaches radius 3, so the smokestack three tiles away is hit. The second cast is the proof of the discount: 3 charge minus a discounted 1 leaves 2, exactly the full price of the unsurged repeat (which reaches only radius 2 and leaves that same smokestack untouched); had the first cast cost 2 the second would have been illegal",
+"sim_version": 9,
+"hash": "6892988173b62340febcffe2226ca03da6042e7e660942f8004d2e0f5e97b535"
+}

@@ -46,7 +46,16 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## skipped one it could not afford - replays differently. snapshot().shop also
 ## carries "graft_prices" now; that key is derived, so state_hash() hashes the
 ## raw stored shop instead and the hash never sees it.
-const SIM_VERSION := 8
+## 9: Block D1 - per-ability stat surges and Spore Trail. A cast surges when
+## the tender stands on growth and its "surge" dict carries anything that
+## applies (a cost delta on a cost >= 2 cast, or any stat delta); a stat surge
+## adds the delta to every effect of the cast that carries the key, so
+## grow_spike(+), water_jet(+), sun_flare(+) and seed_bomb+ hit, push and reach
+## differently on growth (and seed_bomb+ / grow_spike(+) / water_jet(+) now
+## consume the tile at cost 1). grow_radius reads its radius key, and
+## mycelium_dash+ plants the departure tile (op plant_origin). Every default
+## pool holds a surged row, so any log that cast one on growth diverges.
+const SIM_VERSION := 9
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -1547,10 +1556,14 @@ func _act_ability(action: Dictionary) -> void:
 	if player["charge"] < cost or not _ability_targets(aid).has(target):
 		_emit({"t": "illegal", "action": "ability", "id": aid})
 		return
-	if surge_cost < int(adef["cost"]):
-		# verdant surge: the cast draws the growth underfoot up into itself
+	# verdant surge (one rule, _surges): standing on growth with a surge dict
+	# that applies draws the tile up into the cast - the cost delta is already
+	# in surge_cost, the stat deltas ride ctx["surge"] into every effect
+	var surge_stats := {}
+	if _surges(adef):
 		terrain.erase(player["pos"])
 		_emit({"t": "verdant", "tile": player["pos"]})
+		surge_stats = _surge_stats(_surge_of(adef))
 	if cost < surge_cost:
 		# oil_cast_discount (oil_tithe): spent on the first oil-aimed cast of the turn
 		tithe_used_this_turn = true
@@ -1564,6 +1577,11 @@ func _act_ability(action: Dictionary) -> void:
 	}
 	casts_this_turn += 1
 	_emit({"t": "ability", "id": aid, "target": target})
+	if not surge_stats.is_empty():
+		var keys := _surge_applied_keys(adef, surge_stats)
+		if not keys.is_empty():
+			ctx["surge"] = surge_stats
+			_emit({"t": "surge", "id": aid, "keys": keys})
 	var ev_mark := _step_events.size()
 	var fired := false
 	for eff in adef["effects"]:
@@ -1599,25 +1617,83 @@ func run_summary() -> Dictionary:
 	}
 
 
-## Live cost of an ability right now: standing on growth applies the
-## ability's surge rule (Content.SURGE_DEFAULT unless the row carries its own
-## "surge") to a cost-2+ cast, consuming the tile (verdant surge). With a
-## `target`, a held oil_cast_discount graft mod (oil_tithe) that is unspent
-## this turn takes its discount off an oil-aimed cast, floored at 1: the
-## resolved target tile is oil, or for "dir" abilities the line holds oil
-## within range. Without a target the discount is never applied.
+## Live cost of an ability right now: standing on growth applies the cost
+## delta of the ability's surge rule (Content.SURGE_DEFAULT unless the row
+## carries its own "surge") to a cost-2+ cast: maxi(1, base + surge.cost).
+## Whether the cast surges at all (and so consumes the tile) is _surges; the
+## stat half of a surge never moves the price. With a `target`, a held
+## oil_cast_discount graft mod (oil_tithe) that is unspent this turn takes its
+## discount off an oil-aimed cast, floored at 1: the resolved target tile is
+## oil, or for "dir" abilities the line holds oil within range. Without a
+## target the discount is never applied.
 func ability_cost(aid: String, target = null) -> int:
 	var adef: Dictionary = Content.ABILITIES[aid]
 	var base: int = int(adef["cost"])
 	var cost := base
 	if base >= 2 and _terrain_kind(player["pos"]) == "growth":
-		var surge: Dictionary = adef.get("surge", Content.SURGE_DEFAULT)
-		cost = maxi(1, base + int(surge.get("cost", -1)))
+		cost = maxi(1, base + _surge_cost_delta(adef))
 	if target != null and cost > 1 and not tithe_used_this_turn:
 		var discount := int(_graft_mod("oil_cast_discount", 0))
 		if discount > 0 and _targets_oil(adef, target):
 			cost = maxi(1, cost - discount)
 	return cost
+
+
+## The surge dict of an ability row: its "surge" key, else Content.SURGE_DEFAULT.
+func _surge_of(adef: Dictionary) -> Dictionary:
+	return adef.get("surge", Content.SURGE_DEFAULT)
+
+
+## The cost half of a surge dict, the one number ability_cost and _surges both
+## read: an explicit dict without a "cost" key is a stat-only surge and moves
+## no price (sun_flare spells its discount out as {cost: -1, radius: 1}); the
+## default {cost: -1} applies only to a row with no dict at all.
+func _surge_cost_delta(adef: Dictionary) -> int:
+	return int(_surge_of(adef).get("cost", 0))
+
+
+## The stat half of a surge dict: every key but "cost", each an int delta that
+## _apply_effect adds to the matching key of every effect of the cast.
+func _surge_stats(surge: Dictionary) -> Dictionary:
+	var stats := {}
+	for k in surge:
+		if String(k) != "cost":
+			stats[String(k)] = int(surge[k])
+	return stats
+
+
+## The one surge rule (Block D1): a cast of `adef` SURGES when the tender
+## stands on growth and the surge dict carries anything that applies to it -
+## a cost delta that lowers a cost >= 2 (maxi(1, base + cost) < base), or any
+## stat key. A surged cast consumes the growth tile (event verdant). A cost-1
+## ability with only the default {cost: -1} therefore never surges and never
+## consumes growth; one with a stat surge does, and gets the stat.
+func _surges(adef: Dictionary) -> bool:
+	if _terrain_kind(player["pos"]) != "growth":
+		return false
+	var base := int(adef["cost"])
+	if base >= 2 and maxi(1, base + _surge_cost_delta(adef)) < base:
+		return true
+	return not _surge_stats(_surge_of(adef)).is_empty()
+
+
+## The surge stat keys that touch at least one effect of the row (top level or
+## inside a then): what the {t: "surge"} event reports. The content lint
+## requires every stat key to touch something, so for a shipped row this is
+## every stat key in row order.
+func _surge_applied_keys(adef: Dictionary, stats: Dictionary) -> Array:
+	var keys: Array = []
+	for k in stats:
+		var found := false
+		for eff in adef["effects"]:
+			if eff.has(k):
+				found = true
+			for sub in eff.get("then", []):
+				if sub.has(k):
+					found = true
+		if found:
+			keys.append(k)
+	return keys
 
 
 ## Whether a cast of `adef` at `target` is aimed at oil: "dir" abilities when
@@ -1716,8 +1792,14 @@ func _ability_targets(aid: String) -> Array:
 ##            own outcome fired, never for one that found nothing to do.
 ## On `pull` the bonus rides the lash hit (pull has no collision damage) and
 ## its predicates read the enemy's landing tile.
+## Surge stats (Block D1): when ctx carries "surge" ({key: delta}, the stat
+## half of the row's surge dict, set by _act_ability only on a surged cast),
+## every delta is added to the matching key of this effect on a copy, before
+## `per` grows it and before the op runs; then-effects get the same treatment
+## through the ctx they inherit. An effect without the key is untouched.
 ## `ctx` is the cast context built by _act_ability: {aid, adef, target, origin,
-## casts_before, moved} plus "parent" (the parent outcome) inside a then.
+## casts_before, moved} plus "surge" on a stat-surged cast and "parent" (the
+## parent outcome) inside a then.
 ## Returns the outcome: int counters hit / ignited / pushed / collided /
 ## converted / planted / washed / statused, `affected` (ids of enemies the op damaged,
 ## displaced or statused), `crossed` (terrain kinds any displaced enemy
@@ -1731,6 +1813,16 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 		return out
 	if eff.has("if") and not _rider_if(eff["if"], ctx, parent, null):
 		return out
+	var surge_stats: Dictionary = ctx.get("surge", {})
+	if not surge_stats.is_empty():
+		var surged := eff.duplicate()
+		var touched := false
+		for k in surge_stats:
+			if eff.has(k):
+				surged[k] = int(eff[k]) + int(surge_stats[k])
+				touched = true
+		if touched:
+			eff = surged
 	if eff.has("per"):
 		var per: Dictionary = eff["per"]
 		var n := _rider_per(per, ctx)
@@ -1769,9 +1861,24 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 					_affect(out, e)
 					break
 		"grow_radius":
+			# every floor tile within manhattan eff.radius of the target: 1 is
+			# the plus, 2 the 13-tile diamond a surged seed_bomb+ reaches. The
+			# plus keeps its pre-D1 order (target, then DIRS) because terrain
+			# insertion order is observable - terrain.keys() feeds the growth
+			# target list and the state hash - so a radius-1 cast stays
+			# byte-identical; the outer rings follow dy then dx ascending.
+			# The plus is always drawn, so radius is honoured from 1 up -
+			# tests/test_content.gd rejects a grow_radius row below 1
+			var gr := int(eff["radius"])
 			var tiles_: Array = [target]
 			for d in DIRS:
 				tiles_.append(target + d)
+			for dy in range(-gr, gr + 1):
+				for dx in range(-gr, gr + 1):
+					var md := absi(dx) + absi(dy)
+					if md < 2 or md > gr:
+						continue
+					tiles_.append(target + Vector2i(dx, dy))
 			for t in tiles_:
 				if _tile(t) == MapGen.T_FLOOR and not terrain.has(t):
 					terrain[t] = {"kind": "growth"}
@@ -1862,6 +1969,23 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 				moved_this_turn += 1
 			player["pos"] = target
 			_emit({"t": "teleport", "to": target})
+		"plant_origin":
+			# Spore Trail (Block D1): write eff.kind on the tile the cast left
+			# from (ctx.origin) once the tender is gone - floor, no terrain, no
+			# enemy standing there. Counts as planted so on_planted riders,
+			# the growth_planted hook and effective_uses all see it.
+			var o = ctx.get("origin", null)
+			var kind := String(eff["kind"])
+			if o is Vector2i and o != player["pos"] and _tile(o) == MapGen.T_FLOOR \
+					and not terrain.has(o) and _enemy_at(o) == null:
+				terrain[o] = _tile_dict(kind, aid if kind == "fire" else "", {})
+				out["planted"] += 1
+				out["tiles"].append(o)
+				_emit({"t": "terrain", "kind": kind, "tile": o})
+				if kind == "growth":
+					_hook("growth_planted", {"tiles": [o]})
+				elif kind == "fire":
+					_hook("ignite", {"tile": o, "by": aid})
 		"grow_wall":
 			var walled: Array = [target]
 			for d in DIRS:

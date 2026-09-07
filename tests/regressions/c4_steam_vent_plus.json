@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[4,3],"type":"ability"},{"type":"end_turn"},{"type":"end_turn"},{"type":"end_turn"},{"slot":1,"target":[1,0],"type":"ability"}],
 "expect": {"events":[{"id":"steam_vent+","t":"ability"},{"kind":"smoke","t":"terrain","tile":"(4, 3)"},{"id":"gust","t":"ability"},{"t":"smoke_cleared","tile":"(4, 3)"}],"floor":1,"timeout":true,"turns":3,"won":false},
 "note": "C4 steam_vent+ ttl 3 -> 5: the vent is lit on turn 1 and three environment phases later the cloud is still standing - gust can only clear a tile that still holds smoke, so the clear on turn 4 is the extra ttl proving itself (the base row's ttl 3 expires at the end of turn 3)",
-"sim_version": 8,
+"sim_version": 9,
 "hash": "7fd8b24d631b5c1b0af609c1db54ae1c6429e7e44c9c0d147d6e5db447246a78"
 }

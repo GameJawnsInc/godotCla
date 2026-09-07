@@ -7,7 +7,8 @@ extends "res://bots/deeproot.gd"
 ## Layer 1 - option value: _score gains terms for what the kit COULD do next
 ## turn (an enemy standing beside growth while a spike is held, oil under an
 ## enemy while an igniter is held, an enemy pinned against a wall while a
-## shove is held, standing on growth with a cost-2 ability, roots beside an
+## shove is held, standing on growth holding an ability that would surge from
+## it, roots beside an
 ## enemy while a shove is held). Every term is computed only for effect ops
 ## the kit currently holds, read from Content.ABILITIES rows - no ability id
 ## is named anywhere in this file.
@@ -275,8 +276,10 @@ func _option_value(g) -> float:
 ##   pin:    a DISPLACE_OPS op - PIN_POINTS per enemy that the op could move
 ##           and that stands beside a non-open tile along that line (wall,
 ##           roots, another enemy), cap PIN_CAP
-##   surge:  SURGE_POINTS when the player stands on growth and holds a
-##           cost-2+ ability (the sim's surge rule)
+##   surge:  SURGE_POINTS when the player stands on growth and holds an
+##           ability whose surge dict would apply (_surge_applies: a cost
+##           delta that lowers a cost-2+ cast, or any stat delta - the sim's
+##           own rule, Game._surges)
 ##   roots:  ROOTS_POINTS when roots stand beside an enemy and a PUSH_OPS
 ##           op is held
 func _option_terms(g) -> Dictionary:
@@ -292,7 +295,7 @@ func _option_terms(g) -> Dictionary:
 		var adef := _adef(aid)
 		if adef.is_empty():
 			continue
-		if on_growth and int(adef.get("cost", 0)) >= 2:
+		if on_growth and _surge_applies(adef):
 			t["surge"] = SURGE_POINTS
 		for eff in adef.get("effects", []):
 			var op := String(eff.get("op", ""))
@@ -316,6 +319,22 @@ func _option_terms(g) -> Dictionary:
 ## Content.ABILITIES row for a held id, the base row when a "+" form has none.
 func _adef(aid: String) -> Dictionary:
 	return Content.ABILITIES.get(aid, Content.ABILITIES.get(Content.base_id(aid), {}))
+
+
+## Would a cast of `adef` from growth surge at all? The row half of the sim's
+## one surge rule (Game._surges, Block D1): a "cost" delta that actually
+## lowers a cost-2+ cast, or any stat delta (dmg, push, radius, ...) - which
+## surges whatever the cost, so a cost-1 payoff row counts as surge-ready too.
+## Read from Content.SURGE_DEFAULT and the row; no ability id is named.
+func _surge_applies(adef: Dictionary) -> bool:
+	var surge: Dictionary = adef.get("surge", Content.SURGE_DEFAULT)
+	var base := int(adef.get("cost", 0))
+	if base >= 2 and maxi(1, base + int(surge.get("cost", 0))) < base:
+		return true
+	for k in surge:
+		if String(k) != "cost":
+			return true
+	return false
 
 
 ## Flammable tiles inside an igniter's reach that carry an enemy or have one

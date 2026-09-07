@@ -597,6 +597,71 @@ to be paid" loop this project has twice designed against) is written up in the
 BALANCE entry's alternative-probe section as **a decision for the project
 owner**, not taken here.
 
+**Status (2026-09-07d).** **Block D item 1 (6.4, "Per-ability stat surges and
+Spore Trail") has shipped** and **`Game.SIM_VERSION` is 9**. Its gate was met
+before the work began - the `surge` key has existed with identical defaults
+since C1a and the gardener's lift is on record in 06c - so the question this
+pass had to answer was the bullet's own fallback clause, *"cap `per` at 1 when
+surged if lift is excessive"*. **It does not fire.** The surge rule now lives
+in one place (`Game._surges`: the tender stands on growth and the row's own
+`surge` dict carries something that applies - a `cost` delta that lowers a
+cost of 2 or more, or any stat delta), a surge still eats the tile and emits
+`verdant`, and the stat half is added to the matching key of every effect of
+that cast that carries it, on a duplicated effect, before the riders run, with
+one `{t: "surge", id, keys}` per cast. Seven rows carry one - `grow_spike(+)`
+`{dmg: 1}`, `water_jet(+)` `{push: 1, collision_dmg: 1}`, `sun_flare(+)`
+`{cost: -1, radius: 1}`, `seed_bomb+` `{radius: 1}` - the keys are a closed
+int-only set `{cost, dmg, push, collision_dmg, radius, dist, turns, ttl}`
+lint-checked against the row's own effects, `grow_radius` reads its `radius`
+key (defect 16 closed; radius 1 is the plus it always drew), and
+`mycelium_dash+` gained the new positional op `plant_origin` - Spore Trail,
+the departure tile becomes growth when it is bare floor.
+
+The measurement is the "2026-09-07d - bump 9 (D1)" entry in
+`docs/BALANCE.md`, and its headline is a **null result on the row the review
+was worried about**. On the locked lift table the review's own gate uses
+(`sweep_combos`, optimizer, 30 seeds, tier 0, base3 `{kit: K, pool: K}`),
+measured against a `git archive` copy of the pre-D1 commit on the same seeds:
+`grow_spike` **20/30 [49%, 81%] before and after**, `sun_flare` 10/30
+[19%, 51%] before and after, `water_jet` 7/30 [12%, 41%] before and after -
+the jet's whole block byte-identical - with the HOLD line at 25/30 and the
+largest single delta **zero**. What moves is what a small conditional bonus
+should move: the spike row's combos/run 31.67 -> 33.50 and its damage taken
+11.8 -> 11.2, and one win each way on the two spike pairs. The reason is the
+tension the design paragraph states: the surge spends the growth tile that is
+also the tender's heal and the same tile `grow_spike`'s `per` rider wants
+beside the target, so a `+1` there is paid for, not free.
+
+The default game is intact - the 30-seed persona table is inside every 07c
+interval (wanderer, sprout and deeproot within a decimal; fanatic 7/30 ->
+6/30, optimizer 13/30 -> 12/30, magpie 5/30 unchanged), the gate reads
+"gate: all PASS" at 0 illegal actions and 0 timeouts for six personas, and the
+100-seed magpie canary is 7/100 [3%, 14%] against a recorded 10/100 [6, 17] -
+a fall inside noise, and the canary watches rises. Suite green throughout
+("regressions: 68 ok, 0 failed" plain and `REGRESS_STRICT=1`, "grammar: OK
+(614 checks)", "economy: OK (183 checks)", "bots: OK (83 checks)",
+"determinism: OK (61 checks, 8 personas)", "meta: OK", "content: OK", "shell
+smoke: OK", 1400 + 1540 procgen generations with 0 violations); the corpus went
+62 -> 68 with six new `d1_*` demos, 54 records re-stamped on `sim_version`
+alone, one hand-authored record whose hash moved because its `water_jet` is
+now cast from growth, and seven bot logs re-recorded on their personas.
+
+**What the pass measured and deliberately did not act on.** Spore Trail is a
+**shipped no-op at this sample**: the mobility `+` is a draft dead letter
+(optimizer 0/31 offers, deeproot 0/25, fanatic 0/24, magpie 0/15 and 0/51 over
+100 seeds; the one pick in the table is sprout's 1/12, and that sprout never
+casts a dash), so it had to be measured on locked kits, where it plants **5 tiles over 30
+optimizer runs and 14 over 30 magpie runs** and wins the identical seed set
+before and after. `seed_bomb+`'s radius surge fires once per 30 runs in the
+same configs. Both rows are correct (`tests/regressions/d1_spore_trail.json`,
+`d1_seed_bomb_plus_surge.json`, `tests/test_grammar.gd`) and neither is a
+balance event yet - they are content waiting for a draft or a loadout that
+reaches them, which is 6.4's affinity-draft bullet, not this one. The two
+surges no bot can plan for (`water_jet`'s push/collision and the flare's extra
+ring, invisible to `optimizer._est_dmg` and `_aoe_finishes`) are exactly the
+two rows whose locked numbers did not move at all; whether that is the content
+or the instrument is the open question this entry hands forward.
+
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
 180 bot runs; a synergy-lift sweep of 7 hypothesised pairs at 24 seeds per

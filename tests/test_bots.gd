@@ -11,6 +11,10 @@ extends SceneTree
 ##   3b) shrine detour gates: optimizer and magpie walk to a graft counter only
 ##      when the purse covers the CHEAPEST offer (snap.shop.graft_prices), not
 ##      a flat bloom >= 5
+##   3c) Block D1 surge terms: optimizer._est_dmg adds a row's surge dmg while
+##      the tender stands on growth (and the sim lands exactly that number),
+##      and the planner's surge-ready term follows the sim's rule - any held
+##      row whose surge dict applies, cost-1 stat surges included
 ##   4) determinism: two fresh instances agree over 40 steps
 ##   5) runtime factor: deeproot vs deeproot_plan over 5 seeds (test-side
 ##      Time.get_ticks_msec only; the bots never read a clock)
@@ -20,6 +24,7 @@ const Content := preload("res://sim/content.gd")
 const Game := preload("res://sim/game.gd")
 const Roster := preload("res://bots/roster.gd")
 const Sweep := preload("res://tests/sweep_lib.gd")
+const Tally := preload("res://tests/tally.gd")
 
 const RUNTIME_MAX_FACTOR := 6.0
 const RUNTIME_SEEDS := 5
@@ -44,6 +49,7 @@ func _init() -> void:
 	_check_pin()
 	_check_shrine_routing()
 	_check_shop_detour_gates()
+	_check_d1_surge_terms()
 	_check_determinism()
 	_check_runtime_factor()
 	if failures.is_empty():
@@ -108,6 +114,15 @@ static func _kit_id(game, a: Dictionary) -> String:
 
 static func _manhattan(a: Vector2i, b: Vector2i) -> int:
 	return absi(a.x - b.x) + absi(a.y - b.y)
+
+
+## One action through the sim with a tally listening, exactly as
+## Sweep.run_loop feeds it.
+static func _step_into(tally, game, a: Dictionary) -> void:
+	tally.begin_step(game)
+	for ev in game.step(a):
+		tally.add(ev, a, game)
+	tally.end_step(game, a)
 
 
 ## Player distance to `goal` after stepping `a` on a clone.
@@ -364,6 +379,121 @@ func _check_shop_detour_gates() -> void:
 		_ok(not botn._graft_worth_detour(gn.snapshot()),
 			"%s: no grafts on the counter, no graft detour at 20 bloom" % pname)
 		print("detour gate %-9s bloom 5 -> %s, bloom 6 -> %s" % [pname, str(seen[5]), str(seen[6])])
+
+
+# --- 3c) Block D1 surge terms -------------------------------------------------
+
+## The bot half of the D1 surge rule, both sides read from the Content row and
+## never from an id:
+##   optimizer._est_dmg adds the row's surge "dmg" while the tender stands on
+##   growth (grow_spike 3 -> 4, the growth-adjacent rider still paying on top),
+##   and adds nothing to a row whose surge carries no dmg;
+##   deeproot_plan's surge-ready term fires for a held cost-1 ability with a
+##   stat surge (grow_spike), which the old cost-2+ rule could not see, and
+##   still fires for the cost-2 rows it always saw.
+func _check_d1_surge_terms() -> void:
+	var g = _game(["grow_spike", "solar_lance", "mycelium_dash"])
+	var e = g._spawn("welded_hulk", Vector2i(8, 3))
+	g._compute_intents()
+	var opt = Roster.make("optimizer", 1)
+	var ppos: Vector2i = g.player["pos"]
+	var off: Dictionary = g.snapshot()
+	_ok(opt._est_dmg("grow_spike", e["pos"], off) == 3,
+		"off growth the spike estimates its base 3: %d" % opt._est_dmg("grow_spike", e["pos"], off))
+	_ok(opt._est_dmg("solar_lance", e["pos"], off) == 2,
+		"off growth the lance estimates 2: %d" % opt._est_dmg("solar_lance", e["pos"], off))
+	# stand on growth: the spike's own surge {dmg: 1} lands on the base dmg
+	g.terrain[ppos] = {"kind": "growth"}
+	var on: Dictionary = g.snapshot()
+	_ok(opt._est_dmg("grow_spike", e["pos"], on) == 4,
+		"on growth the spike estimates 4: %d" % opt._est_dmg("grow_spike", e["pos"], on))
+	_ok(opt._est_dmg("solar_lance", e["pos"], on) == 2,
+		"a row without a dmg surge is unchanged on growth: %d" % opt._est_dmg("solar_lance", e["pos"], on))
+	_ok(opt._surge_stat(Content.ABILITIES["grow_spike"], "dmg", on) == 1
+			and opt._surge_stat(Content.ABILITIES["grow_spike"], "dmg", off) == 0,
+		"the surge delta is read only while standing on growth")
+	_ok(opt._surge_stat(Content.ABILITIES["water_jet"], "dmg", on) == 0
+			and opt._surge_stat(Content.ABILITIES["water_jet"], "push", on) == 1,
+		"a push surge is no damage surge: %s" % str(Content.ABILITIES["water_jet"]["surge"]))
+	# growth beside the enemy too: surge and the growth_adjacent rider stack
+	g.terrain[Vector2i(8, 2)] = {"kind": "growth"}
+	var on2: Dictionary = g.snapshot()
+	var est: int = opt._est_dmg("grow_spike", e["pos"], on2)
+	_ok(est == 5, "surge + one growth-adjacent rider: 3 + 1 + 1 = %d" % est)
+	var gp = _game(["grow_spike+", "solar_lance", "mycelium_dash"])
+	gp._spawn("welded_hulk", Vector2i(8, 3))
+	gp.terrain[gp.player["pos"]] = {"kind": "growth"}
+	gp.terrain[Vector2i(8, 2)] = {"kind": "growth"}
+	gp.terrain[Vector2i(8, 4)] = {"kind": "growth"}
+	var estp: int = opt._est_dmg("grow_spike+", Vector2i(8, 3), gp.snapshot())
+	_ok(estp == 6, "grow_spike+ on growth with two growth beside the target: 3 + 1 + 2 = %d" % estp)
+	# the estimate is the sim's number: cast it for real
+	var hp0: int = int(e["hp"])
+	var evs: Array = g.step({"type": "ability", "slot": 0, "target": e["pos"]})
+	var kinds: Array = []
+	for ev in evs:
+		kinds.append(String(ev.get("t", "")))
+	_ok(hp0 - int(e["hp"]) == est, "the sim lands the estimate: hp %d -> %d (est %d)" % [hp0, int(e["hp"]), est])
+	_ok(kinds.has("verdant") and kinds.has("surge"), "the surged cast consumes growth and reports it: %s" % str(kinds))
+	print("est_dmg: grow_spike off growth %d, on growth %d, on growth beside growth %d (sim dealt %d); grow_spike+ %d" % [
+		3, 4, est, hp0 - int(e["hp"]), estp])
+
+	# the harness counts both halves: the stat surge per casting id, and the
+	# tile a Spore Trail dash left behind
+	var gt = _game(["mycelium_dash+", "grow_spike", "solar_lance"])
+	var from: Vector2i = gt.player["pos"]
+	gt.terrain[Vector2i(8, 3)] = {"kind": "growth"}
+	var tally = Tally.new()
+	_step_into(tally, gt, {"type": "ability", "slot": 0, "target": Vector2i(8, 3)})
+	_ok(gt.player["pos"] == Vector2i(8, 3) and String(gt.terrain.get(from, {}).get("kind", "")) == "growth",
+		"the dash plants the tile it left: %s -> %s, terrain %s" % [str(from), str(gt.player["pos"]), str(gt.terrain.get(from, {}))])
+	_ok(int(tally.origin_plants_by_aid.get("mycelium_dash+", 0)) == 1,
+		"tally counts the origin plant: %s" % str(tally.origin_plants_by_aid))
+	gt.terrain[gt.player["pos"]] = {"kind": "growth"}
+	gt.player["charge"] = 3
+	gt._spawn("welded_hulk", Vector2i(8, 5))
+	gt.terrain[Vector2i(8, 6)] = {"kind": "growth"}
+	_step_into(tally, gt, {"type": "ability", "slot": 1, "target": Vector2i(8, 5)})
+	_ok(int(tally.surges_by_aid.get("grow_spike", 0)) == 1 and tally.verdant == 1,
+		"tally counts the stat surge and its verdant: %s verdant %d" % [str(tally.surges_by_aid), tally.verdant])
+	var k: Dictionary = Tally.kpis(tally, 1, [])
+	_ok(int(k["surges"]) == 1 and int(k["origin_plants"]) == 1,
+		"kpis carry both counters: surges %d origin plants %d" % [int(k["surges"]), int(k["origin_plants"])])
+
+	# planner: surge-ready for a cost-1 stat-surge row
+	var gs = _game(["grow_spike", "sap_snare", "mycelium_dash"])
+	gs.terrain[gs.player["pos"]] = {"kind": "growth"}
+	var plan = _bot("deeproot_plan", gs)
+	var terms: Dictionary = plan._option_terms(gs)
+	_ok(float(terms["surge"]) == plan.SURGE_POINTS,
+		"a cost-1 stat-surge row held on growth is surge-ready: %s" % str(terms))
+	var gc = _game(["sap_snare", "bramble_coat", "mycelium_dash"])
+	gc.terrain[gc.player["pos"]] = {"kind": "growth"}
+	var planc = _bot("deeproot_plan", gc)
+	_ok(float(planc._option_terms(gc)["surge"]) == 0.0,
+		"cost-1 rows with only the default surge stay worth nothing: %s" % str(planc._option_terms(gc)))
+	var g2 = _game(["spore_cloud", "sap_snare", "mycelium_dash"])
+	g2.terrain[g2.player["pos"]] = {"kind": "growth"}
+	var plan2 = _bot("deeproot_plan", g2)
+	_ok(float(plan2._option_terms(g2)["surge"]) == plan2.SURGE_POINTS,
+		"the cost-2 discount rows the old rule saw still count: %s" % str(plan2._option_terms(g2)))
+	var g3 = _game(["grow_spike", "sap_snare", "mycelium_dash"])
+	var plan3 = _bot("deeproot_plan", g3)
+	_ok(float(plan3._option_terms(g3)["surge"]) == 0.0, "off growth nothing is surge-ready")
+	_ok(plan._surge_applies(Content.ABILITIES["grow_spike"])
+			and plan._surge_applies(Content.ABILITIES["water_jet"])
+			and plan._surge_applies(Content.ABILITIES["sun_flare"])
+			and plan._surge_applies(Content.ABILITIES["seed_bomb"]),
+		"stat surges and cost-2 discounts both apply")
+	_ok(not plan._surge_applies(Content.ABILITIES["sap_snare"])
+			and not plan._surge_applies(Content.ABILITIES["mycelium_dash+"])
+			and not plan._surge_applies({}),
+		"a cost-1 row with the default surge (and an unknown row) applies nothing")
+	var ready: Array = []
+	for aid in Content.ABILITIES:
+		if plan._surge_applies(Content.ABILITIES[aid]):
+			ready.append(aid)
+	print("surge-ready rows (%d of %d): %s" % [ready.size(), Content.ABILITIES.size(), str(ready)])
 
 
 # --- 4) determinism -----------------------------------------------------------

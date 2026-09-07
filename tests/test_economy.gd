@@ -37,6 +37,12 @@ extends SceneTree
 ##     tender, kit_ban applies after the loadout kit, open_pool adds every
 ##     package id to the pool; rng.state after Game.new is the same for the
 ##     default config, every loadout and open_pool
+##  k) Block D1 (bump 9): rng.state after Game.new for the default config is
+##     pinned per seed to the values the bump-8 tree produced (RNG_STATE_BUMP8,
+##     seeds 1..50) - the surge / Spore Trail pass touched no main-rng draw;
+##     and Game.ability_cost is unchanged in shape for every ABILITIES row on
+##     and off growth (base off growth; maxi(1, base - 1) on growth for a cost
+##     >= 2 row, base for a cost-1 row - a stat surge never moves the price)
 ## Run: godot --headless --path . --script tests/test_economy.gd
 
 const Content := preload("res://sim/content.gd")
@@ -48,6 +54,21 @@ const RNG_SEEDS := 50
 const STOCK_SEEDS := 200
 const POD_TARGET := 30
 const GOUGING_TIER := 5  # Content.TIERS[4] is "Gouging Prices"
+## rng.state after Game.new(seed) for seeds 1..50, default config, recorded on
+## the bump-8 tree (git HEAD before Block D1). A deliberate mapgen or spawn
+## change re-pins these; anything else that moves one is a stray main-rng draw.
+const RNG_STATE_BUMP8 := [
+	5089575408282122190, -1543445859615755461, 5249088221260300708, -7365291246896200391, -4307724339993763098,
+	-5880482361733646265, -2810552436854674636, -1230729324925988375, 2921800532955938594, 2473378904339026979,
+	-6414414183668122812, 2991425153590813089, 3396970675805829714, 6179986816058712103, 8222375506542086136,
+	-8307466868879457330, -1913913789140790326, -920277023256220633, 4456736551290949148, 6774621626282757442,
+	8078245979767963114, 8887448235998919003, -343293399291332840, 7114140600357843809, 1220613033662260858,
+	5388088503146639011, 8794150899137250344, 3259365569618313117, 3035381574159428702, 6917545318854331931,
+	-2123855832781644880, -5508205788817708395, 744473577580189906, -2489741651320926877, 1249249924779478724,
+	-7126007905707854211, 5483058272966479890, 7488929353488925007, 4469199078683118676, -4333298479256176359,
+	8916454498695204738, 8748522282163598855, 8919786808711414480, -159301045649121847, 7650199452722886150,
+	7411140844524094591, -4638585121757713264, 6393578473144512909, -5397919597486566550, -4398859535905301253,
+]
 
 var checks := 0
 var failures: Array = []
@@ -67,6 +88,8 @@ func _init() -> void:
 	_check_config_keys()
 	_check_attribution()
 	_check_loadouts()
+	_check_d1_rng_pins()
+	_check_d1_ability_cost()
 	if failures.is_empty():
 		print("economy: OK (%d checks)" % checks)
 		quit(0)
@@ -961,3 +984,62 @@ func _check_attribution() -> void:
 		gsrc.append(ev.get("src", ""))
 	_ok(gsrc.has("geyser") and not gsrc.has("sun_flare"), "geyser srcs %s" % str(gsrc))
 	print("attribution: lance/fire:solar_lance/collision:water_jet/fire:cinder_mite/env spread/geyser OK; player fire src 'fire'")
+
+
+# --- k) Block D1: rng pins and the unchanged cost rule ---------------------------
+
+func _check_d1_rng_pins() -> void:
+	var moved := 0
+	for i in range(RNG_STATE_BUMP8.size()):
+		var s := i + 1
+		var st: int = Game.new(s).rng.state
+		if st != int(RNG_STATE_BUMP8[i]):
+			moved += 1
+			if moved <= 3:
+				failures.append("rng pin: seed %d state %d, bump-8 tree had %d" % [s, st, int(RNG_STATE_BUMP8[i])])
+	_ok(RNG_STATE_BUMP8.size() == RNG_SEEDS, "rng pins cover %d seeds" % RNG_SEEDS)
+	_ok(moved == 0, "rng.state after Game.new matches the bump-8 tree: %d of %d seeds moved" % [moved, RNG_STATE_BUMP8.size()])
+	print("rng pins: %d seeds, %d moved" % [RNG_STATE_BUMP8.size(), moved])
+
+
+## ability_cost per row, on and off growth, against the pre-D1 formula: the
+## surge's stat half never prices anything, so grow_spike / water_jet /
+## seed_bomb+ stay 1 on growth and sun_flare(+) keeps its 2 -> 1 discount.
+func _check_d1_ability_cost() -> void:
+	var g = Game.new(1)
+	var p: Vector2i = g.player["pos"]
+	var bad: Array = []
+	for aid in Content.ABILITIES:
+		var base := int(Content.ABILITIES[aid]["cost"])
+		g.terrain.erase(p)
+		if g.ability_cost(aid) != base:
+			bad.append("%s off=%d" % [aid, g.ability_cost(aid)])
+		g.terrain[p] = {"kind": "growth"}
+		var want: int = maxi(1, base - 1) if base >= 2 else base
+		if g.ability_cost(aid) != want:
+			bad.append("%s on=%d want %d" % [aid, g.ability_cost(aid), want])
+	g.terrain.erase(p)
+	_ok(bad.is_empty(), "ability_cost unchanged for every row on/off growth: %s" % str(bad))
+	# the surged cost-1 rows and sun_flare(+) named: 1 / 1 and 2 / 1
+	g.terrain[p] = {"kind": "growth"}
+	_ok(g.ability_cost("grow_spike") == 1 and g.ability_cost("water_jet") == 1 and g.ability_cost("seed_bomb+") == 1
+		and g.ability_cost("sun_flare") == 1 and g.ability_cost("sun_flare+") == 1 and g.ability_cost("seed_bomb") == 1,
+		"on growth: stat-surged cost-1 rows stay 1, cost-2 rows drop to 1")
+	g.terrain.erase(p)
+	_ok(g.ability_cost("grow_spike") == 1 and g.ability_cost("water_jet") == 1 and g.ability_cost("sun_flare") == 2 and g.ability_cost("seed_bomb") == 2,
+		"off growth: base costs")
+	# the one cost-delta read (Game._surge_cost_delta): no dict -> the default
+	# -1; an explicit dict spells its own delta; a stat-only dict moves no price
+	# and still surges on growth through its stat half
+	var no_dict := {"cost": 2, "effects": [{"op": "damage", "dmg": 1}]}
+	var spelled := {"cost": 2, "effects": [{"op": "damage", "dmg": 1}], "surge": {"cost": -1, "dmg": 1}}
+	var stat_only := {"cost": 2, "effects": [{"op": "damage", "dmg": 1}], "surge": {"dmg": 1}}
+	_ok(g._surge_cost_delta(no_dict) == -1 and g._surge_cost_delta(spelled) == -1 and g._surge_cost_delta(stat_only) == 0,
+		"surge cost delta: default -1 without a dict, spelled -1, 0 for a stat-only dict")
+	g.terrain[p] = {"kind": "growth"}
+	_ok(g._surges(no_dict) and g._surges(spelled) and g._surges(stat_only),
+		"on growth all three surge (the stat-only row through its stat half)")
+	_ok(not g._surges({"cost": 1, "effects": [{"op": "damage", "dmg": 1}]}),
+		"a cost-1 row with no dict never surges")
+	g.terrain.erase(p)
+	print("D1 ability_cost: %d rows checked on and off growth" % Content.ABILITIES.size())

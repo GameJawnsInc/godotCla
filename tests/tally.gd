@@ -7,7 +7,10 @@ const Content := preload("res://sim/content.gd")
 ## casts are counted separately in plus_casts. Pure bookkeeping: it never
 ## touches the game, so feeding it cannot change a run.
 ## Since Block C1a it also counts effect-grammar rider events (per / bonus /
-## then), which feed the combo rate alongside ignite / verdant / stagger.
+## then), which feed the combo rate alongside ignite / verdant / stagger, and
+## since Block D1 the stat surges ({"t": "surge"}) and the tiles a plant_origin
+## op leaves behind. Neither moves the combo rate: every surge is already one
+## `verdant`, so counting it again would double it.
 
 # --- actions ------------------------------------------------------------------
 var casts_by_base := {}
@@ -70,6 +73,17 @@ var shield_absorb_hp := 0
 ## rider only the "+" form carries stays visible (as collision_by_aid does).
 var riders_by_kind := {}
 var riders_by_aid := {}
+## Verdant surges that carried a stat delta ({"t": "surge", id, keys}), by
+## casting ability id (Block D1). Like riders_by_aid these keep the raw id, so
+## a surge only the "+" form carries stays visible. The cost half of a surge
+## emits no event of its own: the tile consumption is the `verdant` count
+## above, which counts every surge, stat or discount.
+var surges_by_aid := {}
+## Tiles planted by a plant_origin op (Spore Trail), by casting ability id:
+## terrain written on the tile the cast departed from. Counted by watching the
+## terrain events of a cast whose row carries the op, so no ability id is named
+## here either.
+var origin_plants_by_aid := {}
 
 # --- terrain / status bookkeeping (Block C1b) ---------------------------------
 ## Fires that burnt out into ash ({"t": "ash", tile}); every one leaves a
@@ -124,6 +138,12 @@ var _floor0 := 0
 var _stall_flagged := false
 var _choke_floor := -1  # floor_def() deep-copies a table: cache choke per floor
 var _choke := 0
+## The cast currently being watched for a plant_origin terrain event, and the
+## kinds its plant_origin ops write: set on the "ability" event, cleared as
+## soon as one matching terrain event on the departure tile is counted (a cast
+## plants its origin at most once) and on the next cast / step.
+var _origin_aid := ""
+var _origin_kinds: Array = []
 
 
 static func base_id(aid: String) -> String:
@@ -145,11 +165,29 @@ static func src_detail(src: String) -> String:
 	return "env" if i < 0 else src.substr(i + 1)
 
 
+## Terrain kinds a cast of `aid` can write on the tile it departs from: the
+## "kind" of every plant_origin op on the row (Block D1, Spore Trail). Empty
+## for every other row, which is what keeps the origin-plant counter from
+## catching ordinary planting.
+static func _origin_plant_kinds(aid: String) -> Array:
+	var adef: Dictionary = Content.ABILITIES.get(aid, {})
+	var kinds: Array = []
+	for eff in adef.get("effects", []):
+		if String(eff.get("op", "")) == "plant_origin":
+			kinds.append(String(eff.get("kind", "")))
+		for sub in eff.get("then", []):
+			if String(sub.get("op", "")) == "plant_origin":
+				kinds.append(String(sub.get("kind", "")))
+	return kinds
+
+
 static func _inc(d: Dictionary, k, amt: int = 1) -> void:
 	d[k] = int(d.get(k, 0)) + amt
 
 
 func begin_step(game) -> void:
+	_origin_aid = ""
+	_origin_kinds = []
 	_bloom0 = game.bloom
 	_pos0 = game.player["pos"]
 	_charge0 = game.player["charge"]
@@ -165,6 +203,8 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 			_inc(casts_by_base, base_id(aid))
 			if aid.ends_with("+"):
 				plus_casts += 1
+			_origin_aid = aid
+			_origin_kinds = _origin_plant_kinds(aid)
 		"strike":
 			strikes += 1
 		"cleanse":
@@ -222,6 +262,17 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 				ignite_env += 1
 		"verdant":
 			verdant += 1
+		"surge":
+			_inc(surges_by_aid, String(ev.get("id", "")))
+		"terrain":
+			# Spore Trail: a plant_origin op writes its kind on the tile the
+			# cast departed from - which is where the player stood when this
+			# step began (_pos0), so a hook planting elsewhere never counts
+			if _origin_aid != "" and ev.get("tile", null) == _pos0 \
+					and _origin_kinds.has(String(ev.get("kind", ""))):
+				_inc(origin_plants_by_aid, _origin_aid)
+				_origin_aid = ""
+				_origin_kinds = []
 		"staggered":
 			staggered += 1
 		"convert":
@@ -371,6 +422,8 @@ func merge(other) -> void:
 	shield_absorb_hp += other.shield_absorb_hp
 	_merge_dict(riders_by_kind, other.riders_by_kind)
 	_merge_dict(riders_by_aid, other.riders_by_aid)
+	_merge_dict(surges_by_aid, other.surges_by_aid)
+	_merge_dict(origin_plants_by_aid, other.origin_plants_by_aid)
 	ash_events += other.ash_events
 	_merge_dict(cleanses_by_kind, other.cleanses_by_kind)
 	resisted_events += other.resisted_events
@@ -508,6 +561,11 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 		"riders": riders,
 		"riders_by_kind": t.riders_by_kind.duplicate(),
 		"riders_by_aid": t.riders_by_aid.duplicate(),
+		# per-ability stat surges and Spore Trail (Block D1)
+		"surges": _sum(t.surges_by_aid),
+		"surges_by_aid": t.surges_by_aid.duplicate(),
+		"origin_plants": _sum(t.origin_plants_by_aid),
+		"origin_plants_by_aid": t.origin_plants_by_aid.duplicate(),
 		# terrain / status bookkeeping (Block C1b)
 		"ash_events": t.ash_events,
 		"cleanses_by_kind": t.cleanses_by_kind.duplicate(),
@@ -553,6 +611,9 @@ func print_block(n_runs: int, kits: Array) -> void:
 		floor_restored / n, seal_burst / n])
 	print("           riders: %.2f/run  by kind %s  by ability %s" % [
 		float(_sum(riders_by_kind)) / n, str(riders_by_kind), str(riders_by_aid)])
+	print("           surges: %.2f/run stat-surged casts %s  (of %.2f verdant/run)  origin plants %.2f/run %s" % [
+		float(_sum(surges_by_aid)) / n, str(surges_by_aid), verdant / n,
+		float(_sum(origin_plants_by_aid)) / n, str(origin_plants_by_aid)])
 	print("           terrain: ash %d  cleanses by kind %s  resisted %d  statuses %s" % [
 		ash_events, str(cleanses_by_kind), resisted_events, str(status_by_kind)])
 	print("           hooks: by graft %s  by kind %s  capped %d  tithe %d" % [
