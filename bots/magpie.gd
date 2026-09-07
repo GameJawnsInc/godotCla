@@ -49,12 +49,9 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 	if by.has("move") and snap["dim"] < 2:
 		var shrine: Vector2i = snap["map"]["shrine"]
 		if shrine != Vector2i(-1, -1) and ppos != shrine:
-			# grafts are priced per offer since the pricing pass (the sim
-			# publishes shop.graft_prices, 3 to 8 bloom), but this detour test
-			# stays a flat purse threshold: the purchase itself is gated by
-			# legal_actions, so a purse too thin for what is on the counter
-			# simply buys nothing when the magpie gets there
-			var worth: bool = snap["shop"].has("grafts") and snap["bloom"] >= 5
+			# grafts are priced per offer (shop.graft_prices, 3 to 8 bloom):
+			# the cheapest one on the counter is what makes the detour pay
+			var worth: bool = _graft_worth_detour(snap)
 			if snap["shop"].has("ability") and snap["bloom"] >= 4:
 				worth = true
 			if snap["shop"].get("heal", false) and snap["bloom"] >= 3 and snap["player"]["hp"] < snap["player"]["max_hp"]:

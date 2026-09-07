@@ -417,8 +417,8 @@ const ROOM_BLOOM_BONUS := 2  # extra bloom when a room's last corruption falls
 ## GRAFT_PRICE_STEP per graft already owned plus the tier markup; SHOP_COSTS
 ## ["graft"] stays as the id-less fallback). Priced off the 30-seed pre-install
 ## sweeps at tiers 0 and 6 recorded in docs/BALANCE.md (2026-09-06d/06f/07):
-##   solar_core 8   the one lever: +12 wins at tier 0 (06d; +13 after this
-##                  pass) and 5/30 -> 22/30 at tier 6, four for four on the
+##   solar_core 8   the one lever: +12 wins at tier 0 (06d; +13 at 07b) and
+##                  5/30 -> 22/30 at tier 6, four for four on the
 ##                  Method rule; all ten grafts held at once are worth no more
 ##                  than solar_core alone
 ##   compost 6      ~32 hooks a run and it halves the planner's damage taken -

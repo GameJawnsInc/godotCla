@@ -8,6 +8,9 @@ extends SceneTree
 ##   3) shrine routing: the field goal is the shrine, the move heads there,
 ##      on the shrine the highest-weight graft is bought - and the detour is
 ##      priced per offer (each graft costs what its own Content.GRAFTS row says)
+##   3b) shrine detour gates: optimizer and magpie walk to a graft counter only
+##      when the purse covers the CHEAPEST offer (snap.shop.graft_prices), not
+##      a flat bloom >= 5
 ##   4) determinism: two fresh instances agree over 40 steps
 ##   5) runtime factor: deeproot vs deeproot_plan over 5 seeds (test-side
 ##      Time.get_ticks_msec only; the bots never read a clock)
@@ -40,6 +43,7 @@ func _init() -> void:
 	_check_seed_on_head()
 	_check_pin()
 	_check_shrine_routing()
+	_check_shop_detour_gates()
 	_check_determinism()
 	_check_runtime_factor()
 	if failures.is_empty():
@@ -312,6 +316,54 @@ func _check_shrine_routing() -> void:
 		"a 3-bloom graft the purse covers is worth the walk: %s" % str(plan5._field_goal))
 	print("graft prices: offers %s at %s bloom; cheapest useful buy %d (purse 6)" % [
 		str(g5.shop["grafts"]), str(snap5["shop"]["graft_prices"]), plan5._cheapest_useful_buy(snap5)])
+
+
+# --- 3b) optimizer / magpie shrine detour gates -------------------------------
+
+## Both personas used to gate the graft detour on a flat bloom >= 5, which with
+## per-offer prices (3..8) walks them to counters they cannot buy from. The gate
+## now reads snap.shop.graft_prices: offers priced [6, 8] are out of reach at 5
+## bloom and in reach at 6. The ability (4) and heal (3) branches are unchanged,
+## so these boards stock grafts only.
+func _check_shop_detour_gates() -> void:
+	var shrine := Vector2i(7, 3)
+	var stairs := Vector2i(1, 1)
+	for pname in ["optimizer", "magpie"]:
+		var seen: Dictionary = {}
+		for purse in [5, 6]:
+			var g = _game(["solar_lance", "seed_bomb", "mycelium_dash"])
+			g.map["shrine"] = shrine
+			g.map["stairs"] = stairs
+			g.shop = {"grafts": ["compost", "solar_core"]}
+			g.bloom = purse
+			var snap: Dictionary = g.snapshot()
+			_ok(snap["shop"]["graft_prices"] == [6, 8],
+				"%s: offers priced [6, 8]: %s" % [pname, str(snap["shop"].get("graft_prices", []))])
+			var bot = Roster.make(pname, 1)
+			var worth: bool = bot._graft_worth_detour(snap)
+			_ok(worth == (purse == 6),
+				"%s: purse %d vs cheapest offer 6 -> worth %s" % [pname, purse, str(worth)])
+			# and the routing follows the gate: toward the shrine (+x) only at 6
+			var step := Vector2i.ZERO
+			if pname == "optimizer":
+				step = bot._path_step(snap, bot._threat_tiles(snap))
+			else:
+				var a: Dictionary = bot.choose_action(snap, g.legal_actions())
+				if String(a.get("type", "")) == "move":
+					step = a["dir"]
+			seen[purse] = step
+			_ok((step == Vector2i(1, 0)) == (purse == 6),
+				"%s: purse %d steps %s (shrine is +x, stairs are -x/-y)" % [pname, purse, str(step)])
+		# a graftless counter is never worth a detour on price alone
+		var gn = _game(["solar_lance", "seed_bomb", "mycelium_dash"])
+		gn.map["shrine"] = shrine
+		gn.map["stairs"] = stairs
+		gn.shop = {"press": true}
+		gn.bloom = 20
+		var botn = Roster.make(pname, 1)
+		_ok(not botn._graft_worth_detour(gn.snapshot()),
+			"%s: no grafts on the counter, no graft detour at 20 bloom" % pname)
+		print("detour gate %-9s bloom 5 -> %s, bloom 6 -> %s" % [pname, str(seen[5]), str(seen[6])])
 
 
 # --- 4) determinism -----------------------------------------------------------

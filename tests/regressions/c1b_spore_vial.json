@@ -5,5 +5,5 @@
 "expect": {"events":[{"id":"spore_vial","item":"item","t":"buy"},{"status":"stun","t":"status","turns":1},{"id":"spore_vial","t":"item_use"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C1b items through the table: spore_vial applies stun via _apply_status, so the stun now emits a status event; only the drill bot 2 tiles away is stunned (the one at 3 is untouched - pinned by the state hash, since regress_lib.event_matches cannot safely compare an int id in a pattern)",
 "sim_version": 8,
-"hash": "240d9c8860542259e1662b6d9c843e6a27040e7731ef8783598c44d408ef229c"
+"hash": "220eca5ce1a1e560c043d5f7f6e39094ea90952dad9e254a850629f5d0d66d5a"
 }

@@ -21,6 +21,10 @@ extends SceneTree
 ##     a fire or an ash tile away does; the room bloom and the floor restore
 ##     wait for the ash too, and neither fire nor ash shields the boss core
 ##  h) config keys "grafts" and "bloom"
+##  d4) state_hash hashes STORED state only: derived snapshot keys never enter
+##     the hash, so state_hash() == the hash of a snapshot with graft_prices
+##     stripped, differs from hashing the full snapshot wherever the shrine
+##     stocks grafts, and is identical either way on a graftless shrine
 ##  d3) the regen_on_growth stat key (bump 8): _begin_player_turn adds
 ##     _graft_stat("regen_on_growth") to regen only while the tender stands on
 ##     growth. No shipped GRAFTS row uses it - it exists so a conditional
@@ -55,6 +59,7 @@ func _init() -> void:
 	_check_pods_and_shops_in_play()
 	_check_graft_buy()
 	_check_graft_prices()
+	_check_state_hash_view()
 	_check_regen_on_growth()
 	_check_ability_buy_kit_slot()
 	_check_press_forge_boarded()
@@ -411,6 +416,54 @@ func _check_graft_prices() -> void:
 		"graft price: all-grafts shop %s" % str(sall["shop"]))
 	print("graft prices: seed %d offers %s at %s bloom; fallback %d, step %d" % [
 		seed_used, str(Game.new(maxi(seed_used, 1)).shop.get("grafts", [])), str(picks), Content.SHOP_COSTS["graft"], Content.GRAFT_PRICE_STEP])
+
+
+# --- d4) state_hash hashes stored state only ----------------------------------
+
+## snapshot().shop carries "graft_prices", which is derived per snapshot from
+## the stock, the owned grafts and the tier. state_hash() swaps in the raw
+## stored shop dict, so a price table that moves never moves the hash.
+func _check_state_hash_view() -> void:
+	var with_prices := 0
+	var without := 0
+	var bad_strip := 0
+	var bad_full := 0
+	var bad_same := 0
+	for s in range(1, 60):
+		var g = Game.new(s)
+		var snap: Dictionary = g.snapshot()
+		var full := str(snap).sha256_text()
+		var stripped: Dictionary = snap.duplicate(true)
+		stripped["shop"] = snap["shop"].duplicate(true)
+		stripped["shop"].erase("graft_prices")
+		if g.state_hash() != str(stripped).sha256_text():
+			bad_strip += 1
+		if snap["shop"].has("graft_prices"):
+			with_prices += 1
+			if g.state_hash() == full:
+				bad_full += 1
+		else:
+			without += 1
+			if g.state_hash() != full:
+				bad_same += 1
+	_ok(bad_strip == 0, "state_hash: %d seeds disagreed with the graft_prices-stripped snapshot" % bad_strip)
+	_ok(with_prices > 0 and bad_full == 0,
+		"state_hash: %d of %d priced shrines hashed the same as the full snapshot" % [bad_full, with_prices])
+	_ok(bad_same == 0, "state_hash: %d graftless shrines hashed differently either way" % bad_same)
+	# an explicitly graftless shrine (every graft already held): no derived key,
+	# so hashing the full snapshot and hashing the stored view agree
+	var gall = Game.new(1, {"grafts": Content.GRAFTS.keys()})
+	var sall: Dictionary = gall.snapshot()
+	_ok(not sall["shop"].has("graft_prices") and gall.state_hash() == str(sall).sha256_text(),
+		"state_hash: graftless shrine %s" % str(sall["shop"]))
+	# and the hash still tracks stored state: buying a graft moves it
+	var gb = Game.new(1, {"bloom": 30})
+	var before := gb.state_hash()
+	gb.player["pos"] = gb.map["shrine"]
+	gb.step({"type": "buy", "item": "graft", "pick": 0})
+	_ok(gb.state_hash() != before and not gb.player["grafts"].is_empty(),
+		"state_hash: a graft purchase left the hash unchanged")
+	print("state_hash: %d priced / %d graftless shrines over 59 seeds; derived keys stay out" % [with_prices, without])
 
 
 # --- d3) the regen_on_growth stat key -----------------------------------------

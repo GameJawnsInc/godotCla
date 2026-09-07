@@ -5,5 +5,5 @@
 "expect": {"events":[{"t":"descend","to_floor":2},{"offers":["bramble_coat","clear_air","sap_snare"],"t":"draft_offer"},{"id":"clear_air","t":"draft_pick"},{"id":"clear_air","t":"ability"}],"floor":2,"timeout":true,"turns":0,"won":false},
 "note": "Block A open_pool mutator: the run commits to no package, yet the descent draft offers clear_air (aeolian) because open_pool appends every Content.PACKAGES ability to the draft pool (23 ids, not 14) - the same seed without the mutator offers solar_lance+/vine_whip/anchor_roots, which no package id can ever reach; the offer is picked (it joins the kit as slot 3, kit_max 4) and cast on floor 2, so the record proves the pool widened rather than just the offer list",
 "sim_version": 8,
-"hash": "2157cb1f4902cf06f259e138494263cb732243171bb2eeadc6c017a3c3307bc3"
+"hash": "d95104ac6794abbc2a35c86191921c22ea4ea0e67724adbb3f0f966da496763e"
 }

@@ -27,7 +27,7 @@ const Sweep := preload("res://tests/sweep_lib.gd")
 const Roster := preload("res://bots/roster.gd")
 
 const CAREER_RUNS := 40
-const TIER0_CAREER_RUNS := 20
+const TIER0_CAREER_RUNS := 22
 const MUTATOR_SEEDS := 8
 ## Winnability floor per starting loadout (review §6.1 item 7): the optimizer
 ## over seeds 1..LOADOUT_SEEDS must clear LOADOUT_MIN_WINS with each
@@ -40,12 +40,17 @@ const LOADOUT_MIN_WINS := 3
 const SKYRUNNER_MIN_WINS := 1
 ## Milestones a career that never leaves tier 0 cannot reach: exactly the ones
 ## gated on tier_wins (Content.MILESTONES). Everything else is a reachability
-## witness - 20 tier-0 optimizer runs land `upgrades_only` (a win holding Seed
-## Bomb+), `wide_draft` (60 effective Grow Spikes; the career casts ~180),
+## witness - 22 tier-0 optimizer runs land `upgrades_only` (a win holding Seed
+## Bomb+), `wide_draft` (60 effective Grow Spikes; the career casts ~245),
 ## `no_lance` and `lasher` (wins whose final kit dropped Solar Lance / kept
 ## Vine Whip - a draft pick over a full kit can do both, sim/game.gd
 ## _act_draft), and every Block A loadout row. An exact set, so a milestone
 ## that quietly becomes unreachable fails here.
+## The run count is a reachability budget, not a target: `no_lance` is the
+## last witness to land (seed 21, a win whose kit drafted Water Jet over the
+## lance), so 21 is the minimum and 22 leaves one run of margin. A bot-routing
+## change moves which seed witnesses what - raise the count, do not move a
+## reachable milestone into the unreachable set.
 const TIER0_UNREACHABLE := ["aeolian", "brittle", "parched"]
 
 ## Fixture milestone table for the dispatch check (Content.MILESTONES is

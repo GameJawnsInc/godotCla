@@ -5,5 +5,5 @@
 "expect": {"floor":3,"timeout":false,"turns":113,"won":false},
 "note": "determinism seed 3, magpie persona (tests/test_determinism.gd seeds)",
 "sim_version": 8,
-"hash": "1e56dd908641478ce079057706ca7bd59d5e9df1e1899c81a2d5b7c796b1e787"
+"hash": "d9a387303f19e77d593285fb51c3ddb8f84a2a33807f60b459dd988caf022fd2"
 }

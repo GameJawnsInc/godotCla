@@ -827,6 +827,20 @@ func _lance_hits(snap: Dictionary, dir: Vector2i) -> bool:
 	return false
 
 
+## Is a graft on the counter worth walking to? Grafts are priced per offer
+## since the pricing pass (the sim publishes shop.graft_prices, 3 to 8 bloom),
+## so a flat purse threshold would send this bot to a counter it cannot buy
+## from: the cheapest offer is the only price that makes the trip pay.
+func _graft_worth_detour(snap: Dictionary) -> bool:
+	var prices: Array = snap["shop"].get("graft_prices", [])
+	if prices.is_empty():
+		return false
+	var cheapest: int = int(prices[0])
+	for p in prices:
+		cheapest = mini(cheapest, int(p))
+	return int(snap["bloom"]) >= cheapest
+
+
 func _path_step(snap: Dictionary, threat: Dictionary) -> Vector2i:
 	var stairs: Vector2i = snap["map"]["stairs"]
 	# shop only when the shrine is nearly on the way to the stairs - measured:
@@ -835,11 +849,7 @@ func _path_step(snap: Dictionary, threat: Dictionary) -> Vector2i:
 	# accidentally beating the un-mutated baseline)
 	var shrine: Vector2i = snap["map"]["shrine"]
 	if shrine != Vector2i(-1, -1) and snap["player"]["pos"] != shrine and int(snap["dim"]) == 0:
-		# grafts are priced per offer since the pricing pass (the sim publishes
-		# shop.graft_prices, 3 to 8 bloom), but this detour test stays a flat
-		# purse threshold: the purchase itself is gated by legal_actions, so a
-		# purse too thin for what is on the counter simply buys nothing there
-		var worth: bool = snap["shop"].has("grafts") and snap["bloom"] >= 5
+		var worth: bool = _graft_worth_detour(snap)
 		if snap["shop"].get("heal", false) and snap["bloom"] >= 3 and snap["player"]["hp"] <= snap["player"]["max_hp"] - 4:
 			worth = true
 		if worth:

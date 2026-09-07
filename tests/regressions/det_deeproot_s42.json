@@ -5,5 +5,5 @@
 "expect": {"floor":5,"timeout":false,"turns":86,"won":false},
 "note": "determinism seed 42, deeproot persona (tests/test_determinism.gd seeds)",
 "sim_version": 8,
-"hash": "7b8200312c96433fc7490479dffe378fd97a1d71362a15cab7b163d93ab841cb"
+"hash": "98388d0fb773edd3f4dc1a96fd0f3cedd5f9726573eef8449882ad3269787f11"
 }

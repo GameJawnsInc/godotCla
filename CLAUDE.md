@@ -382,12 +382,17 @@ architecture below is designed to bend rather than block.
   today: the graft pricing pass — every `Content.GRAFTS` row carries a `price`
   and `Game.shop_cost(item, id)` charges it, so a log that bought a graft at the
   old flat 4 now finds that buy illegal and diverges from there, and
-  `snapshot().shop` gained `graft_prices`, which moves the state hash of any run
-  whose final shrine still stocks grafts. The 8 re-stamp rewrote `sim_version`
+  `snapshot().shop` gained `graft_prices`. The 8 re-stamp rewrote `sim_version`
   across all 60 old records — 38 with no hash diff, 18 hash-only — and four bot
   logs whose actions no longer replay (`canary_fanatic_s1`, `canary_magpie_s2`,
   `det_magpie_s42`, `det_optimizer_s42`) were re-recorded on their personas;
-  `c6_graft_price` and `c6_solar_core_price` are the two new demos. Bump 7 was
+  `c6_graft_price` and `c6_solar_core_price` are the two new demos. Derived
+  snapshot keys never enter `state_hash()`: it hashes a view of the snapshot
+  whose `shop` is the raw stored shop dict, so `graft_prices` (recomputed per
+  snapshot from stock, owned grafts and tier) cannot move a hash — the 18
+  hash-only bump-8 records were re-stamped back where that was their only
+  cause. Adding or removing a derived snapshot key is not a SIM_VERSION bump
+  (it is not replay behaviour), only a hash-only `REGEN=1`. Bump 7 was
   Block A — the starting loadout (`Content.LOADOUTS`, config key
   `loadout`) and the `open_pool` mutator. A default-config run was untouched
   (`tender` is `STARTING_KIT` and the pool is unchanged), so the 7 re-stamp

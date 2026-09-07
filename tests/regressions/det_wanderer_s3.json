@@ -5,5 +5,5 @@
 "expect": {"floor":1,"timeout":false,"turns":55,"won":false},
 "note": "determinism seed 3, wanderer persona (tests/test_determinism.gd seeds)",
 "sim_version": 8,
-"hash": "d4fc7004014e184d07b934d2b462a6fe8bd66e02cbca55e5a7947ed9efb3f589"
+"hash": "bb299c09765b3068b48d39ef0b174a9d631af902c4adb7a3112958bcc0215777"
 }

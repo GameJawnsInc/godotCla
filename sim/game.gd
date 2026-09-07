@@ -44,8 +44,8 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## 8: graft prices as data (Content.GRAFTS[g]["price"], shop_cost("graft", id)):
 ## which graft a purse can afford changed, so any log that bought a graft - or
 ## skipped one it could not afford - replays differently. snapshot().shop also
-## carries "graft_prices" now, which moves the state hash wherever the shrine
-## stocks grafts.
+## carries "graft_prices" now; that key is derived, so state_hash() hashes the
+## raw stored shop instead and the hash never sees it.
 const SIM_VERSION := 8
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
@@ -454,8 +454,15 @@ func snapshot() -> Dictionary:
 	}
 
 
+## Stable identity of the STORED game state. Rule: derived snapshot keys never
+## enter the hash - snapshot()["shop"] carries "graft_prices", which is
+## recomputed per snapshot from the stock and the owned grafts, so the hash
+## reads the raw stored shop dict instead. A hash that moved because a price
+## table moved would report a state change that never happened.
 func state_hash() -> String:
-	return str(snapshot()).sha256_text()
+	var view := snapshot()
+	view["shop"] = shop
+	return str(view).sha256_text()
 
 
 ## Deep copy of the whole game, including RNG state. Enables search bots,

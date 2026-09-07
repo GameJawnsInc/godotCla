@@ -5,5 +5,5 @@
 "expect": {"floor":5,"timeout":false,"turns":110,"won":false},
 "note": "determinism seed 42, fanatic persona (tests/test_determinism.gd seeds)",
 "sim_version": 8,
-"hash": "75ea4287b0d3155322b00270e07d69573d5087b85941b633721c1f3e0ca4948f"
+"hash": "64b3478f183acff9f8fa00eb33e5923a3db086919cb915d863b05f2beae9237a"
 }
