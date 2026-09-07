@@ -105,7 +105,9 @@ architecture below is designed to bend rather than block.
     through `Game._apply_effect` on hand-built states
   - `godot --headless --path . --script tests/test_economy.gd` — shrine economy
     and quota: config-independent main rng, shop stock filters, graft/ability/
-    press/forge purchase rules, quota re-clamp, damage attribution
+    press/forge purchase rules, the shrine reroll (legality, price escalation,
+    the cap, offer exclusion, closed slots, rng-state independence), quota
+    re-clamp, damage attribution
   - `godot --headless --path . --script tests/test_regressions.gd` — replays every
     `tests/regressions/*.json` (seed, config, actions) pair: illegal/error events,
     outcome, expected event patterns; `REGRESS_STRICT=1` also checks the state
@@ -132,6 +134,21 @@ architecture below is designed to bend rather than block.
   unknown), and fanatic narrows that to its mobility half with
   `_mobility_ids()` — under `tender` the two reproduce the old
   `["mycelium_dash", "seed_bomb"]` and `["mycelium_dash"]` exactly.
+  Shrine rerolls (D2, legal only under the `spinning_shrine` mutator — a
+  default run never lists the action) are a persona choice, read from
+  `snapshot().shop` (`reroll_price` / `rerolls_left`), never from the sim:
+  optimizer spins only
+  with the graft counter open, no affordable offer scoring on its kit-tag fit,
+  a spin left and a purse still covering the spin plus the cheapest
+  `Content.GRAFTS` price (so a spin is never a run's last bloom), magpie
+  (the canary) spins whenever nothing on the counter is affordable, and
+  sprout, wanderer and fanatic-beyond-optimizer are unchanged. deeproot and
+  deeproot_plan evaluate `reroll` like any other legal action — and because
+  the redraw is side-rng deterministic, a clone-based search *sees the new
+  offers before paying for them*. That is an instrument property, not a bug:
+  their reroll numbers are an oracle upper bound on the sink (BALANCE.md), and
+  the gap to optimizer/magpie is the value of information a human does not
+  have.
 - Balance sweeps (on demand; run before shipping new content, and verify any
   outlier at 30+ seeds before patching — 10-seed spreads are noisy). Shared env:
   `SWEEP_BOT=<roster name>` (default optimizer), `SWEEP_SEEDS` (default 30),
@@ -295,6 +312,41 @@ architecture below is designed to bend rather than block.
   `deep_cells`/`thick_bark`/`verdant_pulse`/`bloom_surge`/`carapace` at 3 — come
   from measuring every graft pre-installed (`{grafts: [g]}`) before pricing it;
   the sweeps are in `docs/BALANCE.md` (2026-09-06d, 06f and 07).
+- Shrine reroll (Block D2, `docs/PROGRESSION_REVIEW.md` §6.4): the one
+  repeatable bloom sink, and a choice sink — **held behind a switch**: the
+  action is legal only under the `spinning_shrine` mutator (config key
+  `shop_reroll`, read live through `_mut`; unlocked at the first win), because
+  with it on the magpie canary rose 8% -> 15.5% over 200 paired seeds and
+  every single price/cap lever still failed the 30-seed gate (BALANCE.md
+  2026-09-07e) — default-on is an owner decision, one `_mut` default away.
+  A default run never lists the action and its derived `rerolls_left` reads
+  0, so the shell draws no card. Under the mutator: action `{"type": "reroll"}`,
+  legal in phase `play` while the tender stands on the shrine, the counter
+  still holds a re-drawable slot (`ability`, `grafts` or `item` — bought slots
+  never come back), `shop.rerolls < Content.SHOP_REROLL_CAP` and the purse
+  covers `shop_cost("reroll")`; every other case is
+  `{t: "illegal", action: "reroll"}`. It costs bloom, never a charge. Each
+  stocked re-drawable slot is redrawn from the same candidate rule
+  `_stock_shop` uses (`_shop_ability_candidates` / `_shop_graft_candidates` /
+  `_base_item_ids`, one shared `_shop_draw`), minus the offer on the counter
+  whenever an alternative exists — with none the offer stays and that slot is
+  not redrawn — each from its own side generator
+  `_side_rng("reroll<n>_ability" / "reroll<n>_graft" / "reroll<n>_item")` with
+  `n` the spins already taken, so the main rng never moves. Price is data:
+  `Content.SHOP_COSTS["reroll"]` (2) plus `Content.SHOP_REROLL_STEP` (1) per
+  spin already taken plus the tier markup every price pays — 2, 3, 4 at tier 0
+  — and `Content.SHOP_REROLL_CAP` (3) bounds the spins per shrine (the cap
+  bounds the action space and the search bots' shrine branching; the step
+  keeps a repeatable sink getting dearer). `shop.rerolls` is stored stock
+  (`_stock_shop` seeds it at 0, `clone()` copies it, `state_hash()` sees it);
+  `reroll_price` and `rerolls_left` are derived `_shop_snapshot` keys, so the
+  shell and the bots read the price without calling the sim and the hash never
+  sees them. Event: `{t: "reroll", n, cost, ability?/grafts?/item?}` naming the
+  slots actually redrawn (`tests/tally.gd` counts rerolls, bloom spent on them
+  and buys after one). `tests/regressions/d2_reroll.json`,
+  `d2_reroll_escalates.json`, `d2_reroll_closed_slot.json` and
+  `d2_reroll_boarded.json` demo the rule (each carries the mutator in its
+  config).
 - Hook dispatcher (`Game._hook(kind, ctx)`, C3): reactive rules are data.
   Kinds are `Content.HOOK_KINDS` — `ignite`, `staggered`, `cleanse`,
   `growth_planted`, `kill`, `shield_break`, `collision` — each fired at the sim
@@ -330,8 +382,8 @@ architecture below is designed to bend rather than block.
   concatenate. There is no `mutators.has("...")` left in `sim/game.gd`. The
   config keys are the closed set `Content.MUTATOR_CONFIG_KEYS`: `kit_max`,
   `max_hp_delta`, `bank_cap`, `oil_mult`, `extra_common_enemy`, `shop`,
-  `pool_ban`, `kit_ban`, `draft_offers`, `draft_upgrades_only`, `open_pool`.
-  Ten rows — the six originals (`kit_of_3`, `brittle`, `parched`,
+  `pool_ban`, `kit_ban`, `draft_offers`, `draft_upgrades_only`, `open_pool`,
+  `shop_reroll`. Eleven rows — the six originals (`kit_of_3`, `brittle`, `parched`,
   `double_oil`, `overtime`, `boarded`) reproduce their old numbers exactly,
   plus the three C4 rows: `no_lance` (`pool_ban: ["solar_lance"]` + `kit_ban`
   — the lance leaves the starting kit and the draft pool, and the shrine stock
@@ -341,7 +393,9 @@ architecture below is designed to bend rather than block.
   Block A row: `open_pool` (`open_pool: true` — every `Content.PACKAGES`
   ability joins the draft pool, the old all-packages variety kept as a
   deliberate choice now that a package is a one-per-run commitment; the
-  profile unlocks it at one win). Adding a mutator means adding a row; one
+  profile unlocks it at one win), plus the one Block D row: `spinning_shrine`
+  (`shop_reroll: true` — the D2 shrine reroll, held behind this switch after
+  its measurement; unlocked at one win). Adding a mutator means adding a row; one
   that needs a new number needs a new config key, a `_mut` read at the site
   and the key in `MUTATOR_CONFIG_KEYS` (which `tests/test_content.gd` lints).
   `tests/regressions/c4_no_lance.json`, `c4_wide_draft.json` and
@@ -422,8 +476,19 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (9
-  today: Block D1 — per-ability stat surges and Spore Trail. The surge rule
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (10
+  today: Block D2 — the shrine reroll, legal only under the `spinning_shrine`
+  mutator. No old action became illegal and no main-rng draw moved (the
+  redraw is side-rng), but `shop.rerolls` is stored stock, so every record
+  whose final shop is still stocked hashes differently: the 10 re-stamp
+  rewrote `sim_version` across all 68 old records — 46 with the hash
+  unchanged, 18 hash-only (a stocked final shop now stores `rerolls: 0`) —
+  with no outcome or event-pattern diff anywhere, and because a default run
+  never lists the action every bot log replays its old action list exactly
+  (the four magpie/optimizer logs the pre-switch pass had re-recorded went
+  back to their bump-9 actions with a hash-only diff). The corpus went
+  68 -> 72 with the four `d2_*` demos, each under the mutator. Bump 9 was Block D1 — per-ability
+  stat surges and Spore Trail. The surge rule
   moved to `Game._surges` (a cost-1 row with a stat surge now surges and eats
   the tile; a cost-1 row with only the default surge still leaves it alone),
   seven rows gained a `surge` dict, `grow_radius` reads its `radius` key and

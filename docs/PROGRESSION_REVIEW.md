@@ -662,6 +662,103 @@ ring, invisible to `optimizer._est_dmg` and `_aoe_finishes`) are exactly the
 two rows whose locked numbers did not move at all; whether that is the content
 or the instrument is the open question this entry hands forward.
 
+**Status (2026-09-07e).** **Block D item 2 (6.4, "Repeatable economy sinks,
+one at a time") has shipped as code behind the `spinning_shrine` mutator and
+is HELD as a default**, and **`Game.SIM_VERSION` is 10**. The switch is the
+mutator config key `shop_reroll` (`_reroll_legal` returns false without it and
+the derived `rerolls_left` reads 0); a default run never lists the action and
+reads exactly as 07d did. The sink is the one the bullet names first: a
+shrine reroll, side-rng only, a *choice* sink and not a stat one. Action
+`{"type": "reroll"}` is legal in phase `play` while the tender stands on the
+shrine, the counter still holds a re-drawable slot (`ability`, `grafts`,
+`item`), `shop.rerolls < Content.SHOP_REROLL_CAP` and the purse covers
+`shop_cost("reroll")`; every other case emits `{t: "illegal", action:
+"reroll"}`. Each stocked re-drawable slot is redrawn from the same candidate
+rule that stocked it (`_shop_ability_candidates` / `_shop_graft_candidates` /
+`_base_item_ids` through one shared `_shop_draw`), minus the offer on the
+counter whenever an alternative exists, each from its own generator
+`_side_rng("reroll<n>_ability" / "_graft" / "_item")` - so the main rng never
+moves, `rng.state` is unchanged across a spin, and the *same* seed and floor
+redraw identically in two fresh games. Bought slots never come back and the
+three services are never touched. The price is data and escalates:
+`Content.SHOP_COSTS["reroll"]` (2) + `Content.SHOP_REROLL_STEP` (1) per spin
+already taken + the tier markup - 2, 3, 4 at tier 0 - capped at
+`Content.SHOP_REROLL_CAP` (3) spins per floor's stock. `shop.rerolls` is
+stored stock (so `clone()` copies it and `state_hash()` sees it, which is the
+whole of what bump 10 invalidates - the hash of every record whose final shop
+is stocked, no action and no main-rng draw); `reroll_price` and
+`rerolls_left` are derived `_shop_snapshot` keys and stay out of the hash.
+
+The measurement is the "2026-09-07e - bump 10 (D2)" entry in
+`docs/BALANCE.md`, and its headline is the half of the gate that failed.
+**The optimizer half passes**: 100 seeds, working tree against a
+`git archive HEAD` copy on the same seeds, 46/100 [37%, 56%] against 47/100
+[38%, 57%], with avg floor 6.1, turns on wins 84.0 vs 85.0, turns/floor 15.4
+vs 15.3, stall floors 21 vs 21, bloom unspent 33.0 vs 33.0 and shrine turns
+*down* 1.85 -> 1.23 - clock discipline intact, on 13 spins in 100 runs costing
+0.3 bloom a run. **The magpie half fails.** The 30-seed merge gate reads
+"FAIL magpie canary <= 10% (design target 0-5%): 7/30 CI [12%, 41%]" and
+`tests/playtest.gd` exits 1; at 100 seeds greed reads 13/100 [8%, 21%] in
+sample and 18/100 [12%, 27%] out of sample against 7/100 [3%, 14%] and 9/100
+[5%, 16%] before, and pooled over the same 200 seeds it wins 19 seeds it used
+to lose against 4 it used to win - 31/200 = 15.5% [11%, 21%] vs 16/200 = 8%
+[5%, 13%], sign **p = 0.0026**. The 100-seed canary rule (a lower bound
+clearing 17%) still says pass, so the two lines disagree and the entry says to
+quote both; the paired A/B is what breaks the tie. The mechanism is the one
+6.4 anticipated in reverse: greed's buy *counts* barely move (grafts 280 ->
+288, abilities 99 -> 99, heals 96 -> 97, items 180 -> 177) while its
+conversion goes 0.54 -> 0.72 and its end-of-run purse 24.5 -> 17.2, because a
+redraw that excludes the current offer is a search over the counter and greed
+has the most surplus bloom to spend on searching.
+
+**Verdict: HOLD, with the retune written up as data.** Nothing was changed in
+the measure phase. The three options, in the order the entry recommends, are
+`SHOP_REROLL_STEP` 1 -> 2 (2, 4, 6 - leaves the first spin, the only one the
+optimizer buys, at 2 and taxes only greed's repeat spinning),
+`SHOP_COSTS["reroll"]` 2 -> 3 (blunter, and it also prices out the
+optimizer's single considered spin) and `SHOP_REROLL_CAP` 3 -> 2 (least
+effective as measured: magpie already averages ~1.4 spins per floor against a
+cap of 3, so the cap binds the tail, not the mean). One at a time, which is
+the bullet's own rule. Everything else is green: "regressions: 72 ok, 0
+failed" plain and `REGRESS_STRICT=1`, "economy: OK (247 checks)" (183 at 07d)
+with four new reroll sections, "bots: OK (111 checks)" (83 at 07d),
+"determinism: OK (61 checks, 8 personas)", "meta: OK", "content: OK", "shell
+smoke: OK", "grammar: OK (614 checks)", 1400 + 1540 procgen generations with 0
+violations, and 0 illegal actions for every persona in every run of the entry.
+The corpus went 68 -> 72 (four `d2_*` demos; 46 records re-stamped on
+`sim_version` alone, 18 hash-only because their final shop now stores
+`rerolls: 0`; the four bot logs the pre-switch pass re-recorded went back to
+their bump-9 actions once the switch was off, with a hash-only diff).
+
+**After the entry, every lever was measured, and none clears the gate.**
+`SHOP_REROLL_STEP` 2, `SHOP_COSTS["reroll"]` 3 and `SHOP_REROLL_CAP` 2, one at
+a time on the same 200 paired seeds, all land at 22-23/200 for the magpie
+against 16 before and 31 as shipped, and all read 7/30 [12, 41] on the
+30-seed gate line - the price levers do not reduce greed's spinning (5.25 ->
+4.89-5.12 spins/run) but raise what it spends on it (15.2 -> 18.8 bloom/run),
+because that persona spends whatever is left. So the sink is worth about
+three points of greed at any price and seven at the shipped one, and the
+decision was made as a *switch* rather than a *price*: the reroll ships as
+the `spinning_shrine` mutator (unlocked at the first win, like `open_pool`),
+the default run keeps 07d's numbers and a green gate, and turning it on for
+everyone is one `_mut` default away with the lever table (BALANCE.md 07e,
+"The levers, measured") as the price of it. The 6.4 sink question is
+therefore answered as far as data can answer it and stops at the design call.
+
+**One instrument property, stated so it is not mistaken for a bug.**
+`deeproot` and `deeproot_plan` evaluate `reroll` like any other legal action,
+and because the redraw is side-rng deterministic a `clone()`-based search
+**sees the new offers before paying for them**. Their reroll numbers are
+therefore an *oracle upper bound* on the sink - what it is worth with perfect
+information about the redraw - and the gap down to optimizer and magpie is the
+value of that information to a human. It is **unmeasured**: both took 0 spins
+in 20 runs each (18/20 [70%, 97%] for the planner, 14/20 [48%, 85%] for
+deeproot, delta +4) because neither goes to the shrine at all (0.80 and 0.20
+shrine turns per run against magpie's 18.47). A config that puts a searcher at
+the counter with a purse is what would produce that number, and it is the
+number that would say how much of greed's +7.5 points is information rather
+than bloom.
+
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
 180 bot runs; a synergy-lift sweep of 7 hypothesised pairs at 24 seeds per

@@ -11,6 +11,10 @@ extends SceneTree
 ##   3b) shrine detour gates: optimizer and magpie walk to a graft counter only
 ##      when the purse covers the CHEAPEST offer (snap.shop.graft_prices), not
 ##      a flat bloom >= 5
+##   3d) shrine reroll gates (Block D2): the optimizer spins only a counter
+##      that fits its kit nothing and only with a graft's worth of bloom left
+##      over; the magpie spins whenever the counter sells it nothing; the
+##      tally counts the spin, its price and the buy that follows
 ##   3c) Block D1 surge terms: optimizer._est_dmg adds a row's surge dmg while
 ##      the tender stands on growth (and the sim lands exactly that number),
 ##      and the planner's surge-ready term follows the sim's rule - any held
@@ -49,6 +53,7 @@ func _init() -> void:
 	_check_pin()
 	_check_shrine_routing()
 	_check_shop_detour_gates()
+	_check_reroll_gates()
 	_check_d1_surge_terms()
 	_check_determinism()
 	_check_runtime_factor()
@@ -123,6 +128,44 @@ static func _step_into(tally, game, a: Dictionary) -> void:
 	for ev in game.step(a):
 		tally.add(ev, a, game)
 	tally.end_step(game, a)
+
+
+## Every legal buy on the board, in the sim's own order.
+static func _buys(game) -> Array:
+	var out: Array = []
+	for a in game.legal_actions():
+		if String(a.get("type", "")) == "buy":
+			out.append(a)
+	return out
+
+
+static func _has_action(game, t: String) -> bool:
+	for a in game.legal_actions():
+		if String(a.get("type", "")) == t:
+			return true
+	return false
+
+
+## The cheapest price any Content.GRAFTS row carries, read test-side so the
+## bot helper is checked against the table and not against itself.
+static func _table_cheapest_graft() -> int:
+	var best := 1 << 30
+	for gid in Content.GRAFTS:
+		best = mini(best, int(Content.GRAFTS[gid].get("price", 1)))
+	return best
+
+
+## A board with the tender already standing on the shrine, a graft-only
+## counter (so no heal / ability / item branch can answer first) and `spins`
+## rerolls already taken this floor.
+static func _shrine_game(kit: Array, grafts: Array, purse: int, spins: int) -> RefCounted:
+	var g = _game(kit)
+	g.mutators = ["spinning_shrine"]  # the reroll is a mutator switch (read live by _mut)
+	g.map["shrine"] = g.player["pos"]
+	g.map["stairs"] = Vector2i(1, 1)
+	g.shop = {"grafts": grafts.duplicate(), "rerolls": spins}
+	g.bloom = purse
+	return g
 
 
 ## Player distance to `goal` after stepping `a` on a clone.
@@ -234,7 +277,8 @@ func _check_shrine_routing() -> void:
 	var shrine := Vector2i(7, 3)
 	g.map["shrine"] = shrine
 	g.map["stairs"] = Vector2i(1, 1)
-	g.shop = {"heal": true, "press": true, "forge": true, "grafts": ["thick_bark", "solar_core"], "ability": "vine_whip", "item": "balm_fruit"}
+	# post-D2 stock shape: the reroll counter rides in the stock dict
+	g.shop = {"heal": true, "press": true, "forge": true, "grafts": ["thick_bark", "solar_core"], "ability": "vine_whip", "item": "balm_fruit", "rerolls": 0}
 	g.bloom = 12
 	var plan = _bot("deeproot_plan", g)
 	var a: Dictionary = _choose(plan, g)
@@ -306,7 +350,7 @@ func _check_shrine_routing() -> void:
 	g4.map["shrine"] = shrine
 	g4.map["stairs"] = Vector2i(1, 1)
 	g4.bloom = 6
-	g4.shop = {"grafts": ["solar_core"]}
+	g4.shop = {"grafts": ["solar_core"], "rerolls": 0}
 	var plan4 = _bot("deeproot_plan", g4)
 	var snap4: Dictionary = g4.snapshot()
 	_ok(snap4["shop"]["graft_prices"] == [8], "the snapshot prices the lone offer: %s" % str(snap4["shop"].get("graft_prices", [])))
@@ -319,7 +363,7 @@ func _check_shrine_routing() -> void:
 	g5.map["shrine"] = shrine
 	g5.map["stairs"] = Vector2i(1, 1)
 	g5.bloom = 6
-	g5.shop = {"grafts": ["verdant_pulse", "solar_core"]}
+	g5.shop = {"grafts": ["verdant_pulse", "solar_core"], "rerolls": 0}
 	var plan5 = _bot("deeproot_plan", g5)
 	var snap5: Dictionary = g5.snapshot()
 	_ok(snap5["shop"]["graft_prices"] == [3, 8],
@@ -349,7 +393,7 @@ func _check_shop_detour_gates() -> void:
 			var g = _game(["solar_lance", "seed_bomb", "mycelium_dash"])
 			g.map["shrine"] = shrine
 			g.map["stairs"] = stairs
-			g.shop = {"grafts": ["compost", "solar_core"]}
+			g.shop = {"grafts": ["compost", "solar_core"], "rerolls": 0}
 			g.bloom = purse
 			var snap: Dictionary = g.snapshot()
 			_ok(snap["shop"]["graft_prices"] == [6, 8],
@@ -373,12 +417,118 @@ func _check_shop_detour_gates() -> void:
 		var gn = _game(["solar_lance", "seed_bomb", "mycelium_dash"])
 		gn.map["shrine"] = shrine
 		gn.map["stairs"] = stairs
-		gn.shop = {"press": true}
+		gn.shop = {"press": true, "rerolls": 0}
 		gn.bloom = 20
 		var botn = Roster.make(pname, 1)
 		_ok(not botn._graft_worth_detour(gn.snapshot()),
 			"%s: no grafts on the counter, no graft detour at 20 bloom" % pname)
 		print("detour gate %-9s bloom 5 -> %s, bloom 6 -> %s" % [pname, str(seen[5]), str(seen[6])])
+
+
+# --- 3d) Block D2 shrine reroll gates -----------------------------------------
+
+## The bot half of the shrine reroll. Kit sun/fire/growth/mobility, so
+## Thick Bark and Carapace (bark) score 0 on the tag fit and Solar Core (sun)
+## scores 1 - the optimizer spins a counter it wants nothing from and only
+## while the purse still covers the cheapest graft the table can offer after
+## paying; the magpie spins whenever the counter sells it nothing at all.
+## Prices and spins left are read from snapshot().shop, never from the sim.
+func _check_reroll_gates() -> void:
+	var kit := ["solar_lance", "seed_bomb", "mycelium_dash"]
+	var opt = Roster.make("optimizer", 1)
+	var mag = Roster.make("magpie", 1)
+	var cheap := _table_cheapest_graft()
+	_ok(opt._cheapest_graft_price() == cheap,
+		"the bot reads the table's cheapest graft price: %d vs %d" % [opt._cheapest_graft_price(), cheap])
+	var tags: Dictionary = opt._kit_tag_counts({"player": {"kit": kit}})
+	_ok(opt._graft_fit("thick_bark", tags) == 0 and opt._graft_fit("carapace", tags) == 0,
+		"bark grafts fit a sun/fire/growth kit not at all: %s" % str(tags))
+	_ok(opt._graft_fit("solar_core", tags) > 0, "Solar Core fits the sun half of the kit")
+
+	# a) misfit counter, purse exactly reroll price + cheapest graft: spin
+	var ga = _shrine_game(kit, ["thick_bark", "carapace"], 2 + cheap, 0)
+	var snap_a: Dictionary = ga.snapshot()
+	_ok(int(snap_a["shop"]["reroll_price"]) == 2 and int(snap_a["shop"]["rerolls_left"]) == Content.SHOP_REROLL_CAP,
+		"a fresh counter prices the spin at 2 with %d spins left: %s" % [Content.SHOP_REROLL_CAP, str(snap_a["shop"])])
+	_ok(not _buys(ga).is_empty(), "both misfit offers are affordable at %d bloom" % ga.bloom)
+	var a_a: Dictionary = opt.choose_action(snap_a, ga.legal_actions())
+	_ok(String(a_a.get("type", "")) == "reroll",
+		"optimizer spins a counter that fits nothing rather than buying it: %s" % str(a_a))
+	# and the escalation bites: 3 bloom left cannot cover a 3-bloom spin plus a graft
+	ga.step(a_a)
+	var snap_a2: Dictionary = ga.snapshot()
+	_ok(ga.bloom == cheap and int(ga.shop["rerolls"]) == 1,
+		"the spin cost 2 and stored the count: bloom %d rerolls %s" % [ga.bloom, str(ga.shop.get("rerolls"))])
+	_ok(int(snap_a2["shop"]["reroll_price"]) == 3 and int(snap_a2["shop"]["rerolls_left"]) == Content.SHOP_REROLL_CAP - 1,
+		"the second spin is dearer with one fewer left: %s" % str(snap_a2["shop"]))
+	_ok(String(opt.choose_action(snap_a2, ga.legal_actions()).get("type", "")) != "reroll",
+		"the purse that is left never buys a second spin")
+
+	# b) a fitting affordable offer is bought, never spun away
+	var gb = _shrine_game(kit, ["thick_bark", "solar_core"], 12, 0)
+	var snap_b: Dictionary = gb.snapshot()
+	_ok(not opt._wants_reroll(snap_b, _buys(gb)), "a fitting affordable graft cancels the spin")
+	var a_b: Dictionary = opt.choose_action(snap_b, gb.legal_actions())
+	_ok(String(a_b.get("type", "")) == "buy" and String(a_b.get("item", "")) == "graft" and int(a_b.get("pick", -1)) == 1,
+		"optimizer buys the fitting offer instead: %s" % str(a_b))
+
+	# c) spins spent: the sim stops offering it and the bot stops asking
+	var gc = _shrine_game(kit, ["thick_bark", "carapace"], 12, Content.SHOP_REROLL_CAP)
+	var snap_c: Dictionary = gc.snapshot()
+	_ok(int(snap_c["shop"]["rerolls_left"]) == 0, "the cap shows as 0 spins left: %s" % str(snap_c["shop"]))
+	_ok(not _has_action(gc, "reroll"), "the sim refuses the spin at the cap")
+	_ok(not opt._wants_reroll(snap_c, _buys(gc)), "the bot does not ask for a spin it cannot have")
+	_ok(String(opt.choose_action(snap_c, gc.legal_actions()).get("type", "")) == "buy",
+		"with the counter spun out it takes the misfit rather than stalling")
+
+	# d) the reserve: a spin it can pay for but which would leave no graft purse
+	var gd = _shrine_game(kit, ["thick_bark", "carapace"], 2 + cheap - 1, 0)
+	_ok(_has_action(gd, "reroll"), "the sim offers the spin at %d bloom" % gd.bloom)
+	_ok(not opt._wants_reroll(gd.snapshot(), _buys(gd)),
+		"the optimizer never spends its last graft purse on a spin")
+	_ok(String(opt.choose_action(gd.snapshot(), gd.legal_actions()).get("type", "")) == "buy",
+		"it buys what it can instead")
+
+	# e) unaffordable counter: magpie greed spins, the optimizer holds
+	var ge = _shrine_game(kit, ["solar_core"], 3, 0)
+	var snap_e: Dictionary = ge.snapshot()
+	_ok(snap_e["shop"]["graft_prices"] == [8] and _buys(ge).is_empty(),
+		"nothing on the counter is affordable at 3 bloom: %s" % str(snap_e["shop"]))
+	_ok(String(mag.choose_action(snap_e, ge.legal_actions()).get("type", "")) == "reroll",
+		"magpie spins its last bloom on a counter it cannot buy from")
+	_ok(String(opt.choose_action(snap_e, ge.legal_actions()).get("type", "")) != "reroll",
+		"the optimizer keeps a graft's worth back on the same board")
+
+	# f) magpie buys before it spins
+	var gf = _shrine_game(kit, ["thick_bark", "carapace"], 2 + cheap, 0)
+	var a_f: Dictionary = mag.choose_action(gf.snapshot(), gf.legal_actions())
+	_ok(String(a_f.get("type", "")) == "buy" and String(a_f.get("item", "")) == "graft",
+		"magpie takes the affordable misfit before it spins: %s" % str(a_f))
+
+	# g) the tally half: the spin, its price, and the buy off a spun counter
+	var gg = _shrine_game(kit, ["thick_bark", "carapace"], 12, 0)
+	var tal = Tally.new()
+	_step_into(tal, gg, {"type": "reroll"})
+	_ok(tal.rerolls == 1 and tal.bloom_spent_on_rerolls == 2 and tal.buys_after_reroll == 0,
+		"tally counts the spin and its price: %d / %d" % [tal.rerolls, tal.bloom_spent_on_rerolls])
+	var buys_g := _buys(gg)
+	_ok(not buys_g.is_empty(), "the spun counter still sells something")
+	_step_into(tal, gg, buys_g[0])
+	_ok(tal.buys_after_reroll == 1 and int(tal.buys_by_kind.get("graft", 0)) == 1,
+		"a buy off a spun counter is counted: %d" % tal.buys_after_reroll)
+	tal.finish(gg)
+	_ok(tal.bloom_unspent == gg.bloom, "unspent bloom at the end: %d vs %d" % [tal.bloom_unspent, gg.bloom])
+	var tal2 = Tally.new()
+	tal2.merge(tal)
+	_ok(tal2.rerolls == 1 and tal2.bloom_spent_on_rerolls == 2 and tal2.buys_after_reroll == 1
+			and tal2.bloom_unspent == gg.bloom, "merge carries every reroll column")
+	var kg: Dictionary = Tally.kpis(tal2, 1, [])
+	_ok(int(kg.get("rerolls", -1)) == 1 and int(kg.get("bloom_spent_on_rerolls", -1)) == 2
+			and int(kg.get("buys_after_reroll", -1)) == 1 and int(kg.get("bloom_unspent", -1)) == gg.bloom,
+		"kpis exposes the reroll columns: %s" % str([kg.get("rerolls"), kg.get("bloom_spent_on_rerolls"),
+			kg.get("buys_after_reroll"), kg.get("bloom_unspent")]))
+	print("reroll gates: optimizer spins at %d bloom on a misfit counter (price 2, reserve %d), holds at %d; magpie spins at 3 with nothing affordable" % [
+		2 + cheap, cheap, 2 + cheap - 1])
 
 
 # --- 3c) Block D1 surge terms -------------------------------------------------

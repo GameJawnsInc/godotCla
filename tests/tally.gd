@@ -11,6 +11,9 @@ const Content := preload("res://sim/content.gd")
 ## since Block D1 the stat surges ({"t": "surge"}) and the tiles a plant_origin
 ## op leaves behind. Neither moves the combo rate: every surge is already one
 ## `verdant`, so counting it again would double it.
+## Block D2 adds the shrine reroll columns - spins taken, the bloom they cost,
+## buys made off an already-spun counter - and the bloom a run ends still
+## holding, which is the number a repeatable sink is supposed to shrink.
 
 # --- actions ------------------------------------------------------------------
 var casts_by_base := {}
@@ -44,11 +47,24 @@ var graft_discards := 0  # graft buys that threw the second offer away
 ## plus the per-graft-owned step and the tier markup) - the graft half of
 ## bloom_spent, so a pass that reprices grafts can be read off directly.
 var bloom_spent_on_grafts := 0
+## Shrine rerolls (Block D2): spins taken, the bloom they cost (the event
+## carries its own price, which escalates per spin), and the buys made on a
+## counter that had already been spun at least once - the sink's payoff half,
+## read off the live game.shop at the buy event.
+var rerolls := 0
+var bloom_spent_on_rerolls := 0
+var buys_after_reroll := 0
 
 # --- economy ------------------------------------------------------------------
 var bloom_earned := 0
 var bloom_spent := 0
 var shrine_turns := 0  # end_turn taken while standing on the shrine
+## Bloom still in the purse when the run ended (summed over runs): the bloom
+## the run never converted into anything, which is what a repeatable sink is
+## meant to shrink. Per run it is the same number the persona line prints as
+## "avg bloom" (Sweep's bloom_end); it lives here so kpis()/merge() carry it
+## beside the reroll columns it is read against.
+var bloom_unspent := 0
 var unspent_charge_total := 0  # sum of player charge at each end_turn
 
 # --- combo counters -----------------------------------------------------------
@@ -233,6 +249,11 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 		"buy":
 			var kind := String(ev.get("item", ""))
 			_inc(buys_by_kind, kind)
+			# the stock this buy came off: a spun counter still carries its
+			# reroll count (a buy erases only its own slot), so the live shop
+			# says whether the sink paid for itself
+			if int(game.shop.get("rerolls", 0)) > 0:
+				buys_after_reroll += 1
 			if kind == "graft":
 				var gid := String(ev.get("id", ""))
 				_inc(grafts_by_id, gid)
@@ -245,6 +266,9 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 					graft_discards += 1
 			elif kind == "ability":
 				_inc(ability_buys_by_id, String(ev.get("id", "")))
+		"reroll":
+			rerolls += 1
+			bloom_spent_on_rerolls += int(ev.get("cost", 0))
 		"upcycle":
 			upcycles += 1
 		"upcycle_ability":
@@ -368,6 +392,7 @@ func end_step(game, action: Dictionary) -> void:
 func finish(game) -> void:
 	turns_per_floor.append(game.turn)
 	runs += 1
+	bloom_unspent += game.bloom
 	_choke_floor = -1
 	_stall_flagged = false
 	if game.over and not game.won and game.greened < game.green_need:
@@ -400,8 +425,12 @@ func merge(other) -> void:
 	satchel_full += other.satchel_full
 	graft_discards += other.graft_discards
 	bloom_spent_on_grafts += other.bloom_spent_on_grafts
+	rerolls += other.rerolls
+	bloom_spent_on_rerolls += other.bloom_spent_on_rerolls
+	buys_after_reroll += other.buys_after_reroll
 	bloom_earned += other.bloom_earned
 	bloom_spent += other.bloom_spent
+	bloom_unspent += other.bloom_unspent
 	shrine_turns += other.shrine_turns
 	unspent_charge_total += other.unspent_charge_total
 	ignite_ability += other.ignite_ability
@@ -557,6 +586,11 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 		"quota_reclamps": t.quota_reclamps,
 		"graft_discards": t.graft_discards,
 		"bloom_spent_on_grafts": t.bloom_spent_on_grafts,
+		# shrine rerolls (Block D2): the sink's cost half and its payoff half
+		"rerolls": t.rerolls,
+		"bloom_spent_on_rerolls": t.bloom_spent_on_rerolls,
+		"buys_after_reroll": t.buys_after_reroll,
+		"bloom_unspent": t.bloom_unspent,
 		# effect-grammar riders (Block C1a)
 		"riders": riders,
 		"riders_by_kind": t.riders_by_kind.duplicate(),
@@ -625,6 +659,8 @@ func print_block(n_runs: int, kits: Array) -> void:
 		shrine_turns / n, _safe_div(float(unspent_charge_total), float(end_turns)), k["kit_entropy_bits"]])
 	print("           choice sinks: graft offers discarded %d  bloom spent on grafts %d (%.1f/run)  quota reclamps %d" % [
 		graft_discards, bloom_spent_on_grafts, bloom_spent_on_grafts / n, quota_reclamps])
+	print("           rerolls: %.2f/run (%d total)  bloom spent %d (%.1f/run)  buys after a reroll %d  bloom unspent at end %.1f/run" % [
+		rerolls / n, rerolls, bloom_spent_on_rerolls, bloom_spent_on_rerolls / n, buys_after_reroll, bloom_unspent / n])
 	var smog_avg := 0.0
 	for s in smog_at_descend:
 		smog_avg += float(s)

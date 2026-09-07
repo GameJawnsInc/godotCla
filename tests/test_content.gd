@@ -5,8 +5,10 @@ extends SceneTree
 ## 3) ARCHETYPES cores and package requirements reference real ids
 ## 4) every draftable ability is in some archetype core, or is mobility/utility
 ## 5) base_id() round-trips; archetypes_for(DRAFT_POOL) = the package-free set
-## 7) SHOP_COSTS prices every shrine service (press, forge); every base ITEMS
-##    id has a "+" form (the press can upcycle anything the world hands out)
+## 7) SHOP_COSTS prices every shrine service (press, forge, reroll) with an
+##    int >= 1, SHOP_REROLL_CAP is an int >= 1 and SHOP_REROLL_STEP an int >= 0
+##    (Block D2); every base ITEMS id has a "+" form (the press can upcycle
+##    anything the world hands out)
 ## 8) the effect grammar (docs/PROGRESSION_REVIEW.md 6.3, Block C1a): every
 ##    effect dict keeps to the closed op/rider vocabulary, the riders keep to
 ##    the closed predicate and count sets, and the data tables
@@ -222,10 +224,15 @@ func _init() -> void:
 			failures.append("archetypes_for(pool + %s) lacks %s" % [str(pkgs), arch_id])
 	print("archetypes_for(DRAFT_POOL): %s" % str(got))
 
-	# 7) shop price list and item upcycle coverage
-	for svc in ["heal", "ability", "graft", "item", "press", "forge"]:
-		if not Content.SHOP_COSTS.has(svc) or int(Content.SHOP_COSTS[svc]) <= 0:
-			failures.append("SHOP_COSTS lacks a positive price for '%s'" % svc)
+	# 7) shop price list and item upcycle coverage; the reroll sink's data
+	#    (Block D2): a base price >= 1, a cap >= 1 and a step >= 0, all ints
+	for svc in ["heal", "ability", "graft", "item", "press", "forge", "reroll"]:
+		if not Content.SHOP_COSTS.has(svc) or not (Content.SHOP_COSTS[svc] is int) or int(Content.SHOP_COSTS[svc]) <= 0:
+			failures.append("SHOP_COSTS lacks a positive int price for '%s'" % svc)
+	if not (Content.SHOP_REROLL_CAP is int) or Content.SHOP_REROLL_CAP < 1:
+		failures.append("SHOP_REROLL_CAP must be an int >= 1, got %s" % str(Content.SHOP_REROLL_CAP))
+	if not (Content.SHOP_REROLL_STEP is int) or Content.SHOP_REROLL_STEP < 0:
+		failures.append("SHOP_REROLL_STEP must be an int >= 0, got %s" % str(Content.SHOP_REROLL_STEP))
 	var base_items := 0
 	for iid in Content.ITEMS.keys():
 		if String(iid).ends_with("+"):
@@ -235,7 +242,8 @@ func _init() -> void:
 		base_items += 1
 		if not Content.ITEMS.has(iid + "+"):
 			failures.append("item '%s' has no '+' form for the press" % iid)
-	print("shop costs: %s; items: %d base, %d total" % [str(Content.SHOP_COSTS), base_items, Content.ITEMS.size()])
+	print("shop costs: %s; reroll cap %d step %d; items: %d base, %d total" % [
+		str(Content.SHOP_COSTS), Content.SHOP_REROLL_CAP, Content.SHOP_REROLL_STEP, base_items, Content.ITEMS.size()])
 
 	# 8) effect grammar: content rows, data tables, and the lint's own self-test
 	failures.append_array(_lint_effects(Content.ABILITIES))
@@ -856,7 +864,7 @@ func _lint_graft_selftest() -> Array:
 
 # --- 10) mutator lint -----------------------------------------------------------
 
-const MUTATOR_BOOL_KEYS := ["shop", "kit_ban", "draft_upgrades_only", "open_pool"]
+const MUTATOR_BOOL_KEYS := ["shop", "kit_ban", "draft_upgrades_only", "open_pool", "shop_reroll"]
 const MUTATOR_ARRAY_KEYS := ["pool_ban"]
 
 

@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"bloom":10,"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#;;>...;#","#@+;....#","#.;.....#","#########"]},"kit":["solar_lance","seed_bomb","mycelium_dash"],"mutators":["spinning_shrine"]},
+"actions": [{"dir":[1,0],"type":"move"},{"type":"reroll"},{"target":[3,2],"type":"cleanse"}],
+"expect": {"events":[{"ability":"moss_filter","cost":2,"grafts":["compost","carapace"],"item":"clearair_pod","n":1,"t":"reroll"},{"bloom":9,"t":"cleanse"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "D2 shrine reroll (config mutators [spinning_shrine], the switch the sink lives behind - a default run never lists the action): standing on the counter the tender spins it once for 2 bloom and every re-drawable slot redraws from its own side generator - root_wall -> moss_filter, [bloom_surge, verdant_pulse] -> [compost, carapace], spore_vial -> clearair_pod - none of them the offer that was standing there, while heal / press / forge are left alone. A spin costs bloom and no charge, and the cleanse after it pins the purse at 10 - 2 + 1 = 9",
+"sim_version": 10,
+"hash": "56284d1f8c972be488f1eb2a72392d6a4fff5ca13e173596bc1c7891dfda81a1"
+}

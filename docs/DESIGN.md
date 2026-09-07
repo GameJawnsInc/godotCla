@@ -225,7 +225,29 @@ tests a different build muscle so no single draft strategy trivializes it.
 - With a full kit the shrine's ability card is simply not buyable: that shop
   slot goes dead once you are kitted out (accepted), and the forge is the only
   way to free a kit slot - it may never scrap the mobility ability, so a run
-  can always still move. A draft reroll is not in the game yet.
+  can always still move. The 1-of-3 draft at each descent has no reroll of its
+  own; the shrine counter does (below).
+- **Rerolling the counter** (the one repeatable Bloom sink) - **an opt-in
+  mutator, Spinning Shrine, unlocked at the first win**: measured default-on,
+  the greed canary rose from 8% to 15.5% of runs over 200 paired seeds and no
+  single price or cap lever brought it back under the merge gate (BALANCE.md
+  2026-09-07e), so a default run keeps the counter fixed and turning the
+  switch on for everyone is a deliberate decision, not a tweak. Under the
+  mutator, standing on the shrine you can spin the stock: **2 Bloom the first
+  time, +1 for every spin already taken on this floor, three spins at most**. A spin redraws the
+  ability card, the graft pair and the item from exactly the rules that
+  stocked them (the ability from the draft pool minus what you already hold,
+  the grafts from the rows you do not own, the item from the base items), each
+  one excluding what is on the counter right now whenever there is an
+  alternative to move to - with no alternative left the offer simply stays.
+  What a spin never does is reopen a slot you already bought: the heal, the
+  graft pair, the ability card and the item stay bought, and the press and the
+  forge are never touched. Like every shrine service it costs no charge and no
+  turn - the walk to the counter is the time cost. It is deliberately a
+  **choice** sink, not a stat sink: leftover Bloom buys another look at the
+  same three slots, never a number. The escalating price and the per-floor cap
+  are what keep "spin until it fits" from being the dominant line, and the
+  counter resets with the next floor's stock.
 - `+` items exist only through the press: the shrine and supply pods stock base
   items only, so item upgrades are a spend, never a drop.
 - **Grafts** are the relic analog: passive run-long modifiers, and they are

@@ -18,9 +18,12 @@ extends RefCounted
 ##   {"type": "buy", "item": "item"}
 ##   {"type": "upcycle", "keep": k}                  (press: two held items -> the + form of item k; shop.press)
 ##   {"type": "upcycle_ability", "keep": i, "scrap": j}  (forge: kit[i] -> +, kit[j] scrapped, never mobility; once per floor, shop.forge)
+##   {"type": "reroll"}                              (redraw every stocked ability/grafts/item slot; shop.rerolls < SHOP_REROLL_CAP)
 ##
-## Shop snapshot shape: {heal?, press?, forge?: true, ability?: id, grafts?: [id, id?], item?: id}
-## or {} (Boarded mutator / floor without a shrine).
+## Shop snapshot shape: {heal?, press?, forge?: true, ability?: id, grafts?: [id, id?], item?: id,
+## rerolls: n, graft_prices?: [int], reroll_price: int, rerolls_left: int}
+## or {} (Boarded mutator / floor without a shrine). graft_prices, reroll_price
+## and rerolls_left are derived per snapshot and never enter state_hash().
 
 const Content := preload("res://sim/content.gd")
 const MapGen := preload("res://sim/mapgen.gd")
@@ -55,7 +58,16 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## consume the tile at cost 1). grow_radius reads its radius key, and
 ## mycelium_dash+ plants the departure tile (op plant_origin). Every default
 ## pool holds a surged row, so any log that cast one on growth diverges.
-const SIM_VERSION := 9
+## 10: Block D2 - the shrine reroll ({"type": "reroll"}, Content.SHOP_COSTS
+## ["reroll"] + SHOP_REROLL_STEP per spin, SHOP_REROLL_CAP per floor), legal
+## only under the spinning_shrine mutator (config key shop_reroll) after its
+## measurement held the block (BALANCE.md 2026-09-07e). The stocked shop dict
+## now stores "rerolls": 0, so the hash of every record whose final shop is
+## stocked moves (a boarded or boss-floor shop is {} and does not); no old
+## action becomes illegal and no main-rng draw moved, so every pre-10 log
+## replays to the same outcome and the re-stamp is hash-only. snapshot().shop
+## also carries the derived reroll_price / rerolls_left (0 with the switch off).
+const SIM_VERSION := 10
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -258,7 +270,9 @@ func _tier_mod(key: String) -> int:
 ## only for grafts: a graft is priced from its own Content.GRAFTS row
 ## ("price"), so a lever costs more than a stat row. Without an id the graft
 ## price falls back to the flat SHOP_COSTS entry, which is what callers that
-## just want "the graft price" still get. Prices never touch the rng.
+## just want "the graft price" still get. "reroll" climbs by SHOP_REROLL_STEP
+## per reroll already taken on this floor (shop.rerolls). Prices never touch
+## the rng.
 func shop_cost(item: String, id: String = "") -> int:
 	var cost: int = Content.SHOP_COSTS.get(item, 9999)
 	if item == "graft":
@@ -267,6 +281,9 @@ func shop_cost(item: String, id: String = "") -> int:
 		# permanent power gets dearer the more of it you already own, so
 		# "farm early, buy everything" is a real commitment, not a default
 		cost += player["grafts"].size() * Content.GRAFT_PRICE_STEP
+	elif item == "reroll":
+		# a repeatable sink gets dearer with every spin (Content doc)
+		cost += int(shop.get("rerolls", 0)) * Content.SHOP_REROLL_STEP
 	for i in range(mini(tier, Content.TIERS.size())):
 		cost += int(Content.TIERS[i].get("shop_markup", 0))
 	return cost
@@ -315,6 +332,8 @@ func step(action: Dictionary) -> Array:
 			_act_upcycle_ability(action)
 		"buy":
 			_act_buy(action)
+		"reroll":
+			_act_reroll()
 		"end_turn":
 			_resolve_turn()
 		_:
@@ -395,6 +414,8 @@ func legal_actions() -> Array:
 					for j in player["kit"].size():
 						if j != i and not _is_mobility(String(player["kit"][j])):
 							acts.append({"type": "upcycle_ability", "keep": i, "scrap": j})
+		if _reroll_legal():
+			acts.append({"type": "reroll"})
 	acts.append({"type": "end_turn"})
 	return acts
 
@@ -407,12 +428,19 @@ func _is_mobility(aid: String) -> bool:
 
 
 ## The shop as a consumer sees it: the live stock plus "graft_prices", the
-## per-offer prices aligned with "grafts". Prices are derived, never stored,
-## so the shop dict the sim carries (and clone() copies) stays pure stock.
+## per-offer prices aligned with "grafts", and the reroll counter's price and
+## remaining spins ("reroll_price", "rerolls_left"). Prices are derived, never
+## stored, so the shop dict the sim carries (and clone() copies) stays pure
+## stock; a boarded / shrineless shop stays {}.
 func _shop_snapshot() -> Dictionary:
 	var out: Dictionary = shop.duplicate(true)
 	if shop.has("grafts"):
 		out["graft_prices"] = graft_prices()
+	if not shop.is_empty():
+		out["reroll_price"] = shop_cost("reroll")
+		# 0 spins left when the switch is off: the shell reads "no card"
+		out["rerolls_left"] = maxi(0, Content.SHOP_REROLL_CAP - int(shop.get("rerolls", 0))) \
+			if bool(_mut("shop_reroll", false)) else 0
 	return out
 
 
@@ -464,10 +492,12 @@ func snapshot() -> Dictionary:
 
 
 ## Stable identity of the STORED game state. Rule: derived snapshot keys never
-## enter the hash - snapshot()["shop"] carries "graft_prices", which is
-## recomputed per snapshot from the stock and the owned grafts, so the hash
-## reads the raw stored shop dict instead. A hash that moved because a price
-## table moved would report a state change that never happened.
+## enter the hash - snapshot()["shop"] carries "graft_prices", "reroll_price"
+## and "rerolls_left", which are recomputed per snapshot from the stock, the
+## owned grafts and the tier, so the hash reads the raw stored shop dict
+## instead (shop.rerolls IS stored, so a reroll moves the hash). A hash that
+## moved because a price table moved would report a state change that never
+## happened.
 func state_hash() -> String:
 	var view := snapshot()
 	view["shop"] = shop
@@ -564,37 +594,126 @@ func _side_rng(tag: String) -> RandomNumberGenerator:
 ## after _enter_floor depends on map generation and the floor-entry intents
 ## alone - never on the kit, grafts, pool or bloom the run arrived with
 ## (tests/test_economy.gd asserts rng.state equality across configs).
+## "rerolls" counts the shrine rerolls taken on this floor; it is stored
+## stock (clone() copies it, state_hash() sees it), the prices are not.
+## The three slots share one candidate rule each (_shop_ability_candidates,
+## _shop_graft_candidates, _base_item_ids) and one draw helper (_shop_draw)
+## with the reroll, so a reroll is "stock this slot again, minus the offer".
 func _stock_shop() -> Dictionary:
 	if map["shrine"] == Vector2i(-1, -1):
 		return {}
-	var stock := {"heal": true, "press": true, "forge": true}
+	var stock := {"heal": true, "press": true, "forge": true, "rerolls": 0}
+	var aids := _shop_ability_candidates()
+	if not aids.is_empty():
+		stock["ability"] = _shop_draw(aids, "shop_ability", 1)[0]
+	var gids := _shop_graft_candidates()
+	if not gids.is_empty():
+		# two distinct offers from one generator: pick one, the other is discarded
+		stock["grafts"] = _shop_draw(gids, "shop_graft", 2)
+	stock["item"] = _shop_draw(_base_item_ids(), "shop_item", 1)[0]
+	return stock
+
+
+## Ability card candidates: the draft pool minus anything held as X or X+
+## (owning the + form excludes the base: never X and X+ in one kit).
+func _shop_ability_candidates() -> Array:
 	var aids: Array = []
 	for aid in draft_pool:
-		# owning the + form excludes the base: never X and X+ in one kit
 		if not player["kit"].has(aid) and not player["kit"].has(aid + "+"):
 			aids.append(aid)
-	if not aids.is_empty():
-		var arng := _side_rng("shop_ability")
-		stock["ability"] = aids[arng.randi_range(0, aids.size() - 1)]
+	return aids
+
+
+## Graft counter candidates: every Content.GRAFTS row not already owned.
+func _shop_graft_candidates() -> Array:
 	var gids: Array = []
 	for gid in Content.GRAFTS:
 		if not player["grafts"].has(gid):
 			gids.append(gid)
-	if not gids.is_empty():
-		# two distinct offers from one generator: pick one, the other is discarded
-		var grng := _side_rng("shop_graft")
-		var picks: Array = []
-		var gi := grng.randi_range(0, gids.size() - 1)
-		picks.append(gids[gi])
-		gids.remove_at(gi)
+	return gids
+
+
+## Up to `count` distinct picks from `cands` (consumed) through the side
+## generator `tag`: one randi_range per pick, in order, so the floor stock's
+## draws are byte-identical to the pre-reroll sim. Fewer picks when the list
+## runs out; an empty list yields [].
+func _shop_draw(cands: Array, tag: String, count: int) -> Array:
+	var picks: Array = []
+	if cands.is_empty():
+		return picks
+	var r := _side_rng(tag)
+	for _i in count:
+		if cands.is_empty():
+			break
+		var gi := r.randi_range(0, cands.size() - 1)
+		picks.append(cands[gi])
+		cands.remove_at(gi)
+	return picks
+
+
+## `cands` minus every id in `offers`; a reroll excludes the current offer(s)
+## whenever at least one alternative exists.
+static func _without(cands: Array, offers: Array) -> Array:
+	var out: Array = []
+	for c in cands:
+		if not offers.has(c):
+			out.append(c)
+	return out
+
+
+## Reroll legality (Block D2): on the shrine, a stocked shop with at least one
+## re-drawable slot (ability / grafts / item) still on the counter, under the
+## per-floor cap and an affordable price. Bought slots never come back, so a
+## counter with only heal / press / forge left cannot be rerolled.
+func _reroll_legal() -> bool:
+	# the sink is a mutator switch (Content.MUTATORS spinning_shrine ->
+	# shop_reroll); a default run never lists the action
+	if not bool(_mut("shop_reroll", false)):
+		return false
+	if shop.is_empty() or player["pos"] != map["shrine"]:
+		return false
+	if not (shop.has("ability") or shop.has("grafts") or shop.has("item")):
+		return false
+	if int(shop.get("rerolls", 0)) >= Content.SHOP_REROLL_CAP:
+		return false
+	return bloom >= shop_cost("reroll")
+
+
+## Shrine reroll: every still-stocked re-drawable slot is drawn again from
+## the same candidate rule the floor stock used, minus the current offer(s)
+## when an alternative exists (with none the offer stays and the slot is not
+## redrawn), each slot from its own side generator "reroll<n>_<slot>" with n
+## the rerolls already taken. The main rng is never touched, so a search bot
+## with the sim as a forward model sees the redraw before paying - an
+## instrument property (oracle upper bound), documented in BALANCE.md.
+## Costs no charge, like every shrine service. Event: {t: "reroll", n: new
+## count, cost, ability? / grafts? / item?: the slots actually redrawn}.
+## Legal only under the shop_reroll mutator key (_reroll_legal).
+func _act_reroll() -> void:
+	if not _reroll_legal():
+		_emit({"t": "illegal", "action": "reroll"})
+		return
+	var cost := shop_cost("reroll")
+	var n := int(shop.get("rerolls", 0))
+	var ev := {"t": "reroll", "n": n + 1, "cost": cost}
+	if shop.has("ability"):
+		var aids := _without(_shop_ability_candidates(), [shop["ability"]])
+		if not aids.is_empty():
+			shop["ability"] = _shop_draw(aids, "reroll%d_ability" % n, 1)[0]
+			ev["ability"] = shop["ability"]
+	if shop.has("grafts"):
+		var gids := _without(_shop_graft_candidates(), shop["grafts"])
 		if not gids.is_empty():
-			gi = grng.randi_range(0, gids.size() - 1)
-			picks.append(gids[gi])
-		stock["grafts"] = picks
-	var iids := _base_item_ids()
-	var srng := _side_rng("shop_item")
-	stock["item"] = iids[srng.randi_range(0, iids.size() - 1)]
-	return stock
+			shop["grafts"] = _shop_draw(gids, "reroll%d_graft" % n, 2)
+			ev["grafts"] = shop["grafts"].duplicate()
+	if shop.has("item"):
+		var iids := _without(_base_item_ids(), [shop["item"]])
+		if not iids.is_empty():
+			shop["item"] = _shop_draw(iids, "reroll%d_item" % n, 1)[0]
+			ev["item"] = shop["item"]
+	shop["rerolls"] = n + 1
+	bloom -= cost
+	_emit(ev)
 
 
 ## Consumable ids the world hands out (shop, supply pods): base forms only.

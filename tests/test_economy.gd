@@ -43,6 +43,17 @@ extends SceneTree
 ##     and Game.ability_cost is unchanged in shape for every ABILITIES row on
 ##     and off growth (base off growth; maxi(1, base - 1) on growth for a cost
 ##     >= 2 row, base for a cost-1 row - a stat surge never moves the price)
+##  l) Block D2 (bump 10): the shrine reroll. Legal only on the shrine with a
+##     stocked re-drawable slot, under SHOP_REROLL_CAP and an affordable
+##     shop_cost("reroll") (base + SHOP_REROLL_STEP per spin + tier markup);
+##     every other case is one illegal event that changes nothing. A reroll
+##     redraws each stocked ability / grafts / item slot through its own side
+##     generator (reroll<n>_<slot>), excluding the current offer(s) whenever an
+##     alternative exists and keeping them otherwise, never re-creates a bought
+##     slot, never touches heal / press / forge, costs no charge, leaves
+##     rng.state untouched and is reproducible across fresh games; shop.rerolls
+##     is stored (clone copies it, state_hash moves with it) while
+##     reroll_price / rerolls_left are derived snapshot keys the hash ignores
 ## Run: godot --headless --path . --script tests/test_economy.gd
 
 const Content := preload("res://sim/content.gd")
@@ -90,6 +101,10 @@ func _init() -> void:
 	_check_loadouts()
 	_check_d1_rng_pins()
 	_check_d1_ability_cost()
+	_check_reroll_legality()
+	_check_reroll_price_and_cap()
+	_check_reroll_redraw()
+	_check_reroll_state()
 	if failures.is_empty():
 		print("economy: OK (%d checks)" % checks)
 		quit(0)
@@ -209,13 +224,16 @@ func _check_stock_filter() -> void:
 	var bad_item := 0
 	var bad_grafts := 0
 	var bad_keys := 0
-	var allowed := {"heal": true, "press": true, "forge": true, "ability": true, "grafts": true, "item": true}
+	var allowed := {"heal": true, "press": true, "forge": true, "ability": true, "grafts": true, "item": true, "rerolls": true}
 	for s in range(1, STOCK_SEEDS + 1):
 		var g = Game.new(s, {"kit": kit})
 		var shop: Dictionary = g.shop
 		for k in shop:
 			if not allowed.has(k):
 				bad_keys += 1
+		# the reroll counter is stored stock, fresh at 0 (Block D2)
+		if int(shop.get("rerolls", -1)) != 0:
+			bad_keys += 1
 		if not shop.has("ability") or shop["ability"] == "solar_lance" or kit.has(shop["ability"]):
 			bad_ability += 1
 		if not shop.has("item") or String(shop["item"]).ends_with("+"):
@@ -443,9 +461,13 @@ func _check_graft_prices() -> void:
 
 # --- d4) state_hash hashes stored state only ----------------------------------
 
-## snapshot().shop carries "graft_prices", which is derived per snapshot from
-## the stock, the owned grafts and the tier. state_hash() swaps in the raw
-## stored shop dict, so a price table that moves never moves the hash.
+## snapshot().shop carries "graft_prices", "reroll_price" and "rerolls_left",
+## derived per snapshot from the stock, the owned grafts, the tier and the
+## stored reroll counter. state_hash() swaps in the raw stored shop dict, so a
+## price table that moves never moves the hash.
+const DERIVED_SHOP_KEYS := ["graft_prices", "reroll_price", "rerolls_left"]
+
+
 func _check_state_hash_view() -> void:
 	var with_prices := 0
 	var without := 0
@@ -458,27 +480,38 @@ func _check_state_hash_view() -> void:
 		var full := str(snap).sha256_text()
 		var stripped: Dictionary = snap.duplicate(true)
 		stripped["shop"] = snap["shop"].duplicate(true)
-		stripped["shop"].erase("graft_prices")
+		for k in DERIVED_SHOP_KEYS:
+			stripped["shop"].erase(k)
 		if g.state_hash() != str(stripped).sha256_text():
 			bad_strip += 1
 		if snap["shop"].has("graft_prices"):
 			with_prices += 1
-			if g.state_hash() == full:
-				bad_full += 1
 		else:
 			without += 1
-			if g.state_hash() != full:
-				bad_same += 1
-	_ok(bad_strip == 0, "state_hash: %d seeds disagreed with the graft_prices-stripped snapshot" % bad_strip)
+		# every stocked shrine carries reroll_price, so the full snapshot
+		# never hashes like the stored view
+		if snap["shop"].has("reroll_price") and g.state_hash() == full:
+			bad_full += 1
+		if not snap["shop"].has("reroll_price") or not snap["shop"].has("rerolls_left"):
+			bad_same += 1
+	_ok(bad_strip == 0, "state_hash: %d seeds disagreed with the derived-key-stripped snapshot" % bad_strip)
 	_ok(with_prices > 0 and bad_full == 0,
-		"state_hash: %d of %d priced shrines hashed the same as the full snapshot" % [bad_full, with_prices])
-	_ok(bad_same == 0, "state_hash: %d graftless shrines hashed differently either way" % bad_same)
-	# an explicitly graftless shrine (every graft already held): no derived key,
-	# so hashing the full snapshot and hashing the stored view agree
+		"state_hash: %d of %d stocked shrines hashed the same as the full snapshot" % [bad_full, with_prices])
+	_ok(bad_same == 0, "state_hash: %d stocked shrines lacked reroll_price / rerolls_left" % bad_same)
+	# an explicitly graftless shrine (every graft already held): no graft_prices,
+	# but the reroll keys are still derived and still stripped
 	var gall = Game.new(1, {"grafts": Content.GRAFTS.keys()})
 	var sall: Dictionary = gall.snapshot()
-	_ok(not sall["shop"].has("graft_prices") and gall.state_hash() == str(sall).sha256_text(),
+	var sall_stripped: Dictionary = sall.duplicate(true)
+	sall_stripped["shop"] = gall.shop
+	_ok(not sall["shop"].has("graft_prices") and sall["shop"].has("reroll_price")
+			and gall.state_hash() == str(sall_stripped).sha256_text() and gall.state_hash() != str(sall).sha256_text(),
 		"state_hash: graftless shrine %s" % str(sall["shop"]))
+	# a boarded shop is {} with no derived key at all: full and stored views agree
+	var gbd = Game.new(1, {"mutators": ["boarded"]})
+	var sbd: Dictionary = gbd.snapshot()
+	_ok(sbd["shop"].is_empty() and gbd.state_hash() == str(sbd).sha256_text(),
+		"state_hash: boarded shop %s" % str(sbd["shop"]))
 	# and the hash still tracks stored state: buying a graft moves it
 	var gb = Game.new(1, {"bloom": 30})
 	var before := gb.state_hash()
@@ -1043,3 +1076,304 @@ func _check_d1_ability_cost() -> void:
 		"a cost-1 row with no dict never surges")
 	g.terrain.erase(p)
 	print("D1 ability_cost: %d rows checked on and off growth" % Content.ABILITIES.size())
+
+
+# --- l) Block D2: the shrine reroll ------------------------------------------------
+
+## A shrine game with a fat purse, standing on the shrine.
+static func _shrine_game(seed_v: int, extra: Dictionary = {}) -> Game:
+	# the reroll is a mutator switch: the fixture turns it on; a case that
+	# passes its own "mutators" overrides this
+	var cfg := {"bloom": 40, "mutators": ["spinning_shrine"]}
+	for k in extra:
+		cfg[k] = extra[k]
+	var g = Game.new(seed_v, cfg)
+	g.player["pos"] = g.map["shrine"]
+	return g
+
+
+## One illegal reroll attempt: exactly one illegal event, nothing moves.
+func _assert_illegal_reroll(g, label: String) -> void:
+	var shop_before: Dictionary = g.shop.duplicate(true)
+	var bloom_before: int = g.bloom
+	var charge_before: int = g.player["charge"]
+	var rng_before: int = g.rng.state
+	# the illegal event itself lands in recent_events, so compare the
+	# snapshot with the event log stripped
+	var snap_before: Dictionary = g.snapshot()
+	snap_before.erase("events")
+	_ok(not _has_action(g.legal_actions(), "reroll"), "reroll %s: still legal" % label)
+	var evs: Array = g.step({"type": "reroll"})
+	var ill: Array = _events_of(evs, "illegal")
+	_ok(ill.size() == 1 and String(ill[0].get("action", "")) == "reroll" and _events_of(evs, "reroll").is_empty(),
+		"reroll %s: events %s" % [label, str(evs)])
+	var snap_after: Dictionary = g.snapshot()
+	snap_after.erase("events")
+	_ok(g.shop == shop_before and g.bloom == bloom_before and g.player["charge"] == charge_before
+			and g.rng.state == rng_before and str(snap_after) == str(snap_before),
+		"reroll %s: an illegal reroll changed state" % label)
+
+
+func _check_reroll_legality() -> void:
+	# the switch off (default config): a stocked counter and a full purse on
+	# the shrine still list no reroll, and the derived rerolls_left reads 0
+	var g0 = _shrine_game(1, {"mutators": []})
+	_assert_illegal_reroll(g0, "mutator off")
+	_ok(int(g0.snapshot()["shop"].get("rerolls_left", -1)) == 0 and g0.snapshot()["shop"].has("reroll_price"),
+		"reroll mutator off: snapshot shop %s" % str(g0.snapshot()["shop"]))
+	# off the shrine
+	var g = Game.new(1, {"bloom": 40, "mutators": ["spinning_shrine"]})
+	if g.player["pos"] == g.map["shrine"]:
+		g.player["pos"] = g.map["start"] + Vector2i(0, 0)
+	_ok(g.player["pos"] != g.map["shrine"], "reroll fixture: start is the shrine")
+	_assert_illegal_reroll(g, "off shrine")
+	# on the shrine, fresh stock: legal
+	g.player["pos"] = g.map["shrine"]
+	_ok(_has_action(g.legal_actions(), "reroll"), "reroll: not legal on a fresh stocked shrine")
+	# no re-drawable slot left (heal / press / forge only)
+	var g2 = _shrine_game(1)
+	g2.shop.erase("ability")
+	g2.shop.erase("grafts")
+	g2.shop.erase("item")
+	_ok(g2.shop.get("heal", false) and g2.shop.get("press", false) and g2.shop.get("forge", false), "reroll fixture: services gone")
+	_assert_illegal_reroll(g2, "no re-drawable slot")
+	# cap reached
+	var g3 = _shrine_game(1)
+	g3.shop["rerolls"] = Content.SHOP_REROLL_CAP
+	_assert_illegal_reroll(g3, "cap reached")
+	# short purse: one under the price
+	var g4 = _shrine_game(1)
+	g4.bloom = g4.shop_cost("reroll") - 1
+	_assert_illegal_reroll(g4, "short purse")
+	g4.bloom = g4.shop_cost("reroll")
+	_ok(_has_action(g4.legal_actions(), "reroll"), "reroll: exact price not legal")
+	# boarded (shop: false) - the shop is {} and the snapshot carries no reroll keys
+	var g5 = _shrine_game(1, {"mutators": ["spinning_shrine", "boarded"]})
+	_assert_illegal_reroll(g5, "boarded")
+	var s5: Dictionary = g5.snapshot()["shop"]
+	_ok(s5.is_empty(), "reroll boarded: snapshot shop %s" % str(s5))
+	# draft phase: the step is refused by the phase gate, not by the reroll
+	var g6 = _shrine_game(1)
+	g6.phase = "draft"
+	g6.draft_offers = ["vine_whip"]
+	var evs6: Array = g6.step({"type": "reroll"})
+	_ok(not _events_of(evs6, "illegal").is_empty() and int(g6.shop["rerolls"]) == 0
+			and not _has_action(g6.legal_actions(), "reroll"),
+		"reroll in draft phase: %s" % str(evs6))
+	# a legal reroll costs bloom, no charge, and keeps the shop open
+	var g7 = _shrine_game(1)
+	var b7: int = g7.bloom
+	var c7: int = g7.player["charge"]
+	var evs7: Array = g7.step({"type": "reroll"})
+	var rev: Array = _events_of(evs7, "reroll")
+	_ok(rev.size() == 1 and int(rev[0]["n"]) == 1 and int(rev[0]["cost"]) == Content.SHOP_COSTS["reroll"]
+			and _events_of(evs7, "illegal").is_empty(),
+		"reroll: events %s" % str(evs7))
+	_ok(g7.bloom == b7 - Content.SHOP_COSTS["reroll"] and g7.player["charge"] == c7 and int(g7.shop["rerolls"]) == 1
+			and g7.phase == "play" and not g7.over,
+		"reroll: bloom %d -> %d charge %d -> %d rerolls %s" % [b7, g7.bloom, c7, g7.player["charge"], str(g7.shop.get("rerolls"))])
+	print("reroll legality: mutator off / off shrine / no slot / cap / purse / boarded / draft phase illegal; on shrine under spinning_shrine legal at %d bloom" % Content.SHOP_COSTS["reroll"])
+
+
+func _check_reroll_price_and_cap() -> void:
+	var base: int = Content.SHOP_COSTS["reroll"]
+	var step: int = Content.SHOP_REROLL_STEP
+	var cap: int = Content.SHOP_REROLL_CAP
+	_ok(base == 2 and step == 1 and cap == 3, "reroll data: base %d step %d cap %d (spec 2 / 1 / 3)" % [base, step, cap])
+	# escalation 2 / 3 / 4 at tier 0, then the cap
+	var g = _shrine_game(1)
+	var prices: Array = []
+	var lefts: Array = []
+	var spent := 0
+	for i in cap:
+		var snap: Dictionary = g.snapshot()["shop"]
+		prices.append(int(snap.get("reroll_price", -1)))
+		lefts.append(int(snap.get("rerolls_left", -1)))
+		_ok(g.shop_cost("reroll") == base + step * i and int(snap["reroll_price"]) == g.shop_cost("reroll"),
+			"reroll price at %d spins: %d (snapshot %s)" % [i, g.shop_cost("reroll"), str(snap.get("reroll_price"))])
+		var b: int = g.bloom
+		var evs: Array = g.step({"type": "reroll"})
+		var rev: Array = _events_of(evs, "reroll")
+		_ok(rev.size() == 1 and int(rev[0]["cost"]) == base + step * i and int(rev[0]["n"]) == i + 1,
+			"reroll %d: event %s" % [i + 1, str(evs)])
+		spent += b - g.bloom
+	_ok(prices == [2, 3, 4] and lefts == [3, 2, 1], "reroll: prices %s lefts %s" % [str(prices), str(lefts)])
+	_ok(spent == 9 and int(g.shop["rerolls"]) == cap and int(g.snapshot()["shop"]["rerolls_left"]) == 0,
+		"reroll: spent %d over %d spins, counter %s" % [spent, cap, str(g.shop.get("rerolls"))])
+	_assert_illegal_reroll(g, "past the cap")
+	# a fresh floor resets the counter
+	g._enter_floor(2)
+	_ok(int(g.shop.get("rerolls", -1)) == 0 and g.shop_cost("reroll") == base, "reroll: floor 2 counter %s price %d" % [str(g.shop.get("rerolls")), g.shop_cost("reroll")])
+	# tier markup on every spin
+	var gt = _shrine_game(1, {"tier": GOUGING_TIER})
+	var tp: Array = []
+	for i in cap:
+		tp.append(gt.shop_cost("reroll"))
+		gt.step({"type": "reroll"})
+	_ok(tp == [3, 4, 5], "reroll gouging prices: %s" % str(tp))
+	print("reroll price: %s at tier 0, %s at tier %d, cap %d then illegal, floor entry resets" % [str(prices), str(tp), GOUGING_TIER, cap])
+
+
+func _check_reroll_redraw() -> void:
+	# 1) every slot redrawn excludes its current offer while alternatives exist
+	var same_ability := 0
+	var same_graft := 0
+	var same_item := 0
+	var missing := 0
+	var bad_cands := 0
+	var dup_graft := 0
+	for s in range(1, 41):
+		var g = _shrine_game(s)
+		var before: Dictionary = g.shop.duplicate(true)
+		var evs: Array = g.step({"type": "reroll"})
+		var rev: Dictionary = _events_of(evs, "reroll")[0]
+		if not (rev.has("ability") and rev.has("grafts") and rev.has("item")):
+			missing += 1
+		if g.shop["ability"] == before["ability"]:
+			same_ability += 1
+		if g.shop["item"] == before["item"]:
+			same_item += 1
+		var gr: Array = g.shop["grafts"]
+		if gr.size() != 2 or gr[0] == gr[1]:
+			dup_graft += 1
+		for gid in gr:
+			if before["grafts"].has(gid):
+				same_graft += 1
+		# the redraw obeys the stock rule: pool ids not held, unowned grafts, base items
+		if not g.draft_pool.has(g.shop["ability"]) or g.player["kit"].has(g.shop["ability"]):
+			bad_cands += 1
+		if String(g.shop["item"]).ends_with("+") or not Content.ITEMS.has(g.shop["item"]):
+			bad_cands += 1
+		if rev["ability"] != g.shop["ability"] or rev["grafts"] != g.shop["grafts"] or rev["item"] != g.shop["item"]:
+			bad_cands += 1
+	_ok(missing == 0, "reroll redraw: %d events lacked a redrawn slot key" % missing)
+	_ok(same_ability == 0 and same_graft == 0 and same_item == 0,
+		"reroll redraw: current offer kept with alternatives (ability %d, graft %d, item %d)" % [same_ability, same_graft, same_item])
+	_ok(dup_graft == 0 and bad_cands == 0, "reroll redraw: %d bad graft pairs, %d candidate-rule violations" % [dup_graft, bad_cands])
+	# 2) no alternative: a pool of exactly one ability keeps the offer and the
+	#    slot is not redrawn; a graft list with one candidate likewise
+	var all_but_last: Array = Content.GRAFTS.keys().slice(0, Content.GRAFTS.size() - 1)
+	var last: String = Content.GRAFTS.keys()[Content.GRAFTS.size() - 1]
+	var g1 = _shrine_game(3, {"pool": ["vine_whip"], "grafts": all_but_last})
+	_ok(g1.shop.get("ability", "") == "vine_whip" and g1.shop.get("grafts", []) == [last],
+		"reroll fixture: shop %s" % str(g1.shop))
+	var item_before: String = g1.shop["item"]
+	var evs1: Array = g1.step({"type": "reroll"})
+	var rev1: Dictionary = _events_of(evs1, "reroll")[0]
+	_ok(g1.shop["ability"] == "vine_whip" and g1.shop["grafts"] == [last]
+			and not rev1.has("ability") and not rev1.has("grafts") and rev1.has("item") and g1.shop["item"] != item_before
+			and int(rev1["n"]) == 1 and int(g1.shop["rerolls"]) == 1,
+		"reroll with no alternative: shop %s event %s" % [str(g1.shop), str(rev1)])
+	# 3) bought slots stay bought: buy a graft, reroll -> no grafts key, ability redrawn
+	var g2 = _shrine_game(2)
+	g2.step({"type": "buy", "item": "graft", "pick": 0})
+	_ok(not g2.shop.has("grafts") and g2.player["grafts"].size() == 1, "reroll fixture: graft buy %s" % str(g2.shop))
+	var a_before: String = g2.shop["ability"]
+	var evs2: Array = g2.step({"type": "reroll"})
+	var rev2: Dictionary = _events_of(evs2, "reroll")[0]
+	_ok(not g2.shop.has("grafts") and not rev2.has("grafts") and rev2.has("ability") and g2.shop["ability"] != a_before
+			and not g2.snapshot()["shop"].has("graft_prices"),
+		"reroll after a graft buy: shop %s event %s" % [str(g2.shop), str(rev2)])
+	# the redrawn graft counter never offers the graft just bought either
+	var g2b = _shrine_game(2)
+	var bought: String = g2b.shop["grafts"][0]
+	g2b.step({"type": "buy", "item": "graft", "pick": 0})
+	g2b.step({"type": "reroll"})
+	_ok(g2b.player["grafts"] == [bought] and not g2b.shop.has("grafts"), "reroll: bought graft %s reappeared" % bought)
+	# ability and item bought: only the graft counter spins
+	var g3 = _shrine_game(2, {"kit": ["solar_lance", "seed_bomb", "mycelium_dash"]})
+	g3.step({"type": "buy", "item": "ability"})
+	g3.step({"type": "buy", "item": "item"})
+	_ok(not g3.shop.has("ability") and not g3.shop.has("item") and g3.shop.has("grafts"), "reroll fixture: shop %s" % str(g3.shop))
+	var evs3: Array = g3.step({"type": "reroll"})
+	var rev3: Dictionary = _events_of(evs3, "reroll")[0]
+	_ok(not g3.shop.has("ability") and not g3.shop.has("item") and rev3.has("grafts") and not rev3.has("ability") and not rev3.has("item"),
+		"reroll with ability/item bought: shop %s event %s" % [str(g3.shop), str(rev3)])
+	# 4) heal / press / forge untouched, a used forge stays used
+	var g4 = _shrine_game(2, {"kit": ["solar_lance", "seed_bomb", "mycelium_dash"]})
+	g4.step({"type": "upcycle_ability", "keep": 0, "scrap": 1})
+	_ok(not g4.shop.has("forge"), "reroll fixture: forge %s" % str(g4.shop))
+	g4.step({"type": "reroll"})
+	_ok(g4.shop.get("heal", false) == true and g4.shop.get("press", false) == true and not g4.shop.has("forge"),
+		"reroll: services moved: %s" % str(g4.shop))
+	var g4b = _shrine_game(2)
+	g4b.step({"type": "reroll"})
+	_ok(g4b.shop.get("heal", false) == true and g4b.shop.get("press", false) == true and g4b.shop.get("forge", false) == true,
+		"reroll: fresh services moved: %s" % str(g4b.shop))
+	# 5) rng.state untouched; the same seed and floor redraw identically on two fresh games
+	var mismatch := 0
+	var rng_moved := 0
+	for s in range(1, 31):
+		var ga = _shrine_game(s)
+		var gb = _shrine_game(s)
+		var st: int = ga.rng.state
+		var ea: Array = ga.step({"type": "reroll"})
+		var eb: Array = gb.step({"type": "reroll"})
+		if ga.rng.state != st:
+			rng_moved += 1
+		if ga.shop != gb.shop or _events_of(ea, "reroll") != _events_of(eb, "reroll"):
+			mismatch += 1
+		ga.step({"type": "reroll"})
+		gb.step({"type": "reroll"})
+		if ga.rng.state != st:
+			rng_moved += 1
+		if ga.shop != gb.shop:
+			mismatch += 1
+	_ok(rng_moved == 0, "reroll: main rng moved on %d rerolls" % rng_moved)
+	_ok(mismatch == 0, "reroll: %d seeds redrew differently on two fresh games" % mismatch)
+	# 6) reroll 1 and reroll 2 use different generators: the tags seed different streams
+	var same_stream := 0
+	for s in range(1, 51):
+		var g = Game.new(s)
+		if g._side_rng("reroll0_ability").randi() == g._side_rng("reroll1_ability").randi() \
+				or g._side_rng("reroll0_graft").randi() == g._side_rng("reroll1_graft").randi() \
+				or g._side_rng("reroll0_item").randi() == g._side_rng("reroll1_item").randi() \
+				or g._side_rng("reroll0_ability").randi() == g._side_rng("shop_ability").randi():
+			same_stream += 1
+	_ok(same_stream == 0, "reroll: %d of 50 seeds had reroll0 / reroll1 / shop_ability generators agree on their first draw" % same_stream)
+	# and the second spin's draw is reproducible from its own generator: a
+	# fresh game with rerolls forced to 1 draws what the second spin drew
+	var gx = _shrine_game(4)
+	gx.step({"type": "reroll"})
+	var first: Dictionary = gx.shop.duplicate(true)
+	gx.step({"type": "reroll"})
+	var gy = _shrine_game(4)
+	gy.shop = first.duplicate(true)
+	gy.step({"type": "reroll"})
+	_ok(gy.shop == gx.shop, "reroll: second spin not reproducible from rerolls=1 (%s vs %s)" % [str(gy.shop), str(gx.shop)])
+	print("reroll redraw: 40 seeds exclude the offer, one-candidate slots keep it, bought slots stay closed, services untouched, rng fixed, %d/50 tag collisions" % same_stream)
+
+
+func _check_reroll_state() -> void:
+	# clone() copies the counter; state_hash moves with it and not with the derived keys
+	var g = _shrine_game(5)
+	var h0 := g.state_hash()
+	g.step({"type": "reroll"})
+	var h1 := g.state_hash()
+	_ok(h1 != h0, "reroll: state_hash did not move on a reroll")
+	var c = g.clone()
+	_ok(int(c.shop["rerolls"]) == 1 and c.shop == g.shop and c.state_hash() == h1 and c.shop_cost("reroll") == g.shop_cost("reroll"),
+		"reroll: clone shop %s vs %s" % [str(c.shop), str(g.shop)])
+	c.step({"type": "reroll"})
+	_ok(int(c.shop["rerolls"]) == 2 and int(g.shop["rerolls"]) == 1, "reroll: clone shares the counter with its source")
+	# the counter alone moves the hash (same stock, rerolls 0 -> 1)
+	var g2 = _shrine_game(5)
+	var h2 := g2.state_hash()
+	g2.shop["rerolls"] = 1
+	_ok(g2.state_hash() != h2, "reroll: state_hash ignored shop.rerolls")
+	g2.shop["rerolls"] = 0
+	_ok(g2.state_hash() == h2, "reroll: state_hash did not return with the counter")
+	# derived keys: present in the snapshot, absent from the stored shop, out of the hash
+	var snap: Dictionary = g2.snapshot()["shop"]
+	_ok(snap.has("reroll_price") and snap.has("rerolls_left") and not g2.shop.has("reroll_price") and not g2.shop.has("rerolls_left"),
+		"reroll: derived keys stored or missing: snapshot %s stored %s" % [str(snap), str(g2.shop)])
+	_ok(int(snap["reroll_price"]) == g2.shop_cost("reroll") and int(snap["rerolls_left"]) == Content.SHOP_REROLL_CAP - int(g2.shop["rerolls"]),
+		"reroll: derived values %s / %s" % [str(snap["reroll_price"]), str(snap["rerolls_left"])])
+	var view: Dictionary = g2.snapshot()
+	view["shop"] = g2.shop
+	_ok(g2.state_hash() == str(view).sha256_text() and g2.state_hash() != str(g2.snapshot()).sha256_text(),
+		"reroll: state_hash saw a derived key")
+	# a tier change moves reroll_price but not the hash of the stored shop view
+	var gt = _shrine_game(5, {"tier": GOUGING_TIER})
+	_ok(int(gt.snapshot()["shop"]["reroll_price"]) == Content.SHOP_COSTS["reroll"] + 1, "reroll: gouging snapshot price %s" % str(gt.snapshot()["shop"].get("reroll_price")))
+	print("reroll state: clone copies rerolls, hash follows the counter, derived keys reroll_price / rerolls_left stay out")

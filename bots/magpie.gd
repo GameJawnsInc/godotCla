@@ -2,7 +2,10 @@ extends "res://bots/optimizer.gd"
 ## Magpie persona: greedy explorer. Plays the optimizer's competent game, but
 ## buys everything, cleanses with enemies looming, and routes to every
 ## corrupted tile before the stairs while the light holds. Measures what
-## greed costs against the smog clock.
+## greed costs against the smog clock. Since Block D2 it also spins the shrine
+## counter with any bloom the counter will not sell it anything for, which
+## makes it the canary for the repeatable sink: the persona that takes every
+## legal spin is the one that shows what unbounded rerolling would do.
 
 
 func get_bot_name() -> String:
@@ -25,6 +28,15 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		var deal := _magpie_buy(by["buy"], snap)
 		if not deal.is_empty():
 			return deal
+
+	# greed spends the purse down (Block D2): standing on a counter that holds
+	# nothing this purse can buy, the last bloom goes into a spin rather than
+	# out of the run with the tender. No fit test and no reserve - this bot is
+	# the canary for a repeatable sink, so it takes every legal spin (the sim's
+	# per-floor cap and the escalating price are what stop it). Price and spins
+	# left ride in snapshot().shop; the legal list is the only gate read here.
+	if by.has("reroll") and not by.has("buy"):
+		return by["reroll"][0]
 
 	var threat := _threat_tiles(snap)
 

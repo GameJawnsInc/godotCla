@@ -539,8 +539,23 @@ const ABILITY_DESC := {
 ## the tier markup (Game.shop_cost) applies to them like every other purchase.
 ## "graft" here is only the id-less fallback: a real graft offer is priced from
 ## its own GRAFTS row ("price"), through Game.shop_cost("graft", id).
-const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 4, "item": 2, "press": 1, "forge": 3}
+## "reroll" (Block D2, the one repeatable CHOICE sink) redraws every still-
+## stocked re-drawable slot (ability, grafts, item) from the same candidate
+## rule the floor stock used, through the side rng; Game.shop_cost("reroll")
+## adds SHOP_REROLL_STEP per reroll already taken this floor. The action is
+## legal only under the mutator config key shop_reroll (the spinning_shrine
+## row) - see MUTATOR_CONFIG_KEYS for why it is off by default.
+const SHOP_COSTS := {"heal": 3, "ability": 4, "graft": 4, "item": 2, "press": 1, "forge": 3, "reroll": 2}
 const GRAFT_PRICE_STEP := 2  # each owned graft raises the next graft's price
+## Rerolls per shrine (per floor). A cap bounds the action space: without one
+## a purse could spin the counter indefinitely, and every search bot's
+## branching at the shrine would grow with the bloom balance instead of
+## staying a small fixed fan-out.
+const SHOP_REROLL_CAP := 3
+## Price growth per reroll already taken this floor. A repeatable sink must
+## get dearer, or the first spin is always the right one and the cap is the
+## only thing standing between the purse and "reroll until it fits".
+const SHOP_REROLL_STEP := 1
 const CLEANSE_SMOG_RELIEF := 1  # a cleanse pauses the smog clock, never rewinds it
 
 ## Optional run mutators: free-form spice chosen at run start (unlock-gated).
@@ -565,9 +580,15 @@ const CLEANSE_SMOG_RELIEF := 1  # a cleanse pauses the smog clock, never rewinds
 ##                        (the pre-Block-A all-packages variety as a choice;
 ##                        the profile's one-package-per-run commitment is the
 ##                        default). Applied before pool_ban.
+##   shop_reroll          true lets the shrine counter be rerolled for bloom
+##                        (the Block D2 sink). Off by default: with it on the
+##                        magpie canary rose 8% -> 15.5% over 200 paired seeds
+##                        and every single price/cap lever still failed the
+##                        30-seed gate (BALANCE.md 2026-09-07e), so default-on
+##                        is an owner decision, not a data tweak.
 const MUTATOR_CONFIG_KEYS := [
 	"kit_max", "max_hp_delta", "bank_cap", "oil_mult", "extra_common_enemy", "shop",
-	"pool_ban", "kit_ban", "draft_offers", "draft_upgrades_only", "open_pool",
+	"pool_ban", "kit_ban", "draft_offers", "draft_upgrades_only", "open_pool", "shop_reroll",
 ]
 const MUTATORS := {
 	"kit_of_3": {"name": "Kit of Three", "desc": "ability kit capped at 3", "config": {"kit_max": 3}},
@@ -583,6 +604,9 @@ const MUTATORS := {
 		"config": {"draft_upgrades_only": true}},
 	"open_pool": {"name": "Open Pool", "desc": "draft from every package at once",
 		"config": {"open_pool": true}},
+	# Block D2: the shrine reroll, held behind a switch (see shop_reroll above)
+	"spinning_shrine": {"name": "Spinning Shrine", "desc": "pay bloom to reroll the shrine counter",
+		"config": {"shop_reroll": true}},
 }
 
 ## Post-win difficulty tiers. Tier N applies the first N modifiers, stacking.
@@ -638,6 +662,7 @@ const MILESTONES := [
 	# loadout rows open the starting kits in LOADOUTS - each earned by playing
 	# the thing it hands you.
 	{"id": "open_pool", "kind": "mutator", "requires": {"wins": 1}, "desc": "Draft from every package at once"},
+	{"id": "spinning_shrine", "kind": "mutator", "requires": {"wins": 1}, "desc": "Pay bloom to reroll the shrine counter"},
 	{"id": "tidewarden", "kind": "loadout", "requires": {"best_floor": 3}, "desc": "Reach the Refinery Gate"},
 	{"id": "flarekeeper", "kind": "loadout", "requires": {"best_floor": 4}, "desc": "Reach the Cracking Yard"},
 	{"id": "spiker", "kind": "loadout", "requires": {"casts": {"grow_spike": 30}}, "desc": "Land 30 Grow Spikes"},

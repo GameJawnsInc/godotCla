@@ -448,8 +448,8 @@ func _act(a: Dictionary) -> void:
 		tooltip = []
 		queue_redraw()
 		return
-	# a purchase made from the sheet reopens it
-	var keep_shop := mode == "shop" and String(a.get("type", "")) == "buy"
+	# a purchase or a reroll made from the sheet reopens it
+	var keep_shop := mode == "shop" and ["buy", "reroll"].has(String(a.get("type", "")))
 	var evs: Array = game.step(a)
 	if _game_is_run and _run_save != null:
 		_run_save.store_line(var_to_str(a).replace("\n", " "))
@@ -803,6 +803,9 @@ func _key(k: int) -> void:
 		if mode == "shop" and k == KEY_J:
 			_buy_graft(1)  # the shrine offers two grafts; J takes the second
 			return
+		if mode == "shop" and k == KEY_R:
+			_reroll()  # inside the sheet R redraws the counter, outside it restarts
+			return
 		mode = "normal"
 		queue_redraw()
 		return
@@ -944,6 +947,17 @@ func _buy_graft(pick: int) -> void:
 			_act(a)
 			return
 	_flash("can't buy that")
+
+
+## Redraw the shrine counter (Block D2). Every rule - on the shrine, a
+## re-drawable slot still stocked, the per-floor cap, the escalating price -
+## is the sim's, so the shell just looks for the action and flashes when the
+## card is dead.
+func _reroll() -> void:
+	for a in _legal_of("reroll"):
+		_act(a)
+		return
+	_flash("can't reroll")
 
 
 ## The one bit of ability metadata the shell reads, mirroring the sim rule:
@@ -1099,6 +1113,8 @@ func _tap(tag: String) -> void:
 				break
 		if not pressed:
 			_flash("the press is closed")
+	elif tag == "reroll":
+		_reroll()
 	elif tag == "forge":
 		if _legal_of("upcycle_ability").is_empty():
 			_flash("the forge is cold")
@@ -1398,6 +1414,8 @@ func _ev_text(ev: Dictionary) -> String:
 			if String(ev.get("discarded", "")) != "":
 				return "Bought %s (discarded %s)" % [what, _shop_name("graft", String(ev["discarded"]))]
 			return "Bought %s" % what
+		"reroll":
+			return "Rerolled the counter (-%d bloom)" % int(ev.get("cost", 0))
 		"draft_upgrade":
 			return "Upgraded to %s" % str(ev["id"])
 		"shield":
@@ -2529,6 +2547,21 @@ func _shop_cards(snap: Dictionary) -> Array:
 	if not _legal_of("upcycle_ability").is_empty():
 		cards.append(["ab_default", "Forge an ability  -  %d bloom" % game.shop_cost("forge"),
 			"One kit ability becomes its + form; scrap another (never mobility) - once per floor", "forge"])
+	# the repeatable sink: the card shows while a re-drawable slot is stocked
+	# (a bought-out counter can never be redrawn) and prices itself from the
+	# derived snapshot keys - the price climbs with every spin
+	# (a shrine that can never spin - the Spinning Shrine mutator off - shows
+	# no card: rerolls_left reads 0 with nothing spun)
+	var rleft := int(shop.get("rerolls_left", 0))
+	var rspun := int(shop.get("rerolls", 0))
+	if (shop.has("ability") or shop.has("grafts") or shop.has("item")) and (rleft > 0 or rspun > 0):
+		var rprice := int(shop.get("reroll_price", 0))
+		var rdesc := "Redraw the ability, graft and item cards - the offers you see now are lost"
+		if rleft <= 0:
+			rdesc = "The shrine has no more spins this floor"
+		elif snap["bloom"] < rprice:
+			rdesc = "Not enough bloom for another spin"
+		cards.append(["ic_bloom", "Reroll (%d)  -  %d left" % [rprice, rleft], rdesc, "reroll"])
 	return cards
 
 

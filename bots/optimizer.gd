@@ -65,6 +65,12 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 					if int(snap["dim"]) >= 2:
 						return a
 
+	# Shrine reroll (Block D2) is decided BEFORE the counter is read: a graft
+	# that fits nothing is still a legal buy, so asking after _shop_choice
+	# would spend the purse on the misfit and never spin.
+	if by.has("reroll") and _wants_reroll(snap, by.get("buy", [])):
+		return by["reroll"][0]
+
 	if by.has("buy"):
 		var deal := _shop_choice(by["buy"], snap)
 		if not deal.is_empty():
@@ -420,6 +426,38 @@ func _graft_fit(gid: String, kit_tags: Dictionary) -> int:
 	for tag in CONTENT.GRAFTS.get(gid, {}).get("tags", []):
 		n += int(kit_tags.get(tag, 0))
 	return n
+
+
+## Spin the shrine counter (Block D2) instead of buying from it: the graft
+## counter is open, nothing on it both fits the kit and is affordable (every
+## legal graft buy scores 0 on _graft_fit), a spin is left, and the purse still
+## covers the cheapest graft the table can hold after paying for the spin - so
+## a reroll is never the last thing a run's bloom buys. Price and spins left
+## come from snapshot().shop (reroll_price / rerolls_left), never from the sim.
+func _wants_reroll(snap: Dictionary, buys: Array) -> bool:
+	var sh: Dictionary = snap.get("shop", {})
+	var offers: Array = sh.get("grafts", [])
+	if offers.is_empty() or int(sh.get("rerolls_left", 0)) <= 0:
+		return false
+	var kit_tags := _kit_tag_counts(snap)
+	for a in buys:
+		if String(a.get("item", "")) != "graft":
+			continue
+		var pick := int(a.get("pick", -1))
+		var gid := String(offers[pick]) if pick >= 0 and pick < offers.size() else ""
+		if _graft_fit(gid, kit_tags) > 0:
+			return false  # an affordable offer already fits the kit: buy it
+	return int(snap["bloom"]) >= int(sh.get("reroll_price", 1 << 30)) + _cheapest_graft_price()
+
+
+## The cheapest price any Content.GRAFTS row can carry - the purse a spin has
+## to leave behind. Table read, no graft id named: a new cheap row moves this
+## with no bot change.
+func _cheapest_graft_price() -> int:
+	var best := 1 << 30
+	for gid in CONTENT.GRAFTS:
+		best = mini(best, int(CONTENT.GRAFTS[gid].get("price", 1)))
+	return 1 if best == (1 << 30) else best
 
 
 ## Step out of telegraphed damage; when cornered, shove an adjacent attacker

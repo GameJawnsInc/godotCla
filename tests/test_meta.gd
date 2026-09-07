@@ -683,6 +683,26 @@ func _mutator_invariant_problem(mut: String) -> String:
 			full.step({"type": "descend"})
 			if full.phase != "play" or full.floor_num != 2:
 				return "an all-+ kit did not skip the draft: phase %s floor %d" % [full.phase, full.floor_num]
+		"spinning_shrine":
+			# the switch: a stocked shrine with bloom lists the reroll only
+			# under the mutator, and the base game's derived rerolls_left is 0
+			var g = Game.new(1, cfg.merged({"bloom": 20}))
+			g.player["pos"] = g.map["shrine"]
+			var listed := false
+			for a in g.legal_actions():
+				if String(a.get("type", "")) == "reroll":
+					listed = true
+			if not listed:
+				return "spinning shrine lists no reroll on a stocked shrine with 20 bloom"
+			if int(g.snapshot()["shop"].get("rerolls_left", 0)) != Content.SHOP_REROLL_CAP:
+				return "rerolls_left %s, expected %d" % [str(g.snapshot()["shop"].get("rerolls_left")), Content.SHOP_REROLL_CAP]
+			var base_g = Game.new(1, {"bloom": 20})
+			base_g.player["pos"] = base_g.map["shrine"]
+			for a in base_g.legal_actions():
+				if String(a.get("type", "")) == "reroll":
+					return "base game lists a reroll (check proves nothing)"
+			if int(base_g.snapshot()["shop"].get("rerolls_left", -1)) != 0:
+				return "base game rerolls_left %s, expected 0" % str(base_g.snapshot()["shop"].get("rerolls_left"))
 		_:
 			return "no invariant row in tests/test_meta.gd for mutator '%s'" % mut
 	return ""

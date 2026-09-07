@@ -45,6 +45,7 @@ scene.
 | E | descend (on the stairs) |
 | H / B | buy heal / ability (standing on a shrine) |
 | G / J | buy the first / second graft on offer |
+| R (shop sheet open) | reroll the shrine counter (Spinning Shrine mutator only) — outside the sheet R still restarts the seed |
 | SPACE / ENTER | end turn |
 | ESC | cancel targeting |
 | R | restart the same seed |
@@ -215,6 +216,18 @@ or item card is still shown with its price and flashes when tapped:
 - **forge** - one kit ability becomes its `+` form and another is scrapped
   for parts. Once per floor: using it closes the forge until the next
   shrine, and a mobility ability can never be the scrap.
+- **reroll** (only under the Spinning Shrine mutator; a default run's sheet
+  has no reroll card) - "Reroll (price) - n left": redraws the ability, graft and
+  item cards in one go, each from the same table the floor stocked them
+  from and never the offer already on the counter. Bought cards stay bought
+  (a counter with nothing re-drawable left has no reroll card at all) and
+  heal / press / forge are untouched. It costs bloom, not a charge, gets one
+  bloom dearer every spin (2, 3, 4 at tier 0) and is capped at three spins
+  per shrine, so it is a choice sink, not a slot machine: rerolling the
+  counter twice is a graft you did not buy. The card is drawn whenever a
+  re-drawable slot is stocked and says why it is dead (out of spins, or too
+  little bloom); tapping it then just flashes. `R` with the sheet open is
+  the same button.
 
 The Boarded mutator (and floor 7, which has no shrine) closes the whole
 sheet - press and forge included.
