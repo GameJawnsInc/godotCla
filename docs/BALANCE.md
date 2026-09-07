@@ -6933,15 +6933,18 @@ a hand-authored demo rather than by a hash:
 
 ### Watch list
 
-- **The pooled pick-skip line is +3 and its two samples disagree in sign.**
-  In sample the optimizer's picks lose 18 runs to always-skipping (66 vs 84),
-  out of sample they win 21 (120 vs 99). The pre-D4 draft read +5 and +8 - both
-  positive, and the pooled +13. This is the gate line for this feature and it
-  is passing on the narrowest margin in the entry. The cheap next reading is a
-  third 30-seed sample (`ORACLE_SEED_FROM=201`); the expensive and better one is
-  the oracle on a policy that can evaluate an offer (`ORACLE_BOT=deeproot`,
-  sharded - forks run 3-5 s each). Until one of them lands, treat "picking beats
-  skipping" as established pooled and unestablished per-sample.
+- **The pick-skip line is under-powered and is now a "did not move" statement,
+  not a comparison.** The cheap next reading was taken before this entry
+  shipped - three more 30-seed samples per tree - and it retired the
+  comparison: five samples pool to +2 for this tree and +2 for the pre-D4 tree
+  with per-sample values from -18 to +21 (the table is above). So no slot mix
+  is distinguishable from another on this statistic at this sample size, and
+  the earlier claim that one mix "fails in each sample" is withdrawn. What the
+  same samples do establish is the ceiling: best fork higher in 5 of 5 paired
+  samples, 663 against 540, sign test p = 0.031. The expensive and better
+  reading is still owed - the oracle on a policy that can evaluate an offer
+  (`ORACLE_BOT=deeproot`, sharded; forks run 3-5 s each) - and until it lands,
+  no draft-quality claim finer than "the ceiling rose" has support.
 - **Regret is retired as an acceptance number and should not come back.** It
   measures the gap between the content and a fixed heuristic's draft table, so
   it fires whenever the content improves: 0.158 before, 0.24-0.28 in all six
