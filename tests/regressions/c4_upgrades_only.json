@@ -2,8 +2,8 @@
 "seed": 1,
 "config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#.......#","#@>.....#","#.......#","#########"]},"mutators":["upgrades_only"]},
 "actions": [{"dir":[1,0],"type":"move"},{"type":"descend"}],
-"expect": {"events":[{"t":"descend","to_floor":2},{"offers":["solar_lance+","seed_bomb+","mycelium_dash+"],"t":"draft_offer"}],"floor":1,"timeout":true,"turns":0,"won":false},
-"note": "C4 upgrades_only mutator (draft_upgrades_only): the draft never reaches the pool - the candidate list is the + form of every held ability, so the starting kit's three offers are solar_lance+, seed_bomb+ and mycelium_dash+ (pinned below); a kit already all-+ has no candidates and the draft is skipped as before",
-"sim_version": 11,
-"hash": "232f985a7c936a350e161383e4c448b2acb6e750e8371006ae75af339b2c655a"
+"expect": {"events":[{"t":"descend","to_floor":2},{"offers":["solar_lance+","seed_bomb+","mycelium_dash+"],"slots":["upgrade","upgrade","upgrade"],"t":"draft_offer"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "C4 upgrades_only mutator (draft_upgrades_only): the draft never reaches the pool - the candidate list is the + form of every held ability, so the starting kit's three offers are solar_lance+, seed_bomb+ and mycelium_dash+ (pinned below) - the D4 upgrade filter is deliberately not applied here, because under this mutator the + list IS the universe and filtering it could empty a draft that today has offers, which is why the mobility + form still appears in this record and in no other slot pin; a kit already all-+ has no candidates and the draft is skipped as before; the `slots` key pins the roles that rolled the offers, so a change that stops steering offer i by Content.DRAFT_SLOTS fails this record in plain mode",
+"sim_version": 12,
+"hash": "746bf07f58438c9a14f051d73a899138cfe58d5d857d5e62d4c0521437c51c94"
 }

@@ -59,9 +59,13 @@ extends SceneTree
 ##     search relaxes nodes) and the screened execution of a gum leave
 ##     rng.state untouched; and a Game subclass that swaps only the two D3
 ##     entry points back (the reference BFS for _chase_step, _screened false)
-##     drives the optimizer over seeds 1..10 to the rng.state the bump-10 tree
-##     recorded at every floor entry (RNG_FLOOR_ENTRY_BUMP10) - so nothing
-##     outside those two functions moved a draw
+##     drives the optimizer over seeds 1..10 to the rng.state recorded at
+##     every floor entry (RNG_FLOOR_ENTRY_BUMP12) - so nothing outside those
+##     two functions moved a draw
+##  n) Block D4 (bump 12): the draft draws moved on purpose (exactly one
+##     main-rng draw per slot, see tests/test_grammar.gd (d)), so the
+##     floor-entry pins were re-recorded on this tree; the Game.new pins (k)
+##     are untouched - the draft happens after floor 1
 ## Run: godot --headless --path . --script tests/test_economy.gd
 
 const Content := preload("res://sim/content.gd")
@@ -90,26 +94,34 @@ const RNG_STATE_BUMP8 := [
 ]
 
 ## rng.state after Game.new and then right after every step that entered a
-## new floor, optimizer persona, seeds 1..10, recorded on the bump-10 tree
-## (git HEAD before Block D3). Replayed by RefGame below, which restores the
-## pre-D3 chase and no smoke screen, so the run is the bump-10 run exactly.
-const RNG_FLOOR_ENTRY_BUMP10 := [
-	[5089575408282122190, -184513544007953650, 8759944363161018601, 2868822161275640310, 3937219494565775732, 3539856330929230112, 109341832312744600],
-	[-1543445859615755461, -8411093148249300473],
-	[5249088221260300708, -8668300741929293400, 4694250479173219183, -5359620544126918427, 1679020471647375956, 4038978688939662360, -9008640875809358353],
-	[-7365291246896200391, 9118581067688907677, 4174390183580078064, -1769302175855516454, 8580300391172121205, 2216684603156017793, -1685136958817371501],
+## new floor, optimizer persona, seeds 1..10, replayed by RefGame below (the
+## pre-D3 chase and no smoke screen). Re-pinned on the bump-12 tree (Block D4):
+## the affinity-slotted draft deliberately moved the draft draws (one main-rng
+## draw per slot instead of min(count, candidates) from one list), so every
+## run diverges from its first draft on and the bump-10 values could not
+## survive; the Game.new column (floor 1) is unchanged from RNG_STATE_BUMP8.
+## Re-pinned once more inside bump 12 when the upgrade slot took the
+## AFFINITY_IGNORED_TAGS filter: the draw COUNT is what these guard and it is
+## untouched (one per slot), but a filtered candidate list resolves each index
+## differently, so the persona plays a different run from its first draft.
+## From here on, anything that moves one of these is a stray main-rng draw.
+const RNG_FLOOR_ENTRY_BUMP12 := [
+	[5089575408282122190, -184513544007953650, 8759944363161018601, 2868822161275640310, -8152873371107847509, -2237507896994325889],
+	[-1543445859615755461, -8411093148249300473, 1787517375204971321, 8582635207152789512],
+	[5249088221260300708, -8668300741929293400, 4694250479173219183, 5574227338355628461, -3061484965246952852, -1172107250573503496],
+	[-7365291246896200391, 9118581067688907677, 4174390183580078064, 4074606386311278477, -8986578202114716473, 7519982563720124719, 2737900482653066824],
 	[-4307724339993763098, -3504797669898524666, 6961354990307791117, 464051487255323640, -4057801299652768257, 7021950593982289331, -3832266116403619108],
 	[-5880482361733646265, -808239912685928521, -4338090631578911018, -8046437620736313008, 4196872015560688783, -422735934883274349],
-	[-2810552436854674636, 5839575857474482460, 4565013434687613195, -1843283859693427995, -7995792451489974632, -174968855415995460],
-	[-1230729324925988375, 1420908871602353461, 6357929784085942264, 6627642904022408237, 3662287443047722123, 7595618154367185159],
-	[2921800532955938594, 1587407093833056826, 3824933404910214398, 3934717501292175332, 3378600504722340502, -5312019873132383350, 1260004648369663161],
+	[-2810552436854674636, 5839575857474482460, 4565013434687613195, -1843283859693427995, -7995792451489974632],
+	[-1230729324925988375, 1420908871602353461, 6357929784085942264, 5554448959087268275, -5917609727036472808, 4900310370508734588, 2386930102486495348],
+	[2921800532955938594, 1587407093833056826, 3824933404910214398, -8432045276868733401, 2928439803460290418],
 	[2473378904339026979, 8392605424486942015, 2657003823126323915, 5422367580079282869, 8572526701641051724],
 ]
 
 
-## The bump-10 sim as a subclass: the two Block D3 entry points swapped back
-## (the old BFS chase and no smoke screen) and nothing else, so an optimizer
-## run on it must reproduce the pins above exactly. Used only by (m).
+## The sim with the two Block D3 entry points swapped back (the old BFS chase
+## and no smoke screen) and nothing else, so an optimizer run on it must
+## reproduce the pins above exactly. Used only by (m).
 class RefGame extends Game:
 	func _chase_step(e: Dictionary) -> Vector2i:
 		var start: Vector2i = e["pos"]
@@ -1473,11 +1485,11 @@ func _check_d3_rng_untouched() -> void:
 	g2._execute_intent(spitter)
 	_ok(g2.rng.state == st and _events_of(g2._step_events, "screened").size() == 1 and _events_of(g2._step_events, "gummed").is_empty(),
 		"a screened gum executes without an rng draw: %s" % str(g2._step_events))
-	# 3) the bump-10 sim (RefGame) under the optimizer reproduces the recorded floor-entry states
+	# 3) the D3-swapped sim (RefGame) under the optimizer reproduces the recorded floor-entry states
 	var seeds_checked := 0
 	var floors_checked := 0
 	var moved := 0
-	for i in range(RNG_FLOOR_ENTRY_BUMP10.size()):
+	for i in range(RNG_FLOOR_ENTRY_BUMP12.size()):
 		var s := i + 1
 		var rg = RefGame.new(s)
 		var bot = Roster.make("optimizer", s)
@@ -1494,17 +1506,17 @@ func _check_d3_rng_untouched() -> void:
 				last_floor = rg.floor_num
 				states.append(rg.rng.state)
 		seeds_checked += 1
-		var want: Array = RNG_FLOOR_ENTRY_BUMP10[i]
+		var want: Array = RNG_FLOOR_ENTRY_BUMP12[i]
 		if states.size() != want.size():
 			moved += 1
-			failures.append("floor-entry pins: seed %d reached %d floors, the bump-10 tree reached %d" % [s, states.size(), want.size()])
+			failures.append("floor-entry pins: seed %d reached %d floors, the pinned run reached %d" % [s, states.size(), want.size()])
 			continue
 		for f in range(states.size()):
 			floors_checked += 1
 			if int(states[f]) != int(want[f]):
 				moved += 1
 				if moved <= 3:
-					failures.append("floor-entry pins: seed %d floor %d state %d, bump-10 tree had %d" % [s, f + 1, int(states[f]), int(want[f])])
-	_ok(moved == 0, "RefGame optimizer run: rng.state at every floor entry matches the bump-10 tree (%d seeds, %d floor entries, %d moved)" % [seeds_checked, floors_checked, moved])
+					failures.append("floor-entry pins: seed %d floor %d state %d, pinned %d" % [s, f + 1, int(states[f]), int(want[f])])
+	_ok(moved == 0, "RefGame optimizer run: rng.state at every floor entry matches the bump-12 pins (%d seeds, %d floor entries, %d moved)" % [seeds_checked, floors_checked, moved])
 	_ok(RefGame.new(1).rng.state == int(RNG_STATE_BUMP8[0]) and Game.new(1).rng.state == int(RNG_STATE_BUMP8[0]), "RefGame and Game share the Game.new pins")
 	print("d3 rng: floor-entry pins %d seeds / %d entries, %d moved" % [seeds_checked, floors_checked, moved])

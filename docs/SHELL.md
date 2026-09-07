@@ -46,6 +46,7 @@ scene.
 | H / B | buy heal / ability (standing on a shrine) |
 | G / J | buy the first / second graft on offer |
 | R (shop sheet open) | reroll the shrine counter (Spinning Shrine mutator only) — outside the sheet R still restarts the seed |
+| 1–5 / 0 (draft sheet) | take that offer / skip the draft — a skip arms one extra affinity offer on the next descent |
 | SPACE / ENTER | end turn |
 | ESC | cancel targeting |
 | R | restart the same seed |
@@ -199,6 +200,38 @@ use it (free action - the turn does not advance), hold it to read what
 it does. Supply pods drop when a room blooms and shrines always stock
 one consumable. Pods and shrines only ever hand out **base** items: the
 upgraded `+` forms exist solely through the shrine press.
+
+## The descent draft
+
+Each descent opens the draft sheet: tap a card to take it (`1`-`5`, or
+`0` to skip; a full kit then asks which ability to drop). Every card
+carries the **slot** that rolled it, gold on its right edge, straight off
+`snapshot().draft_slots`:
+
+- **AFFINITY** - shares a tag with what you already carry (kit *and*
+  grafts), so it feeds the build you are on
+- **UPGRADE** - the `+` form of an ability in your kit
+- **WILD** - anything in the run's pool, build or no build
+- **FOCUS** - the extra affinity offer a previous skip bought
+
+The three slots are always dealt in that order (Wide Draft adds a fourth,
+wild; Upgrades Only makes every card a `+` form), so the sheet asks the
+same three questions every floor and the labels say which is which.
+
+The skip button is the draft's answer to a bad hand - it reads
+`skip - next draft: +1 affinity offer` (and `skip - focus armed again`
+on a sheet whose roll spent a focus). Skipping pays no Bloom:
+it arms one extra build-matching offer on the next descent, spent by that
+draft whether you take a card or not, and the log line
+(`Took nothing - the next draft adds a focus offer`) is what carries that
+promise across the floor.
+
+A focus slot can find nothing left to offer - under Upgrades Only a
+three-ability kit has exactly three `+` forms and the ordinary slots take
+them all - and then the roll spends the focus and deals no FOCUS card. The
+sheet says so ("Your skip found nothing left to focus on") rather than
+reading as an ordinary draft: it takes that from the `draft_offer` event's
+`focus` flag, since the cards alone cannot tell the two apart.
 
 ## The shrine
 

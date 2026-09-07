@@ -27,7 +27,7 @@ const Sweep := preload("res://tests/sweep_lib.gd")
 const Roster := preload("res://bots/roster.gd")
 
 const CAREER_RUNS := 40
-const TIER0_CAREER_RUNS := 22
+const TIER0_CAREER_RUNS := 24
 const MUTATOR_SEEDS := 8
 ## Winnability floor per starting loadout (review §6.1 item 7): the optimizer
 ## over seeds 1..LOADOUT_SEEDS must clear LOADOUT_MIN_WINS with each
@@ -46,11 +46,14 @@ const SKYRUNNER_MIN_WINS := 1
 ## Vine Whip - a draft pick over a full kit can do both, sim/game.gd
 ## _act_draft), and every Block A loadout row. An exact set, so a milestone
 ## that quietly becomes unreachable fails here.
-## The run count is a reachability budget, not a target: `no_lance` is the
-## last witness to land (seed 21, a win whose kit drafted Water Jet over the
-## lance), so 21 is the minimum and 22 leaves one run of margin. A bot-routing
-## change moves which seed witnesses what - raise the count, do not move a
-## reachable milestone into the unreachable set.
+## The run count is a reachability budget, not a target. Block D4 moved the
+## last witness: under the affinity draft `lasher` (won_with vine_whip) is the
+## one that lands last, at seed 23, because vine_whip shares no tag with the
+## tender starter and so reaches the offer sheet only through a wild slot -
+## `no_lance` used to be last, at seed 21. So 23 is the minimum and 24 leaves
+## one run of margin. A bot-routing or draft change moves which seed witnesses
+## what - raise the count, do not move a reachable milestone into the
+## unreachable set.
 const TIER0_UNREACHABLE := ["aeolian", "brittle", "parched"]
 
 ## Fixture milestone table for the dispatch check (Content.MILESTONES is
@@ -659,12 +662,22 @@ func _mutator_invariant_problem(mut: String) -> String:
 				if base_g.draft_pool.has(aid):
 					return "base game already pools %s (check proves nothing)" % aid
 		"wide_draft":
-			var offers := _first_draft_offers(2, cfg)
+			var wide := _first_draft(2, cfg)
+			var offers: Array = wide["offers"]
 			if offers.size() != 4:
 				return "first draft offers %d (%s), expected 4" % [offers.size(), str(offers)]
-			var base_offers := _first_draft_offers(2, {})
-			if base_offers.size() != 3:
-				return "base game first draft offers %d (check proves nothing)" % base_offers.size()
+			# the extra offer is a WILD slot appended to DRAFT_SLOTS' three
+			# roles - the count alone would pass with the role table ignored
+			var slots: Array = wide["slots"]
+			if slots.size() != offers.size():
+				return "wide draft reported %d slots for %d offers" % [slots.size(), offers.size()]
+			if slots != ["affinity", "upgrade", "wild", "wild"]:
+				return "wide draft slots %s, expected [affinity, upgrade, wild, wild]" % str(slots)
+			var base := _first_draft(2, {})
+			if base["offers"].size() != 3:
+				return "base game first draft offers %d (check proves nothing)" % base["offers"].size()
+			if base["slots"] != ["affinity", "upgrade", "wild"]:
+				return "base game first draft slots %s (check proves nothing)" % str(base["slots"])
 		"upgrades_only":
 			var g = Game.new(2, cfg)
 			var offers := _first_draft_offers(2, cfg)
@@ -711,11 +724,17 @@ func _mutator_invariant_problem(mut: String) -> String:
 ## The offers of the first descent draft on `seed_v` under `cfg` (the quota is
 ## handed to the player so the run does not have to be played out).
 func _first_draft_offers(seed_v: int, cfg: Dictionary) -> Array:
+	return _first_draft(seed_v, cfg)["offers"]
+
+
+## The first descent draft of a run: {offers, slots}, so a row can check the
+## roles a mutator's roll reported and not only how many cards it dealt.
+func _first_draft(seed_v: int, cfg: Dictionary) -> Dictionary:
 	var g = Game.new(seed_v, cfg)
 	g.player["pos"] = g.map["stairs"]
 	g.greened = g.green_need
 	g.step({"type": "descend"})
-	return g.draft_offers.duplicate()
+	return {"offers": g.draft_offers.duplicate(), "slots": g.draft_slots.duplicate()}
 
 
 func _oil_count(g) -> int:

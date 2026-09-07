@@ -17,6 +17,10 @@ const Content := preload("res://sim/content.gd")
 ## Block D3 adds the two terrain-denial columns: the enemy intents a smoke
 ## screen swallowed ({"t": "screened"}) by intent type, and the fire damage
 ## enemies walked into, which is what the rows' avoid lists are meant to shrink.
+## Block D4 adds the draft-slot columns: every offer and every pick counted by
+## the slot role that produced it (the draft_offer event's "slots" array), plus
+## the drafts a skipped draft focused. That is the affinity draft's own metric -
+## how often a build-matching slot is what the player actually takes.
 
 # --- actions ------------------------------------------------------------------
 var casts_by_base := {}
@@ -35,6 +39,17 @@ var picks_by_id := {}
 var upgrades := 0
 var skips := 0
 var drops_by_id := {}
+## Block D4 draft slots: which role rolled each offer ("affinity" / "upgrade" /
+## "wild" / "focus", a Content.DRAFT_SLOT_REPORTS entry) and which role the
+## taken offer came from. picks_by_slot is read against offers_by_slot as a
+## per-role pick rate - the number the affinity draft is measured by. An offer
+## whose draft carried no "slots" key (a pre-D4 event) counts as "unknown", so
+## a wiring break shows up as a column instead of as silence.
+var offers_by_slot := {}
+var picks_by_slot := {}
+## Drafts rolled with focus armed (the draft_offer event's "focus" flag): the
+## drafts a previous skip paid for. Read against `skips`, which is what arms it.
+var focus_drafts := 0
 
 # --- shrine and items ---------------------------------------------------------
 var buys_by_kind := {}
@@ -170,6 +185,10 @@ var _choke := 0
 ## plants its origin at most once) and on the next cast / step.
 var _origin_aid := ""
 var _origin_kinds: Array = []
+## The open draft's offer id -> slot role, rebuilt at every draft_offer: the
+## pick events name an ability, not an index, and a draft never offers the same
+## id twice (Block D4), so the id is enough to attribute the pick to its slot.
+var _slot_by_offer := {}
 
 
 static func base_id(aid: String) -> String:
@@ -241,15 +260,26 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 				moves += 1
 		"draft_offer":
 			drafts += 1
+			if bool(ev.get("focus", false)):
+				focus_drafts += 1
+			var slots: Array = ev.get("slots", [])
+			var offers: Array = ev.get("offers", [])
+			_slot_by_offer = {}
 			var any_plus := false
-			for o in ev.get("offers", []):
-				_inc(offers_by_id, String(o))
-				if String(o).ends_with("+"):
+			for i in offers.size():
+				var oid := String(offers[i])
+				_inc(offers_by_id, oid)
+				var role := String(slots[i]) if i < slots.size() else "unknown"
+				_inc(offers_by_slot, role)
+				_slot_by_offer[oid] = role
+				if oid.ends_with("+"):
 					any_plus = true
 			if any_plus:
 				drafts_with_plus += 1
 		"draft_pick":
-			_inc(picks_by_id, String(ev.get("id", "")))
+			var pid := String(ev.get("id", ""))
+			_inc(picks_by_id, pid)
+			_inc(picks_by_slot, String(_slot_by_offer.get(pid, "unknown")))
 		"draft_upgrade":
 			upgrades += 1
 		"draft_skip":
@@ -424,6 +454,9 @@ func merge(other) -> void:
 	drafts_with_plus += other.drafts_with_plus
 	_merge_dict(offers_by_id, other.offers_by_id)
 	_merge_dict(picks_by_id, other.picks_by_id)
+	_merge_dict(offers_by_slot, other.offers_by_slot)
+	_merge_dict(picks_by_slot, other.picks_by_slot)
+	focus_drafts += other.focus_drafts
 	upgrades += other.upgrades
 	skips += other.skips
 	_merge_dict(drops_by_id, other.drops_by_id)
@@ -522,6 +555,23 @@ static func sorted_desc(d: Dictionary) -> Array:
 	return keys
 
 
+## Draft-slot roles in report order: the Content.DRAFT_SLOT_REPORTS entries
+## that occur, then anything else sorted - so a role the sim added (or an
+## "unknown" from a draft with no "slots" key) still prints, at the end.
+static func slot_order(d: Dictionary) -> Array:
+	var out: Array = []
+	for role in Content.DRAFT_SLOT_REPORTS:
+		if d.has(role):
+			out.append(role)
+	var extra: Array = []
+	for role in d:
+		if not out.has(role):
+			extra.append(role)
+	extra.sort()
+	out.append_array(extra)
+	return out
+
+
 ## Canonical kit string: sorted base ids joined by "+".
 static func kit_key(kit: Array) -> String:
 	var ids: Array = []
@@ -582,6 +632,11 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 	var pick_rate := {}
 	for aid in t.offers_by_id:
 		pick_rate[aid] = _safe_div(float(t.picks_by_id.get(aid, 0)), float(t.offers_by_id[aid]))
+	# Block D4: the same pick rate cut by the slot role that rolled the
+	# offer - "how often is a build-matching offer what gets taken".
+	var slot_rate := {}
+	for role in t.offers_by_slot:
+		slot_rate[role] = _safe_div(float(t.picks_by_slot.get(role, 0)), float(t.offers_by_slot[role]))
 	return {
 		"strike_share": _safe_div(strike, total),
 		"signature_share": 0.0 if total == 0.0 else 1.0 - (strike + lance + fire_dmg) / total,
@@ -590,6 +645,11 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 		"bloom_conversion": _safe_div(float(t.bloom_spent), float(t.bloom_earned)),
 		"kit_entropy_bits": kit_entropy_bits(kits),
 		"pick_rate_by_id": pick_rate,
+		# draft slots (Block D4)
+		"offers_by_slot": t.offers_by_slot.duplicate(),
+		"picks_by_slot": t.picks_by_slot.duplicate(),
+		"pick_rate_by_slot": slot_rate,
+		"focus_drafts": t.focus_drafts,
 		"enemy_dmg_total": int(total),
 		"combos": combos,
 		"enemy_dmg_by_family": by_family,  # keys are base-id families
@@ -651,6 +711,13 @@ func print_block(n_runs: int, kits: Array) -> void:
 	print("           pick rate (picks/offers): %s" % (", ".join(prs) if not prs.is_empty() else "no drafts"))
 	print("           drafts %d  upgrades %d  skips %d  drops %s  P(plus offered|draft) %.2f" % [
 		drafts, upgrades, skips, str(drops_by_id), _safe_div(float(drafts_with_plus), float(drafts))])
+	var slot_parts: Array = []
+	for role in slot_order(offers_by_slot):
+		var off: int = int(offers_by_slot[role])
+		var took: int = int(picks_by_slot.get(role, 0))
+		slot_parts.append("%s %d/%d (%.2f)" % [role, took, off, _safe_div(float(took), float(off))])
+	print("           draft: picks/offers by slot %s  focus drafts %d of %d (skips %d)" % [
+		", ".join(slot_parts) if not slot_parts.is_empty() else "no drafts", focus_drafts, drafts, skips])
 	print("           enemy dmg %d: strike share %.2f  signature share %.2f  terrain share %.2f  by family %s" % [
 		k["enemy_dmg_total"], k["strike_share"], k["signature_share"], k["terrain_share"], str(k["enemy_dmg_by_family"])])
 	print("             by src %s" % str(enemy_dmg_by_src))

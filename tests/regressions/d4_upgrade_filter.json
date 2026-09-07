@@ -1,0 +1,9 @@
+{
+"seed": 5,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#.......#","#@>.....#","#.......#","#########"]},"kit":["seed_bomb","mycelium_dash"],"pool":["grow_spike","water_jet","sun_flare"]},
+"actions": [{"dir":[1,0],"type":"move"},{"type":"descend"}],
+"expect": {"events":[{"t":"descend","to_floor":2},{"offers":["grow_spike","seed_bomb+","mycelium_dash+"],"slots":["affinity","upgrade","wild"],"t":"draft_offer"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "D4 the upgrade slot deepens a build, so it will not spend itself on an ability that is no part of one: the kit is seed_bomb plus the mobility slot, so its + forms are [seed_bomb+, mycelium_dash+] but mycelium_dash+ is pure mobility (Content.AFFINITY_IGNORED_TAGS, read through _build_defining, the same list the affinity set drops) and the slot's candidate list is [seed_bomb+] alone. This board pins both halves of that rule on one roll: slot 1 deals seed_bomb+ and slot 2, the wild slot, deals mycelium_dash+ - the filter narrows the LIST of one slot and never the universe, so the mobility + form is still reachable (and the shrine forge, which reads the kit and not this list, still upcycles it). Drop the filter and the same seed deals mycelium_dash+ from the UPGRADE slot with seed_bomb+ pushed out to wild: the three ids are the same, the roles are swapped, so this record fails in plain mode on its slots without needing the state hash. d4_starved_slot.json is the same board on seed 3, where the filter leaves the offers alone",
+"sim_version": 12,
+"hash": "4f45128670856df3f82870a4c2d7c4a605ceff82ae8fa5896bb7c62907d2837c"
+}

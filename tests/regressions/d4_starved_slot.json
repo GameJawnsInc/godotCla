@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#.......#","#@>.....#","#.......#","#########"]},"kit":["seed_bomb","mycelium_dash"],"pool":["grow_spike","water_jet","sun_flare"]},
+"actions": [{"dir":[1,0],"type":"move"},{"type":"descend"}],
+"expect": {"events":[{"t":"descend","to_floor":2},{"offers":["grow_spike","seed_bomb+","sun_flare"],"slots":["affinity","upgrade","wild"],"t":"draft_offer"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "D4 the one-draw-per-slot rng contract, pinned in plain mode. The kit is seed_bomb (growth) plus the mobility slot and the pool is three ids, so the affinity slot has EXACTLY ONE candidate (grow_spike, the only growth base) and so does the upgrade slot (seed_bomb+; mycelium_dash+ is pure mobility and defines no build, so the D4 upgrade filter keeps it off that list - d4_upgrade_filter.json), while the wild slot has four. A draw that skipped or shortened itself on a one-candidate list - randi_range(lo, lo) is an early return that never advances the generator, which is why _draw_draft_offers draws rng.randi() and indexes with the remainder - would leave BOTH one-candidate slots pinned and shift every later slot: that mutation leaves offers 0 and 1 standing and deals sun_flare -> water_jet in the wild slot, so this record fails on its offers without needing the state hash",
+"sim_version": 12,
+"hash": "c5bcd4a3d3f503ef0ed206e72196bd6c2bfe6c089348a96ce720b6dd030c301b"
+}

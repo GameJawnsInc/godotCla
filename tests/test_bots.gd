@@ -22,6 +22,9 @@ extends SceneTree
 ##   3e) Block D3 denial columns: a screened intent counts by intent type and
 ##      reaches kpis()/merge(), and the enemy fire damage the same line prints
 ##      is the source split that was already there
+##   3f) Block D4 draft slots: a real draft's offers and the pick count by
+##      the slot role the sim reports, a skip's focus draft counts, and both
+##      halves survive merge() into kpis()
 ##   4) determinism: two fresh instances agree over 40 steps
 ##   5) runtime factor: deeproot vs deeproot_plan over 5 seeds (test-side
 ##      Time.get_ticks_msec only; the bots never read a clock)
@@ -59,6 +62,7 @@ func _init() -> void:
 	_check_reroll_gates()
 	_check_d1_surge_terms()
 	_check_d3_denial_tally()
+	_check_d4_draft_tally()
 	_check_determinism()
 	_check_runtime_factor()
 	if failures.is_empty():
@@ -689,6 +693,86 @@ func _check_d3_denial_tally() -> void:
 		"merge carries both denial columns: %s" % str([m.screened_by_intent, km["enemy_fire_dmg"]]))
 	print("d3 denial columns: screened %s, enemy fire dmg %d (%s)" % [
 		str(m.screened_by_intent), int(km["enemy_fire_dmg"]), str(m.fire_dmg_by_by)])
+
+
+## Block D4 harness wiring (spec item 6): the draft-slot columns the runners
+## print. Rolled on a real floor, not a hand-built board - the roles come off
+## the sim's own draft_offer event ("slots"), so the tally never re-derives
+## which slot an id belongs to. Checked: every offer counts under the role the
+## event reports, the pick lands under the role of the offer it took, a skip's
+## focus draft counts as one focused draft with one extra "focus" offer, and
+## both halves reach kpis() and survive a merge.
+func _check_d4_draft_tally() -> void:
+	var t1 = Tally.new()
+	var g = _to_first_draft(t1, 4, {})
+	_ok(g.phase == "draft" and not g.draft_offers.is_empty(),
+		"seed 4 reaches a draft: %s %s" % [g.phase, str(g.draft_offers)])
+	var slots: Array = g.draft_slots.duplicate()
+	_ok(slots.size() == g.draft_offers.size(), "one slot per offer: %s / %s" % [str(slots), str(g.draft_offers)])
+	var want := {}
+	for role in slots:
+		want[String(role)] = int(want.get(String(role), 0)) + 1
+	_ok(t1.offers_by_slot == want and t1.drafts == 1 and t1.focus_drafts == 0,
+		"tally counts every offer under the role the event reports: %s (event %s)" % [
+			str(t1.offers_by_slot), str(want)])
+	var unknown_role := false
+	for role in t1.offers_by_slot:
+		if not Content.DRAFT_SLOT_REPORTS.has(role):
+			unknown_role = true
+	_ok(not unknown_role, "every counted role is a Content.DRAFT_SLOT_REPORTS entry: %s" % str(t1.offers_by_slot))
+	# the pick is attributed to the slot that offered it
+	var took: String = String(g.draft_offers[0])
+	var took_role: String = String(slots[0])
+	_step_into(t1, g, {"type": "draft", "pick": 0})
+	_ok(int(t1.picks_by_slot.get(took_role, 0)) == 1 and Tally._sum(t1.picks_by_slot) == 1
+			and int(t1.picks_by_id.get(took, 0)) == 1,
+		"the pick counts under its own slot: %s took %s from %s" % [str(t1.picks_by_slot), took, took_role])
+	var k1: Dictionary = Tally.kpis(t1, 1, [])
+	_ok(k1["offers_by_slot"] == t1.offers_by_slot and k1["picks_by_slot"] == t1.picks_by_slot
+			and int(k1["focus_drafts"]) == 0
+			and is_equal_approx(float(k1["pick_rate_by_slot"][took_role]),
+				1.0 / float(t1.offers_by_slot[took_role])),
+		"kpis carry the slot columns and their pick rate: %s" % str(k1["pick_rate_by_slot"]))
+	# the focus half: a skip arms one extra affinity offer on the next draft
+	var t2 = Tally.new()
+	var g2 = _to_first_draft(t2, 4, {})
+	var n_offers: int = g2.draft_offers.size()
+	_step_into(t2, g2, {"type": "draft", "pick": -1})
+	_ok(t2.skips == 1 and t2.focus_drafts == 0, "the skip itself is not a focused draft: %d" % t2.focus_drafts)
+	_descend_into(t2, g2)
+	_ok(g2.draft_offers.size() == n_offers + 1 and String(g2.draft_slots[-1]) == "focus",
+		"the next draft carries the focus offer: %s %s" % [str(g2.draft_offers), str(g2.draft_slots)])
+	_ok(t2.focus_drafts == 1 and int(t2.offers_by_slot.get("focus", 0)) == 1
+			and Tally._sum(t2.offers_by_slot) == n_offers * 2 + 1,
+		"tally counts the focused draft and its extra offer: %s focus %d" % [
+			str(t2.offers_by_slot), t2.focus_drafts])
+	var m = Tally.new()
+	m.merge(t1)
+	m.merge(t2)
+	var km: Dictionary = Tally.kpis(m, 2, [])
+	_ok(int(km["focus_drafts"]) == 1
+			and Tally._sum(km["offers_by_slot"]) == Tally._sum(t1.offers_by_slot) + Tally._sum(t2.offers_by_slot)
+			and Tally._sum(km["picks_by_slot"]) == 1,
+		"merge carries both slot columns: %s / %s" % [str(km["offers_by_slot"]), str(km["picks_by_slot"])])
+	print("d4 draft slots: offers %s picks %s focus %d of %d drafts (order %s)" % [
+		str(m.offers_by_slot), str(m.picks_by_slot), m.focus_drafts, m.drafts,
+		str(Tally.slot_order(m.offers_by_slot))])
+
+
+## A real run stepped straight to its first descent draft, every event fed to
+## `tally` exactly as Sweep.run_loop feeds it. The quota and the position are
+## set test-side (tests/test_meta.gd _first_draft_offers does the same) - the
+## point is the draft, not the floor that precedes it.
+func _to_first_draft(tally, seed_v: int, cfg: Dictionary) -> RefCounted:
+	var g = Game.new(seed_v, cfg)
+	_descend_into(tally, g)
+	return g
+
+
+func _descend_into(tally, game) -> void:
+	game.player["pos"] = game.map["stairs"]
+	game.greened = game.green_need
+	_step_into(tally, game, {"type": "descend"})
 
 
 # --- 4) determinism -----------------------------------------------------------

@@ -203,7 +203,12 @@ func _distinct_forks(game, bot, snap: Dictionary, legal: Array) -> Array:
 ## the bot declines the forced offer.
 func _drop_choice(game, bot, snap: Dictionary, group: Array, i: int) -> Dictionary:
 	var sub_snap := snap.duplicate()
+	var all_slots: Array = snap.get("draft_slots", [])
+	# a fork is a well-formed one-offer draft: the slot array is cut with the
+	# offer array, so offer i keeps the role that rolled it
+	var sub_slots: Array = [all_slots[i]] if i < all_slots.size() else []
 	sub_snap["draft_offers"] = [snap["draft_offers"][i]]
+	sub_snap["draft_slots"] = sub_slots
 	var sub_legal: Array = []
 	for a in group:
 		var b: Dictionary = a.duplicate()
@@ -215,6 +220,7 @@ func _drop_choice(game, bot, snap: Dictionary, group: Array, i: int) -> Dictiona
 	if uses_sim:
 		var g = game.clone()
 		g.draft_offers = [snap["draft_offers"][i]]
+		g.draft_slots = sub_slots.duplicate()
 		bot.set_sim(g)
 	var ans: Dictionary = bot.choose_action(sub_snap, sub_legal)
 	bot.rng.state = rng_state

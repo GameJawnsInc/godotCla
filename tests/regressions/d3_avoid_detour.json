@@ -4,6 +4,6 @@
 "actions": [{"type":"end_turn"},{"slot":0,"target":[3,2],"type":"ability"}],
 "expect": {"events":[{"t":"ash","tile":"(2, 1)"},{"id":"sap_snare","t":"ability"},{"status":"root","t":"status","turns":2}],"floor":1,"timeout":true,"turns":1,"won":false},
 "note": "D3 avoid lists are data: Content.ENEMIES.drill_bot carries avoid [fire], so _chase_step prices a fire tile at 1 + Content.ENEMY_AVOID_COST (4) instead of 1. Out of (3,1) the burning north corridor is the SHORT way home - two tiles, (2,1) fire then (1,1) beside the tender - and the clear south corridor is four, (3,2) (3,3) (2,3) (1,3): 2 + 4 = 6 loses to 4, so the bot pays the two extra tiles and goes round. The pre-D3 BFS filtered on _open alone and walked the shorter corridor straight through the flames. The sap_snare after the turn is the proof, not decoration: a target enemy list only ever holds tiles an enemy is standing on, so rooting (3,2) is an illegal action unless the bot took the detour - replayed on the old chase this record fails on the illegal event and not merely on the hash. The fire burning out to ash the same turn (event ash) is why the record claims exactly one decision",
-"sim_version": 11,
-"hash": "911bcd32e39f2ae81ba54a78c4f122b9b824f9f2c5f5ef673e0232604df5d4bd"
+"sim_version": 12,
+"hash": "ef6561711d4d4a26db484f94619ea675f752d99030e8468ceb578bf95dd9899c"
 }

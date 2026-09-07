@@ -17,11 +17,11 @@ Reference numbers for TENDER's difficulty, and the discipline for changing them.
 
 | persona   | target                  | why |
 |-----------|-------------------------|-----|
-| deeproot  | 70–90% wins             | the search ceiling: near-perfect play should nearly always win |
+| deeproot  | 70–90% wins             | the search ceiling: near-perfect play should nearly always win. **2026-09-07g (D4) reads 26/30 = 87% [70, 95]** at 30 seeds against 22/30 [56, 86] at 07f (the first D4 pass read 28/30 [79, 98]) - the gate still passes (the interval straddles the band) but two readings at or above its top mean the band may be measuring the pre-D4 game; see the bump-12 watch item |
 | deeproot_plan | **informational, no gate** | the combo-depth instrument (review 7.5): deeproot plus option-value terms, one-setup-ahead planning and shrine shopping. Measured 29/30 = 97% [83, 99] at tier 0 and 27/30 = 90% [74, 97] at tier 6 (2026-09-06f, both pre-routing-fix); after 07's routing guards and bump 8's per-offer graft pricing it reads 26/30 = 87% [70, 95] at tier 0 and 19/20 = 95% [76, 99] at tier 6 (2026-09-07b), and 25/30 = 83% [66, 93] at tier 0 after bump 9 (2026-09-07d, delta against deeproot +3 wins on the same seeds). Quote its **delta against deeproot**, never its absolute rate as a band — it is a measuring stick, and tier 0 is saturated for it |
 | optimizer | 45–65% wins             | skilled play should win often but never be safe (raised from 30–50 after the tempo fix — the old band measured a bot flaw) |
 | fanatic   | every build > 0 at 100 seeds (hard); 20–40% total (soft) | committing to a niche build must stay viable; the total tracks content difficulty and moves when content does |
-| magpie    | 0–5% design target, top bloom; gate trips at a 10% CI lower bound | full greed loses to the current game almost always; a RISE means greed got cheap (canary, like turtle). Under instrument v2 the recorded baseline is 10/100 [6, 17] (2026-09-07d reads 7/100 [3, 14], a fall inside noise); a 100-seed lower bound clearing 17% is the signal — see 2026-09-05d. **2026-09-07e (the D2 shrine reroll) is the first reading to fail the merge gate**: 7/30 CI [12, 41] at 30 seeds, 13/100 [8, 21] in sample and 18/100 [12, 27] out of sample, pooled 31/200 = 15.5% [11, 21] against 16/200 = 8% [5, 13] before, paired sign p = 0.0026 — the sink shipped behind the `spinning_shrine` mutator, so the default-config reading is 07d's 7/100 [3, 14] again |
+| magpie    | 0–5% design target, top bloom; gate trips at a 10% CI lower bound | full greed loses to the current game almost always; a RISE means greed got cheap (canary, like turtle). Under instrument v2 the recorded baseline is 10/100 [6, 17] (2026-09-07d reads 7/100 [3, 14], a fall inside noise); a 100-seed lower bound clearing 17% is the signal — see 2026-09-05d. **2026-09-07e (the D2 shrine reroll) is the first reading to fail the merge gate**: 7/30 CI [12, 41] at 30 seeds, 13/100 [8, 21] in sample and 18/100 [12, 27] out of sample, pooled 31/200 = 15.5% [11, 21] against 16/200 = 8% [5, 13] before, paired sign p = 0.0026 — the sink shipped behind the `spinning_shrine` mutator, so the default-config reading is 07d's 7/100 [3, 14] again. Bump 12 (D4, 2026-09-07g) re-reads it at 8/100 [4, 15] wins - unmoved from 07f - with stall floors 71 against 59 (1.20x, inside the 1.25x limit and the highest recorded) |
 | sprout    | avg depth 3.5–5, wins rare | noobs feel progress; full clears are earned |
 | wanderer  | dies floor 1–2, 0 wins  | the world must punish random play |
 | all       | zero timeouts/softlocks | every run ends in win or death |
@@ -6332,6 +6332,668 @@ record.
   early, and it is the first thing to extend if a later rule makes a screen do
   something instead of nothing.
 
+## 2026-09-07g - bump 12 (D4): the affinity draft
+
+Block D's fourth bullet (review 6.4, *"Affinity-slotted draft with `focus` on
+skip"*, closing finding 5.1 *"the draft is kit-blind in the sense that
+matters"*) is implemented and **`Game.SIM_VERSION` is 12**. This entry is the
+measure phase and **its verdict is SHIP**. It was written twice: a first pass
+measured the slot rule alone and held it against a gate line that has since
+been retired as mis-specified, and this pass re-measured six slot/filter
+configurations from scratch, applied the one review finding that changed a
+rule (the upgrade slot's mobility filter) and re-ran every gate line on the
+final tree. Everything below is the final tree unless a column says otherwise.
+
+**The rule, in four sentences.** `Content.DRAFT_SLOTS` is
+`["affinity", "upgrade_or_affinity", "wild"]` and names the role that rolls
+offer 1, 2 and 3 of a draft (an offer past the list - `wide_draft` asks for
+four - is "wild"): "affinity" draws an unowned pool base sharing a tag with the
+run's **affinity set** (the union of `Content.ABILITIES[id].tags` over the held
+kit and `Content.GRAFTS[id].tags` over the held grafts, minus
+`Content.AFFINITY_IGNORED_TAGS`), "upgrade_or_affinity" draws a `+` form of a
+held **build-defining** base when one exists and otherwise falls back to the
+affinity list, and "wild" draws from the whole universe the draft already used.
+`Content.AFFINITY_IGNORED_TAGS` is `["mobility"]` and it now means *"these tags
+do not define a build"*: it is read by both build-steering slots through the
+one helper pair `Game._tag_defines_build` / `Game._build_defining`, so the
+affinity set drops the tag and the upgrade list drops a `+` form whose base
+carries nothing else (`mycelium_dash+`, `burrow+`; never `updraft+`, which is
+`["wind", "mobility"]`). The filter narrows that slot's **list** only - the
+universe still holds every `+` form of a held base, so a wild slot can still
+offer one and the shrine forge still upcycles it - and under
+`draft_upgrades_only` the `+` list *is* the universe, so it stays unfiltered.
+`Game._draw_draft_offers` spends **exactly one main-rng draw per slot whatever
+the lists hold** - an empty candidate list after exclusions falls back to the
+wild list, an empty wild list still spends the draw and yields nothing - so the
+number of main-rng draws is the slot count and never the kit, the grafts or the
+pool, which is what keeps a seed's downstream rolls comparable across configs.
+And a skip arms `focus`: the next draft rolls one extra trailing affinity slot
+(reported `"focus"` even when it pads to wild), spent by that roll whether the
+player picks or skips again, and **never bloom** - review 5.1's own constraint,
+since six drafts times 2 bloom is a free graft for never engaging.
+
+**What `SIM_VERSION` 12 invalidates.** Every stored action log from its first
+draft onward. The roll is different in a default-config run - three role-driven
+draws replace one uniform list of `min(count, candidates)` draws - so the offers
+differ, the main-rng stream diverges from that draft, and a draft pick is an
+*index*, so even a log that still replays legally lands on a different ability.
+It does not invalidate this document's numbers: the instrument is still v2, and
+`tests/tally.gd` gained one printed line and four kpi keys
+(`offers_by_slot`, `picks_by_slot`, `pick_rate_by_slot`, `focus_drafts`) with
+every existing key untouched. This entry compares against **07f**, which is the
+bump-11 column, and every "before" cell below was **re-measured in a
+`git archive` copy of the bump-11 commit** rather than quoted from the record.
+
+Two tree-identity checks say the pairing is sound. The pristine copy reproduces
+07f's optimizer 100-seed cell exactly - **46/100 = 46% [37%, 56%]**, avg floor
+6.1, turns on wins 87.0, stall floors 23 - and its `measure_fanatic` turtle and
+pyro rows come back at **3/100 [1%, 8%]** and **32/100 [24%, 42%]**, the two
+cells 07f recorded. The draft oracle reproduces its recorded run cell for cell
+as well (best fork 113 / bot pick 90 / skip 85 / regret 23 / skip strictly best
+6 over 155 drafts).
+
+### The gate line that was retired, and what replaced it
+
+The first pass held this bullet against *"oracle regret per draft not higher
+than before by more than 0.05"*. **That line is retired as mis-specified.** The
+evidence is that regret rose in **every one of the six configurations
+measured** - 0.158 pooled before, 0.24 to 0.28 after - and it rose because the
+**ceiling** rose, not because play got worse: best fork goes 113 before to
+120-139 after. The cleanest single disproof is the `["upgrade_or_affinity",
+"wild", "wild"]` configuration, which holds the optimizer's oracle pick count
+at exactly the pre-D4 **90** and its policy wins at exactly the pre-D4
+**15/30** - the before column's own numbers, unmoved - and still reads regret
+**0.27**. A number that fires when nothing about the policy's results changed
+is not measuring the policy.
+
+This is the same error the review warned about for kit-set entropy, made a
+second time in a different metric: an acceptance number that a *uniform*
+lottery maximises (entropy) or minimises (regret against a fixed heuristic)
+will always reject content that stops being a lottery.
+
+**The replacement line is whether picking still beats always-skipping** - the
+draft oracle's bot-pick win count minus its always-skip win count, pooled over
+two independent 30-seed samples. It is a *within-instrument* comparison: both
+columns come from the same forks of the same policy on the same seeds, so a
+rising ceiling cancels out and only "is a player who engages with the draft
+better off than one who ignores it" survives. Read across the configurations:
+
+| config | pick - skip, in-sample | out-of-sample | pooled |
+|---|---|---|---|
+| before (bump 11, uniform draft) | 90 - 85 = **+5** | 90 - 82 = **+8** | **+13** |
+| D4 slots, no upgrade filter (first pass) | 72 - 85 = **-13** | 90 - 92 = **-2** | **-15** |
+| **D4 slots + upgrade filter (shipped)** | 66 - 84 = **-18** | 120 - 99 = **+21** | **+3** |
+
+The first pass's shipped mix is **the only configuration measured in which
+picking is worse than skipping**, and it fails in each sample separately. That
+is the line that should have been the gate, and it is the line the entry
+applies below.
+
+### The six configurations
+
+Trees: `before` = a `git archive` of the bump-11 commit (no slots: one uniform
+list, `min(count, candidates)` draws); every other row is a copy of the working
+tree with `Content.DRAFT_SLOTS` changed and nothing else, except `levC`/`levD`,
+which also carry a prototype of the upgrade-slot mobility filter.
+
+| id | DRAFT_SLOTS | upgrade slot skips a mobility `+` |
+|----|-------------|-----------------------------------|
+| before | (uniform, no slots) | n/a |
+| shipped-v1 | `["affinity", "upgrade_or_affinity", "wild"]` (review 6.4's spec) | no |
+| levA | `["affinity", "wild", "wild"]` | no |
+| levB | `["upgrade_or_affinity", "wild", "wild"]` | no |
+| levC | `["upgrade_or_affinity", "wild", "wild"]` | yes (prototype) |
+| levD | `["affinity", "upgrade_or_affinity", "wild"]` | yes (prototype) |
+
+| config | opt 100 | fanatic /800 | turtle in/oos | timeouts | pooled pick-skip | pooled regret | entropy | signature | magpie 100 | 30-seed gate |
+|---|---|---|---|---|---|---|---|---|---|---|
+| before | 46 [37, 56] | 166 | 3 / 2 | 0 | **+13** | 0.158 | 4.43 | 0.42 | 7 [3, 14] | all PASS |
+| shipped-v1 | 41 [32, 51] | 192 | 3 / 4 | 0 | **-15** | 0.284 | 3.92 | 0.48 | 7 [3, 14] | all PASS |
+| levA | 44 [35, 54] | 165 | 0 / 3 | 0 | +16 | 0.245 | 4.07 | 0.52 | - | all PASS |
+| levB | 52 [42, 62] | 192 | 8 / 4 | 0 | +8 | 0.263 | 4.31 | 0.45 | 7 [3, 14] | all PASS |
+| levC | 48 [38, 58] | 213 | 5 / - | **4** | +8 | 0.268 | 4.11 | 0.43 | - | all PASS |
+| levD | 56 [46, 65] | 209 | 5 / 3 | 0 | +13 | 0.244 | 3.51 | 0.53 | 3 [1, 8] | all PASS |
+| **final tree (shipped)** | **44 [35, 54]** | **188 / 233** | **3 / 3** | **0** | **+3** | **0.239** | **3.74** | **0.51** | **8 [4, 15]** | **all PASS** |
+
+`opt 100` is `VERIFY_BOT=optimizer VERIFY_SEEDS=100`; `pooled` adds the two
+independent 30-seed oracle samples (seeds 1..30 and 101..130); `entropy` and
+`signature` are the optimizer 100-seed cells. `levA`-`levD` were measured on
+scratch copies and are recorded as the decision evidence, not as this tree.
+
+**Read levC and levD as prototypes, not as this tree.** Their filter is a
+different rule from the shipped one in two ways: it selected on
+`role == "mobility"` (so it would also drop `updraft+`, which has an identity
+beyond moving) and it removed the filtered ids from the **universe**, so no
+slot could offer them at all. The shipped rule selects on **tags** and narrows
+the upgrade slot's **list only**. The final tree therefore does **not**
+reproduce levD's cells and was not expected to: it reads optimizer
+**44/100 [35%, 54%]** against levD's 56/100 [46%, 65%], fanatic **188/800**
+against 209/800, magpie **8/100 [4%, 15%]** against 3/100 [1%, 8%], entropy
+**3.74** against 3.51 and pooled pick-skip **+3** against +13. What does
+reproduce is the *direction* on every line the roadmap named - signature share
+up (0.42 before, 0.51 here), optimizer inside its band and overlapping the
+before column, every fanatic build above zero in both samples, zero timeouts,
+the 30-seed gate all PASS, and picking beating skipping pooled where the
+unfiltered mix had it losing - and the *mechanism*, the upgrade slot no longer
+spending itself on a card no persona takes. **The pooled +3 is the weakest
+cell of the set** and it is the one number to re-read; the watch list carries
+it.
+
+### What each slot buys
+
+Read off the configuration grid, holding everything else constant:
+
+- **The upgrade slot completes builds.** Both unfiltered configurations that
+  carry it read fanatic **192/800**; both that do not read ~**165/800** (166
+  and 165). With the filter it reads 213 (levC), 209 (levD) and **188 / 233**
+  on the final tree, against 166 before. Pooled fanatic never-complete goes
+  **72.8% before -> 65.0% in sample / 65.1% out of sample** on this tree.
+- **The affinity slot concentrates damage into drafted abilities.** Optimizer
+  signature share: **0.42** with neither slot, 0.45 with the upgrade slot only
+  (levB), 0.48 with both unfiltered, 0.52 with the affinity slot only (levA),
+  **0.51 with both plus the filter (final tree)**. It costs variety - kit
+  entropy 4.43 -> 4.07 with the affinity slot alone, -> 3.74 on this tree - and
+  the review forbids gating on that; see the entropy note below.
+- **Neither slot moves the canary or the 30-seed gate.** Every configuration
+  measured reads "gate: all PASS" at 30 seeds, and the magpie 100-seed cell
+  sits at 7-8/100 in every unfiltered row and 8/100 here.
+
+### The upgrade filter: the review finding it came from
+
+Two of the four adversarial review lenses independently found the same
+asymmetry: `AFFINITY_IGNORED_TAGS` kept a pure-mobility ability out of the
+**affinity** slot, but nothing filtered the **upgrade** slot, so the slot that
+is supposed to deepen a build spent about a quarter of its offers on the one
+`+` form every loadout is guaranteed to hold. Measured on the unfiltered tree:
+**`mycelium_dash+` was offered 158 times in 511 optimizer drafts and taken 0
+times** (103 offers / 0 picks pre-D4), and over seeds 1..60 **79 of 311
+upgrade-slot offers (25%) were a mobility `+` form**. The dedicated slot is
+what concentrated it: the dash upgrade occupied slot 1 in 130 of 511 drafts
+(25.4%) against 26 of 511 (5.1%) pre-D4, on a candidate rule that had not
+changed.
+
+On the final tree the same probe (optimizer, default config, seeds 1..60,
+counting `draft_offer` events) reads **"upgrade-slot offers: 310, of them a
+pure-mobility + form: 0"** against **79 of 311** with the one-line filter
+reverted, and **"pure-mobility + forms offered by ANY slot: 24"** against 96 -
+the list narrows, the universe does not. The 100-seed optimizer run agrees:
+`mycelium_dash+` **0/36 offers** here, against 0/158 unfiltered and 0/103
+pre-D4, and every one of the 36 is a wild slot. `tests/test_grammar.gd` pins
+the rule at "d4 upgrade filter: 264 upgrade-slot offers over 264 drafts, 0 pure
+mobility" (all six loadouts x 44 seeds), and
+`tests/regressions/d4_upgrade_filter.json` pins both halves on one board: the
+upgrade slot deals the build-defining `seed_bomb+` while the **wild** slot
+deals `mycelium_dash+` on the same roll.
+
+The filter is a rule change and it moves main-rng outcomes on every seed, which
+is why the first pass's review declined to apply it and why the whole
+measurement above was redone from scratch rather than patched.
+
+**What the filter is justified on, stated plainly:** a slot that dealt a card
+no persona ever took in 158 offers now deals one that can be taken, and the
+count is 25% -> 0% by direct probe. It is **not** justified on a win-rate gain.
+Every 100-seed win cell in the six-configuration table overlaps every other one
+(41 to 56 of 100, Wilson half-widths of about ten points), and the oracle
+cannot separate slot mixes at all (above). A dead card in a quarter of drafts
+is a defect you can see without a win rate, and that is the whole claim.
+
+### Suite
+
+All on the final tree, after the corpus pass:
+
+- `tests/test_regressions.gd`: "=== regressions | dir res://tests/regressions |
+  **83 records** | strict false | regen false ===" / "**regressions: 83 ok, 0
+  failed**", and with `REGRESS_STRICT=1` "strict true" / "**regressions: 83 ok,
+  0 failed**"
+- `tests/test_content.gd`: "**d4 lint self-test: 5 bad slot lists -> 5 rejected;
+  3 good -> clean; 5 bad name lists -> 5; 5 bad ignored-tag lists -> 5; 3 good
+  -> clean**" / "**draft slots: ["affinity", "upgrade_or_affinity", "wild"]
+  (roles ["affinity", "upgrade_or_affinity", "wild"], reports ["affinity",
+  "upgrade", "wild", "focus"]); affinity ignores ["mobility"]**" / "**loadout
+  affinity: 6 / 6 kits hold a build-defining ability**" / "**content: OK**"
+- `tests/test_grammar.gd`: "**d4 slots: tender first offer affine 50/50, third
+  affine 19/50 (base rate)**" / "**d4 upgrade filter: 264 upgrade-slot offers
+  over 264 drafts, 0 pure mobility**" / "**grammar: OK (730 checks)**" (666 at
+  07f, 715 at the first pass)
+- `tests/test_economy.gd`: "**rng pins: 50 seeds, 0 moved**" / "**d3 rng:
+  floor-entry pins 10 seeds / 58 entries, 0 moved**" / "**economy: OK (256
+  checks)**". The floor-entry pin block was re-taken for this tree: the filter
+  changes *which* ability a draft index lands on, so the optimizer plays a
+  different run from the same seed. The draw **count** is unchanged and is
+  pinned separately by `test_grammar`'s draw-count assert.
+- `tests/test_bots.gd`: "**d4 draft slots: offers { "affinity": 3, "upgrade": 3,
+  "wild": 3, "focus": 1 } picks { "affinity": 1 } focus 1 of 3 drafts (order
+  ["affinity", "upgrade", "wild", "focus"])**" / "**bots: OK (126 checks)**"
+  (116 at 07f)
+- `tests/test_determinism.gd`: "**determinism: OK (61 checks, 8 personas)**"
+- `tests/test_meta.gd`: "**meta: OK**", with "tier-0 career: 24 runs, 12 wins,
+  best floor 7, grow_spike casts 374, locked milestones ["aeolian", "brittle",
+  "parched"]". `TIER0_CAREER_RUNS` was raised from 22 to 24: the `lasher`
+  milestone is `requires {won_with: ["vine_whip"]}` and a tender-led career
+  (`{sun, fire, growth}` affinity) is offered the displace-tagged `vine_whip`
+  less often, so a 22-run simulated career no longer wins holding it. That is
+  the affinity rule arriving in the meta layer, not a defect.
+- `tests/test_invariants.gd`: "invariants: **1400 generations, 0 violations**",
+  "terrain kinds: ["oil", "goo", "growth", "rich_goo"] (0 violations)",
+  "floor_def invariants: 11 configs, **1540 generations, 0 violations**"
+- `tests/test_shell.gd`: "**shell smoke: OK**"
+
+`test_meta`'s six-row loadout smoke gate (optimizer, seeds 1..20) reads tender
+**6/20**, tidewarden **12/20**, flarekeeper **8/20**, spiker **14/20**, lasher
+**10/20**, skyrunner **6/20** against 07f's 9 / 11 / 10 / 11 / 9 / 4 - every row
+still above the 3/20 winnability line, and the spread is 8 wins (6-14) against
+07f's 7 (4-11), with the starter loadout now the weakest row and `spiker` the
+strongest. Not a measurement (20 seeds, no CI); recorded because Block A's
+watch item asks for the row.
+
+### Persona table (playtest, 30 seeds, tier 0, gate ON)
+
+Before = the 2026-09-07f entry (bump 11). After =
+`=== playtest | bot wanderer,sprout,magpie,fanatic,optimizer,deeproot | config
+{  } | seeds 1..30 (30) ===`, Wilson 95% as the runner prints it.
+
+| persona | 2026-09-07f (bump 11) | final tree (D4) | moved outside CI? |
+|---|---|---|---|
+| wanderer | 0/30 = 0% [0, 11], floor 1.0, turns 82.4 | 0/30 = 0% [0, 11], floor 1.0, turns 82.4 | no - **identical**, it never drafts |
+| sprout | 1/30 = 3% [1, 17], floor 3.6, turns 103.3 | 1/30 = 3% [1, 17], floor **3.4**, turns **106.8** | no |
+| magpie | 6/30 = 20% [10, 37], floor 4.0, turns 160.5 | **4/30** = 13% [5, 30], floor **3.7**, turns **146.2** | no |
+| fanatic | 5/30 = 17% [7, 34], floor 5.5, turns 108.8 | **9/30** = 30% [17, 48], floor **5.7**, turns 110.4 | no (CIs overlap), **+4 wins** |
+| optimizer | 15/30 = 50% [33, 67], floor 6.2, turns 96.2 | **11/30** = 37% [22, 54], floor **6.0**, turns **106.5** | no (CIs overlap) |
+| deeproot | 22/30 = 73% [56, 86], floor 7.0, turns 112.6 | **26/30** = 87% [70, 95], floor **6.8**, turns **83.0** | no, but **+4 wins and -30 turns** |
+
+Every persona: **0 illegal actions, 0 timeouts**. The wanderer row is the
+control: it dies on floor 1 in all 30 seeds and never reaches a draft, so its
+turn count, its combo rate (30.27) and its damage cells reproduce to the
+decimal - which is the check that nothing outside the draft moved.
+
+**The two ends of the roster still move in opposite directions.** The heuristic
+optimizer loses four seeds and the 1-ply search gains four while cutting 30
+turns off its average run; the fanatic, which commits to a build and therefore
+benefits most from being offered that build, gains four. A draft that offers
+build-relevant cards is worth more to a policy that can evaluate them and less
+to one that scores offers off a fixed table that knows nothing about the slot
+they came from. None of the three moves clears its interval on its own.
+
+### The draft line
+
+New in `tests/tally.gd`; one printed line per persona from the 30-seed gated
+playtest, verbatim:
+
+```
+wanderer   draft: picks/offers by slot no drafts  focus drafts 0 of 0 (skips 0)
+sprout     draft: picks/offers by slot affinity 18/75 (0.24), upgrade 38/69 (0.55), wild 11/72 (0.15), focus 1/2 (0.50)  focus drafts 2 of 72 (skips 4)
+magpie     draft: picks/offers by slot affinity 28/82 (0.34), upgrade 25/82 (0.30), wild 29/82 (0.35)  focus drafts 0 of 82 (skips 0)
+fanatic    draft: picks/offers by slot affinity 22/141 (0.16), upgrade 46/141 (0.33), wild 15/141 (0.11), focus 2/41 (0.05)  focus drafts 41 of 141 (skips 56)
+optimizer  draft: picks/offers by slot affinity 58/151 (0.38), upgrade 41/149 (0.28), wild 51/150 (0.34)  focus drafts 0 of 150 (skips 0)
+deeproot   draft: picks/offers by slot affinity 62/176 (0.35), upgrade 58/172 (0.34), wild 54/174 (0.31)  focus drafts 0 of 174 (skips 0)
+```
+
+Two structural facts fall straight out of it. **Offers total exactly three per
+draft in every row** (optimizer 151 + 149 + 150 = 450 = 3 x 150; deeproot
+176 + 172 + 174 = 522 = 3 x 174), which is the one-draw-per-slot contract read
+off the harness rather than off a unit test - the per-role counts differ from
+the draft count only because a slot that falls back reports the role it drew
+from. And **four of the six personas never skip**, so the focus half of the
+feature is exercised by exactly two of them: fanatic (41 focused drafts of 141,
+focus card taken 2 times) and sprout (2 focused drafts, 1 taken).
+
+**The upgrade slot's pick rate is what the filter bought.** Unfiltered it read
+optimizer 0.23, magpie 0.22, fanatic 0.25 and deeproot 0.31; here it reads
+**0.28, 0.30, 0.33 and 0.34**, and the sprout row reads **0.55** - the slot
+stopped dealing a card that is refused by construction.
+
+### The draft oracle
+
+`=== draft_oracle | bot optimizer | config {  } | seeds 1..30 (30) ===` and the
+same command with `ORACLE_SEED_FROM=101`, both on the final tree; the before
+column is the same command on the pristine bump-11 copy.
+
+| oracle, optimizer | before, seeds 1..30 | final, seeds 1..30 | before, 101..130 | final, 101..130 |
+|---|---|---|---|---|
+| policy runs | 15/30 | **11/30** | - | **20/30** |
+| drafts / forks | 155 / 620 | **150 / 600** | - | **164 / 656** |
+| **best fork wins** | **113** | **120** | **116** | **141** |
+| **bot pick wins** | **90** | **66** | **90** | **120** |
+| **always-skip wins** | **85** | **84** | **82** | **99** |
+| **pick - skip** | **+5** | **-18** | **+8** | **+21** |
+| regret | 23 (0.15/draft) | 54 (**0.36**/draft) | (0.17/draft) | 21 (**0.13**/draft) |
+| pick matched best fork | 132/155 | 96/150 | - | 143/164 |
+| skip matched best fork | 127/155 | 114/150 | - | 122/164 |
+| skip strictly best | 6 | 23 | - | 12 |
+| picks: new / upgrade / skip | 115 / 40 / 0 | 102 / 48 / 0 | - | 96 / 68 / 0 |
+| mean stakes per draft | 0.36 | **0.57** | - | **0.48** |
+| decisive drafts | 56 | **86** | - | **79** |
+
+**Pooled over both samples: bot pick 186, always-skip 183, pick - skip = +3;
+regret 75 over 314 drafts = 0.239 per draft.** The two samples disagree in
+sign, which is the honest headline: in-sample the optimizer's picks lose 18
+runs to a player who skips every draft, out of sample they win 21. Both halves
+are 30 seeds with no interval printed on the difference; the pooled number is
+the gate statistic and it is **+3**, positive but far below the pre-D4 +13 and
+below the levD prototype's +13.
+
+The ceiling moved in both samples and moved a lot: best fork **113 -> 120** and
+**116 -> 141**, with the always-skip column nearly unmoved in sample (85 -> 84)
+and up out of sample (82 -> 99). Mean stakes per draft rise from 0.36 to 0.57
+and 0.48, and decisive drafts (some fork wins, some loses) from 56 to 86 and
+79. **The draft is worth more per decision than it was**, on both samples, on
+every column that does not involve the heuristic's own choices - which is
+exactly why regret is not a usable acceptance number and why the pick-skip
+line replaced it.
+
+Two per-offer rows are worth recording against the first pass. `mycelium_dash+`
+was the worst row in the unfiltered table (n=39, delta **-23%**, sign_p 0.049,
+the only row under 0.05 in either table); on this tree it is offered by wild
+slots only and reads **n=10, +20%** in sample and **n=16, -6%** out of sample -
+no longer a systematic drag, and its sample is a quarter of what it was.
+`seed_bomb+`, the card the upgrade slot deals instead, is the most-offered
+card in both samples (n=50 and n=62) at -6% and -3%.
+
+### The fanatic builds
+
+`=== measure_fanatic | bot fanatic | config {  } | seeds 1..100 (100) ===` and
+the same with `FANATIC_SEED_FROM=101`; `builds: pyro, gardener, turtle, shover,
+pyro_nolance, shover_nolance, ember, anchor  (pool 14 ids)`. Every build runs on
+every seed, so the columns are paired by construction. Before = the pristine
+bump-11 copy on seeds 1..100.
+
+| build | before (bump 11) | final, 1..100 | final, 101..200 | never-complete before -> in / oos |
+|---|---|---|---|---|
+| pyro | 32/100 [24%, 42%] | **29/100** [21%, 39%] | 24/100 [17%, 33%] | 30% -> **13% / 12%** |
+| gardener | 33/100 [25%, 43%] | **53/100** [43%, 62%] | **56/100** [46%, 65%] | 67% -> **36% / 35%** |
+| turtle | 3/100 [1%, 8%] | **3/100** [1%, 8%] | **3/100** [1%, 8%] | 100% -> 100% / 100% |
+| shover | 17/100 [11%, 26%] | **20/100** [13%, 29%] | **25/100** [18%, 34%] | 83% -> 95% / 90% |
+| pyro_nolance | 34/100 [25%, 44%] | **40/100** [31%, 50%] | **50/100** [40%, 60%] | 52% -> **19% / 23%** |
+| shover_nolance | 18/100 [12%, 27%] | 14/100 [9%, 22%] | **20/100** [13%, 29%] | 85% -> 95% / 88% |
+| ember | 22/100 [15%, 31%] | **27/100** [19%, 36%] | **49/100** [39%, 59%] | 73% -> 67% / **81%** |
+| anchor | 7/100 [3%, 14%] | **2/100** [1%, 7%] | **6/100** [3%, 12%] | 92% -> 95% / 92% |
+| **total** | **166/800** | **188/800** | **233/800** | 72.8% -> **65.0% / 65.1%** |
+
+**Every build is above zero in both samples, so the hard rule holds** (the floor
+is anchor 2/100 [1%, 7%] in sample and turtle 3/100 [1%, 8%] in both), and
+**0 timeouts in all 1600 runs**. The gardener is the one row whose interval
+separates from its before column in both samples (+20 and +23 wins on paired
+seeds); the anchor's in-sample -5 does not survive out of sample (6/100, an
+interval that overlaps the before column).
+
+The mechanism is the tag list and it is not subtle. The default loadout's kit is
+`solar_lance` (sun, fire), `seed_bomb` (growth) and `mycelium_dash` (mobility,
+which now defines no build), so **the affinity set of a default run is
+`{sun, fire, growth}` from turn one** and stays there until a graft or a pick
+widens it. The pool bases that share it are `sun_flare`, `moss_filter`,
+`grow_spike`, `overgrowth` and `root_wall`; the ones that do not are
+`water_jet`, `vine_whip`, `pollen_burst`, `sap_snare`, `thorn_shield`,
+`bramble_coat` and `anchor_roots`. The gardener and both pyros are made of the
+affine half and their cores now assemble (never-complete 67% -> 36%,
+30% -> 13%, 52% -> 19%); the two shovers and the anchor are made of the other
+half and theirs assemble less (83% -> 95%, 85% -> 95%, 92% -> 95%).
+
+**This is the feature working as specified and it is also the thing to watch.**
+"Affinity" in a default-config run means "more of what the starting kit already
+is", because the default config has exactly one loadout and it is fixed. The
+variety that makes the slot mean different things per run is Block A's
+loadouts, and they are not the default.
+
+### Optimizer at 100 seeds
+
+`=== verify_kit | bot optimizer | config {  } | seeds 1..100 (100) ===`, same
+command in all three trees. `shipped-v1` is the D4 slots without the upgrade
+filter, kept as a column because it is what the first pass measured.
+
+| metric | before (bump 11) | shipped-v1 (no filter) | **final tree** |
+|---|---|---|---|
+| wins | **46/100 = 46% [37%, 56%]** | 41/100 [32%, 51%] | **44/100 = 44% [35%, 54%]** |
+| avg floor | 6.1 | 6.1 | 6.2 |
+| turns on wins | 87.0 | 89.8 | 89.5 |
+| turns/floor avg | 15.5 | 15.9 | 15.7 |
+| damage taken/run | 18.9 | 23.2 | 23.7 |
+| of which smog (100-run totals) | 474 | 837 | 877 |
+| stall floors | 23 | 26 | 25 |
+| quota-unmet deaths | 4 | 3 | 4 |
+| smog at descend | 9.0 | 9.3 | 9.4 |
+| **signature share** | **0.42** | 0.48 | **0.51** |
+| strike share | 0.30 | 0.25 | 0.25 |
+| **kit entropy** | **4.43 bits** | 3.92 | **3.74** (recorded, not gated) |
+| combos/run | 15.40 | 17.50 | **18.46** |
+| riders/run | 9.14 | 10.92 | **11.57** |
+| drafts / skips | 511 / 0 | 511 / 0 | 516 / 0 |
+| upgrades taken | 112 | 156 | **181** |
+| P(plus offered \| draft) | 0.66 | 1.00 | 0.99 |
+| plus-form casts | 467 | 711 | **920** |
+| `mycelium_dash+` offers / picks | 103 / 0 | **158 / 0** | **36 / 0** (all wild) |
+| `grow_spike` casts/run | 9.7 | 11.9 | 12.4 |
+| `solar_lance` casts/run | 13.7 | 12.4 | 11.2 |
+| bloom earned / spent per run | 49.3 / 16.1 | 51.3 / 17.4 | 51.4 / 18.1 |
+| shrine turns/run | 1.88 | 1.91 | 2.05 |
+| illegal / timeouts | 0 / 0 | 0 / 0 | 0 / 0 |
+
+`draft: picks/offers by slot affinity 211/519 (0.41), upgrade 149/513 (0.29),
+wild 156/516 (0.30)  focus drafts 0 of 516 (skips 0)` - 519 + 513 + 516 = 1548
+= 3 x 516, the one-draw-per-slot contract again.
+
+**Signature share is up and kit entropy is down, which is the shape the review
+predicted.** 0.42 -> 0.51 says a larger share of enemy damage comes from
+something other than a strike, the lance or a fire - the bot's kit is doing more
+of the work - and 4.43 -> 3.74 bits says the kits themselves are less varied,
+which affinity does by construction. The clock cells still argue the other way:
+damage taken up 25% with smog damage up 85% on flat smog-at-descend, and stall
+floors 23 -> 25. The filter recovered three of the five wins the unfiltered
+slots cost (41 -> 44 against 46) and moved upgrades taken 156 -> 181 and
+plus-form casts 711 -> 920 while cutting the dead `mycelium_dash+` offers from
+158 to 36.
+
+### The greed canary
+
+`=== verify_kit | bot magpie | config {  } | seeds 1..100 (100) ===`.
+
+| magpie, 100 seeds | 07f (bump 11) | shipped-v1 | **final tree** | gate |
+|---|---|---|---|---|
+| wins | **8/100 = 8% [4%, 15%]** | 7/100 [3%, 14%] | **8/100 = 8% [4%, 15%]** | canary watches rises; **unmoved from 07f** |
+| stall floors | 59 (0.59/run) | 62 | **71 (0.71/run)** | **1.20x - inside the 1.25x limit**, and the highest of the three |
+| timeouts | 0 | 0 | **0** | **PASS** |
+| avg floor | 3.5 | 3.6 | 3.7 | flat |
+| turns/floor avg | 40.1 | 42.0 | 42.6 | flat |
+| damage taken/run | 35.9 | 41.6 | 43.6 | up |
+| shrine turns/run | 19.07 | 23.23 | 22.79 | up |
+| kit entropy | - | 4.93 bits | 4.83 bits | the roster's most varied kit |
+| illegal | 0 | 0 | 0 | |
+
+`draft: picks/offers by slot affinity 102/266 (0.38), upgrade 79/266 (0.30),
+wild 85/266 (0.32)  focus drafts 0 of 266 (skips 0)`. Greed never skips, so it
+never sees a focus card either. `mycelium_dash+` 0/19.
+
+### Gate verdict: SHIP
+
+| gate line | result |
+|---|---|
+| `tests/playtest.gd` at 30 seeds, gate ON, passes | **PASS** - "gate: all PASS", exit 0 |
+| every fanatic build > 0 at 100 seeds, **both samples** | **PASS** - floor is anchor 2/100 [1%, 7%] in sample, turtle 3/100 [1%, 8%] in both; 0 timeouts in 1600 runs |
+| optimizer 100-seed win CI overlaps the before column | **PASS** - 44/100 [35%, 54%] against 46/100 [37%, 56%] |
+| **picking still beats always-skipping** (oracle bot-pick minus always-skip) | **PASS, and the line is now known to be under-powered** - five independent 30-seed samples of each tree read **+2** for this tree and **+2** for the pre-D4 tree, identical, with per-sample swings of -18 to +21. See "The pick-skip line is under-powered too" below: this cell says the margin did not move, and nothing finer |
+| signature share flat or up (optimizer 100 and fanatic) | **PASS** - optimizer 0.42 -> **0.51**; unweighted mean of the eight fanatic build rows 0.278 -> **0.301** in sample, **0.296** out of sample |
+| ~~oracle regret per draft not higher by more than 0.05~~ | **RETIRED as mis-specified** (see above). For the record it would still fail: pooled 0.158 -> **0.239** |
+
+The playtest block, verbatim:
+
+```
+PASS wanderer 0 wins, avg floor <= 2: 0 wins, avg floor 1.00
+PASS wanderer illegal actions == 0: 0
+PASS sprout wins rare (<= 1 per 30 seeds): 1/30
+PASS sprout illegal actions == 0: 0
+PASS magpie canary <= 10% (design target 0-5%): 4/30 CI [5%, 30%] (fails when the lower bound clears the trip line)
+PASS magpie illegal actions == 0: 0
+PASS fanatic illegal actions == 0: 0
+PASS optimizer band 35-65%: 11/30 CI [22%, 54%]
+PASS optimizer timeouts == 0: 0
+PASS optimizer illegal actions == 0: 0
+PASS deeproot band 70-90%: 26/30 CI [70%, 95%]
+PASS deeproot timeouts == 0: 0
+PASS deeproot illegal actions == 0: 0
+gate: all PASS
+```
+
+**SHIP.** Every line passes as written.
+
+### The pick-skip line is under-powered too
+
+The replacement gate line was defined on two 30-seed oracle samples. Three more
+samples per tree were then run (seeds 201..230, 301..330, 401..430, both trees,
+same runner and header), and they retire the *comparison* while leaving the
+*measurement* standing. Bot-pick wins minus always-skip wins, per sample:
+
+| seeds | this tree | pre-D4 |
+|---|---|---|
+| 1..30    | **-18** (66 v 84) | +5 (90 v 85) |
+| 101..130 | **+21** (120 v 99) | +8 (90 v 82) |
+| 201..230 | -5 (84 v 89) | -12 (72 v 84) |
+| 301..330 | +19 (114 v 95) | +4 (90 v 86) |
+| 401..430 | -15 (72 v 87) | -3 (60 v 63) |
+| **pooled** | **+2** (456 v 454) | **+2** (402 v 400) |
+
+The two trees land on the same number, and a single sample of the statistic
+swings across a 39-point range. So the earlier reading that the unfiltered D4
+mix "fails in each sample" was two samples of a statistic whose per-sample
+noise is larger than any effect measured here, and it is withdrawn: on this
+instrument, at this sample size, **no slot mix is distinguishable from another
+on pick-versus-skip**, and the honest statement is that D4 leaves the margin
+where it found it.
+
+What the same five paired samples DO establish, cleanly, is the ceiling:
+
+| seeds | best fork, this tree | best fork, pre-D4 |
+|---|---|---|
+| 1..30 | 120 | 113 |
+| 101..130 | 141 | 116 |
+| 201..230 | 139 | 108 |
+| 301..330 | 142 | 111 |
+| 401..430 | 121 | 92 |
+| **total** | **663** | **540** |
+
+Higher in **5 of 5** paired samples (sign test p = 0.031), +123 wins over about
+780 drafts. That is the robust oracle finding of this block and the one to
+quote: the affinity draft puts more winnable runs inside the draft tree, and
+does not change how much of that a fixed heuristic converts.
+
+The lesson is the same one twice, and it is now written into the method: **a
+gate line whose per-sample noise has never been measured is not a gate line.**
+Regret was retired for measuring the ceiling; its replacement is kept only as a
+"did not move" statement because five samples showed its noise band is wider
+than the effect anyone wanted it to detect. The next metric proposed for this
+block gets its variance measured before it is quoted, not after.
+
+**Kit entropy is recorded and explicitly not gated.** Optimizer 4.43 -> 3.74
+bits, magpie 4.93 -> 4.83, deeproot 3.29 at 30 seeds. The review's reason
+stands and is the reason: *a uniform lottery maximises kit entropy and affinity
+lowers it by design*, so a fall is the feature and not a variety regression.
+Read it only beside signature share (up on every column), never alone.
+
+### Corpus
+
+77 -> **83 records**, "regressions: 83 ok, 0 failed" plain and with
+`REGRESS_STRICT=1`. Every one of the 77 pre-D4 records' hashes moved, drafting
+or not, because `draft_slots` and `focus` are new *stored* snapshot keys and so
+enter `state_hash()`. Six new `d4_*` demos, one rule each: `d4_affinity_slot`
+(a flarekeeper's affinity set `{sun, fire, growth}` deals `moss_filter` in slot
+1 where bump 11 dealt `bramble_coat`), `d4_upgrade_slot` (a tidewarden gets
+`water_jet+` in slot 2 and `vine_whip` in slot 1), `d4_wide_draft_slots` (the
+fourth slot **appends** a draw - the first three offers are byte-identical to
+`d4_affinity_slot`), `d4_focus_skip` (a skip, then a four-offer draft whose
+trailing role is `focus`), `d4_starved_slot` (a kit and pool that leave two
+slots exactly one candidate each, so a draw that shortened itself on a
+one-candidate list shifts the wild offer) and **`d4_upgrade_filter`** (the
+upgrade slot deals `seed_bomb+` while the wild slot deals `mycelium_dash+` on
+the same roll - both halves of the filter on one board; unfiltered the same
+seed swaps the two roles, so it fails in plain mode without the state hash).
+
+The upgrade-filter pass moved 17 records and added 1: `d4_focus_skip` was
+re-pinned (its upgrade slot deals `seed_bomb+` where it dealt `mycelium_dash+`),
+three demos had stale notes corrected with no pin change (`d4_upgrade_slot`,
+`d4_starved_slot`, `c4_upgrades_only` - the last records that the filter is
+deliberately **not** applied under `draft_upgrades_only`), and **all 20 bot
+logs were re-recorded on their personas, of which 13 changed and 7 came back
+byte-identical**. Three of the 13 are the lesson: `det_optimizer_s42` replayed
+byte-identical with a matching hash and was re-recorded anyway, because its
+persona now picks index 2 where it picked 0-and-drop-3 at action 102 -
+replaying its old list under the filtered and unfiltered sims shows draft 1
+offering `["sun_flare", "solar_lance+", "overgrowth"]` against
+`["sun_flare", "seed_bomb+", "overgrowth"]`. `det_optimizer_s11` and
+`det_magpie_s42` are the same case. **A record that still replays is not a
+record that is unaffected**, because a draft pick is an index.
+
+Four mutation probes, all in plain (non-strict) mode on scratch copies with the
+final 83-record corpus, each proving a different half of the rule is pinned by
+a hand-authored demo rather than by a hash:
+
+| mutation | corpus | the demo that catches it |
+|---|---|---|
+| `rng.randi()` -> `rng.randi_range(0, cands.size() - 1)` | 76 ok, 7 failed | `d4_starved_slot.json` (offers shift on a one-candidate list) |
+| the `upgrades_only` label collapse removed | 82 ok, 1 failed | `c4_upgrades_only.json` (slots `[upgrade, upgrade, upgrade]`) |
+| `DRAFT_SLOTS` role dispatch ignored (all wild) | 59 ok, 24 failed | plus `test_meta` "wide draft slots ["wild", "wild", "wild", "wild"], expected [affinity, upgrade, wild, wild]" |
+| **the upgrade filter removed** | **75 ok, 8 failed** | **`d4_upgrade_filter.json` and `d4_focus_skip.json`** |
+
+### Watch list
+
+- **The pooled pick-skip line is +3 and its two samples disagree in sign.**
+  In sample the optimizer's picks lose 18 runs to always-skipping (66 vs 84),
+  out of sample they win 21 (120 vs 99). The pre-D4 draft read +5 and +8 - both
+  positive, and the pooled +13. This is the gate line for this feature and it
+  is passing on the narrowest margin in the entry. The cheap next reading is a
+  third 30-seed sample (`ORACLE_SEED_FROM=201`); the expensive and better one is
+  the oracle on a policy that can evaluate an offer (`ORACLE_BOT=deeproot`,
+  sharded - forks run 3-5 s each). Until one of them lands, treat "picking beats
+  skipping" as established pooled and unestablished per-sample.
+- **Regret is retired as an acceptance number and should not come back.** It
+  measures the gap between the content and a fixed heuristic's draft table, so
+  it fires whenever the content improves: 0.158 before, 0.24-0.28 in all six
+  configurations after, on a ceiling that went 113 -> 120-139. Keep printing it
+  (it is a useful diagnostic of *this persona's* draft policy) and never gate on
+  it. Same for kit entropy, for the same reason and by the review's own
+  instruction.
+- **The final tree does not reproduce the levD prototype's cells.** levD read
+  optimizer 56/100, fanatic 209/800, magpie 3/100 and pooled pick-skip +13; the
+  shipped rule reads 44/100, 188/800 and 233/800, 8/100 and +3. The two rules
+  differ (role vs tags, and levD also cut the filtered ids from the universe),
+  so this is expected - but **no levD cell may be quoted as a number for this
+  tree**, and the six-config grid above is decision evidence, not a baseline.
+- **Affinity in a default run means "more of the starter's own tags", because
+  the default config has one loadout.** The affinity set is `{sun, fire, growth}`
+  from turn one of every default run. Everything in this entry - the gardener's
+  +20/+23, the offer counts splitting along the tag line, the `lasher` milestone
+  needing two more career runs - is that fact. The measurement that is owed is
+  the same five gate lines under a non-tender loadout (`SWEEP_LOADOUT=spiker` or
+  `lasher`, whose kits carry bark and displace), to separate "affinity works"
+  from "affinity favours sun/fire/growth".
+- **The optimizer's clock cells moved together again.** Damage taken 18.9 ->
+  23.7 with smog damage 474 -> 877, turns/floor 15.5 -> 15.7, stall floors
+  23 -> 25. 07f already listed stall floors and quota-unmet deaths as a pair to
+  re-read; this bump moves the same family again in the same direction on a
+  different cause. A fourth consecutive rise is a real clock problem rather than
+  a per-bump coincidence.
+- **The magpie's stall floors are the highest recorded: 71 against 59 at 07f.**
+  1.20x, inside the 1.25x limit, on an unmoved win cell (8/100 [4%, 15%] in both
+  readings). Greed is spending longer on each floor for the same result. The
+  next 100-seed reading above 74 trips the limit and should be treated as a
+  clock finding, not a canary one.
+- **The focus half of the feature is measured on two personas and 43 drafts.**
+  Only fanatic and sprout skip at all; magpie, optimizer and deeproot skipped 0
+  times in 406 drafts between them (82 + 150 + 174), so `focus` never armed for them. The card is
+  taken 2/41 by the fanatic and 1/2 by sprout. Its *value* is therefore
+  unmeasured for skilled play, exactly the profile C2's `water_jet+`, C3's
+  `undertow` and D3's smoke screen have: the rule is correct and pinned
+  (`tests/regressions/d4_focus_skip.json`, `tests/test_grammar.gd`), its
+  opportunity rate for a policy that would use it is zero.
+- **Deeproot reads 26/30 = 87% [70%, 95%] against a 70-90 band.** It passed
+  because the interval straddles the band, as it did at the first pass
+  (28/30 [79, 98]). Two readings in a row sitting at or above the top of the
+  band means the ceiling moved and the band is measuring the pre-D4 game. A
+  100-seed deeproot run settles it; nothing else does.
+- **`shover` and `shover_nolance` complete their cores in 5-12% of runs.**
+  95%/95% never-complete in sample and 90%/88% out of sample, up from 83% and
+  85%. `water_jet`, `vine_whip` and `pollen_burst` are all off-affinity for a
+  tender starter, so the build has to wait for a wild slot. Judge push/pull
+  content with forced-kit deeproot runs, not this row - and note that under a
+  `lasher` or `tidewarden` loadout the same core would be the affine half.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from
@@ -6818,3 +7480,43 @@ record.
   other**, on top of the side-rng shop draw that 06d already flagged. Any
   future graft edit is a `sweep_grafts` re-run, a `SIM_VERSION` bump and a
   corpus pass - never a data-only edit.
+
+### Bump-12 additions (2026-09-07g)
+
+- **`kit entropy` is no longer a comparable series across the bump-11 line.**
+  The affinity draft lowers it by construction (optimizer 100 seeds 4.43 ->
+  3.74 bits), which is why the review forbade it as an acceptance KPI. Keep
+  recording it, never gate on it, and do not read a fall after this bump as a
+  variety regression without a signature-share reading beside it.
+- **The deeproot band (70-90%) may need re-deriving.** 26/30 = 87% [70, 95] at
+  30 seeds against 22/30 = 73% [56, 86] in 07f, with avg turns 112.6 -> 83.0
+  (the first D4 pass read 28/30 [79, 98]). The gate passed because the interval
+  straddles the band, but two readings in a row at or above its top mean the
+  ceiling moved and the band is measuring the old game. A 100-seed deeproot run
+  settles it; nothing else does.
+- **The magpie canary reads 8/100 = 8% [4%, 15%]** on this tree - unmoved from
+  07f's 8/100 [4, 15], against 10/100 [6, 17] the recorded v2 rise baseline.
+  Greed never skips and so never sees a focus card. Its **71 stall floors
+  against 59 (1.20x)** are inside the 1.25x limit and are the highest recorded;
+  the next reading above 74 trips it. Compare the next win reading against
+  [4, 15].
+- **A gate line that measures a fixed heuristic policy against new content will
+  fail whenever the content improves.** D4's regret line is the worked example
+  and it was **retired as mis-specified** in the measure phase: regret rose in
+  all six slot configurations measured (0.158 -> 0.24-0.28) because the ceiling
+  rose (best fork 113 -> 120-139), and the one configuration that held the
+  optimizer's oracle pick count and policy wins at exactly their pre-D4 values
+  still read 0.27. Its replacement is a **within-instrument** line - the
+  oracle's bot-pick win count minus its always-skip count, pooled over two
+  independent 30-seed samples - which cancels a moving ceiling because both
+  columns come from the same forks of the same policy on the same seeds. Any
+  future bullet whose acceptance number is an oracle regret or a kit-entropy
+  reading needs either a policy that can read the new rule or a paired
+  within-instrument column, decided before the measure phase and not after it.
+- **A record that still replays is not a record that is unaffected.** A draft
+  pick is an *index*, so a log whose offers changed replays legally while
+  landing on a different ability: at the upgrade-filter pass three of the
+  twenty bot logs (`det_optimizer_s42`, `det_optimizer_s11`, `det_magpie_s42`)
+  were byte-identical or hash-clean on replay and still changed when
+  re-recorded on their personas. Re-record every log a draft change could have
+  moved, never only the ones that stop replaying.

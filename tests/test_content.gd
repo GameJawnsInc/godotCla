@@ -37,6 +37,17 @@ extends SceneTree
 ##     TERRAIN kind (closed), ENEMY_AVOID_COST is an int >= 1, SCREENED_INTENTS
 ##     is a non-empty subset of INTENT_TYPES, and TERRAIN "screens" is a
 ##     required bool. Same self-test discipline: one bad fixture per shape.
+## 13) Block D4 - the affinity-slotted draft: DRAFT_SLOTS is a non-empty
+##     Array of DRAFT_SLOT_ROLES entries (the closed role set), DRAFT_SLOT_ROLES
+##     and DRAFT_SLOT_REPORTS are non-empty duplicate-free String lists, and
+##     AFFINITY_IGNORED_TAGS is a duplicate-free PROPER subset of TAGS. It now
+##     means "these tags do not define a build" and gates TWO slots (the
+##     affinity set drops the tags, the upgrade slot drops a + form whose base
+##     carries only them), so the list swallowing the whole vocabulary would
+##     leave nothing defining a build and silently turn both slots into
+##     lotteries - and so would a loadout kit made only of ignored-tag
+##     abilities, which is checked against LOADOUTS here. Same self-test
+##     discipline: one bad fixture per shape.
 ## Run: godot --headless --path . --script tests/test_content.gd
 
 const Content := preload("res://sim/content.gd")
@@ -323,6 +334,17 @@ func _init() -> void:
 	print("enemies: %d rows, %d with an avoid list (%s); avoid cost %d; screened intents %s; screening terrain %s" % [
 		Content.ENEMIES.size(), avoiders.size(), ", ".join(avoiders), Content.ENEMY_AVOID_COST,
 		str(Content.SCREENED_INTENTS), str(screens)])
+
+	# 13) Block D4: the draft slot tables, then the lint's own self-test
+	failures.append_array(_lint_draft_slots(Content.DRAFT_SLOTS, Content.DRAFT_SLOT_ROLES))
+	failures.append_array(_lint_name_list("DRAFT_SLOT_ROLES", Content.DRAFT_SLOT_ROLES))
+	failures.append_array(_lint_name_list("DRAFT_SLOT_REPORTS", Content.DRAFT_SLOT_REPORTS))
+	failures.append_array(_lint_ignored_tags(Content.AFFINITY_IGNORED_TAGS, Content.TAGS))
+	failures.append_array(_lint_loadout_affinity())
+	failures.append_array(_lint_d4_selftest())
+	print("draft slots: %s (roles %s, reports %s); affinity ignores %s" % [
+		str(Content.DRAFT_SLOTS), str(Content.DRAFT_SLOT_ROLES), str(Content.DRAFT_SLOT_REPORTS),
+		str(Content.AFFINITY_IGNORED_TAGS)])
 
 	if failures.is_empty():
 		print("content: OK")
@@ -1208,4 +1230,162 @@ func _lint_d3_selftest() -> Array:
 	print("d3 lint self-test: %d bad enemy rows -> %d failures; %d good rows -> %d failures; %d bad screens -> %d; %d bad costs -> %d; %d bad intent lists -> %d" % [
 		BAD_ENEMY_ROWS.size(), bad.size(), GOOD_ENEMY_ROWS.size(), good.size(),
 		BAD_TERRAIN_SCREENS.size(), bad_screens, bad_costs.size(), cost_fails, bad_lists.size(), list_fails])
+	return out
+
+
+# --- 13) Block D4 draft slot lint ---------------------------------------------
+
+## DRAFT_SLOTS: a non-empty Array whose entries are `roles` (the closed role
+## set Game._draw_draft_offers dispatches on). Duplicates are legal - two
+## affinity slots is the named lever.
+func _lint_draft_slots(slots, roles) -> Array:
+	if not (slots is Array) or slots.is_empty():
+		return ["DRAFT_SLOTS: must be a non-empty Array of slot roles, got %s" % str(slots)]
+	var out: Array = []
+	for i in slots.size():
+		var r = slots[i]
+		if not (r is String) or not (roles is Array) or not roles.has(r):
+			out.append("DRAFT_SLOTS: slot %d role '%s' not in DRAFT_SLOT_ROLES" % [i, str(r)])
+	return out
+
+
+## A closed name list (DRAFT_SLOT_ROLES, DRAFT_SLOT_REPORTS): non-empty
+## Array of non-empty Strings, no duplicates.
+func _lint_name_list(label: String, list) -> Array:
+	if not (list is Array) or list.is_empty():
+		return ["%s: must be a non-empty Array of names, got %s" % [label, str(list)]]
+	var out: Array = []
+	var seen := {}
+	for n in list:
+		if not (n is String) or String(n).is_empty():
+			out.append("%s: entry '%s' is not a non-empty String" % [label, str(n)])
+		elif seen.has(n):
+			out.append("%s: '%s' listed twice" % [label, str(n)])
+		seen[n] = true
+	return out
+
+
+## AFFINITY_IGNORED_TAGS: an Array (empty is legal: nothing ignored) of
+## distinct `tags` entries, and never all of them - the list says which tags
+## do NOT define a build, so a list covering the whole vocabulary means no
+## ability defines one, which empties the affinity set and the upgrade list
+## on every run and degrades both build-steering slots to wild without any
+## other symptom.
+func _lint_ignored_tags(list, tags) -> Array:
+	if not (list is Array):
+		return ["AFFINITY_IGNORED_TAGS: must be an Array of TAGS entries, got %s" % str(list)]
+	var out: Array = []
+	var seen := {}
+	for t in list:
+		if not (t is String) or not (tags is Array) or not tags.has(t):
+			out.append("AFFINITY_IGNORED_TAGS: '%s' not in TAGS" % str(t))
+		elif seen.has(t):
+			out.append("AFFINITY_IGNORED_TAGS: '%s' listed twice" % str(t))
+		seen[t] = true
+	if tags is Array and not tags.is_empty() and seen.size() == tags.size():
+		out.append("AFFINITY_IGNORED_TAGS: ignores every TAGS entry, so nothing defines a build")
+	return out
+
+
+## Does `aid` define a build? The reference reading of AFFINITY_IGNORED_TAGS,
+## kept here in the lint rather than called out of the sim: any tag outside
+## the ignored list. Game._build_defining must agree with it (the D4 checks in
+## tests/test_grammar.gd pin the sim side).
+func _defines_build(aid: String) -> bool:
+	for t in Content.ABILITIES.get(Content.base_id(aid), {}).get("tags", []):
+		if not Content.AFFINITY_IGNORED_TAGS.has(t):
+			return true
+	return false
+
+
+## Every LOADOUTS kit holds at least one build-defining ability. A kit that
+## did not would start with an empty affinity set AND an all-ignored upgrade
+## list, so both build-steering slots would roll wild for the whole run - the
+## degenerate case AFFINITY_IGNORED_TAGS can cause by growing.
+func _lint_loadout_affinity() -> Array:
+	var out: Array = []
+	var defining := 0
+	for lid in Content.LOADOUTS:
+		var any := false
+		for aid in Content.LOADOUTS[lid].get("kit", []):
+			if _defines_build(String(aid)):
+				any = true
+				break
+		if any:
+			defining += 1
+		else:
+			out.append("LOADOUTS '%s': no kit ability defines a build (every tag is in AFFINITY_IGNORED_TAGS)" % str(lid))
+	print("loadout affinity: %d / %d kits hold a build-defining ability" % [defining, Content.LOADOUTS.size()])
+	return out
+
+
+## Fixtures the D4 lint MUST reject, one shape each, and the ones it must accept.
+const BAD_DRAFT_SLOTS := {
+	"empty": [],
+	"not_array": "affinity",
+	"unknown_role": ["affinity", "upgrade", "wild"],
+	"not_string": ["affinity", 2],
+	"report_as_role": ["focus"],
+}
+const GOOD_DRAFT_SLOTS := {
+	"shipped": ["affinity", "upgrade_or_affinity", "wild"],
+	"one_wild": ["wild"],
+	"two_affinity": ["affinity", "affinity", "wild"],
+}
+const BAD_NAME_LISTS := {
+	"empty": [],
+	"not_array": "wild",
+	"empty_string": ["wild", ""],
+	"not_string": ["wild", 1],
+	"duplicate": ["wild", "wild"],
+}
+const BAD_IGNORED_TAGS := {
+	"not_array": "mobility",
+	"unknown_tag": ["lava"],
+	"not_string": [3],
+	"duplicate": ["mobility", "mobility"],
+}
+const GOOD_IGNORED_TAGS := {
+	"shipped": ["mobility"],
+	"none": [],
+	"two": ["mobility", "economy"],
+}
+
+
+## The D4 lint checking itself: every bad fixture rejected, every good one clean.
+func _lint_d4_selftest() -> Array:
+	var out: Array = []
+	var bad_slots := 0
+	for k in BAD_DRAFT_SLOTS:
+		var fails: Array = _lint_draft_slots(BAD_DRAFT_SLOTS[k], Content.DRAFT_SLOT_ROLES)
+		if fails.is_empty():
+			out.append("d4 lint self-test: bad DRAFT_SLOTS fixture '%s' was accepted" % k)
+		else:
+			bad_slots += 1
+	for k in GOOD_DRAFT_SLOTS:
+		for f in _lint_draft_slots(GOOD_DRAFT_SLOTS[k], Content.DRAFT_SLOT_ROLES):
+			out.append("d4 lint self-test: good DRAFT_SLOTS fixture '%s' rejected: %s" % [k, f])
+	var bad_lists := 0
+	for k in BAD_NAME_LISTS:
+		if _lint_name_list("fixture", BAD_NAME_LISTS[k]).is_empty():
+			out.append("d4 lint self-test: bad name list fixture '%s' was accepted" % k)
+		else:
+			bad_lists += 1
+	if not _lint_name_list("fixture", ["affinity", "wild"]).is_empty():
+		out.append("d4 lint self-test: a legal name list was rejected")
+	var bad_tags := 0
+	var bad_ignored: Dictionary = BAD_IGNORED_TAGS.duplicate()
+	# built here rather than as a const: it is TAGS itself
+	bad_ignored["ignores_everything"] = Content.TAGS.duplicate()
+	for k in bad_ignored:
+		if _lint_ignored_tags(bad_ignored[k], Content.TAGS).is_empty():
+			out.append("d4 lint self-test: bad AFFINITY_IGNORED_TAGS fixture '%s' was accepted" % k)
+		else:
+			bad_tags += 1
+	for k in GOOD_IGNORED_TAGS:
+		for f in _lint_ignored_tags(GOOD_IGNORED_TAGS[k], Content.TAGS):
+			out.append("d4 lint self-test: good AFFINITY_IGNORED_TAGS fixture '%s' rejected: %s" % [k, f])
+	print("d4 lint self-test: %d bad slot lists -> %d rejected; %d good -> clean; %d bad name lists -> %d; %d bad ignored-tag lists -> %d; %d good -> clean" % [
+		BAD_DRAFT_SLOTS.size(), bad_slots, GOOD_DRAFT_SLOTS.size(), BAD_NAME_LISTS.size(), bad_lists,
+		bad_ignored.size(), bad_tags, GOOD_IGNORED_TAGS.size()])
 	return out

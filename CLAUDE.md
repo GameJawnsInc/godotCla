@@ -98,11 +98,13 @@ architecture below is designed to bend rather than block.
   - `godot --headless --path . --script tests/test_determinism.gd` — rerun + replay hashes
   - `godot --headless --path . --script tests/test_content.gd` — ability tags/roles,
     `Content.ARCHETYPES` cores, `base_id`, `archetypes_for`, and the effect-grammar
-    lint (closed op/rider vocabulary, TERRAIN/REACTIONS/STATUSES rows, plus a
-    self-test that feeds the lint deliberately bad rows and the planned rider rows)
+    lint (closed op/rider vocabulary, TERRAIN/REACTIONS/STATUSES rows, the D4
+    `DRAFT_SLOTS`/`AFFINITY_IGNORED_TAGS` shapes, plus a self-test that feeds
+    the lint deliberately bad rows and the planned rider rows)
   - `godot --headless --path . --script tests/test_grammar.gd` — effect grammar
-    behaviour: rider evaluation, returned outcomes, and the data tables driven
-    through `Game._apply_effect` on hand-built states
+    behaviour: rider evaluation, returned outcomes, the data tables driven
+    through `Game._apply_effect` on hand-built states, and the D4 draft slots
+    (affinity/upgrade/wild candidates, the one-draw-per-slot count, focus)
   - `godot --headless --path . --script tests/test_economy.gd` — shrine economy
     and quota: config-independent main rng, shop stock filters, graft/ability/
     press/forge purchase rules, the shrine reroll (legality, price escalation,
@@ -458,6 +460,116 @@ architecture below is designed to bend rather than block.
   and the key in `MUTATOR_CONFIG_KEYS` (which `tests/test_content.gd` lints).
   `tests/regressions/c4_no_lance.json`, `c4_wide_draft.json` and
   `c4_upgrades_only.json` demo the three C4 rows.
+- Affinity draft (Block D4, `docs/PROGRESSION_REVIEW.md` §6.4): the descent
+  draft is slotted, so a run's own build steers what it is offered.
+  `Content.DRAFT_SLOTS` (`["affinity", "upgrade_or_affinity", "wild"]`) names
+  the role of offer i; an offer past the list (`wide_draft` asks for 4) is
+  `wild`. Roles come from the closed `Content.DRAFT_SLOT_ROLES`, and what an
+  offer reports is one of `Content.DRAFT_SLOT_REPORTS`
+  (`affinity`/`upgrade`/`wild`/`focus`). The run's affinity tag set is the
+  union of `Content.ABILITIES[id].tags` over the held kit (a `+` form carries
+  its base's tags) and `Content.GRAFTS[id].tags` over the held grafts, minus
+  `Content.AFFINITY_IGNORED_TAGS`. That constant means "these tags do not
+  define a build" (`["mobility"]` — every loadout carries a mobility ability,
+  so counting it would make every run mobility-affine) and BOTH build-steering
+  slots read it through the one helper pair `Game._tag_defines_build(tag)` /
+  `Game._build_defining(aid)` (the latter guards its row read, so an unknown
+  id defines nothing). The affinity tag SET has one reader,
+  `Game._affinity_tags()`, and the two candidate lists in
+  `_draw_draft_offers` are the only other place the
+  sim reads `tags` — all of it serves this one draft rule, and nothing else in
+  the sim reads a tag. Candidates come from the universe the
+  draft already used — unowned `draft_pool` bases (never a base whose `X` or
+  `X+` is held) plus the `+` forms of held bases; under `draft_upgrades_only`
+  only the `+` forms, and every role collapses to that list. `affinity` =
+  unowned pool bases sharing a tag with the set; `upgrade_or_affinity` = the
+  `+` forms of held BUILD-DEFINING bases (reported `upgrade`), else the
+  affinity list; `wild` = the whole universe. The upgrade filter is the
+  affinity set's own rule applied to the other half of the universe: the kit
+  scan builds two lists in one pass, `upgrades` (every `+` form of a held
+  base) and `deepenings` (the same minus rows where `_build_defining` is
+  false), `universe` is still `bases + upgrades` and only the
+  `upgrade_or_affinity` arm reads `deepenings` — so `mycelium_dash+` and
+  `burrow+` are off that slot while `updraft+` (`["wind", "mobility"]`) stays,
+  the UNIVERSE is untouched (a wild slot still offers the dash upgrade, and
+  the shrine forge, which reads the kit, still upcycles it), and under
+  `draft_upgrades_only` the `+` list IS the universe so that arm keeps using
+  `upgrades` — filtering it could empty a draft that today has offers. It is
+  tags, never `role`. Unfiltered, `mycelium_dash+` was offered 158 times in
+  511 optimizer drafts and taken 0; filtered it is 36 offers, all from wild
+  slots, and 0 of 310 upgrade-slot offers over seeds 1..60 are a pure-mobility
+  `+` form (BALANCE.md 2026-09-07g). An id already
+  drawn is excluded from every later slot. `_draw_draft_offers(count)` spends EXACTLY one
+  main-rng draw per slot: a slot whose list is empty after exclusions falls
+  back to wild-minus-drawn (reported `wild` — except the focus slot, which
+  keeps its `focus` label through the fallback whatever list it drew from),
+  and when that is empty too the
+  draw still happens and the slot yields nothing — so the number of main-rng
+  draws is the slot count and never the kit, the grafts or the pool, which is
+  what keeps two configs on one seed comparable downstream (Godot's
+  `randi_range(lo, lo)` is an early return that does not advance the
+  generator, so the draw is `rng.randi()` and the index its remainder).
+  `draft_slots` is stored beside `draft_offers` — the role that produced each
+  offer, cleared with it — and the new stored int `focus` (0 or 1) is armed by
+  a skip: the next draft rolls `count + 1` offers whose extra trailing slot is
+  an affinity slot reported `focus`, and the roll spends the flag whether or
+  not the player then picks. A skip still never pays bloom. The focus slot can
+  buy nothing: under `draft_upgrades_only` a 3-ability kit has exactly three
+  upgrade candidates, the three ordinary slots take them all and the focus
+  slot's list (and the wild fallback, which is the same list) is empty, so the
+  roll spends its draw, clears the flag and deals no fourth card — a skip is
+  strictly dominated under that mutator, pinned by `tests/test_grammar.gd`. Both `draft_slots`
+  and `focus` are in `snapshot()` and therefore in `state_hash()`. Events: the
+  `draft_offer` event carries `offers`, `slots` and `focus` (bool);
+  `draft_pick` / `draft_upgrade` / `draft_skip` and the `legal_actions` /
+  `_act_draft` pick/drop/skip shape are unchanged. `tests/tally.gd` counts
+  `offers_by_slot` / `picks_by_slot` / `focus_drafts` and prints one `draft:`
+  line (picks/offers by slot, focus drafts of drafts, skips); the shell's
+  draft sheet labels each card with its role and its skip button reads
+  "skip - next draft: +1 affinity offer"; the sheet learns whether the ROLL
+  spent a focus from the `draft_offer` event (`_draft_focus_spent`), not from
+  the cards, so a focus slot that dealt nothing says "your skip found nothing
+  left to focus on" instead of reading as an ordinary draft. `tests/test_content.gd` lints
+  `DRAFT_SLOTS` (non-empty, entries from `DRAFT_SLOT_ROLES`) and
+  `AFFINITY_IGNORED_TAGS` (a duplicate-free `Content.TAGS` subset) with a
+  self-test fixture per bad shape (an ignored-tag list covering every
+  `Content.TAGS` entry is rejected too — nothing would define a build) plus
+  `_lint_loadout_affinity`, which requires every `Content.LOADOUTS` kit to
+  hold at least one build-defining ability ("loadout affinity: 6 / 6 kits hold
+  a build-defining ability"); `tests/test_grammar.gd` holds the behaviour
+  tests, including check (i) for the upgrade filter (the helpers, a
+  whole-table pass over all 48 abilities, all six loadouts x seeds 1..44 =
+  264 drafts with 0 pure-mobility upgrade offers, `updraft+` still dealt on a
+  skyrunner/aeolian config, the starved fallbacks, a wild slot still offering
+  `mycelium_dash+`, the forge still upcycling it, and the draw count held at
+  3 for kits whose filtered and unfiltered lists differ by 0, 1 and 2 entries)
+  and the draw-count assert (rng.state after a roll equal across
+  kits with different candidate counts, and equal to a fresh generator
+  advanced `count` times) and the starved cases (a 3-ability kit under
+  `upgrades_only` buying no focus card, a mobility-only kit whose focus slot
+  falls back to wild and is still reported `focus`). A role is CODE, not data:
+  `Game._draw_draft_offers` is the only site that implements one (a match on
+  the role strings with `wild` as the catch-all), so adding an entry to
+  `DRAFT_SLOT_ROLES` without an arm there silently rolls it as wild —
+  `sim/content.gd` says so beside the table. Demos:
+  `tests/regressions/d4_affinity_slot.json`,
+  `d4_upgrade_slot.json` and `d4_wide_draft_slots.json` are one seed and one
+  board through three configs (the flarekeeper's affinity slot deals a sun
+  base, the tidewarden's deals a displace base and its slot 1 a held `+` form,
+  and the wide draft appends a fourth wild offer to the flarekeeper's three
+  unchanged ones), and `d4_focus_skip.json` skips a draft and descends again
+  for the four-offer roll whose last slot is `focus` (its slot 1 pins the
+  upgrade filter too — `seed_bomb+` where the unfiltered rule dealt
+  `mycelium_dash+`). `d4_starved_slot.json`
+  pins the one-draw-per-slot contract in plain mode: a kit and pool that leave
+  the affinity slot exactly one candidate, so a draw that skips or shortens
+  itself on a one-candidate list shifts the two offers after it.
+  `d4_upgrade_filter.json` pins both halves of the filter on one board — the
+  upgrade slot deals the build-defining `seed_bomb+` while the WILD slot deals
+  `mycelium_dash+` on the same roll; unfiltered, the same seed swaps those two
+  roles, so removing the filter fails it in plain mode. `c4_upgrades_only.json`
+  records the deliberate exemption: the mobility `+` form still appears there
+  and in no other slot pin.
 - Run summary and effective casts (C4): `Game.effective_uses` (base id -> int)
   counts a cast only when something happened — an effect outcome fired or a
   rider ran — while `player.uses` stays the raw count. It is copied by
@@ -534,8 +646,53 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (11
-  today: Block D3 — enemies read terrain. `_chase_step` prices a tile whose
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (12
+  today: Block D4 — the affinity-slotted draft with focus on skip. Offer i of
+  a descent draft is rolled by the role `Content.DRAFT_SLOTS[i]` over the same
+  candidate universe as before, and `_draw_draft_offers` spends exactly one
+  main-rng draw per slot — a padded empty slot included — instead of the old
+  `min(count, candidates)` draws from one uniform list, so every log that
+  reached a draft diverges at its first `draft_offer` and every downstream
+  draw shifts; a skip arms the stored `focus` and the next draft rolls one
+  extra affinity slot; and the `upgrade_or_affinity` slot draws from the `+`
+  forms of held BUILD-DEFINING bases only, so its offer moves again wherever
+  the unfiltered list would have dealt a pure-mobility `+`.
+  `draft_slots` and `focus` are stored snapshot keys, so
+  the hash of EVERY record moved, drafting or not. The 12 re-stamp rewrote
+  `sim_version` and the hash across all 77 old records: 57 stamp-only
+  (version + hash, no outcome, action or event-pattern diff), all 20 bot logs
+  replayed on their personas of which 16 came back different — an index pick
+  lands on a different ability now even where the stale list still replayed
+  legally, which is why the re-record is not limited to the desyncing logs;
+  the three `det_wanderer_*` logs (a wanderer never descends, so they are the
+  check that non-drafting play is untouched) and `det_magpie_s11` came back
+  byte-identical — the magpie log DOES draft, and its one draft's offer list
+  changed (`["anchor_roots", "pollen_burst", "vine_whip"]` ->
+  `["bramble_coat", "solar_lance+", "vine_whip"]`); it replayed unchanged only
+  because its stored pick index 2 lands on `vine_whip` in both lists, which is
+  the index-pick hazard below arriving as a coincidence — and four
+  hand-authored demos re-pinned by hand:
+  `c4_no_lance`, `c4_wide_draft` and `c5_loadout_kit_ban` keep their seed and
+  actions with a new offer list, while `c5_open_pool` moved from seed 1 to
+  seed 5, where the package id that carries its point is dealt by the AFFINITY
+  slot (`fungal_ring` is growth-tagged, so `open_pool` widens what every slot
+  draws from and not just the wild one). The re-recorded logs are where the
+  new draft arrives as difficulty rather than as a stale log:
+  `det_optimizer_s11` no longer wins on floor 7 (121 turns, was a win in 83)
+  and `det_fanatic_s11` now reaches floor 7 in 247 turns where it used to die
+  on floor 2 in 50. The upgrade-slot filter landed inside the same
+  uncommitted bump (no second bump: nothing outside this tree ever ran
+  SIM_VERSION 12 unfiltered), and it moved the corpus again — `d4_focus_skip`
+  re-pinned, three demo notes corrected with no pin change
+  (`d4_upgrade_slot`, `d4_starved_slot`, `c4_upgrades_only`), and all 20 bot
+  logs re-recorded on their personas of which 13 changed and 7 came back
+  byte-identical; `det_optimizer_s42` replayed BYTE-IDENTICAL with a matching
+  hash and still changed when re-recorded (its persona now picks index 2
+  where it picked 0-and-drop-3), which is the index-pick hazard again and the
+  reason a re-record is never limited to the logs that stop replaying. The
+  corpus went 77 -> 83 with six `d4_*` demos (the four originals plus
+  `d4_starved_slot` and `d4_upgrade_filter`).
+  Bump 11 was Block D3 — enemies read terrain. `_chase_step` prices a tile whose
   kind is in the row's `avoid` list at 1 + `Content.ENEMY_AVOID_COST` instead
   of 1, so an avoider takes a different step the moment fire lies on or beside
   its path, and a `Content.SCREENED_INTENTS` intent from a non-adjacent,
@@ -609,7 +766,11 @@ architecture below is designed to bend rather than block.
   `tests/autopsy.gd` all read it -
   live phone runs persist as replayable action logs and a stale log replayed
   across sim changes diverges silently. After a bump, re-stamp the corpus
-  (`REGEN=1`) and re-record any bot log whose actions no longer replay.
+  (`REGEN=1`) and re-record every bot log the change could have moved — not
+  only the ones that stop replaying. Bump 12 is why: a draft pick is an index,
+  so a log whose offers changed still replays legally while landing on a
+  different ability, and four of the twenty logs were only proved untouched by
+  re-recording them and diffing (`det_wanderer_*`, `det_magpie_s11`).
 - Human shell (`shell/`): SVG-sprite Godot scene over the sim — see
   `docs/SHELL.md` for controls. `tests/test_shell.gd` smoke-tests it
   headless; `tests/render_frame.gd` renders any game state as a standalone

@@ -1,0 +1,9 @@
+{
+"seed": 3,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#.......#","#@>.....#","#.......#","#########"]},"loadout":"flarekeeper","mutators":["wide_draft"]},
+"actions": [{"dir":[1,0],"type":"move"},{"type":"descend"}],
+"expect": {"events":[{"t":"descend","to_floor":2},{"focus":false,"offers":["moss_filter","sun_flare+","pollen_burst","anchor_roots"],"slots":["affinity","upgrade","wild","wild"],"t":"draft_offer"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "D4 an offer past Content.DRAFT_SLOTS is wild: wide_draft asks for four, the list names three roles, and the fourth slot rolls over the whole universe - anchor_roots, bark, no tag the flarekeeper holds. The record is d4_affinity_slot draft with one slot added and its first three offers are identical (moss_filter, sun_flare+, pollen_burst): the roll spends exactly one main-rng draw per slot in order, so widening the draft appends a draw instead of reshuffling the ones before it. What this board does NOT hold is a starved slot (every slot here has several candidates), so the padding half of the rule - a slot whose list is empty still spends its draw and yields nothing, the number of main-rng draws being the slot count and never the kit, the grafts or the pool - is pinned by d4_starved_slot.json instead",
+"sim_version": 12,
+"hash": "a78d8e3ee26a1331530d3e41f337df588f0d5b29196c0b368a8b8429ec311237"
+}

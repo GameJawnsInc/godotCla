@@ -110,6 +110,13 @@ func _init() -> void:
 	_check_d3_fire_fence()
 	_check_d3_bfs_parity()
 	_check_d3_screening()
+	_check_d4_slot_roles()
+	_check_d4_slot_exclusions()
+	_check_d4_draw_count()
+	_check_d4_focus()
+	_check_d4_mutators()
+	_check_d4_upgrade_filter()
+	_check_d4_state()
 	if failures.is_empty():
 		print("grammar: OK (%d checks)" % checks)
 		quit(0)
@@ -2872,3 +2879,435 @@ func _check_d3_screening() -> void:
 	g._step_events = []
 	g._execute_intent(e)
 	_ok(_evs(g._step_events, "stunned").size() == 1 and _evs(g._step_events, "screened").is_empty(), "a stun swallows the intent before the screen: %s" % str(g._step_events))
+
+
+# --- Block D4: affinity-slotted draft with focus on skip -----------------------
+## Content.DRAFT_SLOTS rolls offer i by role (affinity / upgrade_or_affinity /
+## wild, wild past the list); Game._draw_draft_offers spends exactly one
+## main-rng draw per slot; a skip arms `focus` and the next draft carries one
+## extra trailing affinity offer reported "focus".
+
+const D4_SEEDS := 50
+const D4_TENDER := ["solar_lance", "seed_bomb", "mycelium_dash"]
+
+
+## The first descent draft on seed_v under cfg (the quota handed to the player).
+static func _drafted(seed_v: int, cfg: Dictionary) -> RefCounted:
+	var g = Game.new(seed_v, cfg)
+	g.player["pos"] = g.map["stairs"]
+	g.greened = g.green_need
+	g.step({"type": "descend"})
+	return g
+
+
+## Resolves the open draft with `action` and walks the tender to the next draft.
+static func _next_draft(g, action: Dictionary) -> void:
+	g.step(action)
+	g.player["pos"] = g.map["stairs"]
+	g.greened = g.green_need
+	g.step({"type": "descend"})
+
+
+static func _shares_tag(aid: String, tags: Array) -> bool:
+	for t in Content.ABILITIES[aid].get("tags", []):
+		if tags.has(t):
+			return true
+	return false
+
+
+## (a) the tender kit (sun / fire / growth): the first offer shares a tag with
+## the kit on every seed and is reported "affinity"; the third is "wild" and
+## shares one at the pool's base rate (strictly between never and always).
+## (b) slot 2 is a + form ("upgrade") whenever the kit holds an upgradable
+## base, else an affinity offer ("affinity").
+func _check_d4_slot_roles() -> void:
+	var tags: Array = Game.new(1, {"kit": D4_TENDER})._affinity_tags()
+	_ok(tags == ["sun", "fire", "growth"], "tender affinity tags: %s" % str(tags))
+	_ok(Game.new(1, {"kit": ["mycelium_dash"]})._affinity_tags().is_empty(), "mobility alone defines no affinity")
+	_ok(Game.new(1, {"kit": ["mycelium_dash"], "grafts": ["undertow"]})._affinity_tags() == ["water", "displace", "control"],
+		"grafts feed the affinity set")
+	_ok(Game.new(1, {"kit": ["solar_lance+", "mycelium_dash+"]})._affinity_tags() == ["sun", "fire"], "+ forms carry their base tags")
+	var first_affine := 0
+	var third_affine := 0
+	var roles_ok := 0
+	var second_up := 0
+	var drafts := 0
+	for s in range(1, D4_SEEDS + 1):
+		var g = _drafted(s, {"kit": D4_TENDER})
+		if g.phase != "draft" or g.draft_offers.size() != 3:
+			failures.append("d4 seed %d: expected a 3-offer draft, got %s" % [s, str(g.draft_offers)])
+			continue
+		drafts += 1
+		if _shares_tag(String(g.draft_offers[0]), tags):
+			first_affine += 1
+		if _shares_tag(String(g.draft_offers[2]), tags):
+			third_affine += 1
+		if g.draft_slots == ["affinity", "upgrade", "wild"]:
+			roles_ok += 1
+		if String(g.draft_offers[1]).ends_with("+") and g.player["kit"].has(String(g.draft_offers[1]).trim_suffix("+")):
+			second_up += 1
+	_ok(drafts == D4_SEEDS and first_affine == drafts, "(a) first offer shares a kit tag on %d / %d seeds" % [first_affine, drafts])
+	_ok(third_affine > 0 and third_affine < drafts, "(a) third offer shares a kit tag at the base rate: %d / %d" % [third_affine, drafts])
+	_ok(roles_ok == drafts, "(a) roles affinity / upgrade / wild on %d / %d seeds" % [roles_ok, drafts])
+	_ok(second_up == drafts, "(b) slot 2 is a held base's + form on %d / %d seeds" % [second_up, drafts])
+	print("d4 slots: tender first offer affine %d/%d, third affine %d/%d (base rate)" % [first_affine, drafts, third_affine, drafts])
+	# (b) no upgradable base held: slot 2 falls to the affinity list
+	var no_up := ["solar_lance+", "seed_bomb+", "mycelium_dash+"]
+	var fell := 0
+	for s in range(1, 11):
+		var g = _drafted(s, {"kit": no_up})
+		if g.draft_slots.size() == 3 and g.draft_slots[1] == "affinity" and _shares_tag(String(g.draft_offers[1]), ["sun", "fire", "growth"]) \
+				and not String(g.draft_offers[1]).ends_with("+"):
+			fell += 1
+	_ok(fell == 10, "(b) an all-+ kit sends slot 2 to the affinity list on %d / 10 seeds" % fell)
+	# the affinity slot with nothing affine falls back to wild (reported wild).
+	# burrow is pure mobility, so it defines no build: the affinity set is
+	# empty AND burrow+ is no deepening, so slot 2 falls through as well.
+	var g_w = _drafted(2, {"kit": ["burrow"]})
+	_ok(g_w.draft_slots.size() == 3 and g_w.draft_slots[0] == "wild" and g_w.draft_slots[1] == "wild",
+		"an empty affinity list pads slot 1 from the wild list: %s %s" % [str(g_w.draft_offers), str(g_w.draft_slots)])
+
+
+## (c) no duplicates across slots; a base offer is never held (nor its + twin)
+## and a + offer always upgrades a held base - over several kits and seeds.
+func _check_d4_slot_exclusions() -> void:
+	var kits: Array = [D4_TENDER, ["solar_lance+", "seed_bomb", "mycelium_dash", "water_jet"], ["vine_whip", "root_wall+"],
+		["gust", "seed_bomb", "updraft"]]
+	var bad := 0
+	var drafts := 0
+	for kit in kits:
+		for s in range(1, 21):
+			var g = _drafted(s, {"kit": kit, "packages": ["aeolian"]})
+			if g.phase != "draft":
+				continue
+			drafts += 1
+			var seen := {}
+			for i in g.draft_offers.size():
+				var aid := String(g.draft_offers[i])
+				var ok := not seen.has(aid) and Content.DRAFT_SLOT_REPORTS.has(g.draft_slots[i])
+				seen[aid] = true
+				if aid.ends_with("+"):
+					# a + form comes from the upgrade list or, as part of the universe, the wild one
+					ok = ok and kit.has(aid.trim_suffix("+")) and ["upgrade", "wild"].has(g.draft_slots[i])
+				else:
+					ok = ok and not kit.has(aid) and not kit.has(aid + "+") and g.draft_pool.has(aid)
+				if not ok:
+					bad += 1
+					if bad <= 3:
+						failures.append("d4 exclusions: kit %s seed %d offer %d %s (%s) breaks a rule: %s" % [
+							str(kit), s, i, aid, str(g.draft_slots[i]), str(g.draft_offers)])
+			if g.draft_slots.size() != g.draft_offers.size():
+				bad += 1
+	_ok(bad == 0 and drafts == kits.size() * 20, "(c) %d drafts: no duplicate, held or unheld-upgrade offer (%d bad)" % [drafts, bad])
+
+
+## (d) rng contract: rng.state after the roll depends on the slot count alone.
+## Four kits with 15 / 13 / 2 / 3-candidate universes (the last one a
+## one-candidate affinity slot, the 2-universe one a padded empty slot) on the
+## same seed land on the same state, which is the pre-roll state advanced by
+## exactly `count` generator steps; wide_draft is 4 steps, an armed focus +1.
+func _check_d4_draw_count() -> void:
+	var cfgs: Array = [
+		{"kit": D4_TENDER},
+		{"kit": ["solar_lance+"]},
+		{"kit": ["burrow", "moss_filter"], "pool": ["moss_filter"]},
+		{"kit": ["solar_lance", "seed_bomb"], "pool": ["sun_flare"]},
+	]
+	for s in [1, 7]:
+		var states: Array = []
+		var sizes: Array = []
+		var before: int = -1
+		for cfg in cfgs:
+			var g = Game.new(s, cfg)
+			if before == -1:
+				before = g.rng.state
+			_ok(g.rng.state == before, "(d) Game.new state independent of the kit (seed %d %s)" % [s, str(cfg)])
+			var drawn: Dictionary = g._draw_draft_offers(3)
+			states.append(g.rng.state)
+			sizes.append(drawn["offers"].size())
+		var same := true
+		for st in states:
+			if st != states[0]:
+				same = false
+		_ok(same, "(d) seed %d: rng.state after a 3-slot roll equal across %d kits: %s" % [s, cfgs.size(), str(states)])
+		_ok(sizes == [3, 3, 2, 3], "(d) seed %d: offers per kit %s (the 2-universe kit pads one slot)" % [s, str(sizes)])
+		var ref := RandomNumberGenerator.new()
+		ref.state = before
+		for i in 3:
+			ref.randi()
+		_ok(ref.state == states[0], "(d) seed %d: a 3-slot roll is exactly 3 generator steps" % s)
+		var g4 = Game.new(s, {"kit": D4_TENDER})
+		g4._draw_draft_offers(4)
+		ref.state = before
+		for i in 4:
+			ref.randi()
+		_ok(g4.rng.state == ref.state, "(d) seed %d: a 4-slot roll is exactly 4 steps" % s)
+		var g5 = Game.new(s, {"kit": D4_TENDER})
+		g5.focus = 1
+		var d5: Dictionary = g5._draw_draft_offers(3)
+		ref.state = before
+		for i in 4:
+			ref.randi()
+		_ok(g5.rng.state == ref.state and d5["offers"].size() == 4 and d5["slots"][3] == "focus",
+			"(d) seed %d: an armed focus adds exactly one step and one focus offer: %s" % [s, str(d5)])
+		# the all-empty universe: the draws still happen, the draft yields nothing
+		var g0 = Game.new(s, {"kit": ["mycelium_dash+"], "pool": []})
+		var d0: Dictionary = g0._draw_draft_offers(3)
+		ref.state = before
+		for i in 3:
+			ref.randi()
+		_ok(d0["offers"].is_empty() and d0["slots"].is_empty() and g0.rng.state == ref.state,
+			"(d) seed %d: an empty universe still spends 3 steps and offers nothing" % s)
+
+
+## (e) a skip arms focus; the next draft rolls count + 1 with a trailing
+## "focus" offer that shares a kit tag; focus is spent by the roll whether the
+## player picks or skips; a pick never arms it; the skip never pays bloom.
+func _check_d4_focus() -> void:
+	var armed_ok := 0
+	var extra_affine := 0
+	var reset_ok := 0
+	var pick_ok := 0
+	var event_ok := 0
+	var n := 0
+	for s in range(1, 21):
+		var g = _drafted(s, {"kit": D4_TENDER})
+		if g.phase != "draft":
+			continue
+		n += 1
+		var evs: Array = _evs(g.recent_events, "draft_offer")
+		var ev: Dictionary = evs[evs.size() - 1] if not evs.is_empty() else {}
+		if ev.get("slots", []) == g.draft_slots and ev.get("focus", true) == false:
+			event_ok += 1
+		var picker = g.clone()
+		var bloom_before: int = g.bloom
+		g.step({"type": "draft", "pick": -1})
+		if g.focus == 1 and g.bloom == bloom_before and g.draft_offers.is_empty() and g.draft_slots.is_empty():
+			armed_ok += 1
+		g.player["pos"] = g.map["stairs"]
+		g.greened = g.green_need
+		var evs2: Array = g.step({"type": "descend"})
+		var tags: Array = g._affinity_tags()
+		var offs: Array = _evs(evs2, "draft_offer")
+		if g.phase == "draft" and g.draft_offers.size() == 4 and g.draft_slots.size() == 4 and g.draft_slots[3] == "focus" \
+				and _shares_tag(String(g.draft_offers[3]), tags) and g.focus == 0 \
+				and offs.size() == 1 and offs[0].get("focus", false) == true and offs[0].get("slots", []) == g.draft_slots:
+			extra_affine += 1
+		# a second skip re-arms; a pick on the focused draft leaves it 0
+		var second_picker = g.clone()
+		second_picker.step({"type": "draft", "pick": 0})
+		g.step({"type": "draft", "pick": -1})
+		if g.focus == 1 and second_picker.focus == 0:
+			reset_ok += 1
+		# the pick branch on the first draft never arms focus and rolls 3 next time
+		_next_draft(picker, {"type": "draft", "pick": 0})
+		if picker.focus == 0 and picker.draft_offers.size() == 3 and picker.draft_slots.size() == 3 and not picker.draft_slots.has("focus"):
+			pick_ok += 1
+	_ok(n == 20 and event_ok == n, "(e) draft_offer carries slots and focus false on %d / %d first drafts" % [event_ok, n])
+	_ok(armed_ok == n, "(e) a skip arms focus, clears the offers and costs no bloom on %d / %d" % [armed_ok, n])
+	_ok(extra_affine == n, "(e) the focused draft rolls 4 with a trailing affine focus offer, event focus true, focus reset: %d / %d" % [extra_affine, n])
+	_ok(reset_ok == n, "(e) focus is spent by the roll: a pick leaves 0, another skip re-arms: %d / %d" % [reset_ok, n])
+	_ok(pick_ok == n, "(e) a pick never arms focus: %d / %d" % [pick_ok, n])
+
+
+## (f) wide_draft: 4 offers, roles affinity / upgrade / wild / wild (+ focus
+## when armed). (g) upgrades_only: only + forms, every slot "upgrade", the
+## focus slot draws from the + list too; no + form at all skips the draft.
+func _check_d4_mutators() -> void:
+	var wide_ok := 0
+	for s in range(1, 11):
+		var g = _drafted(s, {"kit": D4_TENDER, "mutators": ["wide_draft"]})
+		if g.draft_offers.size() == 4 and g.draft_slots == ["affinity", "upgrade", "wild", "wild"]:
+			wide_ok += 1
+	_ok(wide_ok == 10, "(f) wide_draft rolls affinity / upgrade / wild / wild on %d / 10 seeds" % wide_ok)
+	var gw = _drafted(3, {"kit": D4_TENDER, "mutators": ["wide_draft"]})
+	_next_draft(gw, {"type": "draft", "pick": -1})
+	_ok(gw.draft_offers.size() == 5 and gw.draft_slots == ["affinity", "upgrade", "wild", "wild", "focus"],
+		"(f) wide_draft + focus rolls 5: %s" % str(gw.draft_slots))
+	var uo_ok := 0
+	for s in range(1, 11):
+		var g = _drafted(s, {"kit": D4_TENDER, "mutators": ["upgrades_only"]})
+		var all_plus: bool = g.draft_offers.size() == 3 and g.draft_slots == ["upgrade", "upgrade", "upgrade"]
+		for aid in g.draft_offers:
+			if not String(aid).ends_with("+") or not D4_TENDER.has(String(aid).trim_suffix("+")):
+				all_plus = false
+		if all_plus:
+			uo_ok += 1
+	_ok(uo_ok == 10, "(g) upgrades_only rolls three + forms reported upgrade on %d / 10 seeds" % uo_ok)
+	var gu = _drafted(4, {"kit": D4_TENDER + ["vine_whip"], "mutators": ["upgrades_only"]})
+	_next_draft(gu, {"type": "draft", "pick": -1})
+	var focus_plus: bool = gu.draft_offers.size() == 4 and gu.draft_slots == ["upgrade", "upgrade", "upgrade", "focus"] \
+		and String(gu.draft_offers[3]).ends_with("+")
+	_ok(focus_plus, "(g) upgrades_only + focus: the focus slot draws a + form too: %s %s" % [str(gu.draft_offers), str(gu.draft_slots)])
+	# the SHIPPED kit is the starved case: three bases give exactly three
+	# upgrade candidates, the three ordinary slots take them all and the focus
+	# slot has nothing left to draw - the skip is spent (the event says focus,
+	# the flag clears) and buys no card. gu above is a 4-ability kit, the only
+	# size where that slot can fire, so pin the 3-ability behaviour here too.
+	var starved := 0
+	for s in range(1, 11):
+		var g = _drafted(s, {"kit": D4_TENDER, "mutators": ["upgrades_only"]})
+		_next_draft(g, {"type": "draft", "pick": -1})
+		if g.draft_offers.size() == 3 and g.draft_slots == ["upgrade", "upgrade", "upgrade"] and g.focus == 0:
+			starved += 1
+	_ok(starved == 10, "(g) upgrades_only + a 3-ability kit: the focus slot buys nothing on %d / 10 seeds" % starved)
+	# the wild fallback never renames a focus slot: a mobility-only kit has an
+	# empty affinity set, so that slot always draws from the wild list
+	var fb := 0
+	for s in range(1, 11):
+		var g = _drafted(s, {"kit": ["mycelium_dash"]})
+		_next_draft(g, {"type": "draft", "pick": -1})
+		if g.draft_offers.size() == 4 and g.draft_slots.size() == 4 and String(g.draft_slots[3]) == "focus":
+			fb += 1
+	_ok(fb == 10, "(g) a focus slot that falls back to wild is still reported focus on %d / 10 seeds" % fb)
+	var gn = _drafted(4, {"kit": ["solar_lance+", "seed_bomb+", "mycelium_dash+"], "mutators": ["upgrades_only"]})
+	_ok(gn.phase == "play" and gn.floor_num == 2 and gn.draft_offers.is_empty() and gn.draft_slots.is_empty() and gn.focus == 0,
+		"(g) upgrades_only with no + form left skips the draft")
+	gn.focus = 1
+	gn.player["pos"] = gn.map["stairs"]
+	gn.greened = gn.green_need
+	gn.step({"type": "descend"})
+	_ok(gn.phase == "play" and gn.floor_num == 3 and gn.focus == 0, "(g) a skipped draft still spends the focus")
+
+
+## (i) the upgrade slot reads the same "defines a build" rule as the affinity
+## set (Content.AFFINITY_IGNORED_TAGS): it never deals a + form whose base
+## carries only ignored tags. Tags, not role - mycelium_dash / burrow are
+## ["mobility"] and are out, updraft is ["wind", "mobility"] and is in. The
+## universe is untouched: a wild slot still offers the mobility + form and
+## the forge still upcycles it, and the filter costs no rng draw.
+func _check_d4_upgrade_filter() -> void:
+	# the helper itself: + forms fold onto their base, unknown ids define nothing
+	var defining_ok: bool = true
+	for aid in ["mycelium_dash", "mycelium_dash+", "burrow", "burrow+", "no_such_ability"]:
+		defining_ok = defining_ok and not Game._build_defining(aid)
+	for aid in ["updraft", "updraft+", "solar_lance", "seed_bomb+", "gust"]:
+		defining_ok = defining_ok and Game._build_defining(aid)
+	_ok(defining_ok, "(i) _build_defining: pure-mobility rows define no build, updraft does")
+	_ok(Game._tag_defines_build("sun") and not Game._tag_defines_build("mobility"),
+		"(i) _tag_defines_build is the one reading of AFFINITY_IGNORED_TAGS")
+	# whole table: a + form always agrees with its base, and the helper agrees
+	# with reading AFFINITY_IGNORED_TAGS off the row directly
+	var folded := 0
+	var table_ok: bool = true
+	for aid in Content.ABILITIES:
+		var want: bool = false
+		for t in Content.ABILITIES[Content.base_id(String(aid))].get("tags", []):
+			if not Content.AFFINITY_IGNORED_TAGS.has(t):
+				want = true
+		table_ok = table_ok and Game._build_defining(String(aid)) == want
+		if String(aid).ends_with("+"):
+			folded += 1
+			table_ok = table_ok and Game._build_defining(String(aid)) == Game._build_defining(Content.base_id(String(aid)))
+	_ok(table_ok and folded > 0, "(i) %d abilities (%d + forms) agree with the ignored-tag reading" % [Content.ABILITIES.size(), folded])
+	# every loadout, 44 seeds: no "upgrade" slot is ever a pure-mobility + form
+	var mob_up := 0
+	var up_offers := 0
+	var drafts := 0
+	for lid in Content.LOADOUTS:
+		var cfg := {"loadout": lid, "packages": Content.LOADOUTS[lid]["requires"].get("packages", [])}
+		for s in range(1, 45):
+			var g = _drafted(s, cfg)
+			if g.phase != "draft":
+				continue
+			drafts += 1
+			for i in g.draft_offers.size():
+				if String(g.draft_slots[i]) != "upgrade":
+					continue
+				up_offers += 1
+				var aid := String(g.draft_offers[i])
+				if not Game._build_defining(aid):
+					mob_up += 1
+					if mob_up <= 3:
+						failures.append("d4 upgrade filter: loadout %s seed %d dealt %s in an upgrade slot" % [lid, s, aid])
+	_ok(drafts == Content.LOADOUTS.size() * 44 and up_offers > 0 and mob_up == 0,
+		"(i) %d drafts, %d upgrade offers, %d of them pure mobility" % [drafts, up_offers, mob_up])
+	print("d4 upgrade filter: %d upgrade-slot offers over %d drafts, %d pure mobility" % [up_offers, drafts, mob_up])
+	# updraft+ is still an upgrade candidate for a kit that holds updraft
+	var updraft_up := 0
+	var sky := 0
+	for s in range(1, 45):
+		var g = _drafted(s, {"loadout": "skyrunner", "packages": ["aeolian"]})
+		if g.phase != "draft":
+			continue
+		sky += 1
+		if g.draft_slots[1] == "upgrade" and String(g.draft_offers[1]) == "updraft+":
+			updraft_up += 1
+	_ok(sky == 44 and updraft_up > 0, "(i) updraft+ is offered by the upgrade slot on %d / %d skyrunner seeds" % [updraft_up, sky])
+	# the starved slot: the mobility ability is the only upgradable base held,
+	# so the upgrade list is empty and the slot falls back - to affinity when
+	# the run has one, to wild when it has none - and still spends its draw
+	var to_affinity := 0
+	var to_wild := 0
+	for s in range(1, 45):
+		var ga = _drafted(s, {"kit": ["solar_lance+", "seed_bomb+", "mycelium_dash"]})
+		if ga.draft_slots.size() == 3 and ga.draft_slots[1] == "affinity" \
+				and _shares_tag(String(ga.draft_offers[1]), ["sun", "fire", "growth"]) \
+				and not String(ga.draft_offers[1]).ends_with("+"):
+			to_affinity += 1
+		var gw2 = _drafted(s, {"kit": ["mycelium_dash"]})
+		if gw2.draft_slots.size() == 3 and gw2.draft_slots[1] == "wild":
+			to_wild += 1
+	_ok(to_affinity == 44, "(i) a mobility-only upgrade list falls back to affinity on %d / 44 seeds" % to_affinity)
+	_ok(to_wild == 44, "(i) with no affinity either it falls back to wild on %d / 44 seeds" % to_wild)
+	# a wild slot still offers the mobility + form: it is in the universe
+	var wild_mob := 0
+	var seen_seed := -1
+	for s in range(1, 201):
+		var g = Game.new(s, {"kit": ["mycelium_dash"]})
+		var d: Dictionary = g._draw_draft_offers(3)
+		for i in d["offers"].size():
+			if String(d["offers"][i]) == "mycelium_dash+":
+				wild_mob += 1
+				if seen_seed == -1:
+					seen_seed = s
+					_ok(String(d["slots"][i]) == "wild", "(i) the mobility + form is dealt by a wild slot: %s %s" % [str(d["offers"]), str(d["slots"])])
+	_ok(wild_mob > 0, "(i) a wild slot offered mycelium_dash+ on %d / 200 seeds (first seed %d)" % [wild_mob, seen_seed])
+	# the forge reads the kit, not the draft list: it still upcycles mobility
+	var gf = Game.new(3, {"kit": D4_TENDER, "bloom": 40})
+	gf.player["pos"] = gf.map["shrine"]
+	gf.shop["forge"] = true
+	gf.step({"type": "upcycle_ability", "keep": 2, "scrap": 0})
+	_ok(gf.player["kit"].has("mycelium_dash+") and _evs(gf.recent_events, "illegal").is_empty(),
+		"(i) the shrine forge still upcycles the mobility ability: %s" % str(gf.player["kit"]))
+	# the filter costs no draw: kits whose filtered / unfiltered upgrade lists
+	# differ by 1, by 2 and not at all all land on count generator steps
+	var kits: Array = [D4_TENDER, ["mycelium_dash", "burrow", "solar_lance"], ["mycelium_dash"], ["solar_lance", "vine_whip"]]
+	for s in [1, 7, 13]:
+		var states: Array = []
+		var before: int = -1
+		for kit in kits:
+			var g = Game.new(s, {"kit": kit, "packages": ["mycology"]})
+			if before == -1:
+				before = g.rng.state
+			g._draw_draft_offers(3)
+			states.append(g.rng.state)
+		var ref := RandomNumberGenerator.new()
+		ref.state = before
+		for i in 3:
+			ref.randi()
+		var same: bool = true
+		for st in states:
+			same = same and st == ref.state
+		_ok(same, "(i) seed %d: the filter costs no draw - every kit lands on 3 steps: %s" % [s, str(states)])
+
+
+## (h) snapshot carries draft_slots and focus; clone copies both; state_hash
+## moves with focus and with draft_slots.
+func _check_d4_state() -> void:
+	var g = _drafted(5, {"kit": D4_TENDER})
+	var snap: Dictionary = g.snapshot()
+	_ok(snap.get("draft_slots", null) == g.draft_slots and snap.get("draft_slots", []).size() == 3 and int(snap.get("focus", -1)) == 0,
+		"(h) snapshot carries draft_slots %s and focus %s" % [str(snap.get("draft_slots")), str(snap.get("focus"))])
+	g.step({"type": "draft", "pick": -1})
+	_ok(int(g.snapshot()["focus"]) == 1, "(h) snapshot focus follows the skip")
+	var c = g.clone()
+	_ok(c.focus == 1 and c.draft_slots == g.draft_slots and c.state_hash() == g.state_hash(), "(h) clone copies focus and draft_slots")
+	c.focus = 0
+	_ok(c.state_hash() != g.state_hash(), "(h) state_hash moves with focus")
+	var g2 = _drafted(5, {"kit": D4_TENDER})
+	var c2 = g2.clone()
+	_ok(c2.state_hash() == g2.state_hash() and c2.draft_slots == g2.draft_slots, "(h) clone copies draft_slots")
+	c2.draft_slots[0] = "wild"
+	_ok(c2.state_hash() != g2.state_hash(), "(h) state_hash moves with draft_slots")
+	_ok(Game.new(5).focus == 0 and Game.new(5).draft_slots.is_empty(), "(h) a fresh game starts unfocused with no slots")

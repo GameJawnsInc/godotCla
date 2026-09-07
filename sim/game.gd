@@ -77,7 +77,22 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## non-massive enemy fizzles ({t: "screened", id, intent}) while the tender
 ## stands on or beside a TERRAIN row with "screens" (smoke). No main-rng draw
 ## moved: the search and the screen never touch the rng.
-const SIM_VERSION := 11
+## 12: Block D4 - the affinity-slotted draft with focus on skip. Offer i of a
+## descent draft is rolled by the role Content.DRAFT_SLOTS[i] (affinity /
+## upgrade_or_affinity / wild; past the list wild) over the same candidate
+## universe as before, and _draw_draft_offers spends exactly one main-rng draw
+## per slot - a padded empty slot included - instead of the old
+## min(count, candidates) draws from one uniform list. A draft skip arms
+## `focus` (stored, hashed) and the next draft rolls one extra affinity slot.
+## Neither build-steering slot spends itself on an ability that defines no
+## build: the affinity set drops Content.AFFINITY_IGNORED_TAGS and the upgrade
+## slot's list drops a + form whose base carries nothing else (_build_defining
+## - mycelium_dash+ and burrow+, never updraft+, which is ["wind","mobility"]).
+## The universe is untouched, so a wild slot can still offer one.
+## So every log that reached a draft diverges at its first draft_offer: the
+## offers differ, and every downstream draw shifts. `draft_slots` (the role
+## that produced each offer) and `focus` join snapshot() and the hash.
+const SIM_VERSION := 12
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -100,6 +115,12 @@ var terrain := {}
 var recent_events: Array = []
 var phase := "play"
 var draft_offers: Array = []
+## Block D4: the reported role that produced draft_offers[i] (one of
+## Content.DRAFT_SLOT_REPORTS), cleared with draft_offers.
+var draft_slots: Array = []
+## Block D4: 1 after a draft skip until the next draft is rolled, which then
+## carries one extra affinity ("focus") offer. Stored, hashed, never bloom.
+var focus := 0
 var shop := {}
 var tier := 0
 var mutators: Array = []
@@ -478,6 +499,7 @@ func snapshot() -> Dictionary:
 		"greened": greened, "green_need": green_need,
 		"over": over, "won": won, "death_cause": death_cause,
 		"phase": phase, "draft_offers": draft_offers.duplicate(),
+		"draft_slots": draft_slots.duplicate(), "focus": focus,
 		"pool": draft_pool.duplicate(), "packages": packages.duplicate(), "loadout": loadout,
 		"player": {
 			"pos": player["pos"], "hp": player["hp"], "max_hp": player["max_hp"],
@@ -545,6 +567,8 @@ func clone():
 	g.recent_events = recent_events.duplicate(true)
 	g.phase = phase
 	g.draft_offers = draft_offers.duplicate()
+	g.draft_slots = draft_slots.duplicate()
+	g.focus = focus
 	g.shop = shop.duplicate(true)
 	g.casts_this_turn = casts_this_turn
 	g.moved_this_turn = moved_this_turn
@@ -1402,31 +1426,158 @@ func _act_descend() -> void:
 	player["hp"] = mini(player["hp"] + Content.DESCEND_HEAL, player["max_hp"])
 	_emit({"t": "descend", "to_floor": floor_num + 1})
 	_pending_floor = floor_num + 1
-	draft_offers = _draw_draft_offers(int(_mut("draft_offers", 3)))
+	# Block D4: an armed focus (the last draft was skipped) adds one affinity
+	# slot to this roll and is spent by the roll, picked or not.
+	var focused: bool = focus == 1
+	var drawn: Dictionary = _draw_draft_offers(int(_mut("draft_offers", 3)))
+	draft_offers = drawn["offers"]
+	draft_slots = drawn["slots"]
+	focus = 0
 	if draft_offers.is_empty():
+		draft_slots = []
 		_enter_floor(_pending_floor)
 		_begin_player_turn()
 	else:
 		phase = "draft"
-		_emit({"t": "draft_offer", "offers": draft_offers.duplicate()})
+		_emit({"t": "draft_offer", "offers": draft_offers.duplicate(),
+			"slots": draft_slots.duplicate(), "focus": focused})
 
 
-func _draw_draft_offers(count: int) -> Array:
-	var candidates: Array = []
-	if not bool(_mut("draft_upgrades_only", false)):
+## Does the tag `t` define a build (Block D4)? The one reading of
+## Content.AFFINITY_IGNORED_TAGS, which means "these tags do not define a
+## build": such a tag says nothing about what a run is building, so no draft
+## slot that cares about the build may be steered by it. Both readers below
+## go through here, so the list has one meaning in one place.
+static func _tag_defines_build(t: String) -> bool:
+	return not Content.AFFINITY_IGNORED_TAGS.has(t)
+
+
+## Does the ability `aid` define a build (Block D4)? True when its row carries
+## any build-defining tag (a + form carries its base's tags). Tags, never
+## role: mycelium_dash and burrow are ["mobility"] and define nothing, while
+## updraft is ["wind", "mobility"] and does - it has an identity beyond
+## moving. Read by the upgrade slot, the mirror of the affinity set's own
+## filter: the slot that MATCHES your build and the slot that DEEPENS it both
+## refuse to spend themselves on an ability that is no part of one.
+static func _build_defining(aid: String) -> bool:
+	for t in Content.ABILITIES.get(Content.base_id(aid), {}).get("tags", []):
+		if _tag_defines_build(t):
+			return true
+	return false
+
+
+## The run's affinity tag set (Block D4): every tag of every held ability (a
+## + form carries its base's tags) and every held graft, minus the tags that
+## do not define a build (_tag_defines_build). Pure table reads; order is
+## first-seen.
+func _affinity_tags() -> Array:
+	var tags: Array = []
+	var rows: Array = []
+	for aid in player["kit"]:
+		rows.append(Content.ABILITIES.get(aid, {}).get("tags", []))
+	for gid in player["grafts"]:
+		rows.append(Content.GRAFTS.get(gid, {}).get("tags", []))
+	for row in rows:
+		for t in row:
+			if _tag_defines_build(t) and not tags.has(t):
+				tags.append(t)
+	return tags
+
+
+## Rolls a descent draft (Block D4): {offers, slots}. Offer i is rolled by the
+## role Content.DRAFT_SLOTS[i] ("wild" past the list) and an armed focus adds
+## one trailing "affinity" slot reported as "focus". Candidate lists, all
+## over the pre-D4 universe (unowned pool bases, never a base whose X or X+
+## is held, plus the + forms of held bases; under draft_upgrades_only the +
+## forms only, every role alike):
+##   affinity            unowned pool bases sharing a tag with _affinity_tags()
+##   upgrade_or_affinity the + forms of held BUILD-DEFINING bases
+##                       (_build_defining) when any exist, else affinity
+##   wild                the whole universe
+## The upgrade slot's filter is the affinity set's own rule applied to the
+## other half of the universe: a pure-mobility + form deepens no build, so
+## the slot falls through to affinity (and then wild) rather than spend
+## itself on one. It narrows that slot's LIST only - the universe still holds
+## every + form of a held base, so a wild slot can still offer one and the
+## shrine forge (which reads the kit, not this list) still upcycles it; under
+## draft_upgrades_only the + list IS the universe, so it stays unfiltered.
+## An offer already drawn is excluded from every later slot; a slot whose
+## list is then empty falls back to the wild list (reported "wild", except the
+## focus slot, which keeps its "focus" label whatever list it drew from), and
+## when that is empty too the slot yields nothing. The rng contract: EXACTLY one
+## main-rng draw per slot, whatever the kit, grafts or pool hold, so
+## rng.state after the roll depends on the slot count alone. randi_range(lo,
+## lo) is an early return that never advances the generator (a one-candidate
+## slot would then advance differently from a two-candidate one), so the draw
+## is rng.randi() and the index its remainder.
+func _draw_draft_offers(count: int) -> Dictionary:
+	var upgrades_only := bool(_mut("draft_upgrades_only", false))
+	var bases: Array = []
+	if not upgrades_only:
 		for aid in draft_pool:
 			if not player["kit"].has(aid) and not player["kit"].has(aid + "+"):
-				candidates.append(aid)
+				bases.append(aid)
+	var upgrades: Array = []
+	var deepenings: Array = []
 	for aid in player["kit"]:
 		var up: String = aid + "+"
-		if Content.ABILITIES.has(up):
-			candidates.append(up)
+		if Content.ABILITIES.has(up) and not upgrades.has(up):
+			upgrades.append(up)
+			if _build_defining(up):
+				deepenings.append(up)
+	var universe: Array = bases + upgrades
+	var affine: Array = []
+	var tags: Array = _affinity_tags()
+	for aid in bases:
+		for t in Content.ABILITIES.get(aid, {}).get("tags", []):
+			if tags.has(t):
+				affine.append(aid)
+				break
 	var offers: Array = []
-	while offers.size() < count and not candidates.is_empty():
-		var i := rng.randi_range(0, candidates.size() - 1)
-		offers.append(candidates[i])
-		candidates.remove_at(i)
-	return offers
+	var slots: Array = []
+	var total: int = count + (1 if focus == 1 else 0)
+	for i in total:
+		var role: String = "affinity" if i >= count else (
+			String(Content.DRAFT_SLOTS[i]) if i < Content.DRAFT_SLOTS.size() else "wild")
+		var report: String = "focus" if i >= count else role
+		var cands: Array = []
+		if upgrades_only:
+			cands = _minus(upgrades, offers)
+			if i < count:
+				report = "upgrade"
+		else:
+			match role:
+				"affinity":
+					cands = _minus(affine, offers)
+				"upgrade_or_affinity":
+					cands = _minus(deepenings, offers)
+					report = "upgrade"
+					if cands.is_empty():
+						cands = _minus(affine, offers)
+						report = "affinity"
+				_:
+					cands = _minus(universe, offers)
+					report = "wild"
+		if cands.is_empty():
+			# the wild fallback never renames the focus slot: the skip was spent
+			# on this slot whatever list it ended up drawing from
+			cands = _minus(universe, offers)
+			report = "focus" if i >= count else "wild"
+		var r: int = rng.randi()
+		if cands.is_empty():
+			continue
+		offers.append(cands[r % cands.size()])
+		slots.append(report)
+	return {"offers": offers, "slots": slots}
+
+
+## `list` without the entries of `taken`, order kept.
+static func _minus(list: Array, taken: Array) -> Array:
+	var out: Array = []
+	for x in list:
+		if not taken.has(x):
+			out.append(x)
+	return out
 
 
 func _act_draft(action: Dictionary) -> void:
@@ -1455,8 +1606,10 @@ func _act_draft(action: Dictionary) -> void:
 			player["kit"].append(aid)
 		_emit({"t": "draft_pick", "id": aid})
 	else:
+		focus = 1
 		_emit({"t": "draft_skip"})
 	draft_offers = []
+	draft_slots = []
 	phase = "play"
 	_enter_floor(_pending_floor)
 	_begin_player_turn()

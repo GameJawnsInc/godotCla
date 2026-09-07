@@ -277,11 +277,56 @@ const DRAFT_POOL := [
 	"grow_spike", "bramble_coat", "anchor_roots", "moss_filter",
 ]
 
+## Descent draft slot roles (Block D4, docs/PROGRESSION_REVIEW.md 6.4 "Affinity-
+## slotted draft with focus on skip"). Offer i of a draft is rolled by the
+## role DRAFT_SLOTS[i]; an offer past the list (wide_draft asks for 4) is
+## "wild". Roles, all over the universe the draft used before (unowned pool
+## bases - never a base whose X or X+ is held - plus the + forms of held
+## bases; under draft_upgrades_only only the + forms, and every role collapses
+## to that list):
+##   affinity             unowned pool bases sharing a tag with the run's
+##                        affinity set (the union of ABILITIES tags over the
+##                        held kit and GRAFTS tags over the held grafts, minus
+##                        AFFINITY_IGNORED_TAGS)
+##   upgrade_or_affinity  the + forms of held BUILD-DEFINING bases (see
+##                        AFFINITY_IGNORED_TAGS) when any exist, else the
+##                        affinity list
+##   wild                 the whole universe
+## A slot whose list is empty after earlier offers are excluded falls back to
+## the wild list (reported "wild"; the focus slot below keeps its "focus"
+## label through that fallback); Game._draw_draft_offers spends exactly one
+## main-rng draw per slot whatever the lists hold. A skip arms `focus`: the
+## next draft rolls one extra, last "affinity" slot (reported "focus").
+## Entries come from the closed DRAFT_SLOT_ROLES set (tests/test_content.gd
+## lints both, and the reported slot names in DRAFT_SLOT_REPORTS).
+## A role is CODE, not data: Game._draw_draft_offers is the one site that
+## implements them (a match on these strings, wild as the catch-all), so
+## adding a role here without an arm there silently rolls it as wild - adding
+## a role means changing that function in the same commit.
+const DRAFT_SLOT_ROLES := ["affinity", "upgrade_or_affinity", "wild"]
+const DRAFT_SLOTS := ["affinity", "upgrade_or_affinity", "wild"]
+## What snapshot().draft_slots / the draft_offer event report per offer.
+const DRAFT_SLOT_REPORTS := ["affinity", "upgrade", "wild", "focus"]
+## Tags that do not define a build. Every loadout carries a mobility ability,
+## so a run whose only "mobility" tag came from that slot is not thereby
+## "mobility-affine" - and an ability carrying nothing but these tags is no
+## part of a build at all. Both draft slots that read the build honour that,
+## through the one helper pair Game._tag_defines_build / _build_defining:
+## the affinity set ignores these tags, and the upgrade slot skips a + form
+## whose base carries only them (mycelium_dash+, burrow+; updraft+ is
+## ["wind", "mobility"] and stays). Neither the universe nor the wild slot
+## nor the shrine forge is filtered - the + form is still reachable, just not
+## dealt by the slot that is supposed to deepen what you are building.
+const AFFINITY_IGNORED_TAGS := ["mobility"]
+
 ## --- Sim-ignored ability metadata ------------------------------------------
-## The sim never reads "tags", TAGS, ROLES, ARCHETYPES or the helpers below,
-## and reads "role" for exactly one rule: the shrine forge may never scrap a
-## role == "mobility" ability (Game._is_mobility). Otherwise step() outcomes
-## and rng draws are unaffected by any value here. They are shared data (style
+## The sim never reads TAGS, ROLES, ARCHETYPES or the helpers below, and reads
+## "role" for exactly one rule: the shrine forge may never scrap a
+## role == "mobility" ability (Game._is_mobility). Since Block D4 it reads
+## "tags" for exactly one rule too: the draft's affinity slots (DRAFT_SLOTS
+## above) offer bases sharing a tag with the held kit and grafts - the tags
+## decide WHICH ids a slot can offer, never how many main-rng draws it spends.
+## Otherwise step() outcomes and rng draws are unaffected by any value here. They are shared data (style
 ## guide §6) for bots (persona build commitments, drop guards), the shell
 ## (kit labels, build hints) and tests (coverage asserts), so all three agree
 ## on one vocabulary instead of each hardcoding ids.
@@ -573,9 +618,12 @@ const CLEANSE_SMOG_RELIEF := 1  # a cleanse pauses the smog clock, never rewinds
 ##                        shop's ability stock follows the pool)
 ##   kit_ban              true also strips pool_ban ids (+ forms too) from the
 ##                        starting kit
-##   draft_offers         offers per descent draft (default 3)
+##   draft_offers         offers per descent draft (default 3; a slot past
+##                        DRAFT_SLOTS rolls as "wild", and an armed focus
+##                        adds one more on top)
 ##   draft_upgrades_only  draft candidates are only the + forms of held
-##                        abilities (no candidate = the draft is skipped)
+##                        abilities - every DRAFT_SLOTS role collapses to that
+##                        list (no candidate = the draft is skipped)
 ##   open_pool            true adds every PACKAGES ability to the draft pool
 ##                        (the pre-Block-A all-packages variety as a choice;
 ##                        the profile's one-package-per-run commitment is the

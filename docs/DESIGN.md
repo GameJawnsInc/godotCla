@@ -170,6 +170,47 @@ The theme should do mechanical work, not just paint.
 - Loadout: 4 ability slots + 1 mobility slot. Drafting while full = drop one.
 - Draft cadence: 1-of-3 at each descent; shrines/shops mid-floor spend Bloom.
 - Upgrades appear as draft options (e.g. cost reduction, bigger shape).
+- **The draft is slotted, not a lottery.** Each of the three offers is rolled
+  by a *role* (`Content.DRAFT_SLOTS`), so the same descent always asks the same
+  three questions: **affinity** (a pool ability sharing a tag with what you
+  already carry), **upgrade or affinity** (the `+` form of something you hold
+  when there is one, another build-matching offer when there isn't), and
+  **wild** (anything in the pool). A run that has committed to fire keeps
+  seeing fire, so wanting a build is a thing you can *do* rather than a thing
+  the roll does to you — the answer to review finding 5.1, "the draft is
+  kit-blind in the sense that matters".
+- **The affinity set** is the union of the tags of every ability in the kit
+  (a `+` form counts as its base) and of every graft owned, minus
+  `Content.AFFINITY_IGNORED_TAGS` — today just `mobility`, because every
+  loadout carries a mobility ability and a tag everyone has defines no build.
+  Buying a graft therefore widens what the next draft is likely to show you:
+  the shrine and the draft are one build conversation, not two.
+- **Neither build-steering slot spends itself on something that is no part of
+  a build.** The same list that keeps `mobility` out of the affinity set keeps
+  a pure-mobility upgrade off the upgrade slot: every loadout is guaranteed to
+  carry a mobility ability, so without the rule roughly a quarter of "deepen
+  your build" offers were the dash upgrade — a card measured at 158 offers and
+  0 takes across 511 bot drafts. It is a *tag* test, not a role test, so an
+  ability with an identity beyond moving (Updraft, which is wind as well as
+  mobility) still counts as a build. And it narrows only what that slot draws
+  from: the wild slot can still offer a mobility upgrade and the shrine forge
+  still sells one, so the card stays reachable for the run that actually wants
+  it.
+- **One draw per slot, always.** The roll spends exactly one main-rng draw per
+  offer whatever the candidate lists hold: a slot with nothing to offer falls
+  back to the wild list, and a slot with nothing left at all still spends its
+  draw and simply yields no card. That keeps the whole seed downstream of a
+  draft independent of the kit — two runs of the same seed diverge because of
+  what they *chose*, not because one of them had a shorter candidate list.
+- **Skipping buys focus.** Taking nothing arms `focus`: the next draft deals
+  one extra offer, an affinity one, and the arming is spent by that draft
+  whether or not you take a card. So "none of these three" is a real line of
+  play — pass now, get a wider look at your own build next floor — and the
+  draft has an answer to a bad hand that isn't a reroll. The reward is
+  deliberately *not* Bloom: Bloom would make skipping a shop decision priced
+  against grafts and heals, and every persona would learn one Bloom-optimal
+  skip rate. An extra affinity card is only worth taking when you actually
+  want the build, so the choice stays a build choice.
 - Starting pool: **Horticulture** core set (~12 abilities). Examples:
   - Solar Lance — line damage, stronger in clear smog.
   - Seed Bomb — radius, creates growth.
@@ -261,7 +302,8 @@ tests a different build muscle so no single draft strategy trivializes it.
   slot goes dead once you are kitted out (accepted), and the forge is the only
   way to free a kit slot - it may never scrap the mobility ability, so a run
   can always still move. The 1-of-3 draft at each descent has no reroll of its
-  own; the shrine counter does (below).
+  own - its answer to a bad hand is the skip, which arms one extra affinity
+  offer on the next descent; the shrine counter has the reroll (below).
 - **Rerolling the counter** (the one repeatable Bloom sink) - **an opt-in
   mutator, Spinning Shrine, unlocked at the first win**: measured default-on,
   the greed canary rose from 8% to 15.5% of runs over 200 paired seeds and no
@@ -415,9 +457,11 @@ Both replay hooks, both implemented as data over the same sim:
   table entry, not a branch. Three of them rewrite the draft or the kit rather
   than a stat: **Lance Embargo** takes Solar Lance out of the starting kit, the
   draft pool and the shrine, so the run opens on two abilities and has to find
-  its own damage; **Wide Draft** deals four offers instead of three;
-  **Upgrades Only** never offers a new ability at all, only the `+` forms of
-  what you already hold, so the kit stops widening and starts deepening.
+  its own damage; **Wide Draft** deals four offers instead of three (the fourth
+  slot is a wild one, past the end of the role list); **Upgrades Only** never
+  offers a new ability at all, only the `+` forms of what you already hold, so
+  the kit stops widening and starts deepening - every slot, the focus one
+  included, draws from that same list.
 
 ## Playtest personas (style guide §5)
 

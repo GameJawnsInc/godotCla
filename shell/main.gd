@@ -98,10 +98,27 @@ const DIRS4 := {
 	"left": Vector2i(-1, 0), "right": Vector2i(1, 0),
 }
 
+## Draft slot roles (Content.DRAFT_SLOT_REPORTS) as card badges: one word per
+## role, drawn gold on the card. Presentation only - the sim reports the role
+## and the sheet just names it, so a role with no entry here draws no badge
+## rather than a wrong one.
+const DRAFT_SLOT_LABEL := {
+	"affinity": "AFFINITY",
+	"upgrade": "UPGRADE",
+	"wild": "WILD",
+	"focus": "FOCUS",
+}
+
 var game
 var seed_v := 0
 var screen := "menu"  # menu | game | tutorial
 var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | up_keep | up_scrap | intro | help | shop | log | settings
+## Did the roll that produced the draft on screen spend an armed focus? Read
+## off the draft_offer event, because a focus slot that found no candidate
+## yields no FOCUS card and the snapshot cannot tell that from an ordinary
+## draft. False after a resume mid-draft (no event seen), where the card
+## itself is the only evidence left.
+var _draft_focus_spent := false
 var mode_slot := -1
 var mode_targets: Array = []
 var mode_pick := -1
@@ -239,6 +256,7 @@ func _new_game() -> void:
 	var cfg: Dictionary = _run_config()
 	run_tier = int(cfg.get("tier", 0))
 	game = Game.new(seed_v, cfg)
+	_draft_focus_spent = false  # a fresh run never inherits the last one's focus
 	_game_is_run = true
 	_run_recorded = false
 	_run_unlocks = []
@@ -262,6 +280,7 @@ func _new_game() -> void:
 func _start_tutorial() -> void:
 	screen = "tutorial"
 	game = Game.new(1, Tutorial.game_config())
+	_draft_focus_spent = false
 	_game_is_run = false
 	tut_step = 0
 	tut_done = false
@@ -309,6 +328,8 @@ func _load_run() -> void:
 	mode = "normal"
 	log_lines = []
 	for ev in game.snapshot()["events"]:
+		if String(ev.get("t", "")) == "draft_offer":
+			_draft_focus_spent = bool(ev.get("focus", false))
 		var s := _ev_text(ev)
 		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
 			log_lines.append(s)
@@ -459,6 +480,8 @@ func _act(a: Dictionary) -> void:
 	if game.over and _game_is_run and not _run_recorded:
 		_record_finished_run()
 	for ev in evs:
+		if String(ev.get("t", "")) == "draft_offer":
+			_draft_focus_spent = bool(ev.get("focus", false))
 		var s := _ev_text(ev)
 		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
 			log_lines.append(s)
@@ -1444,6 +1467,8 @@ func _ev_text(ev: Dictionary) -> String:
 			return "Rerolled the counter (-%d bloom)" % int(ev.get("cost", 0))
 		"draft_upgrade":
 			return "Upgraded to %s" % str(ev["id"])
+		"draft_skip":
+			return "Took nothing - the next draft adds a focus offer"
 		"shield":
 			return "Shield up (%d)" % ev["total"]
 		"thorns":
@@ -2505,8 +2530,11 @@ func _ability_desc(aid: String) -> String:
 
 
 ## A choice card: icon, title with cost, and the effect explained inline -
-## the whole card is the tap target, so no extra info taps needed.
-func _card(r: Rect2, icon: String, title: String, desc: String, tag: String, vh: float) -> void:
+## the whole card is the tap target, so no extra info taps needed. `badge` is
+## an optional short word drawn gold on the title line's right edge (the draft
+## uses it for the slot a card was rolled from); it shortens the title's own
+## width so the two can never overlap.
+func _card(r: Rect2, icon: String, title: String, desc: String, tag: String, vh: float, badge: String = "") -> void:
 	_box(r, _sb_card)
 	var isz := int(r.size.y * 0.62)
 	var tx := Art.tex(icon, isz)
@@ -2515,6 +2543,12 @@ func _card(r: Rect2, icon: String, title: String, desc: String, tag: String, vh:
 		draw_texture(tx, r.position + Vector2(r.size.y * 0.19, (r.size.y - isz) / 2.0))
 		text_x = r.position.x + r.size.y * 1.05
 	var max_w := r.position.x + r.size.x - text_x - vh * 0.01
+	if badge != "":
+		var bsz := _fit_size(badge, int(r.size.y * 0.2), r.size.x * 0.4)
+		var bw := font.get_string_size(badge, HORIZONTAL_ALIGNMENT_LEFT, -1, bsz).x
+		_txt(Vector2(r.position.x + r.size.x - bw - vh * 0.012, r.position.y + r.size.y * 0.38),
+			badge, COL_GOLD, bsz)
+		max_w = maxf(max_w - bw - vh * 0.024, vh * 0.05)
 	_txt_fit(Vector2(text_x, r.position.y + r.size.y * 0.42), title, COL_TEXT, int(r.size.y * 0.27), max_w)
 	_txt_fit(Vector2(text_x, r.position.y + r.size.y * 0.76), desc, COL_DIM_TEXT, int(r.size.y * 0.2), max_w)
 	_hot(r, tag)
@@ -2620,10 +2654,33 @@ func _draw_logsheet(vw: float, vh: float) -> void:
 		y += fsz * 1.45
 
 
+## The descent draft (Block D4). Each card carries the slot that rolled it -
+## AFFINITY (shares a tag with your kit and grafts), UPGRADE (the "+" form of
+## something you hold), WILD (anything in the pool) or FOCUS (the extra
+## affinity offer a previous skip bought). The roles are read straight off
+## snapshot().draft_slots, so the sheet can never label a card as something
+## the sim did not roll it as. Whether the roll SPENT a focus is a different
+## question - a focus slot with no candidate left yields no card - and that
+## comes off the draft_offer event (_draft_focus_spent), so a skip that
+## bought nothing says so instead of reading as an ordinary draft.
 func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 	hotspots.clear()
 	var y := _sheet(vw, vh, "DESCENT DRAFT")
-	_txt_fit(Vector2(vw * 0.06, y), "Choose one ability to take down with you:", COL_TEXT, int(vh * 0.024), vw * 0.88); y += vh * 0.055
+	var slots: Array = snap.get("draft_slots", [])
+	# a FOCUS card on the sheet vs a focus the roll spent: the second is the
+	# truth about the skip, and only the draft_offer event carries it
+	var focused: bool = slots.has("focus")
+	var spent: bool = focused or _draft_focus_spent
+	# the head names the labels the sheet actually carries: Upgrades Only deals
+	# nothing but UPGRADE cards, and pointing at AFFINITY there would be a lie
+	var head := "Choose one to take down with you:"
+	if focused:
+		head = "Your skip bought the FOCUS card - one extra offer for your build:"
+	elif spent:
+		head = "Your skip found nothing left to focus on - no extra offer here:"
+	elif slots.has("affinity"):
+		head = "Choose one to take down with you - AFFINITY cards match your build:"
+	_txt_fit(Vector2(vw * 0.06, y), head, COL_TEXT, int(vh * 0.024), vw * 0.88); y += vh * 0.055
 	var bh := vh * 0.105
 	if mode != "draft_drop":
 		for i in snap["draft_offers"].size():
@@ -2632,13 +2689,19 @@ func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 			var icon := "ab_" + aid.trim_suffix("+")
 			if not Art.ART.has(icon):
 				icon = "ab_default"
-			var up := "  (upgrade)" if aid.ends_with("+") else ""
+			var role := String(slots[i]) if i < slots.size() else ""
+			# the badge already says UPGRADE when the slot was the upgrade one;
+			# a "+" card off a wild slot still needs the word in its title
+			var up := "  (upgrade)" if aid.ends_with("+") and role != "upgrade" else ""
 			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), icon,
 				"%s  —  %d charge%s" % [adef["name"], adef["cost"], up],
-				_ability_desc(aid), "draft:%d" % i, vh)
+				_ability_desc(aid), "draft:%d" % i, vh, String(DRAFT_SLOT_LABEL.get(role, "")))
 			y += bh + vh * 0.02
 		y += vh * 0.015
-		_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.65), "skip - take nothing", "skip_draft", int(bh * 0.24))
+		_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.65),
+			"skip - focus armed again: +1 affinity offer" if spent
+				else "skip - next draft: +1 affinity offer",
+			"skip_draft", int(bh * 0.24))
 	else:
 		_txt_fit(Vector2(vw * 0.06, y), "Kit is full - tap what to DROP for it:", COL_RED, int(vh * 0.024), vw * 0.88); y += vh * 0.05
 		for i in snap["player"]["kit"].size():
