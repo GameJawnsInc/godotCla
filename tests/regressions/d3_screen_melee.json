@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["########","#.....>#","#.@t...#","#......#","########"]},"kit":["steam_vent"],"pool":["steam_vent"]},
+"actions": [{"slot":0,"target":[2,1],"type":"ability"},{"type":"end_turn"}],
+"expect": {"events":[{"kind":"smoke","t":"terrain","tile":"(2, 1)"},{"id":"steam_vent","slot":0,"t":"gummed"}],"floor":1,"timeout":true,"turns":1,"won":false},
+"note": "D3 you cannot smoke-screen at arm's length: the same vent onto (2,1), the same telegraphed gum, but the spitter is standing next to the tender - _screened returns false on manhattan <= 1 before it ever reads the terrain - so slot 0 is gummed through the smoke. Paired with d3_screened_gum this is the whole rule: identical board, identical smoke, only the distance differs",
+"sim_version": 11,
+"hash": "85d94efc64da0f53dbbea8cd814d1c789a256a79f9b01fcf4bdc5970436771fe"
+}

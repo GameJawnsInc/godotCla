@@ -63,8 +63,8 @@ The theme should do mechanical work, not just paint.
 ### Terrain
 
 - Enemy terrain: **oil slick** (flammable, spreads slowly, slows), **sludge**
-  (damages on entry), **smoke** (blocks targeting through it; never hides
-  intents).
+  (damages on entry), **smoke** (blocks targeting through it and screens the
+  tender from ranged disruption; never hides intents — see Enemies).
 - Player terrain: **growth** (planted by abilities; slow heal while standing on
   it; some abilities require or empower on growth).
 - Neutral: **fire** (ignited oil; damages everyone; burns out), water, rubble,
@@ -88,8 +88,8 @@ The theme should do mechanical work, not just paint.
 - Cleansing corrupted tiles (via abilities) yields **Bloom**.
 - Terrain is **data, not code**: `Content.TERRAIN` holds one row per kind
   (corruption, shields_core, flammable, washable, bloom yield, ttl/decays,
-  entry and per-turn damage, blocks, blocks_beam, heal, burns_to) and the sim
-  reads it through `Content.terrain(kind, key, default)`. Terrain *reactions*
+  entry and per-turn damage, blocks, blocks_beam, screens, heal, burns_to) and
+  the sim reads it through `Content.terrain(kind, key, default)`. Terrain *reactions*
   are data too: `Content.REACTIONS` rows (fire spreads into oil, fire burns
   out; damp, roots-burn and smoke-smother present but disabled) are consumed
   by one `_terrain_react()` in the environment phase. Enemy statuses live in
@@ -189,6 +189,41 @@ The theme should do mechanical work, not just paint.
     your own kit costs turn economy.
   - **Extractor Engine** — visible 3-turn summon cycle until destroyed.
 - Enemy content is data (stats, intents, spawn tables) per style guide §6.
+- **Enemies read the floor.** Two rules, both data, both aimed at the same
+  hole: terrain used to be something only the player could see.
+- **Avoid lists — terrain is a cost, never a wall.** An enemy row may carry
+  `avoid: [terrain kinds]` (default `[]`, which is the old terrain-blind
+  behaviour exactly). The chase is a shortest-path search over integer step
+  costs: one per tile, plus `Content.ENEMY_AVOID_COST` (4) for a tile whose
+  kind the row avoids. So a machine walks *around* a burning tile when the way
+  round is at most that much longer (a tie on cost goes to the path through
+  fewer burning tiles, which is what makes "at most" inclusive), and walks
+  straight *through* it when the
+  detour costs more than the burn — a ring of fire is a toll, not an immortal
+  fence, and an enemy cornered by flame still comes for you (and takes the
+  entry damage for it). The lever is one constant, so "fire is scarier" is a
+  number, not a rewrite. Every mobile machine avoids fire; the exceptions are
+  characters: the **Welded Hulk** (nothing stops the hulk), the **Coal Golem**
+  (made of coal), the **Cinder Mite** (the igniter *wants* fire), the
+  stationary kinds, and every boss. Both the ordinary `move` intent and a
+  boss's `advance` go through the same search, so bosses inherit nothing and
+  lose nothing.
+- **Smoke screens ranged intents.** A `Content.TERRAIN` row may set
+  `screens: true` (smoke does; nothing else). An intent in the closed list
+  `Content.SCREENED_INTENTS` — drain, gum, drag: the three *disruption*
+  intents — fizzles when the tender stands on a screening tile or has one in
+  any of the four adjacent tiles. Two exemptions keep it honest: the enemy
+  must be non-adjacent (you cannot smoke-screen at arm's length, so a melee
+  answer to a spitter is still a melee answer), and `massive` enemies see
+  through it (bosses, the same exemption statuses use). The intent is still
+  computed and still telegraphed — the counter-play is *walking into the
+  smoke after you have read the telegraph*, which is the intent-visibility
+  pillar doing work rather than a hidden dodge roll. A screened action emits
+  `screened` and ends that enemy's turn.
+- Between the two, **fire is area denial as much as damage**: a line of flame
+  now bends a pack's approach for as long as it burns, which is what makes the
+  Coal Golem's smoke burst and the Cinder Mite's igniting genuinely
+  double-edged.
 
 ### Run structure (~30 min)
 

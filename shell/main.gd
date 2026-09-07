@@ -73,7 +73,7 @@ const LEGEND := [
 	["ash", "Ash", "burnt oil - still corruption, cleanse it for bloom; it never shields the boss core"],
 	["growth", "Growth", "heals 1 HP per turn while you stand on it"],
 	["fire", "Fire", "burns whoever stands in it; burns out into ash"],
-	["smoke", "Smoke", "blocks solar lances"],
+	["smoke", "Smoke", "blocks solar lances; on or beside you it screens tar, drain and grapple"],
 	["roots", "Roots", "blocks enemies for a while"],
 	["drill_bot", "Drill Bot", "melee - telegraphs its strike a turn ahead"],
 	["oil_sludge", "Oil Sludge", "slow, leaves oil, splits when killed"],
@@ -739,6 +739,10 @@ func _show_tooltip(pos: Vector2) -> void:
 			lines.append(_intent_words(e))
 			if e["traits"].has("spiked") or e.get("elite", false):
 				lines.append("SPIKED - striking it in melee costs you 1 HP")
+			# what the row refuses to walk through, straight off the data
+			var avoid: Array = Content.ENEMIES.get(e["kind"], {}).get("avoid", [])
+			if not avoid.is_empty():
+				lines.append("avoids: %s - it walks around, unless the way round is far" % ", ".join(avoid))
 			if not row.is_empty():
 				lines.append(row[2])
 	if lines.is_empty() and snap["player"]["pos"] == t:
@@ -1318,6 +1322,25 @@ func _ename(kind: String) -> String:
 	return Content.ENEMIES[kind]["name"] if Content.ENEMIES.has(kind) else kind
 
 
+## The name of the enemy an event names by id (the screen event reports the
+## enemy, not its kind); "Something" if it has already left the board.
+func _ename_by_id(id) -> String:
+	for e in game.enemies:
+		if e["id"] == id:
+			return _ename(String(e["kind"]))
+	return "Something"
+
+
+## What a screened intent is called in the log. The raw type is the fallback,
+## so a new Content.SCREENED_INTENTS entry still reads as a sentence.
+func _screen_word(itype: String) -> String:
+	match itype:
+		"gum": return "tar"
+		"drain": return "drain"
+		"drag": return "grapple"
+	return itype
+
+
 ## Purchase ids in words for the log ("bloom_surge" -> "Bloom Surge").
 func _shop_name(item: String, id: String) -> String:
 	match item:
@@ -1385,6 +1408,9 @@ func _ev_text(ev: Dictionary) -> String:
 			return "A vent releases a drill bot"
 		"gummed":
 			return "Tar gums up an ability"
+		"screened":
+			return "%s's %s is lost in the smoke" % [
+				_ename_by_id(ev.get("id", -1)), _screen_word(String(ev.get("intent", "")))]
 		"drain":
 			return "Leech drone drains %d banked charge" % ev["amt"]
 		"drag":

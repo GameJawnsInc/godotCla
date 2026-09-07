@@ -4,6 +4,6 @@
 "actions": [{"dir":[1,0],"type":"move"},{"target":[3,2],"type":"cleanse"}],
 "expect": {"events":[{"bloom":11,"t":"cleanse"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "D2 reroll under the Boarded mutator (config shop: false) with spinning_shrine also held: the shrine stocks nothing, so _reroll_legal refuses on the empty counter before a price is ever read - the tender walks onto the shrine with the same 10 bloom d2_reroll spends 2 of and leaves holding all of it (the cleanse pins 10 + 1 = 11). The refusal emits {t: illegal, action: reroll}, which the corpus runner counts as a failure, so it is asserted in tests/test_economy.gd; what this record pins is the state that refusal leaves - an empty shop and an unspent purse (strict hash)",
-"sim_version": 10,
+"sim_version": 11,
 "hash": "159426a18e48c5962c4179cc28593c11146bb15373cb15d8e0037f267f7b2eaa"
 }

@@ -759,6 +759,100 @@ the counter with a purse is what would produce that number, and it is the
 number that would say how much of greed's +7.5 points is information rather
 than bloom.
 
+**Status (2026-09-07f).** **Block D item 3 (6.4, "Enemies read terrain") has
+shipped as a default rule** - no mutator switch - and **`Game.SIM_VERSION` is
+11**. Finding 5.2 is closed on both halves. `Content.ENEMIES` rows carry an
+optional `avoid: [terrain kinds]` (default `[]` = terrain-blind, exactly the
+pre-D3 chase); seven of the ten ordinary mobile rows carry `["fire"]`, and
+`welded_hulk` ("nothing stops the hulk"), `coal_golem` ("made of coal"),
+`cinder_mite` ("the igniter WANTS fire"), the three stationary kinds and all
+three bosses carry none, each deviation carrying its one-line reason in the
+row. `Game._chase_step` is now a shortest-path search over integer step costs -
+1 per tile plus `Content.ENEMY_AVOID_COST` (4) for an avoided one, passability
+still `_open()`, goal any tile at manhattan 1 from the tender - run on a bucket
+queue drained in ascending cost, within a cost by fewer avoided tiles and then
+by push order, neighbours pushed in `DIRS` order. For a row with an empty avoid
+list every key is `(c, 0)`, nothing is ever re-pushed, and the drain order is
+the old BFS's dequeue order, so the returned step is **byte-identical to the
+pre-D3 chase**; `tests/test_grammar.gd` keeps that BFS as a reference
+implementation and proves it over 210 generated floors, every enemy against
+sampled tender positions, on clean boards and on fire-scattered ones
+("d3 parity: 210 floors, 17270 clean-board comparisons, 17270 fire-board
+comparisons, 0 mismatches"), and the same probe run in a `git archive HEAD`
+copy returns the same counts at `SIM_VERSION` 10. Both the `move` intent and
+the boss `advance` intent go through the search, neither special-cased. The
+review's warning about the proposed fix is respected exactly: the smoke rule is
+**not** `_line_clear` and never consults intervening enemies or walls. A
+`TERRAIN` row carries `screens` (smoke alone), `Content.SCREENED_INTENTS` is
+the closed list `["drain", "gum", "drag"]`, and `Game._screened` - read at
+`_execute_intent` only, so the intent is still computed and telegraphed -
+fizzles one as `{t: "screened", id, intent}` when the tender stands on or
+beside a screening tile, unless the enemy is adjacent (no smoke-screening at
+arm's length) or its row is `massive` (bosses see through smoke, the same
+exemption `_apply_status` uses).
+
+The measurement is the "2026-09-07f - bump 11 (D3)" entry in `docs/BALANCE.md`,
+and **the gate the bullet named passes on every line**. The gate is the
+immortal-fence question - *"the row most likely to produce an immortal-fence
+canary hit (fire-avoiding enemies plus pump-jack refuelled oil): turtle and
+magpie 100-seed stall canaries are the gate"* - measured in this tree and in a
+`git archive HEAD` copy of the pre-D3 commit on the same seeds. **Magpie's
+stall floors fell 63 -> 59 per 100 runs (0.94x) and the turtle's moved 48 -> 49
+(1.02x)**, against a limit of 1.25x, with **zero timeouts in every run of the
+entry** - 30-seed playtest across six personas, magpie 100 in both trees,
+optimizer 100 in both trees, fanatic turtle+pyro 100 in both trees, deeproot
+20. `tests/playtest.gd` at 30 seeds with the gate on reads "gate: all PASS" and
+exits 0 (magpie 6/30 CI [10%, 37%], optimizer 15/30 CI [33%, 67%], deeproot
+22/30 CI [56%, 86%], 0 illegal actions everywhere). The fence does not form
+because `ENEMY_AVOID_COST` is a **toll and not a wall**: an enemy with no cheap
+detour pays 4 and walks through the fire, which
+`tests/regressions/d3_avoid_no_fence.json` pins as a record and a mutation that
+made avoided tiles impassable fails.
+
+**The pyro row moved, upward, and it is the entry's finding.** 6.4 predicted
+the archetype would move because enemies pathing around fire change what a fire
+is for; at 100 seeds it goes **28/100 [20%, 37%] -> 32/100 [24%, 42%]** while
+the fire damage it deals **falls 40%** (195 -> 116 points) at a flat ignition
+rate (4.54 -> 4.39 ability ignitions, 6.10 -> 6.07 environment ignitions per
+run). Fire stopped being a damage source and became a wall the pyro can place.
+The two win intervals overlap almost entirely and neither runner prints
+`wins_by_seed`, so the +4 carries no sign test and the entry asks for an
+out-of-sample re-measure (`FANATIC_SEED_FROM=101`) before anyone calls the pyro
+buffed; what the gate reads is the hard rule ("every build > 0 at 100 seeds"),
+and it holds with turtle 3/100 [1%, 8%] and pyro 32/100. The same -28% to -41%
+in enemy fire damage appears in all four paired runs (magpie 68 -> 41,
+optimizer 168 -> 120, turtle 99 -> 71, pyro 195 -> 116), and for the optimizer
+the whole fall is the lance's own fires (`solar_lance` 94 -> 51) while the
+cinder mite's are **identical at 44** - the igniter carries no avoid list, so
+nothing dodges what it lights. Optimizer
+clock discipline is intact (46/100 [37%, 56%] against 47/100 [38%, 57%], turns
+on wins 87.0 vs 85.0, turns/floor 15.5 vs 15.3, smog at descend 9.0 both,
+damage taken 18.9 vs 19.0), with two cells drifting the same way on the watch
+list (stall floors 21 -> 23, quota-unmet deaths 2 -> 4). Suite green throughout
+("regressions: 77 ok, 0 failed" plain and `REGRESS_STRICT=1`, "content: OK"
+with the D3 lint self-test at 4 bad enemy rows / 2 bad screens / 5 bad costs /
+5 bad intent lists, "grammar: OK (666 checks)", "economy: OK (256 checks)" with
+"rng pins: 50 seeds, 0 moved" and "d3 rng: floor-entry pins 10 seeds / 60
+entries, 0 moved", "bots: OK (116 checks)", "determinism: OK (61 checks, 8
+personas)", "meta: OK", "shell smoke: OK", 1400 + 1540 procgen generations with
+0 violations); the corpus went 72 -> 77 with five new `d3_*` demos, 69 records
+re-stamped on `sim_version` alone and three bot logs re-recorded on their
+personas.
+
+**Verdict: SHIP, with `ENEMY_AVOID_COST` unmeasured as a lever.** Nothing was
+changed in the measure phase and the named lever was not touched. What the
+entry hands forward is that **the smoke screen is shipped correct and
+unmeasured as counter-play**: it fires 0.10 to 0.20 times per run for every
+persona in the roster and not one of those screens is aimed - no bot reads the
+`screens` key or routes to smoke - so this pass measured the rule's cost to the
+enemies, not its value to a player, the same profile as C2's `water_jet+` and
+C3's `undertow`. `drag`, the third entry of `SCREENED_INTENTS`, has never
+fizzled in play at all (0 against 61 gums and 12 drains over the entry's 600
+runs). And
+`avoid` is measured as a list of exactly one kind on exactly one terrain: no
+board ever forces a two-kind trade-off, so the first row that avoids `oil`
+needs its own before/after, because oil is generated by mapgen and fire is not.
+
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
 180 bot runs; a synergy-lift sweep of 7 hypothesised pairs at 24 seeds per

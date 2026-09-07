@@ -57,6 +57,12 @@ panel lists every enemy's exact intent; the strip below the map is the
 event log. Elites wear a gold ring, bosses show HP bars, your buffs ring
 the player sprite (brown = anchored, green = thorns).
 
+Holding an enemy adds an `avoids: fire` line when its `Content.ENEMIES` row
+carries an avoid list — it paths around those tiles unless the way round is
+far. When smoke swallows a telegraphed drain / gum / drag, the log says so
+(`Tar Spitter's tar is lost in the smoke`), so a screened intent reads as
+something you did rather than as the enemy skipping a turn.
+
 ## Touch controls (Android / any touchscreen)
 
 Portrait layout: map on top, log + status in the middle, D-pad and action
@@ -128,7 +134,7 @@ one (`tests/test_shell.gd` checks it). The terrain rows:
 | Ash | `,` | burnt oil - still corruption, cleanse it for bloom; it never shields the boss core |
 | Growth | `"` | heals 1 HP per turn while you stand on it |
 | Fire | `*` | burns whoever stands in it; burns out into ash |
-| Smoke | `%` | blocks solar lances |
+| Smoke | `%` | blocks solar lances; on or beside you it screens tar, drain and grapple |
 | Roots | `8` | blocks enemies for a while |
 | Supply pod | `+` | walk over it to stock your satchel (2 slots) |
 

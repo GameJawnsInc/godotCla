@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#####","#>*G#","#@#.#","#...#","#####"]},"kit":["sap_snare","seed_bomb","mycelium_dash"],"pool":["sap_snare","seed_bomb","mycelium_dash"]},
+"actions": [{"type":"end_turn"},{"slot":0,"target":[2,1],"type":"ability"}],
+"expect": {"events":[{"amt":1,"src":"fire:env","t":"damage","who":"coal_golem"},{"amt":1,"src":"fire:env","t":"damage","who":"coal_golem"},{"t":"ash","tile":"(2, 1)"},{"id":"sap_snare","t":"ability"},{"status":"root","t":"status","turns":2}],"floor":1,"timeout":true,"turns":1,"won":false},
+"note": "D3 the avoid list is per kind, not a global rule: the board of d3_avoid_detour with a coal golem where the drill bot stood (its Content.ENEMIES row carries no avoid - it is made of coal and does not mind fire). With no fire penalty to price, the north corridor is simply the shorter one, so the golem steps onto the burning (2,1), pays 1 entering and 1 to the environment tick, and sap_snare pins it standing on what is now ash - the same first step, the same seed, the same fire, the opposite decision to d3_avoid_detour. No enemy kind is named in sim/game.gd for any of it: _chase_step reads Content.ENEMIES[kind].avoid",
+"sim_version": 11,
+"hash": "6401997b972e1d474ae89f2cc61a6b6ccea1dd39c5624c6ef899787751dbbc2e"
+}

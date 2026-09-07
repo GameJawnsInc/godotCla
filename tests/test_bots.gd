@@ -19,6 +19,9 @@ extends SceneTree
 ##      the tender stands on growth (and the sim lands exactly that number),
 ##      and the planner's surge-ready term follows the sim's rule - any held
 ##      row whose surge dict applies, cost-1 stat surges included
+##   3e) Block D3 denial columns: a screened intent counts by intent type and
+##      reaches kpis()/merge(), and the enemy fire damage the same line prints
+##      is the source split that was already there
 ##   4) determinism: two fresh instances agree over 40 steps
 ##   5) runtime factor: deeproot vs deeproot_plan over 5 seeds (test-side
 ##      Time.get_ticks_msec only; the bots never read a clock)
@@ -55,6 +58,7 @@ func _init() -> void:
 	_check_shop_detour_gates()
 	_check_reroll_gates()
 	_check_d1_surge_terms()
+	_check_d3_denial_tally()
 	_check_determinism()
 	_check_runtime_factor()
 	if failures.is_empty():
@@ -644,6 +648,47 @@ func _check_d1_surge_terms() -> void:
 		if plan._surge_applies(Content.ABILITIES[aid]):
 			ready.append(aid)
 	print("surge-ready rows (%d of %d): %s" % [ready.size(), Content.ABILITIES.size(), str(ready)])
+
+
+## Block D3 harness wiring (spec item 5): the two terrain-denial columns the
+## runners print. A screened intent ({"t": "screened", id, intent}) counts by
+## intent type, survives a merge and reaches kpis(); the fire half of the same
+## line is the "fire:<igniter>" source split that was already there, not a new
+## counter, so a kind with no avoid list walking into fire lands in both.
+func _check_d3_denial_tally() -> void:
+	var g = _game(["solar_lance", "seed_bomb", "mycelium_dash"])
+	g.terrain[Vector2i(6, 3)] = {"kind": "smoke", "ttl": 9}
+	g._spawn("tar_spitter", Vector2i(8, 3))
+	g._compute_intents()
+	var shown := String(g.snapshot()["enemies"][0]["intent"].get("type", ""))
+	_ok(shown == "gum", "the spitter still telegraphs its gum before the screen: %s" % shown)
+	var tally = Tally.new()
+	_step_into(tally, g, {"type": "end_turn"})
+	_ok(int(tally.screened_by_intent.get("gum", 0)) == 1 and tally.screened_by_intent.size() == 1,
+		"tally counts the screened intent by type: %s" % str(tally.screened_by_intent))
+	var k: Dictionary = Tally.kpis(tally, 1, [])
+	_ok(int(k["screened"]) == 1 and int(k["screened_by_intent"].get("gum", 0)) == 1,
+		"kpis carry the screened columns: %s" % str([k["screened"], k["screened_by_intent"]]))
+	# a kind with no avoid list walks into fire and burns for it
+	var g2 = _game(["solar_lance", "seed_bomb", "mycelium_dash"])
+	g2._spawn("welded_hulk", Vector2i(7, 3))
+	g2.terrain[Vector2i(6, 3)] = {"kind": "fire", "ttl": 9}
+	g2._compute_intents()
+	var t2 = Tally.new()
+	_step_into(t2, g2, {"type": "end_turn"})
+	var k2: Dictionary = Tally.kpis(t2, 1, [])
+	_ok(int(k2["enemy_fire_dmg"]) > 0 and int(k2["enemy_fire_dmg"]) == int(t2.fire_dmg_by_by.get("env", 0))
+			and int(k2["screened"]) == 0,
+		"the hulk burns and the fire column reads the source split: %d / %s" % [
+			int(k2["enemy_fire_dmg"]), str(t2.fire_dmg_by_by)])
+	var m = Tally.new()
+	m.merge(tally)
+	m.merge(t2)
+	var km: Dictionary = Tally.kpis(m, 2, [])
+	_ok(int(km["screened"]) == 1 and int(km["enemy_fire_dmg"]) == int(k2["enemy_fire_dmg"]),
+		"merge carries both denial columns: %s" % str([m.screened_by_intent, km["enemy_fire_dmg"]]))
+	print("d3 denial columns: screened %s, enemy fire dmg %d (%s)" % [
+		str(m.screened_by_intent), int(km["enemy_fire_dmg"]), str(m.fire_dmg_by_by)])
 
 
 # --- 4) determinism -----------------------------------------------------------

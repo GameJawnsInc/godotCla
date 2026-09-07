@@ -5865,6 +5865,473 @@ that adds an action nothing in the corpus took.
   the win rate: a bot that loiters less is not the same as a bot that plays
   better.
 
+## 2026-09-07f - bump 11 (D3): enemies read terrain
+
+Block D's third bullet (review 6.4, *"Enemies read terrain"*, closing finding
+5.2 *"Enemies are terrain-blind"*) has landed and **`Game.SIM_VERSION` is 11**.
+The bullet carries its own gate - *"the row most likely to produce an
+immortal-fence canary hit (fire-avoiding enemies plus pump-jack refuelled oil):
+turtle and magpie 100-seed stall canaries are the gate"* - and this entry is
+that measurement.
+
+**The rule, in three sentences.** A `Content.ENEMIES` row may carry
+`avoid: [terrain kinds]` (default `[]` = terrain-blind, exactly the pre-D3
+chase) and **seven of the ten ordinary mobile rows** carry `["fire"]` - the
+three that do not are the welded hulk (nothing stops it), the coal golem (made
+of coal) and the cinder mite (the igniter *wants* fire), while the three
+stationary kinds and all three bosses carry none. An avoid list is a **price
+and not a wall**: entering an avoided tile costs
+`Content.ENEMY_AVOID_COST` (4) extra steps, so a detour up to that many tiles
+longer is taken and a longer one is not, and a ring of fire with no way round
+is walked straight through. `Game._chase_step` is therefore a shortest-path
+search over integer costs on a bucket queue - buckets drained in ascending
+cost, within a cost the path through fewer avoided tiles first and otherwise
+push order, neighbours pushed in `DIRS` order - which for a row with an empty
+avoid list returns the **byte-identical** first step to the old BFS on every
+board, and both the `move` intent and the boss `advance` intent go through it
+with no special case. And smoke now screens: an intent whose type is in
+`Content.SCREENED_INTENTS` (`drain`, `gum`, `drag`) fizzles as
+`{t: "screened", id, intent}` when the tender stands on, or beside in any of
+the four `DIRS`, a `TERRAIN` row with `screens: true` (smoke alone), **unless**
+the enemy is adjacent (you cannot smoke-screen at arm's length) or its row is
+`massive` (bosses see through smoke, the same exemption `_apply_status` uses) -
+read at `_execute_intent` only, so the intent is still computed and telegraphed
+and stepping into the smoke *is* the counter-play.
+
+**What `SIM_VERSION` 11 invalidates.** Any stored action log in which a fire and
+an avoider ever met, or a screenable intent was aimed at a tender standing on
+or beside smoke: the enemy takes a different step or loses its action, and the
+log diverges from there. Both rules are default-config content - unlike D2's
+sink there is no mutator switch - so a bot log desynchronises from the first
+floor that lights up. It does **not** invalidate this document's numbers. The
+instrument is still v2; `tests/tally.gd` gained one printed line and two kpi
+keys (`screened_by_intent`, and `enemy_fire_dmg`, which is not a new counter at
+all but the already-accumulated `fire:<igniter>` family finally printed as a
+number); `combo_rate`, every damage share and every clock cell are untouched;
+and this entry compares directly with **07d**, which is also the default-config
+column of 07e (that entry's reroll ships behind `spinning_shrine`).
+
+Two properties were proved rather than asserted, and they are why the before /
+after columns below pair at all. **No main-rng draw moved**: neither
+`_chase_step` nor `_screened` touches the rng, `tests/test_economy.gd` still
+pins `rng.state` after `Game.new` for seeds 1..50 ("0 moved") and now also pins
+the floor-entry state over 10 full optimizer runs against a reference subclass
+carrying the old BFS ("10 seeds / 60 entries, 0 moved"). **The search is the
+old BFS for an avoid-less row**: `tests/test_grammar.gd` keeps the pre-D3 BFS
+as a reference implementation and compares it over 210 generated floors, every
+enemy against sampled tender positions, on clean boards and on boards
+deliberately scattered with fire - 34,540 comparisons, 0 mismatches - and the
+same probe in the `git archive HEAD` copy returns the same counts at
+`SIM_VERSION` 10.
+
+### Suite
+
+All on this tree, after the corpus pass:
+
+- `tests/test_regressions.gd`: "=== regressions | dir res://tests/regressions |
+  **77 records** | strict false | regen false ===" / "**regressions: 77 ok, 0
+  failed**", and with `REGRESS_STRICT=1` "strict true" / "regressions: 77 ok,
+  0 failed"
+- `tests/test_content.gd`: "**d3 lint self-test: 4 bad enemy rows -> 4
+  failures; 3 good rows -> 0 failures; 2 bad screens -> 2; 5 bad costs -> 5; 5
+  bad intent lists -> 5**" / "**enemies: 16 rows, 7 with an avoid list
+  (drill_bot ["fire"], oil_sludge ["fire"], sludgeling ["fire"], leech_drone
+  ["fire"], tar_spitter ["fire"], rust_hound ["fire"], magnet_crane ["fire"]);
+  avoid cost 4; screened intents ["drain", "gum", "drag"]; screening terrain
+  ["smoke"]**" / "**content: OK**"
+- `tests/test_grammar.gd`: "**d3 parity: 210 floors, 17270 clean-board
+  comparisons (0 skipped: an avoided kind on the board), 17270 fire-board
+  comparisons, 0 mismatches**" / "**grammar: OK (666 checks)**" (614 at 07e)
+- `tests/test_economy.gd`: "**rng pins: 50 seeds, 0 moved**" / "**d3 rng:
+  floor-entry pins 10 seeds / 60 entries, 0 moved**" / "**economy: OK (256
+  checks)**" (247 at 07e)
+- `tests/test_bots.gd`: "**d3 denial columns: screened { "gum": 1 }, enemy fire
+  dmg 2 ({ "env": 2 })**" / "**bots: OK (116 checks)**" (111 at 07e)
+- `tests/test_determinism.gd`: "**determinism: OK (61 checks, 8 personas)**"
+- `tests/test_meta.gd`: "**meta: OK**"
+- `tests/test_invariants.gd`: "invariants: **1400 generations, 0 violations**",
+  "terrain kinds: ["oil", "goo", "growth", "rich_goo"] (0 violations)",
+  "floor_def invariants: 11 configs, **1540 generations, 0 violations**"
+- `tests/test_shell.gd`: "**shell smoke: OK**"
+
+### Persona table (playtest, 30 seeds, tier 0, gate ON)
+
+Before = the 2026-09-07d entry (the default-config column; 07e's sink is behind
+`spinning_shrine`, so a default run reads as 07d). After =
+`=== playtest | bot wanderer,sprout,magpie,fanatic,optimizer,deeproot | config
+{  } | seeds 1..30 (30) ===`, Wilson 95% as the runner prints it.
+
+| persona | 2026-09-07d (bump 9) | this bump (D3) | moved outside CI? |
+|---|---|---|---|
+| wanderer | 0/30 = 0% [0, 11], floor 1.0, turns 83.5 | 0/30 = 0% [0, 11], floor 1.0, **turns 82.4** | no |
+| sprout | 1/30 = 3% [1, 17], floor 3.7, turns 101.1 | 1/30 = 3% [1, 17], floor **3.6**, turns **103.3** | no |
+| magpie | 5/30 = 17% [7, 34], floor 4.0, turns 166.0 | **6/30** = 20% [10, 37], floor 4.0, turns **160.5** | no |
+| fanatic | 6/30 = 20% [10, 37], floor 5.5, turns 104.9 | **5/30** = 17% [7, 34], floor 5.5, turns **108.8** | no |
+| optimizer | 12/30 = 40% [25, 58], floor 6.1, turns 96.2 | **15/30** = 50% [33, 67], floor **6.2**, turns 96.2 | no (CIs overlap) |
+| deeproot | 22/30 = 73% [56, 86], floor 6.9, turns 104.9 | 22/30 = 73% [56, 86], floor **7.0**, turns **112.6** | no - same wins, +7.7 turns |
+
+**Every row moved in at least one cell, and that is the expected shape.** D1 and
+D2 could both point at four personas reproducing to the decimal because their
+rules were unreachable for those bots; both D3 rules are on by default and fire
+in a default run, so nothing reproduces. Even wanderer - which drafts nothing,
+holds no fire tool and dies on floor 1 in all 30 seeds - moved its turn count,
+because the random walker still lights oil with `solar_lance` 15.8 times a run
+and the drill bots now walk round the result. Every persona: **0 illegal
+actions, 0 timeouts**.
+
+Damage taken per run: wanderer 42.4 -> **41.6**, sprout 29.7 -> **30.8**,
+magpie 48.4 -> **41.2**, fanatic 26.0 -> **26.9**, optimizer 22.7 -> **21.4**,
+deeproot 8.0 -> **9.1**. Combos/run: wanderer 30.33 -> 30.27, sprout 8.60 ->
+9.13, magpie 19.10 -> 18.83, fanatic 15.60 -> 16.43, optimizer 14.67 -> 14.67,
+deeproot 19.30 -> 20.07. Nothing here is outside the noise these cells have
+shown across bumps.
+
+### The two stall canaries (100 seeds, both trees)
+
+This is the gate 6.4 named. Both canaries were run in this tree and in a
+`git archive HEAD` copy of the pre-D3 commit (`SIM_VERSION` 10, pre-D3 sim
+*and* pre-D3 bots) on the same seeds, today. The before-tree checks out against
+the record: its magpie canary comes back at **7/100 [3%, 14%]** with 63 stall
+floors and its optimizer at **47/100 [38%, 57%]** with 21 - the cells 07d and
+07e recorded for the default config, cell for cell.
+
+`=== verify_kit | bot magpie | config {  } | seeds 1..100 (100) ===`:
+
+| magpie, 100 seeds | pristine (bump 10) | this bump (D3) | gate |
+|---|---|---|---|
+| wins | **7/100 = 7% [3%, 14%]** | **8/100 = 8% [4%, 15%]** | canary watches rises; +1 seed is noise |
+| **stall floors** | **63 (0.63/run)** | **59 (0.59/run)** | **0.94x - PASS (limit 1.25x)** |
+| **timeouts** | **0** | **0** | **PASS** |
+| avg floor | 3.5 | 3.5 | flat |
+| turns on wins | 197.7 | 202.6 | flat |
+| turns/floor avg | 40.2 | 40.1 | flat |
+| damage taken/run | 37.4 | 35.9 | down |
+| quota-unmet deaths | 10 | 10 | flat |
+| shrine turns/run | 18.34 | 19.07 | flat |
+| enemy fire dmg | 0.68/run (68) | **0.41/run (41)** | **-40%** |
+| screened | 0.00/run (0) | 0.08/run (8) `{gum: 6, drain: 2}` | |
+| illegal | 0 | 0 | |
+
+`=== measure_fanatic | bot fanatic | config {  } | seeds 1..100 (100) ===`,
+`builds: turtle, pyro  (pool 14 ids)`, re-run with `FANATIC_VERBOSE=1` for the
+tally block:
+
+| turtle, 100 seeds | pristine (bump 10) | this bump (D3) | gate |
+|---|---|---|---|
+| wins | **4/100 = 4% [2%, 10%]** | **3/100 = 3% [1%, 8%]** | the anti-pattern stays an anti-pattern |
+| **stall floors** | **48 (0.48/run)** | **49 (0.49/run)** | **1.02x - PASS (limit 1.25x)** |
+| **timeouts** | **0** | **0** | **PASS** |
+| avg floor | 4.1 | 4.1 | flat |
+| turns/floor avg | 28.4 | 28.1 | flat |
+| quota-unmet deaths | 22 | 21 | flat |
+| smog at descend | 13.9 | 14.0 | flat |
+| enemy fire dmg | 0.99/run (99) | **0.71/run (71)** | **-28%** |
+| screened | 0.00/run (0) | **0.18/run (18)** `{gum: 15, drain: 3}` | the most-screened row in this entry |
+
+**The immortal-fence canary does not hit.** The row the review was worried
+about is a fire-avoiding enemy plus a pump jack refuelling the oil it burns in:
+an enemy that treated fire as impassable would loop outside a burning room
+while the smog clock ran, and a stall floor is exactly that (turn > 60, or smog
+> choke + 30, at any point on the floor). Magpie's stall count went **down** and
+the turtle's moved by one floor in a hundred runs, with zero timeouts in either
+tree. The reason is the design decision the constant encodes: `ENEMY_AVOID_COST`
+is a toll, not a wall, so an enemy with no cheap way round pays 4 and walks
+through the fire. `tests/regressions/d3_avoid_no_fence.json` pins that case as
+a record (a drill bot ringed by fire steps in and takes the enter damage), and
+the mutation probe that made avoided tiles impassable instead is what fails it.
+
+### The pyro row: fire is now control as much as damage
+
+The bullet's own warning was that the pyro archetype should move, because
+enemies pathing around fire change what a fire is *for*. It moved, upward:
+
+| fanatic build, 100 seeds | pristine (bump 10) | this bump (D3) |
+|---|---|---|
+| **pyro wins** | **28/100 = 28% [20%, 37%]** | **32/100 = 32% [24%, 42%]** |
+| pyro avg floor | 5.9 | 5.9 |
+| **pyro enemy fire dmg** | **1.95/run (195)** | **1.16/run (116)** |
+| pyro combos/run | 10.50 (fire-hits 1.95) | 10.36 (fire-hits **1.16**) |
+| pyro ignite(ability) / ignite(env) | 4.54 / 6.10 | 4.39 / 6.07 |
+| pyro stall floors | 16 | 17 |
+| pyro timeouts | 0 | 0 |
+| pyro screened | 0.00/run (0) | 0.13/run (13) `{gum: 11, drain: 2}` |
+| **total (turtle + pyro)** | **32/200** | **35/200** |
+
+**Pyro's fires deal 40% less damage and win four more seeds.** The ignition
+rate barely moves - 4.39 ability ignitions and 6.07 environment ignitions per
+run against 4.54 and 6.10 - so the pyro is lighting the same number of fires;
+what changed is that the enemies no longer stand in them. Fire stopped being a
+damage source and became a wall the pyro can put where it wants, and the win
+column says the trade is positive at this sample. **Say "at this sample" out
+loud**: [20%, 37%] and [24%, 42%] overlap almost entirely, and although
+`measure_fanatic` runs every build on every seed (so the two columns are paired
+by construction) neither runner prints `wins_by_seed`, so there is no
+discordant count and no sign test behind the +4. Re-measure out of sample
+(`FANATIC_SEED_FROM=101`) before anyone calls the pyro buffed. The **fanatic
+hard rule ("every build > 0 at 100 seeds") holds** either way: turtle 3/100,
+pyro 32/100.
+
+The same fall appears in every paired run in this entry - magpie 68 -> 41
+(-40%), optimizer 168 -> 120 (-29%), turtle 99 -> 71 (-28%), pyro 195 -> 116
+(-41%) - which is the avoid lists' own acceptance metric, measured four ways on
+four personas.
+
+### Optimizer clock and damage (100 seeds, both trees)
+
+`=== verify_kit | bot optimizer | config {  } | seeds 1..100 (100) ===`, same
+command in both trees.
+
+| metric | pristine (bump 10) | this bump (D3) | read |
+|---|---|---|---|
+| wins | **47/100 = 47% [38%, 57%]** | **46/100 = 46% [37%, 56%]** | overlapping, -1 seed |
+| avg floor | 6.1 | 6.1 | flat |
+| turns on wins | 85.0 | 87.0 | flat |
+| turns/floor avg | 15.3 | 15.5 | flat |
+| stall floors | 21 | **23** | +2 in 100 runs (1.10x, inside the canary limit) |
+| quota-unmet deaths | 2 | **4** | +2 in 100 runs |
+| smog at descend | 9.0 | 9.0 | flat |
+| damage taken/run | 19.0 | 18.9 | flat |
+| shrine turns/run | 1.85 | 1.88 | flat |
+| unspent charge/end_turn | 0.83 | 0.88 | flat |
+| bloom earned / spent /run | 49.1 / 16.1 | 49.3 / 16.1 | flat |
+| combos/run | 15.13 | 15.40 | flat |
+| **enemy fire dmg** | **1.68/run (168)** | **1.20/run (120)** | **-29%** |
+| fire dmg by igniter | `{cinder_mite 44, solar_lance 94, sun_flare 14, furnace_core 7, sun_flare+ 3, solar_lance+ 6}` | `{cinder_mite 44, solar_lance 51, sun_flare 13, furnace_core 7, sun_flare+ 3, solar_lance+ 2}` | the fall is the lance's own fires |
+| **screened** | 0.00/run (0) | **0.11/run (11)** `{gum: 10, drain: 1}` | |
+| illegal / timeouts | 0 / 0 | 0 / 0 | |
+
+**Clock discipline is intact, and the lost fire damage is almost all the
+lance's.** `cinder_mite` fire damage is **identical at 44** in both trees
+because the mite carries no avoid list - it is the igniter and wants fire -
+while `solar_lance` fire damage nearly halves, 94 -> 51. That is the cleanest
+statement of the rule anywhere in this document: the damage enemies *chose to
+walk into* is gone; the damage they were standing in when the fire arrived is
+not. Two clock cells drifted up together (stall floors 21 -> 23, quota-unmet
+deaths 2 -> 4) against flat turns, flat smog and an overlapping win interval;
+both are inside noise at 100 runs and inside the 1.25x canary limit, and both
+are on the watch list below because they move the same way.
+
+### The screen in play
+
+One printed line per persona from the 30-seed gated playtest, verbatim:
+
+```
+wanderer   denial: screened 0.00/run (0 total) {  }  enemy fire dmg 0.07/run (2 total)
+sprout     denial: screened 0.13/run (4 total) { "gum": 4 }  enemy fire dmg 0.77/run (23 total)
+magpie     denial: screened 0.20/run (6 total) { "drain": 1, "gum": 5 }  enemy fire dmg 0.43/run (13 total)
+fanatic    denial: screened 0.10/run (3 total) { "gum": 2, "drain": 1 }  enemy fire dmg 1.00/run (30 total)
+optimizer  denial: screened 0.17/run (5 total) { "gum": 4, "drain": 1 }  enemy fire dmg 1.27/run (38 total)
+deeproot   denial: screened 0.10/run (3 total) { "gum": 2, "drain": 1 }  enemy fire dmg 2.60/run (78 total)
+```
+
+and from the 100-seed runs: magpie 0.08/run (8), optimizer 0.11/run (11),
+fanatic-turtle 0.18/run (18), fanatic-pyro 0.13/run (13).
+
+**Every screen in this entry is incidental, and there is a structural reason.**
+The only abilities that create smoke are `steam_vent` and `steam_vent+`, both
+hydraulics-package content, so in a default run (`packages: []`) **the only
+smoke on the board is made by the enemy team** - a coal golem's `smoke_burst`.
+No persona reads the `screens` key, routes to smoke, or holds smoke-making
+content (`grep -rn "screens\|screened\|avoid" bots/` returns nothing), so every
+one of these fizzles is a tender that happened to be standing beside a dead
+golem's cloud. The rate is the same order for greed (0.20/run), skilled play
+(0.17/run), the ceiling (0.10/run) and a committed turtle (0.18/run), which is
+what "incidental" looks like. **The counter-play this rule buys a human is
+therefore unmeasured** - the same profile as C2's `water_jet+` and C3's
+`undertow`: the rule is correct (`tests/test_grammar.gd`'s screening section,
+`tests/regressions/d3_screened_gum.json` and `d3_screen_melee.json`), its
+opportunity rate is not there for heuristic play.
+
+**Not one `drag` has ever been screened.** `gum` and `drain` appear in every
+persona's counts; `drag` appears in none of the 600 runs in this entry (61
+gums, 12 drains, 0 drags). The magnet crane has `drag_range` 3, so it is
+screenable at range 2-3 in principle - this is an opportunity-rate observation
+and not a bug (`tests/test_grammar.gd` drives a screened crane drag and an
+unscreened massive one on hand-built boards) - but the third entry of
+`SCREENED_INTENTS` is shipped and unexercised in play.
+
+### Gate verdict: SHIP
+
+`tests/playtest.gd` at 30 seeds, gate ON: **exit 0**, verbatim:
+
+```
+PASS wanderer 0 wins, avg floor <= 2: 0 wins, avg floor 1.00
+PASS wanderer illegal actions == 0: 0
+PASS sprout wins rare (<= 1 per 30 seeds): 1/30
+PASS sprout illegal actions == 0: 0
+PASS magpie canary <= 10% (design target 0-5%): 6/30 CI [10%, 37%] (fails when the lower bound clears the trip line)
+PASS magpie illegal actions == 0: 0
+PASS fanatic illegal actions == 0: 0
+PASS optimizer band 35-65%: 15/30 CI [33%, 67%]
+PASS optimizer timeouts == 0: 0
+PASS optimizer illegal actions == 0: 0
+PASS deeproot band 70-90%: 22/30 CI [56%, 86%]
+PASS deeproot timeouts == 0: 0
+PASS deeproot illegal actions == 0: 0
+gate: all PASS
+```
+
+The magpie line **passes on 0.5 of a percentage point and prints as though it
+did not**: `Sweep.fmt_ci` rounds, so 6/30's Wilson lower bound of 9.5% shows as
+"[10%, 37%]" next to a trip line of 10%. The comparison is on the unrounded
+bound (`ci.x <= MAGPIE_MAX_LOWER`), so this is a PASS, but a reader diffing
+gate blocks will see the same bracket that failed in 07e (7/30 [12%, 41%]).
+Quote the 100-seed canary next to it - **8/100 [4%, 15%]**, a fall against the
+recorded 10/100 [6, 17] rise baseline and against 07d's 7/100 [3, 14].
+
+Against the gate this measure phase was given:
+
+| gate line | result |
+|---|---|
+| zero timeouts in every run above | **PASS** - 0 in all of: playtest 30 x 6 personas, magpie 100 (both trees), optimizer 100 (both trees), fanatic turtle+pyro 100 (both trees), deeproot 20 |
+| magpie stall floors/run <= 1.25x before | **PASS** - 0.59 against 0.63 (0.94x) |
+| turtle stall floors/run <= 1.25x before | **PASS** - 0.49 against 0.48 (1.02x) |
+| playtest gate PASS | **PASS** - "gate: all PASS", exit 0 |
+| pyro > 0 at 100 seeds | **PASS** - 32/100 [24%, 42%], up from 28/100 [20%, 37%] |
+
+**SHIP.** `Content.ENEMY_AVOID_COST` (4) is the named lever and **was not
+touched**: no data changed in the measure phase.
+
+### The search bot (informational)
+
+`=== playtest | bot deeproot | config {  } | seeds 1..20 (20) ===`, gate off:
+**14/20 = 70% wins, win CI [48%, 85%]**, avg floor 7.0, avg turns 125.7, avg
+bloom 45.5, combos/run 21.35, stall floors 9, quota-unmet deaths 0, **0
+timeouts, 0 illegal**, `denial: screened 0.10/run (2 total) { "gum": 2 }
+enemy fire dmg 2.30/run (46 total)`. Against 07e's reading of the same command
+(14/20 [48%, 85%], avg floor 7.0, avg turns 118.4, avg bloom 45.2, combos/run
+20.70) the ceiling **wins the same count, 14, and spends 7.3 more turns doing
+it** (the seed sets were not compared) - the same +7 turns the 30-seed row
+shows. Search still routes around the
+new cost rather than being blocked by it, and it does so without a term that
+knows the cost exists: deeproot's evaluator reads no avoid list, so every
+detour it benefits from is one it discovered by simulating the enemy, not one
+it planned.
+
+`tests/test_meta.gd`'s six-row loadout smoke gate (optimizer, seeds 1..20) is
+also unmoved: tender 8/20 -> **9/20**, tidewarden 11/20, flarekeeper 10/20,
+spiker 11/20, lasher 10/20 -> **9/20**, skyrunner 4/20, every row above the
+3/20 winnability line with no timeouts (the Block A watch item).
+
+### Corpus
+
+72 -> **77 records**, "regressions: 77 ok, 0 failed" plain and with
+`REGRESS_STRICT=1`. Before the corpus pass all 72 failed on the version stamp
+(`sim_version 10 != 11`); **69 of them had no other problem** and re-stamped
+with `sim_version` as their only changed line - no hand-authored demo has an
+avoider standing beside fire or smoke standing beside the tender - while
+**three bot logs desynced and were re-recorded on their personas**:
+`det_deeproot_s11` (still a floor-7 death, but longer: 199 -> 250 turns),
+`det_magpie_s11` (same outcome and the same 104 turns by a different path, hash
+only) and `det_deeproot_s42`, **which flipped from a floor-5 death to a floor-7
+win**. That last one is a real difficulty movement from the D3 enemy AI on one
+seed, not a harness artefact - read it next to the 30-seed deeproot row (22/30,
+unmoved), not instead of it.
+
+**5 new `d3_*` demos**, one rule each: `d3_avoid_detour` (a drill bot prices a
+2-tile corridor holding fire at 6 against a 4-tile detour and takes the
+detour), `d3_coal_walks_fire` (the same room, a coal golem with no avoid list
+takes the short way and eats 1 enter + 1 tick of `fire:env`),
+`d3_avoid_no_fence` (a fire ring with no detour: the avoider steps in),
+`d3_screened_gum` (a telegraphed gum at range 3 fizzles beside smoke, lands
+when the tender steps out of the screen, fizzles again when it steps back) and
+`d3_screen_melee` (the same spitter, adjacent, gums straight through the
+smoke). Only two of the five discriminate against the pre-D3 sim by
+construction - the other three pin rules whose *absence* looks exactly like the
+old terrain-blind behaviour - so each of those was proved load-bearing against
+a targeted mutation instead (coal_golem given an avoid list; the adjacency
+exemption deleted; avoided tiles made impassable), and each mutation fails its
+record.
+
+### Watch list
+
+- **Two optimizer clock cells drifted the same way and neither has a CI.**
+  Stall floors 21 -> 23 and quota-unmet deaths 2 -> 4 over 100 runs, against
+  flat turns, flat smog and an overlapping win interval. That is the exact
+  shape a soft fence would produce if it were slowing the bot down rather than
+  fencing it out, and it is on a persona neither stall canary covers. **Re-read
+  both cells at 100 seeds before any content that adds a persistent avoided
+  terrain kind** - a longer fire ttl, a second `avoid` entry, an enemy that
+  lays its own avoided tile - and treat `ENEMY_AVOID_COST` 4 -> 3 as the first
+  lever if they keep rising.
+- **`ENEMY_AVOID_COST` has one measurement, at one value.** Everything in this
+  entry was measured at 4. The constant's *design* claim ("a detour up to this
+  many tiles longer is taken, a longer one is not") is pinned by
+  `tests/test_grammar.gd`'s +4 / +6 bracket on a hand-built board; its
+  *balance* claim is pinned by nothing, because no sweep varied it. A cost
+  sweep (3 / 4 / 6 / 8 at 100 seeds on magpie and the turtle) is the
+  measurement owed before a later block reads the constant as tuned.
+- **The tie rule, not the constant alone, is what makes the bracket true.**
+  Ties break on `(cost, avoided)` before push order, so at exactly equal cost
+  the detour wins. Grid detours differ from the direct route by an even number
+  of tiles, so with cost 4 the real bracket is "+4 taken, +6 not"; under plain
+  push-order ties a +4 detour would have been refused on some layouts. Any
+  future change to the tie rule is a behaviour change even at the same cost,
+  and it breaks the BFS-parity property only if it can distinguish `(c, 0)`
+  keys - which is why an avoid-less row is still byte-identical today.
+- **The screen is incidental for every bot in the roster, structurally.** Both
+  smoke-making abilities (`steam_vent`, `steam_vent+`) are hydraulics-package
+  content, so a default run's only smoke comes from a coal golem's burst, and
+  no persona reads `screens` or routes to smoke. This entry therefore measures
+  the rule's *cost to the enemies* and not its *value to a player*. The cheap
+  instrument is a bot term that values standing beside a screening tile while a
+  screenable intent is telegraphed, behind a scratch tree - not a data change -
+  and a package-committed config (`hydraulics`) is the cheapest way to get a
+  non-zero aimed rate at all.
+- **`drag` is the third of three `SCREENED_INTENTS` and has never fired in
+  play.** 0 screened drags across the 600 runs here, against 61 gums and 12
+  drains. If a fourth block adds a screenable intent, check its opportunity
+  rate before its numbers.
+- **The avoid lists are measured on exactly one terrain kind.** Seven rows
+  avoid `fire` and nothing avoids anything else, so `avoid` as a *list* is
+  untested in play: no board ever forces a two-kind trade-off and no row has
+  ever preferred one avoided kind over another. The obvious next row - a
+  machine that will not walk into the slick it is about to be set alight in -
+  needs its own before/after, because `oil` is generated by mapgen and fire
+  never is.
+- **`enemy_fire_dmg` is a KPI now and it is not symmetric.** It counts fire
+  damage *dealt to enemies* from the `fire:<igniter>` family, so it falls both
+  when enemies dodge fire (the intended reading) and when the player stops
+  lighting them. Every fall in this entry is the first case - ignition rates
+  are flat to two decimals in all four pairs - but the column cannot tell them
+  apart alone. Quote it beside `ignite(ability)` and `ignite(env)`, never on
+  its own.
+- **`det_deeproot_s42` flipped a stored loss into a stored win**, the fourth
+  single-seed corpus outcome flip in three bumps (07d flagged two and asked for
+  a check if a third arrived). The 30-seed deeproot row is unmoved at 22/30, so
+  nothing is wrong - the search bots are being *rerouted* by a rule that
+  changes what the board costs, which is what the rule is for. But note what
+  deeproot cannot do: its evaluator prices no enemy's avoid list, so it cannot
+  plan a fire as a wall, only discover one. A ceiling number for "fire as
+  terrain denial" needs that term first.
+- **`_chase_step` cost wall-clock at the ceiling - fixed after the review.**
+  `tests/test_bots.gd`'s runtime line read "deeproot 53494 ms (wins 4/5
+  actions 1959)" in this entry's runs against 37637 ms recorded at 2026-09-07
+  (and deeproot_plan 122580 ms), because the bucket queue, the
+  `[pos, avoided]` entries and the `best` lookups ran on every enemy on every
+  ply even when nothing on the board was avoided. The review flagged it as a
+  minor finding and the fix landed with the block: `_chase_step` takes the
+  pre-D3 BFS verbatim (`_chase_bfs`) whenever the row's avoid list is empty
+  OR the board holds no tile of an avoided kind (`_terrain_has_any`), and runs
+  the weighted search (`_chase_dijkstra`) only when a weight can apply - with
+  nothing to avoid the two are step-for-step identical, which is exactly the
+  parity claim, and the grammar test now asserts the weighted search against
+  the reference BFS directly as well as through `_chase_step`. Clean readings
+  on an idle machine, same wins and action counts either way: "deeproot 47508
+  ms (wins 4/5 actions 1959), deeproot_plan 111714 ms" with only the
+  empty-list early-out, "deeproot 25858 ms (wins 4/5 actions 1959),
+  deeproot_plan 63573 ms (wins 5/5 actions 1188), factor 2.46x" with the
+  board scan. Every replay, hash and measurement in this entry is unchanged
+  by it (regressions 77/77 plain and strict, determinism 61 checks, grammar
+  666, economy 256 after the change).
+- **The parity proof covers the search, not the screen.** The reference BFS
+  pins that an avoid-less row moves exactly as before, over 210 floors and
+  34,540 comparisons. There is no equivalent whole-board proof that a
+  *screened* enemy's turn is otherwise unchanged - the coverage is hand-built
+  boards plus two records. That is adequate for a rule that only ever returns
+  early, and it is the first thing to extend if a later rule makes a screen do
+  something instead of nothing.
+
 ## Watch list
 
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from

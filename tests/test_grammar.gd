@@ -28,10 +28,23 @@ extends SceneTree
 ## grow_radius reads its radius key (1 = the old plus, 2 = the 13-tile
 ## diamond); mycelium_dash+ plants the departure tile through plant_origin
 ## only when it is bare floor with nobody on it, and that cast is effective.
+## Block D3 (bump 11): enemies read terrain. Game._chase_step is a cost search
+## (1 per tile, + Content.ENEMY_AVOID_COST on a tile whose kind is in the row's
+## "avoid" list): on hand-built two-corridor rooms an avoider takes a detour
+## exactly ENEMY_AVOID_COST longer and walks through fire when the detour is
+## longer than that or the short way holds two fires; a fire ring is no fence
+## (it steps in and takes enter damage); the pre-D3 BFS is kept here verbatim
+## as a reference and the search must match it byte for byte over generated
+## floors x every enemy x sampled tender positions, fire and roots scattered,
+## for a row with no avoid list. The smoke screen (TERRAIN "screens",
+## Content.SCREENED_INTENTS): gum / drain / drag from a non-adjacent,
+## non-massive enemy fizzles ({t: "screened"}) while the tender stands on or
+## beside smoke; adjacent, massive, or smoke two tiles away all execute.
 ## Run: godot --headless --path . --script tests/test_grammar.gd
 
 const Content := preload("res://sim/content.gd")
 const Game := preload("res://sim/game.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 ## 11 x 7 room, player at (5, 3). Every interior tile is floor.
 const ROOM := [
@@ -93,6 +106,10 @@ func _init() -> void:
 	_check_d1_seed_bomb()
 	_check_d1_grow_radius()
 	_check_d1_spore_trail()
+	_check_d3_avoid_detour()
+	_check_d3_fire_fence()
+	_check_d3_bfs_parity()
+	_check_d3_screening()
 	if failures.is_empty():
 		print("grammar: OK (%d checks)" % checks)
 		quit(0)
@@ -2484,3 +2501,374 @@ func _check_d1_spore_trail() -> void:
 	_ok(Content.ABILITIES["mycelium_dash+"]["effects"] == [{"op": "teleport"}, {"op": "plant_origin", "kind": "growth"}]
 		and int(Content.ABILITIES["mycelium_dash+"]["cost"]) == 1 and int(Content.ABILITIES["mycelium_dash+"]["range"]) == 7,
 		"mycelium_dash+ row: teleport + plant_origin growth, cost 1, range 7")
+
+
+# --- Block D3: enemies read terrain ---------------------------------------------
+
+## Fire that outlives the test: TERRAIN fire decays in 2 environment phases,
+## these rooms want it standing for the whole walk.
+const LONG_FIRE := {"kind": "fire", "ttl": 99, "by": "env"}
+
+## Two-corridor rooms. Tender @ (2, 1), enemy spawned at (9, 1), fire at (5, 1)
+## on the short row. Short way: 6 steps to (3, 1). Long way, down column 9,
+## along the bottom row and up column 2 to (2, 2): 10 steps in DETOUR_4
+## (exactly ENEMY_AVOID_COST longer), 12 in DETOUR_6. Detours on a grid
+## always differ from the direct route by an even number of tiles (every
+## goal tile shares one parity), so 4 and 6 bracket the constant.
+const DETOUR_4 := [
+	"###########",
+	"#.@..F...E#",
+	"##.######.#",
+	"#.........#",
+	"###########",
+]
+const DETOUR_6 := [
+	"###########",
+	"#.@..F...E#",
+	"##.######.#",
+	"##.######.#",
+	"#.........#",
+	"###########",
+]
+const SHORT_FIRST := Vector2i(8, 1)  # first step of the direct row
+const LONG_FIRST := Vector2i(9, 2)   # first step down the detour column
+
+
+## Same legend as ROOM plus F = long-lived fire, E = enemy spawn point (returned
+## in "spawn"; the caller picks the kind). Returns {game, spawn}.
+static func _room_d3(rows: Array, kind: String) -> Dictionary:
+	var g = Game.new(1, {"fixed_floor": {"gen": _gen(rows), "fdef": {}}, "kit": ["solar_lance", "seed_bomb", "mycelium_dash"]})
+	var spawn := Vector2i(-1, -1)
+	for y in rows.size():
+		var row := String(rows[y])
+		for x in row.length():
+			if row[x] == "F":
+				g.terrain[Vector2i(x, y)] = LONG_FIRE.duplicate()
+			elif row[x] == "E":
+				spawn = Vector2i(x, y)
+	var e = g._spawn(kind, spawn)
+	g._compute_intents()
+	return {"game": g, "enemy": e}
+
+
+## The pre-D3 _chase_step, verbatim: BFS toward any tile adjacent to the
+## tender, occupied tiles impassable, DIRS order, first step returned. The
+## reference the search is held to for a row with no avoid list.
+static func _ref_bfs(g, e: Dictionary) -> Vector2i:
+	var start: Vector2i = e["pos"]
+	var goal: Vector2i = g.player["pos"]
+	var prev := {}
+	prev[start] = start
+	var queue: Array = [start]
+	var qi := 0
+	while qi < queue.size():
+		var cur: Vector2i = queue[qi]
+		qi += 1
+		if g._manhattan(cur, goal) == 1:
+			var node := cur
+			while prev[node] != start:
+				node = prev[node]
+			return node
+		for d in Game.DIRS:
+			var nxt: Vector2i = cur + d
+			if prev.has(nxt) or not g._open(nxt):
+				continue
+			prev[nxt] = cur
+			queue.append(nxt)
+	return start
+
+
+## (a) The detour rule. drill_bot avoids fire, welded_hulk avoids nothing.
+func _check_d3_avoid_detour() -> void:
+	_ok(Content.ENEMY_AVOID_COST == 4, "ENEMY_AVOID_COST is 4 (the rooms below are built for it)")
+	_ok(Content.ENEMIES["drill_bot"].get("avoid", []) == ["fire"] and Content.ENEMIES["welded_hulk"].get("avoid", []).is_empty(),
+		"drill_bot avoids fire, welded_hulk avoids nothing")
+	# a detour exactly ENEMY_AVOID_COST longer is taken (equal cost: fewer avoided tiles wins)
+	var r := _room_d3(DETOUR_4, "drill_bot")
+	var g = r["game"]
+	var e = r["enemy"]
+	var st: int = g.rng.state
+	_ok(g._chase_step(e) == LONG_FIRST, "detour +4 with one fire: the avoider goes the long way")
+	_ok(g.rng.state == st, "_chase_step never touches the rng")
+	r = _room_d3(DETOUR_4, "welded_hulk")
+	_ok(r["game"]._chase_step(r["enemy"]) == SHORT_FIRST, "detour +4: a row with no avoid list takes the short way through the fire")
+	# a detour longer than that is not: the avoider walks through one fire
+	r = _room_d3(DETOUR_6, "drill_bot")
+	g = r["game"]
+	e = r["enemy"]
+	_ok(g._chase_step(e) == SHORT_FIRST, "detour +6 with one fire: the avoider takes the short way (cost 10 < 12)")
+	# ...but two fires on the short way (cost 6 + 8 = 14) make the +6 detour cheaper
+	g.terrain[Vector2i(6, 1)] = LONG_FIRE.duplicate()
+	_ok(g._chase_step(e) == LONG_FIRST, "detour +6 with two fires: the avoider goes the long way (14 > 12)")
+	r = _room_d3(DETOUR_6, "welded_hulk")
+	r["game"].terrain[Vector2i(6, 1)] = LONG_FIRE.duplicate()
+	_ok(r["game"]._chase_step(r["enemy"]) == SHORT_FIRST, "two fires: the hulk still takes the short way")
+	# the tile the enemy stands on is never charged: an avoider standing IN fire
+	# leaves by the cheapest route, not a route that avoids its own tile
+	r = _room_d3(DETOUR_6, "drill_bot")
+	g = r["game"]
+	e = r["enemy"]
+	g.terrain.erase(Vector2i(5, 1))
+	g.terrain[Vector2i(9, 1)] = LONG_FIRE.duplicate()
+	_ok(g._chase_step(e) == SHORT_FIRST, "standing in fire costs nothing: the short way (no fire ahead) is taken")
+	# walk it for real through step(): the "move" intent goes through _chase_step,
+	# the avoider arrives under the tender in 10 moves without ever touching fire
+	r = _room_d3(DETOUR_4, "drill_bot")
+	g = r["game"]
+	e = r["enemy"]
+	var path: Array = []
+	var fire_dmg := 0
+	for i in range(12):
+		var evs: Array = g.step({"type": "end_turn"})
+		for ev in evs:
+			if String(ev.get("t", "")) == "damage" and String(ev.get("src", "")).begins_with("fire"):
+				fire_dmg += 1
+		path.append(e["pos"])
+		if g._manhattan(e["pos"], g.player["pos"]) == 1:
+			break
+	_ok(path == [Vector2i(9, 2), Vector2i(9, 3), Vector2i(8, 3), Vector2i(7, 3), Vector2i(6, 3), Vector2i(5, 3),
+			Vector2i(4, 3), Vector2i(3, 3), Vector2i(2, 3), Vector2i(2, 2)],
+		"the move intent walks the whole detour: %s" % str(path))
+	_ok(fire_dmg == 0 and e["hp"] == int(Content.ENEMIES["drill_bot"]["hp"]), "no fire damage on the way: hp %d" % e["hp"])
+	_ok(String(e["intent"].get("type", "")) == "attack", "arrived: the next intent is an attack, got %s" % str(e["intent"]))
+	# the hulk on the same room walks straight through and burns for it
+	r = _room_d3(DETOUR_4, "welded_hulk")
+	g = r["game"]
+	e = r["enemy"]
+	var hulk_fire := 0
+	for i in range(14):  # slow: moves every other turn
+		for ev in g.step({"type": "end_turn"}):
+			if String(ev.get("t", "")) == "damage" and String(ev.get("src", "")) == "fire:env" and int(ev.get("id", -1)) == int(e["id"]):
+				hulk_fire += int(ev["amt"])
+		if g._manhattan(e["pos"], g.player["pos"]) == 1:
+			break
+	_ok(hulk_fire >= 1, "the hulk took fire damage on the short way: %d" % hulk_fire)
+
+
+## (b) A ring of fire is no fence: with no fire-free way to the tender the
+## avoider steps in, takes enter damage (source "fire:<by>"), and attacks.
+func _check_d3_fire_fence() -> void:
+	var g = _game()
+	var p: Vector2i = g.player["pos"]
+	for dx in range(-1, 2):
+		for dy in range(-1, 2):
+			if dx != 0 or dy != 0:
+				g.terrain[p + Vector2i(dx, dy)] = LONG_FIRE.duplicate()
+	var e = g._spawn("drill_bot", Vector2i(9, 3))
+	g._compute_intents()
+	# every goal tile is fire: the cheapest path still ends on one
+	_ok(g._chase_step(e) == Vector2i(8, 3), "ringed tender: the avoider heads straight in, first step %s" % str(g._chase_step(e)))
+	var dmg: Array = []
+	for i in range(3):
+		for ev in g.step({"type": "end_turn"}):
+			if String(ev.get("t", "")) == "damage" and int(ev.get("id", -1)) == int(e["id"]):
+				dmg.append(ev)
+	_ok(e["pos"] == Vector2i(6, 3), "three moves later it stands in the ring at %s" % str(e["pos"]))
+	# enter damage on the step in, then the environment phase's tick for standing in it
+	_ok(dmg.size() == 2 and String(dmg[0]["src"]) == "fire:env" and String(dmg[1]["src"]) == "fire:env"
+		and int(dmg[0]["amt"]) == int(Content.terrain("fire", "enter_dmg_enemy", 0))
+		and int(dmg[1]["amt"]) == int(Content.terrain("fire", "tick_dmg_enemy", 0))
+		and e["hp"] == int(Content.ENEMIES["drill_bot"]["hp"]) - 2,
+		"it took enter damage from the fire it stepped into, then the standing tick: %s hp %d" % [str(dmg), e["hp"]])
+	_ok(String(e["intent"].get("type", "")) == "attack", "and telegraphs an attack: %s" % str(e["intent"]))
+	# a corridor sealed by fire: the same, through step(), no detour anywhere
+	var corridor := ["#########", "#@..F..E#", "#########"]
+	var r := _room_d3(corridor, "sludgeling")
+	var g2 = r["game"]
+	var e2 = r["enemy"]
+	var hit := 0
+	for i in range(4):
+		for ev in g2.step({"type": "end_turn"}):
+			if String(ev.get("t", "")) == "damage" and int(ev.get("id", -1)) == int(e2["id"]) and String(ev.get("src", "")) == "fire:env":
+				hit += 1
+		if not g2.enemies.has(e2):
+			break
+	_ok(hit == 1 and not g2.enemies.has(e2), "a 1-hp sludgeling walks into the sealing fire and dies of it (hits %d)" % hit)
+
+
+## (c) Reference parity: on generated floors (every seed x every floor), for
+## every enemy and a sample of tender positions, the search equals the old BFS
+## whenever the enemy's avoid list is empty or names no kind on the board.
+## Then the same boards with fire and roots scattered, every enemy relabelled
+## as an avoid-less mobile kind (the reference never reads the kind; the search
+## reads only its avoid list), so _open blocks and cost-1 fire tiles are
+## exercised without ever changing the inputs the two are handed.
+func _check_d3_bfs_parity() -> void:
+	var seeds := 30
+	var floors := 0
+	var compared := 0
+	var compared_fire := 0
+	var skipped := 0
+	var mismatches := 0
+	var rng_moved := 0
+	var no_avoid_kind := ""
+	for kind in Content.ENEMIES:
+		var traits: Array = Content.ENEMIES[kind]["traits"]
+		if Content.ENEMIES[kind].get("avoid", []).is_empty() and not traits.has("boss") 				and not traits.has("summons") and not traits.has("oozes") and not traits.has("stokes"):
+			no_avoid_kind = kind
+			break
+	_ok(no_avoid_kind != "", "an avoid-less mobile kind exists for the relabel pass: %s" % no_avoid_kind)
+	for s in range(1, seeds + 1):
+		var g = Game.new(s)
+		for n in range(1, Content.FLOORS.size() + 1):
+			if n > 1:
+				g._enter_floor(n)
+			floors += 1
+			var kinds_on_board := {}
+			for t in g.terrain:
+				kinds_on_board[String(g.terrain[t]["kind"])] = true
+			var opens: Array = []
+			for y in int(g.map["h"]):
+				for x in int(g.map["w"]):
+					var p := Vector2i(x, y)
+					if g._tile(p) == MapGen.T_FLOOR and g._enemy_at(p) == null:
+						opens.append(p)
+			var positions: Array = [g.map["start"]]
+			for i in range(0, opens.size(), 9):
+				positions.append(opens[i])
+			# pass 1: the board as generated, real kinds
+			for pp in positions:
+				g.player["pos"] = pp
+				for e in g.enemies:
+					var relevant := false
+					for k in Content.ENEMIES[e["kind"]].get("avoid", []):
+						if kinds_on_board.has(String(k)):
+							relevant = true
+					if relevant:
+						skipped += 1
+						continue
+					var st: int = g.rng.state
+					var got: Vector2i = g._chase_step(e)
+					# the weighted search must reproduce the BFS with an empty list
+					# too (the fast path skips it, so ask it directly)
+					var got_w: Vector2i = g._chase_dijkstra(e["pos"], g.player["pos"], [])
+					if g.rng.state != st:
+						rng_moved += 1
+					compared += 1
+					if got != _ref_bfs(g, e) or got_w != got:
+						mismatches += 1
+						if mismatches <= 3:
+							failures.append("parity: seed %d floor %d %s at %s tender %s: %s vs BFS %s" % [
+								s, n, e["kind"], str(e["pos"]), str(pp), str(got), str(_ref_bfs(g, e))])
+			# pass 2: fire on every 5th open tile, roots on every 11th, kinds relabelled
+			for i in range(opens.size()):
+				if g.terrain.has(opens[i]) or opens[i] == g.map["start"]:
+					continue
+				if i % 5 == 0:
+					g.terrain[opens[i]] = LONG_FIRE.duplicate()
+				elif i % 11 == 0:
+					g.terrain[opens[i]] = {"kind": "roots", "ttl": 99}
+			for pp in positions:
+				g.player["pos"] = pp
+				for e in g.enemies:
+					var real_kind: String = e["kind"]
+					e["kind"] = no_avoid_kind
+					var got: Vector2i = g._chase_step(e)
+					var got_w: Vector2i = g._chase_dijkstra(e["pos"], g.player["pos"], [])
+					var want: Vector2i = _ref_bfs(g, e)
+					e["kind"] = real_kind
+					compared_fire += 1
+					if got != want or got_w != want:
+						mismatches += 1
+						if mismatches <= 3:
+							failures.append("parity (fire board): seed %d floor %d at %s tender %s: %s vs BFS %s" % [
+								s, n, str(e["pos"]), str(pp), str(got), str(want)])
+	_ok(floors >= 200, "parity covers %d generated floors (want >= 200)" % floors)
+	_ok(mismatches == 0, "reference-BFS parity: %d mismatches over %d + %d comparisons" % [mismatches, compared, compared_fire])
+	_ok(rng_moved == 0, "the search moved the rng %d times" % rng_moved)
+	print("d3 parity: %d floors, %d clean-board comparisons (%d skipped: an avoided kind on the board), %d fire-board comparisons, %d mismatches" % [
+		floors, compared, skipped, compared_fire, mismatches])
+
+
+## One end_turn on ROOM with `kind` at `epos`, smoke tiles at `smoke`; the
+## tender banks `bank` charge first. Returns {game, enemy, events, intent}
+## where intent is the snapshot's telegraph before the step.
+func _screen_case(kind: String, epos: Vector2i, smoke: Array, bank: int = 0) -> Dictionary:
+	var g = _game()
+	for sp in smoke:
+		g.terrain[sp] = {"kind": "smoke", "ttl": 9}
+	var e = g._spawn(kind, epos)
+	g._compute_intents()
+	var shown: Dictionary = g.snapshot()["enemies"][0]["intent"]
+	g.player["charge"] = bank
+	var evs: Array = g.step({"type": "end_turn"})
+	return {"game": g, "enemy": e, "events": evs, "intent": shown}
+
+
+## (d) The smoke screen, adjacency-based.
+func _check_d3_screening() -> void:
+	_ok(Content.SCREENED_INTENTS == ["drain", "gum", "drag"], "SCREENED_INTENTS as shipped")
+	_ok(bool(Content.terrain("smoke", "screens", false)), "smoke screens")
+	for kind in Content.TERRAIN:
+		if kind != "smoke":
+			_ok(not bool(Content.terrain(kind, "screens", false)), "%s does not screen" % kind)
+	var p := Vector2i(5, 3)
+	# tar_spitter at range 3, smoke beside the tender: the gum is shown, then lost
+	var c := _screen_case("tar_spitter", Vector2i(8, 3), [Vector2i(6, 3)])
+	_ok(String(c["intent"].get("type", "")) == "gum", "the telegraph still shows the gum: %s" % str(c["intent"]))
+	var scr := _evs(c["events"], "screened")
+	_ok(scr.size() == 1 and int(scr[0]["id"]) == int(c["enemy"]["id"]) and String(scr[0]["intent"]) == "gum",
+		"screened {id, intent gum}: %s" % str(scr))
+	_ok(_evs(c["events"], "gummed").is_empty() and c["game"].player["gummed"].is_empty(), "nothing was gummed")
+	# the same spitter adjacent: gums through the smoke (you cannot screen at arm's length)
+	c = _screen_case("tar_spitter", Vector2i(6, 3), [Vector2i(4, 3)])
+	_ok(_evs(c["events"], "screened").is_empty() and _evs(c["events"], "gummed").size() == 1 and not c["game"].player["gummed"].is_empty(),
+		"adjacent spitter gums through smoke: %s" % str(c["events"]))
+	# smoke two tiles from the tender does not screen
+	c = _screen_case("tar_spitter", Vector2i(8, 3), [Vector2i(7, 3)])
+	_ok(_evs(c["events"], "screened").is_empty() and _evs(c["events"], "gummed").size() == 1, "smoke two tiles away: the gum lands")
+	# standing on smoke screens
+	c = _screen_case("tar_spitter", Vector2i(8, 3), [p])
+	_ok(_evs(c["events"], "screened").size() == 1 and _evs(c["events"], "gummed").is_empty(), "standing on smoke: screened")
+	# smoke on the far side of the tender screens too (adjacency, not a line)
+	c = _screen_case("tar_spitter", Vector2i(8, 3), [Vector2i(4, 3)])
+	_ok(_evs(c["events"], "screened").size() == 1, "smoke behind the tender screens (not a line check)")
+	# leech drain at range 2: screened keeps the bank; adjacent drains through.
+	# The bank is paid back into charge at the start of the next player turn
+	# (_begin_player_turn), so the banked 3 is read as charge against a
+	# baseline turn with nothing draining
+	var baseline: int = int(_screen_case("drill_bot", Vector2i(9, 5), [], 3)["game"].player["charge"])
+	c = _screen_case("leech_drone", Vector2i(7, 3), [Vector2i(6, 3)], 3)
+	_ok(String(c["intent"].get("type", "")) == "drain" and _evs(c["events"], "screened").size() == 1
+		and String(_evs(c["events"], "screened")[0]["intent"]) == "drain" and _evs(c["events"], "drain").is_empty()
+		and int(c["game"].player["charge"]) == baseline, "leech at range 2 through smoke: drain screened, bank kept (charge %d = %d): %s" % [
+			int(c["game"].player["charge"]), baseline, str(c["events"])])
+	c = _screen_case("leech_drone", Vector2i(6, 3), [Vector2i(4, 3)], 3)
+	var drained := _evs(c["events"], "drain")
+	_ok(_evs(c["events"], "screened").is_empty() and drained.size() == 1 and int(drained[0]["amt"]) == int(Content.ENEMIES["leech_drone"]["drain"])
+		and int(c["game"].player["charge"]) == baseline - int(drained[0]["amt"]),
+		"adjacent leech drains through smoke: charge %d (baseline %d): %s" % [int(c["game"].player["charge"]), baseline, str(drained)])
+	# crane drag at range 3: screened leaves the tender in place; without smoke it pulls
+	c = _screen_case("magnet_crane", Vector2i(8, 3), [Vector2i(6, 3)])
+	_ok(String(c["intent"].get("type", "")) == "drag" and _evs(c["events"], "screened").size() == 1
+		and String(_evs(c["events"], "screened")[0]["intent"]) == "drag" and _evs(c["events"], "drag").is_empty()
+		and c["game"].player["pos"] == p, "crane drag screened, tender stays at %s" % str(c["game"].player["pos"]))
+	c = _screen_case("magnet_crane", Vector2i(8, 3), [])
+	_ok(_evs(c["events"], "drag").size() == 1 and c["game"].player["pos"] == Vector2i(6, 3), "no smoke: the crane pulls")
+	# a massive dragger sees through smoke
+	_ok(Content.ENEMIES["the_dredge"]["traits"].has("massive") and Content.ENEMIES["the_dredge"]["traits"].has("dredges"),
+		"the_dredge is massive and drags through its boss cycle (dredges)")
+	c = _screen_case("the_dredge", Vector2i(8, 3), [Vector2i(6, 3)])
+	_ok(String(c["intent"].get("type", "")) == "drag" and _evs(c["events"], "screened").is_empty()
+		and _evs(c["events"], "drag").size() == 1 and c["game"].player["pos"] == Vector2i(6, 3),
+		"massive drag is not screened: %s" % str(c["events"]))
+	# intents outside the list are untouched: a drill_bot still moves beside smoke
+	c = _screen_case("drill_bot", Vector2i(8, 3), [Vector2i(6, 3)])
+	_ok(_evs(c["events"], "screened").is_empty() and c["enemy"]["pos"] == Vector2i(7, 3), "a move intent is never screened")
+	# event order: screened is the enemy's whole action - no gummed follows it,
+	# the rng is not touched by the screen itself, and a stunned enemy is
+	# swallowed by its status first (no screened event)
+	var g = _game()
+	g.terrain[Vector2i(6, 3)] = {"kind": "smoke", "ttl": 9}
+	var e = g._spawn("tar_spitter", Vector2i(8, 3))
+	g._compute_intents()
+	var st: int = g.rng.state
+	g._step_events = []
+	g._execute_intent(e)
+	_ok(g.rng.state == st, "_execute_intent of a screened gum leaves the rng alone")
+	_ok(g._step_events.size() == 1 and String(g._step_events[0]["t"]) == "screened", "screened is the only event of the action: %s" % str(g._step_events))
+	_ok(g._screened(e, "gum") and not g._screened(e, "move") and not g._screened(e, "attack"), "_screened is per intent type")
+	e["status"]["stun"] = 1
+	g._step_events = []
+	g._execute_intent(e)
+	_ok(_evs(g._step_events, "stunned").size() == 1 and _evs(g._step_events, "screened").is_empty(), "a stun swallows the intent before the screen: %s" % str(g._step_events))

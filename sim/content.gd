@@ -725,6 +725,10 @@ const SURGE_DEFAULT := {"cost": -1}
 ##                   burns to ash: the REACTIONS fire_burns_out row mirrors it)
 ##   convertible     a convert_radius (overgrowth) turns it into growth; every
 ##                   corruption kind except rich_goo, whose bonus must be cleansed
+##   screens         a smoke screen (Block D3): while the tender stands on such a
+##                   tile or one lies on any of the four DIRS neighbours, every
+##                   SCREENED_INTENTS intent from a non-adjacent, non-massive
+##                   enemy fizzles ({t: "screened"}); smoke only
 ## Ash (C1b): what oil leaves once its fire burns out. Corruption for the
 ## quota, room bloom and floor restore, cleansable and washable, but it never
 ## shields the boss core and never burns again. Mapgen never places it; the
@@ -736,63 +740,63 @@ const TERRAIN := {
 		"bloom": 1, "ttl": 0, "decays": false,
 		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": true,
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": true, "screens": false,
 	},
 	"goo": {
 		"corruption": true, "shields_core": true, "flammable": false, "washable": false,
 		"bloom": 1, "ttl": 0, "decays": false,
 		"enter_dmg_player": 1, "enter_dmg_enemy": 0, "enter_src": "goo",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": true,
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": true, "screens": false,
 	},
 	"rich_goo": {
 		"corruption": true, "shields_core": true, "flammable": false, "washable": false,
 		"bloom": RICH_GOO_BLOOM, "ttl": 0, "decays": false,
 		"enter_dmg_player": 1, "enter_dmg_enemy": 0, "enter_src": "goo",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": false,
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": false, "screens": false,
 	},
 	"growth": {
 		"corruption": false, "shields_core": false, "flammable": false, "washable": false,
 		"bloom": 0, "ttl": 0, "decays": false,
 		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": false, "blocks_beam": false, "heal": 1, "burns_to": "", "convertible": false,
+		"blocks": false, "blocks_beam": false, "heal": 1, "burns_to": "", "convertible": false, "screens": false,
 	},
 	"fire": {
 		"corruption": false, "shields_core": false, "flammable": false, "washable": true,
 		"bloom": 0, "ttl": 2, "decays": true,
 		"enter_dmg_player": 1, "enter_dmg_enemy": 1, "enter_src": "fire",
 		"tick_dmg_player": 1, "tick_dmg_enemy": 1,
-		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "ash", "convertible": false,
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "ash", "convertible": false, "screens": false,
 	},
 	"smoke": {
 		"corruption": false, "shields_core": false, "flammable": false, "washable": false,
 		"bloom": 0, "ttl": 3, "decays": true,
 		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": false, "blocks_beam": true, "heal": 0, "burns_to": "", "convertible": false,
+		"blocks": false, "blocks_beam": true, "heal": 0, "burns_to": "", "convertible": false, "screens": true,
 	},
 	"roots": {
 		"corruption": false, "shields_core": false, "flammable": false, "washable": false,
 		"bloom": 0, "ttl": 0, "decays": true,
 		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": true, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": false,
+		"blocks": true, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": false, "screens": false,
 	},
 	"supply": {
 		"corruption": false, "shields_core": false, "flammable": false, "washable": false,
 		"bloom": 0, "ttl": 0, "decays": false,
 		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": false,
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": false, "screens": false,
 	},
 	"ash": {
 		"corruption": true, "shields_core": false, "flammable": false, "washable": true,
 		"bloom": 1, "ttl": 0, "decays": false,
 		"enter_dmg_player": 0, "enter_dmg_enemy": 0, "enter_src": "",
 		"tick_dmg_player": 0, "tick_dmg_enemy": 0,
-		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": true,
+		"blocks": false, "blocks_beam": false, "heal": 0, "burns_to": "", "convertible": true, "screens": false,
 	},
 }
 
@@ -833,6 +837,15 @@ const STATUSES := {
 }
 
 
+## Enemy intents a smoke screen swallows (Block D3, Game._screened): drain,
+## gum and drag are the ranged, aimed intents that need to see the tender; a
+## melee attack, a slam or a summon does not look. Closed list - every entry
+## must be an intent type Game._execute_intent handles (tests/test_content.gd
+## INTENT_TYPES). The rule lives at execution only, so the intent is still
+## computed and telegraphed: a shown gum is something the tender can step into
+## smoke to dodge.
+const SCREENED_INTENTS := ["drain", "gum", "drag"]
+
 ## One TERRAIN attribute; `default` when the kind or key is unknown ("" is the
 ## no-terrain kind and always reads as default).
 static func terrain(kind: String, key: String, default = null):
@@ -856,18 +869,37 @@ static func counts_as_corruption(kind: String) -> bool:
 	return is_corruption(kind) or is_corruption(String(terrain(kind, "burns_to", "")))
 
 
+## Extra step-cost an enemy pays to enter a tile whose terrain kind is in its
+## row's "avoid" list (Block D3, Game._chase_step). Walking around costs the
+## detour's extra tiles, walking through costs this much per avoided tile, and
+## the enemy takes whichever is cheaper (at equal cost the path with fewer
+## avoided tiles): a detour up to this many tiles longer is taken, a longer
+## one is not. So a ring of fire is never an immortal fence - when burning
+## through is the cheapest way, the enemy burns through. This constant is the
+## one tuning lever the measure phase may name.
+const ENEMY_AVOID_COST := 4
+
+## Enemy rows. Optional key "avoid": [TERRAIN kinds] (default [] = terrain-
+## blind, exactly the pre-D3 chase) - the kinds the enemy paths around at
+## ENEMY_AVOID_COST per tile. Every mobile machine avoids fire; the rows that
+## deviate say why. Stationary kinds (extractor_engine, pump_jack, smokestack)
+## never move, so an avoid list would be dead data; bosses see through smoke
+## (massive) and fear nothing.
 const ENEMIES := {
-	"drill_bot": {"name": "Drill Bot", "hp": 3, "dmg": 2, "slow": false, "traits": ["fuses"]},
-	"oil_sludge": {"name": "Oil Sludge", "hp": 4, "dmg": 1, "slow": true, "traits": ["splits", "oil_trail"]},
-	"sludgeling": {"name": "Sludgeling", "hp": 1, "dmg": 1, "slow": false, "traits": []},
-	"leech_drone": {"name": "Leech Drone", "hp": 2, "dmg": 0, "slow": false, "traits": ["drains"], "drain": 2, "drain_range": 2},
-	"tar_spitter": {"name": "Tar Spitter", "hp": 2, "dmg": 0, "slow": false, "traits": ["gums"], "gum_range": 3, "gum_turns": 2},
-	# Two drill bots welded into one by the combine's assimilation.
+	"drill_bot": {"name": "Drill Bot", "hp": 3, "dmg": 2, "slow": false, "traits": ["fuses"], "avoid": ["fire"]},
+	"oil_sludge": {"name": "Oil Sludge", "hp": 4, "dmg": 1, "slow": true, "traits": ["splits", "oil_trail"], "avoid": ["fire"]},
+	"sludgeling": {"name": "Sludgeling", "hp": 1, "dmg": 1, "slow": false, "traits": [], "avoid": ["fire"]},
+	"leech_drone": {"name": "Leech Drone", "hp": 2, "dmg": 0, "slow": false, "traits": ["drains"], "drain": 2, "drain_range": 2, "avoid": ["fire"]},
+	"tar_spitter": {"name": "Tar Spitter", "hp": 2, "dmg": 0, "slow": false, "traits": ["gums"], "gum_range": 3, "gum_turns": 2, "avoid": ["fire"]},
+	# Two drill bots welded into one by the combine's assimilation. No avoid
+	# list: nothing stops the hulk, it walks straight through fire.
 	"welded_hulk": {"name": "Welded Hulk", "hp": 7, "dmg": 2, "slow": true, "traits": ["spiked"]},
 	# Spiked: melee strikes hurt the attacker - reach for a tool instead.
+	# No avoid list: it is made of coal and does not mind fire.
 	"coal_golem": {"name": "Coal Golem", "hp": 4, "dmg": 2, "slow": true, "traits": ["smoke_burst", "spiked"]},
 	"extractor_engine": {"name": "Extractor Engine", "hp": 5, "dmg": 0, "slow": false, "traits": ["summons"], "summon_cycle": 3},
-	"rust_hound": {"name": "Rust Hound", "hp": 2, "dmg": 1, "slow": false, "traits": ["spiked", "fast"]},
+	"rust_hound": {"name": "Rust Hound", "hp": 2, "dmg": 1, "slow": false, "traits": ["spiked", "fast"], "avoid": ["fire"]},
+	# No avoid list: the igniter WANTS fire - it lights the oil it walks over.
 	"cinder_mite": {"name": "Cinder Mite", "hp": 1, "dmg": 1, "slow": false, "traits": ["igniter"]},
 	"pump_jack": {"name": "Pump Jack", "hp": 4, "dmg": 0, "slow": false, "traits": ["oozes"], "ooze_cycle": 2},
 	# Stationary clock attacker: every stoke_cycle turns the smog clock ticks
@@ -875,7 +907,7 @@ const ENEMIES := {
 	"smokestack": {"name": "Smokestack", "hp": 4, "dmg": 0, "slow": false, "traits": ["stokes"], "stoke_cycle": 2},
 	# Position disruptor: drags the player one tile toward itself each turn
 	# while in range - punishes pure kiting, feeds melee packs.
-	"magnet_crane": {"name": "Magnet Crane", "hp": 3, "dmg": 0, "slow": false, "traits": ["drags"], "drag_range": 3},
+	"magnet_crane": {"name": "Magnet Crane", "hp": 3, "dmg": 0, "slow": false, "traits": ["drags"], "drag_range": 3, "avoid": ["fire"]},
 	"furnace_core": {"name": "Furnace Core", "hp": 18, "dmg": 3, "slow": false, "traits": ["boss", "massive"], "slam_range": 3, "gate_hp": 6},
 	"overseer": {"name": "The Overseer", "hp": 16, "dmg": 3, "slow": false, "traits": ["boss", "massive", "mobile_boss"], "slam_range": 3, "gate_hp": 5},
 	# Anti-growth boss: drags the player in, slams, and dredges nearby growth

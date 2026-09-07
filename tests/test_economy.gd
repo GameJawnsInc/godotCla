@@ -54,6 +54,14 @@ extends SceneTree
 ##     rng.state untouched and is reproducible across fresh games; shop.rerolls
 ##     is stored (clone copies it, state_hash moves with it) while
 ##     reroll_price / rerolls_left are derived snapshot keys the hash ignores
+##  m) Block D3 (bump 11): no new main-rng draw. The Game.new pins (k) still
+##     hold; Game._chase_step on rooms where fire and an avoider meet (the
+##     search relaxes nodes) and the screened execution of a gum leave
+##     rng.state untouched; and a Game subclass that swaps only the two D3
+##     entry points back (the reference BFS for _chase_step, _screened false)
+##     drives the optimizer over seeds 1..10 to the rng.state the bump-10 tree
+##     recorded at every floor entry (RNG_FLOOR_ENTRY_BUMP10) - so nothing
+##     outside those two functions moved a draw
 ## Run: godot --headless --path . --script tests/test_economy.gd
 
 const Content := preload("res://sim/content.gd")
@@ -81,6 +89,55 @@ const RNG_STATE_BUMP8 := [
 	7411140844524094591, -4638585121757713264, 6393578473144512909, -5397919597486566550, -4398859535905301253,
 ]
 
+## rng.state after Game.new and then right after every step that entered a
+## new floor, optimizer persona, seeds 1..10, recorded on the bump-10 tree
+## (git HEAD before Block D3). Replayed by RefGame below, which restores the
+## pre-D3 chase and no smoke screen, so the run is the bump-10 run exactly.
+const RNG_FLOOR_ENTRY_BUMP10 := [
+	[5089575408282122190, -184513544007953650, 8759944363161018601, 2868822161275640310, 3937219494565775732, 3539856330929230112, 109341832312744600],
+	[-1543445859615755461, -8411093148249300473],
+	[5249088221260300708, -8668300741929293400, 4694250479173219183, -5359620544126918427, 1679020471647375956, 4038978688939662360, -9008640875809358353],
+	[-7365291246896200391, 9118581067688907677, 4174390183580078064, -1769302175855516454, 8580300391172121205, 2216684603156017793, -1685136958817371501],
+	[-4307724339993763098, -3504797669898524666, 6961354990307791117, 464051487255323640, -4057801299652768257, 7021950593982289331, -3832266116403619108],
+	[-5880482361733646265, -808239912685928521, -4338090631578911018, -8046437620736313008, 4196872015560688783, -422735934883274349],
+	[-2810552436854674636, 5839575857474482460, 4565013434687613195, -1843283859693427995, -7995792451489974632, -174968855415995460],
+	[-1230729324925988375, 1420908871602353461, 6357929784085942264, 6627642904022408237, 3662287443047722123, 7595618154367185159],
+	[2921800532955938594, 1587407093833056826, 3824933404910214398, 3934717501292175332, 3378600504722340502, -5312019873132383350, 1260004648369663161],
+	[2473378904339026979, 8392605424486942015, 2657003823126323915, 5422367580079282869, 8572526701641051724],
+]
+
+
+## The bump-10 sim as a subclass: the two Block D3 entry points swapped back
+## (the old BFS chase and no smoke screen) and nothing else, so an optimizer
+## run on it must reproduce the pins above exactly. Used only by (m).
+class RefGame extends Game:
+	func _chase_step(e: Dictionary) -> Vector2i:
+		var start: Vector2i = e["pos"]
+		var goal: Vector2i = player["pos"]
+		var prev := {}
+		prev[start] = start
+		var queue: Array = [start]
+		var qi := 0
+		while qi < queue.size():
+			var cur: Vector2i = queue[qi]
+			qi += 1
+			if _manhattan(cur, goal) == 1:
+				var node := cur
+				while prev[node] != start:
+					node = prev[node]
+				return node
+			for d in DIRS:
+				var nxt: Vector2i = cur + d
+				if prev.has(nxt) or not _open(nxt):
+					continue
+				prev[nxt] = cur
+				queue.append(nxt)
+		return start
+
+	func _screened(_e: Dictionary, _itype: String) -> bool:
+		return false
+
+
 var checks := 0
 var failures: Array = []
 
@@ -105,6 +162,7 @@ func _init() -> void:
 	_check_reroll_price_and_cap()
 	_check_reroll_redraw()
 	_check_reroll_state()
+	_check_d3_rng_untouched()
 	if failures.is_empty():
 		print("economy: OK (%d checks)" % checks)
 		quit(0)
@@ -1377,3 +1435,76 @@ func _check_reroll_state() -> void:
 	var gt = _shrine_game(5, {"tier": GOUGING_TIER})
 	_ok(int(gt.snapshot()["shop"]["reroll_price"]) == Content.SHOP_COSTS["reroll"] + 1, "reroll: gouging snapshot price %s" % str(gt.snapshot()["shop"].get("reroll_price")))
 	print("reroll state: clone copies rerolls, hash follows the counter, derived keys reroll_price / rerolls_left stay out")
+
+
+# --- m) Block D3: no new main-rng draw ------------------------------------------
+
+## Two-corridor room (tests/test_grammar.gd DETOUR_4): @ (2, 1), fire at (5, 1)
+## on the short row, an avoider spawned at (9, 1) so the search has to relax
+## nodes to find the detour.
+const D3_ROOM := [
+	"###########",
+	"#.@..F...E#",
+	"##.######.#",
+	"#.........#",
+	"###########",
+]
+
+
+func _check_d3_rng_untouched() -> void:
+	# 1) the search on a board where fire and an avoider meet, and where they do not
+	var gen := _gen(D3_ROOM)
+	gen["terrain"][Vector2i(5, 1)] = {"kind": "fire", "ttl": 99, "by": "env"}
+	var g = Game.new(1, {"fixed_floor": {"gen": gen, "fdef": {}}, "kit": Content.STARTING_KIT})
+	var e = g._spawn("drill_bot", Vector2i(9, 1))
+	var hulk = g._spawn("welded_hulk", Vector2i(1, 3))  # the dead-end tile: off the detour
+	var st: int = g.rng.state
+	var step_a: Vector2i = g._chase_step(e)
+	var step_h: Vector2i = g._chase_step(hulk)
+	_ok(g.rng.state == st, "_chase_step (avoider through a detour, hulk on a plain board) leaves rng.state alone")
+	_ok(step_a == Vector2i(9, 2) and step_h == Vector2i(2, 3), "the two chases went where expected: %s %s" % [str(step_a), str(step_h)])
+	# 2) a screened gum executed directly: no rng draw (the gum slot draw belongs to _compute_intents, not to the screen)
+	var g2 = Game.new(1, {"fixed_floor": {"gen": _gen(D3_ROOM), "fdef": {}}, "kit": Content.STARTING_KIT})
+	g2.terrain[Vector2i(3, 1)] = {"kind": "smoke", "ttl": 9}
+	var spitter = g2._spawn("tar_spitter", Vector2i(5, 1))
+	spitter["intent"] = {"type": "gum", "slot": 0}
+	st = g2.rng.state
+	g2._step_events = []
+	g2._execute_intent(spitter)
+	_ok(g2.rng.state == st and _events_of(g2._step_events, "screened").size() == 1 and _events_of(g2._step_events, "gummed").is_empty(),
+		"a screened gum executes without an rng draw: %s" % str(g2._step_events))
+	# 3) the bump-10 sim (RefGame) under the optimizer reproduces the recorded floor-entry states
+	var seeds_checked := 0
+	var floors_checked := 0
+	var moved := 0
+	for i in range(RNG_FLOOR_ENTRY_BUMP10.size()):
+		var s := i + 1
+		var rg = RefGame.new(s)
+		var bot = Roster.make("optimizer", s)
+		if bot.has_method("set_sim"):
+			bot.set_sim(rg)
+		var states: Array = [rg.rng.state]
+		var last_floor: int = rg.floor_num
+		var actions := 0
+		while not rg.over and actions < Sweep.MAX_ACTIONS and rg.total_turns < Sweep.MAX_TURNS:
+			var act: Dictionary = bot.choose_action(rg.snapshot(), rg.legal_actions())
+			rg.step(act)
+			actions += 1
+			if rg.floor_num != last_floor:
+				last_floor = rg.floor_num
+				states.append(rg.rng.state)
+		seeds_checked += 1
+		var want: Array = RNG_FLOOR_ENTRY_BUMP10[i]
+		if states.size() != want.size():
+			moved += 1
+			failures.append("floor-entry pins: seed %d reached %d floors, the bump-10 tree reached %d" % [s, states.size(), want.size()])
+			continue
+		for f in range(states.size()):
+			floors_checked += 1
+			if int(states[f]) != int(want[f]):
+				moved += 1
+				if moved <= 3:
+					failures.append("floor-entry pins: seed %d floor %d state %d, bump-10 tree had %d" % [s, f + 1, int(states[f]), int(want[f])])
+	_ok(moved == 0, "RefGame optimizer run: rng.state at every floor entry matches the bump-10 tree (%d seeds, %d floor entries, %d moved)" % [seeds_checked, floors_checked, moved])
+	_ok(RefGame.new(1).rng.state == int(RNG_STATE_BUMP8[0]) and Game.new(1).rng.state == int(RNG_STATE_BUMP8[0]), "RefGame and Game share the Game.new pins")
+	print("d3 rng: floor-entry pins %d seeds / %d entries, %d moved" % [seeds_checked, floors_checked, moved])

@@ -33,6 +33,10 @@ extends SceneTree
 ##    config dict whose keys come from Content.MUTATOR_CONFIG_KEYS (the closed
 ##    set Game._mut reads), typed per key: pool_ban an array of ABILITIES base
 ##    ids, the booleans bool, the rest int. Same self-test discipline.
+## 12) Block D3 - enemies read terrain: every ENEMIES "avoid" entry is a
+##     TERRAIN kind (closed), ENEMY_AVOID_COST is an int >= 1, SCREENED_INTENTS
+##     is a non-empty subset of INTENT_TYPES, and TERRAIN "screens" is a
+##     required bool. Same self-test discipline: one bad fixture per shape.
 ## Run: godot --headless --path . --script tests/test_content.gd
 
 const Content := preload("res://sim/content.gd")
@@ -90,8 +94,11 @@ const PER_RADIUS_COUNTS := ["fire_within_self"]  # the only count Game._rider_pe
 const TERRAIN_REQUIRED := [
 	"corruption", "shields_core", "flammable", "washable", "bloom", "ttl", "decays",
 	"enter_dmg_player", "enter_dmg_enemy", "enter_src", "tick_dmg_player", "tick_dmg_enemy",
-	"blocks", "blocks_beam", "heal", "burns_to", "convertible",
+	"blocks", "blocks_beam", "heal", "burns_to", "convertible", "screens",
 ]
+## TERRAIN keys that must be bools (Game reads them through bool()); "screens"
+## is the Block D3 smoke-screen flag Game._screened reads.
+const TERRAIN_BOOL_KEYS := ["corruption", "shields_core", "flammable", "washable", "decays", "blocks", "blocks_beam", "convertible", "screens"]
 ## "cooldown" stays optional: only the rows that want stagger-style
 ## immunity (root, since Block C1b) carry one, but where it appears it
 ## must be a positive int - a 0 or a float would silently disable it.
@@ -298,6 +305,24 @@ func _init() -> void:
 				"has" if free_loadouts.has(lid) else "lacks", lid, str(pkgs)])
 	print("loadouts: %d rows, %d package-free (%s)" % [
 		Content.LOADOUTS.size(), free_loadouts.size(), str(free_loadouts)])
+
+	# 12) Block D3: enemies read terrain - the live tables, then the lint's own self-test
+	failures.append_array(_lint_enemy_avoid(Content.ENEMIES))
+	failures.append_array(_lint_avoid_cost(Content.ENEMY_AVOID_COST))
+	failures.append_array(_lint_screened_intents(Content.SCREENED_INTENTS))
+	failures.append_array(_lint_d3_selftest())
+	var avoiders: Array = []
+	var screens: Array = []
+	for kind in Content.ENEMIES:
+		if not Content.ENEMIES[kind].get("avoid", []).is_empty():
+			avoiders.append("%s %s" % [kind, str(Content.ENEMIES[kind]["avoid"])])
+	for kind in Content.TERRAIN:
+		# the lint above rejects a non-bool screens value; do not throw on it here
+		if Content.TERRAIN[kind].get("screens", false) is bool and Content.TERRAIN[kind].get("screens", false):
+			screens.append(kind)
+	print("enemies: %d rows, %d with an avoid list (%s); avoid cost %d; screened intents %s; screening terrain %s" % [
+		Content.ENEMIES.size(), avoiders.size(), ", ".join(avoiders), Content.ENEMY_AVOID_COST,
+		str(Content.SCREENED_INTENTS), str(screens)])
 
 	if failures.is_empty():
 		print("content: OK")
@@ -511,6 +536,7 @@ func _lint_tables() -> Array:
 			out.append("TERRAIN %s: burns_to '%s' not in TERRAIN" % [kind, burns])
 		if bool(row.get("decays", false)) and int(row.get("ttl", 0)) < 0:
 			out.append("TERRAIN %s: decays with a negative ttl" % kind)
+		out.append_array(_lint_terrain_bools(kind, row))
 		# convert_radius only ever turns corruption into growth, so a
 		# convertible row that is not corruption would be dead data
 		if row.has("convertible") and not (row["convertible"] is bool):
@@ -1056,4 +1082,130 @@ func _lint_loadout_selftest() -> Array:
 		out.append("loadout lint self-test: good fixture rejected: %s" % f)
 	print("loadout lint self-test: %d bad rows -> %d failures; %d good rows -> %d failures" % [
 		BAD_LOADOUTS.size(), bad.size(), GOOD_LOADOUTS.size(), good.size()])
+	return out
+
+
+# --- 12) Block D3: enemies read terrain -----------------------------------------
+
+## Every TERRAIN_BOOL_KEYS key present on a row must be a bool: Game reads them
+## through bool(), where a stray 1 or "true" would pass silently.
+func _lint_terrain_bools(kind: String, row: Dictionary) -> Array:
+	var out: Array = []
+	for key in TERRAIN_BOOL_KEYS:
+		if row.has(key) and not (row[key] is bool):
+			out.append("TERRAIN %s: '%s' must be a bool, got %s" % [kind, key, str(row[key])])
+	return out
+
+
+## An ENEMIES-shaped table: "avoid", when present, is an Array of TERRAIN kinds
+## (closed vocabulary - Game._chase_step compares it with _terrain_kind), with
+## no duplicates. Failure strings start with the enemy kind.
+func _lint_enemy_avoid(enemies: Dictionary) -> Array:
+	var out: Array = []
+	for kind in enemies:
+		var row: Dictionary = enemies[kind]
+		if not row.has("avoid"):
+			continue
+		if not (row["avoid"] is Array):
+			out.append("%s: avoid must be an Array of TERRAIN kinds, got %s" % [kind, str(row["avoid"])])
+			continue
+		var seen := {}
+		for k in row["avoid"]:
+			if not (k is String) or not Content.TERRAIN.has(k):
+				out.append("%s: avoid kind '%s' not in TERRAIN" % [kind, str(k)])
+			elif seen.has(k):
+				out.append("%s: avoid lists '%s' twice" % [kind, str(k)])
+			seen[k] = true
+	return out
+
+
+## ENEMY_AVOID_COST: an int >= 1 (0 would make the avoid lists dead data, a
+## float would break the integer bucket queue).
+func _lint_avoid_cost(cost) -> Array:
+	if not (cost is int) or int(cost) < 1:
+		return ["ENEMY_AVOID_COST: must be an int >= 1, got %s" % str(cost)]
+	return []
+
+
+## SCREENED_INTENTS: a non-empty Array whose entries are INTENT_TYPES, no
+## duplicates (Game._screened reads it as a set of intent types).
+func _lint_screened_intents(list) -> Array:
+	var out: Array = []
+	if not (list is Array) or list.is_empty():
+		return ["SCREENED_INTENTS: must be a non-empty Array of intent types, got %s" % str(list)]
+	var seen := {}
+	for it in list:
+		if not (it is String) or not INTENT_TYPES.has(it):
+			out.append("SCREENED_INTENTS: '%s' is not an enemy intent type" % str(it))
+		elif seen.has(it):
+			out.append("SCREENED_INTENTS: '%s' listed twice" % str(it))
+		seen[it] = true
+	return out
+
+
+## Enemy rows the avoid lint MUST reject, one violation each (the id prefixes
+## the failure), plus one row it must accept.
+const BAD_ENEMY_ROWS := {
+	"za_avoid_not_array": {"name": "x", "hp": 1, "dmg": 1, "slow": false, "traits": [], "avoid": "fire"},
+	"zb_avoid_unknown_kind": {"name": "x", "hp": 1, "dmg": 1, "slow": false, "traits": [], "avoid": ["lava"]},
+	"zc_avoid_not_string": {"name": "x", "hp": 1, "dmg": 1, "slow": false, "traits": [], "avoid": [3]},
+	"zd_avoid_duplicate": {"name": "x", "hp": 1, "dmg": 1, "slow": false, "traits": [], "avoid": ["fire", "fire"]},
+}
+const GOOD_ENEMY_ROWS := {
+	"ya_avoid_two": {"name": "x", "hp": 1, "dmg": 1, "slow": false, "traits": [], "avoid": ["fire", "goo"]},
+	"yb_avoid_absent": {"name": "x", "hp": 1, "dmg": 1, "slow": false, "traits": []},
+	"yc_avoid_empty": {"name": "x", "hp": 1, "dmg": 1, "slow": false, "traits": [], "avoid": []},
+}
+## TERRAIN rows whose "screens" is the wrong shape (the row id prefixes the failure).
+const BAD_TERRAIN_SCREENS := {
+	"xa_screens_int": {"screens": 1},
+	"xb_screens_string": {"screens": "true"},
+}
+
+
+## The D3 lint checking itself: every bad fixture named by a failure, every
+## good one clean; the cost and the intent list rejected in each bad shape.
+func _lint_d3_selftest() -> Array:
+	var out: Array = []
+	var bad: Array = _lint_enemy_avoid(BAD_ENEMY_ROWS)
+	for kind in BAD_ENEMY_ROWS.keys():
+		var caught := false
+		for f in bad:
+			if String(f).begins_with(String(kind)):
+				caught = true
+		if not caught:
+			out.append("d3 lint self-test: bad enemy fixture '%s' was accepted" % kind)
+	var good: Array = _lint_enemy_avoid(GOOD_ENEMY_ROWS)
+	for f in good:
+		out.append("d3 lint self-test: good enemy fixture rejected: %s" % f)
+	var bad_screens := 0
+	for kind in BAD_TERRAIN_SCREENS.keys():
+		var fails: Array = _lint_terrain_bools(kind, BAD_TERRAIN_SCREENS[kind])
+		if fails.is_empty():
+			out.append("d3 lint self-test: bad terrain fixture '%s' was accepted" % kind)
+		else:
+			bad_screens += fails.size()
+	if not _lint_terrain_bools("good", {"screens": true}).is_empty():
+		out.append("d3 lint self-test: screens true rejected")
+	var bad_costs: Array = [0, -1, 2.5, "4", null]
+	var cost_fails := 0
+	for c in bad_costs:
+		if _lint_avoid_cost(c).is_empty():
+			out.append("d3 lint self-test: avoid cost %s was accepted" % str(c))
+		else:
+			cost_fails += 1
+	if not _lint_avoid_cost(1).is_empty() or not _lint_avoid_cost(4).is_empty():
+		out.append("d3 lint self-test: a legal avoid cost was rejected")
+	var bad_lists: Array = [[], ["gum", "melt"], ["gum", "gum"], "gum", [7]]
+	var list_fails := 0
+	for l in bad_lists:
+		if _lint_screened_intents(l).is_empty():
+			out.append("d3 lint self-test: screened intents %s were accepted" % str(l))
+		else:
+			list_fails += 1
+	if not _lint_screened_intents(["drain", "gum", "drag"]).is_empty():
+		out.append("d3 lint self-test: the shipped SCREENED_INTENTS shape was rejected")
+	print("d3 lint self-test: %d bad enemy rows -> %d failures; %d good rows -> %d failures; %d bad screens -> %d; %d bad costs -> %d; %d bad intent lists -> %d" % [
+		BAD_ENEMY_ROWS.size(), bad.size(), GOOD_ENEMY_ROWS.size(), good.size(),
+		BAD_TERRAIN_SCREENS.size(), bad_screens, bad_costs.size(), cost_fails, bad_lists.size(), list_fails])
 	return out

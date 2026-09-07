@@ -14,6 +14,9 @@ const Content := preload("res://sim/content.gd")
 ## Block D2 adds the shrine reroll columns - spins taken, the bloom they cost,
 ## buys made off an already-spun counter - and the bloom a run ends still
 ## holding, which is the number a repeatable sink is supposed to shrink.
+## Block D3 adds the two terrain-denial columns: the enemy intents a smoke
+## screen swallowed ({"t": "screened"}) by intent type, and the fire damage
+## enemies walked into, which is what the rows' avoid lists are meant to shrink.
 
 # --- actions ------------------------------------------------------------------
 var casts_by_base := {}
@@ -113,6 +116,13 @@ var resisted_events := 0
 ## the event itself (the sim reports the applied turns, not the total), so a
 ## second spore on the same enemy shows up here as a second "spore".
 var status_by_kind := {}
+
+# --- terrain denial (Block D3) -------------------------------------------------
+## Enemy intents a smoke screen swallowed ({"t": "screened", id, intent}), by
+## intent type (a Content.SCREENED_INTENTS entry). One count per fizzled
+## action: the intent was still computed and telegraphed, so this is the number
+## of enemy turns the player bought with terrain instead of with damage.
+var screened_by_intent := {}
 
 # --- graft hooks (Block C3) ---------------------------------------------------
 ## Hook rows that ran ({"t": "hook", id, on, tile}), by source id (the graft or
@@ -315,6 +325,8 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 			resisted_events += 1
 		"status":
 			_inc(status_by_kind, String(ev.get("status", "")))
+		"screened":
+			_inc(screened_by_intent, String(ev.get("intent", "")))
 		"hook":
 			_inc(hooks_by_graft, String(ev.get("id", "")))
 			_inc(hooks_by_kind, String(ev.get("on", "")))
@@ -457,6 +469,7 @@ func merge(other) -> void:
 	_merge_dict(cleanses_by_kind, other.cleanses_by_kind)
 	resisted_events += other.resisted_events
 	_merge_dict(status_by_kind, other.status_by_kind)
+	_merge_dict(screened_by_intent, other.screened_by_intent)
 	_merge_dict(hooks_by_graft, other.hooks_by_graft)
 	_merge_dict(hooks_by_kind, other.hooks_by_kind)
 	hook_capped += other.hook_capped
@@ -605,6 +618,12 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 		"cleanses_by_kind": t.cleanses_by_kind.duplicate(),
 		"resisted_events": t.resisted_events,
 		"status_by_kind": t.status_by_kind.duplicate(),
+		# terrain denial (Block D3): the intents smoke swallowed, and the fire
+		# damage enemies walked into anyway - the avoid lists' own metric, read
+		# off the same "fire" family that feeds the terrain share above
+		"screened": _sum(t.screened_by_intent),
+		"screened_by_intent": t.screened_by_intent.duplicate(),
+		"enemy_fire_dmg": int(fire_dmg),
 		# graft hooks (Block C3): rows run by source id and by firing kind
 		"hooks": _sum(t.hooks_by_kind),
 		"hooks_by_graft": t.hooks_by_graft.duplicate(),
@@ -650,6 +669,9 @@ func print_block(n_runs: int, kits: Array) -> void:
 		float(_sum(origin_plants_by_aid)) / n, str(origin_plants_by_aid)])
 	print("           terrain: ash %d  cleanses by kind %s  resisted %d  statuses %s" % [
 		ash_events, str(cleanses_by_kind), resisted_events, str(status_by_kind)])
+	print("           denial: screened %.2f/run (%d total) %s  enemy fire dmg %.2f/run (%d total)" % [
+		float(_sum(screened_by_intent)) / n, _sum(screened_by_intent), str(screened_by_intent),
+		float(int(k["enemy_fire_dmg"])) / n, int(k["enemy_fire_dmg"])])
 	print("           hooks: by graft %s  by kind %s  capped %d  tithe %d" % [
 		str(hooks_by_graft), str(hooks_by_kind), hook_capped, tithes])
 	print("           bloom earned %.1f/run  spent %.1f/run  conversion %.2f  buys %s  grafts %s  ability buys %s  upcycles %d/%d  pickups %d  satchel_full %d" % [

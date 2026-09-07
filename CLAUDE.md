@@ -202,7 +202,8 @@ architecture below is designed to bend rather than block.
 - Effect grammar and data tables (`docs/PROGRESSION_REVIEW.md` §6.3 C1):
   terrain, terrain reactions and statuses are data — `Content.TERRAIN` (one row
   per kind: corruption, shields_core, flammable, washable, bloom, ttl/decays,
-  enter/tick damage, blocks, blocks_beam, heal, burns_to, convertible; read
+  enter/tick damage, blocks, blocks_beam, heal, burns_to, convertible,
+  screens; read
   through `Content.terrain(kind, key, default)`, `Content.is_corruption(kind)`
   and `Content.counts_as_corruption(kind)`),
   `Content.REACTIONS` (rows consumed by `Game._terrain_react()`; disabled rows
@@ -347,6 +348,63 @@ architecture below is designed to bend rather than block.
   `d2_reroll_escalates.json`, `d2_reroll_closed_slot.json` and
   `d2_reroll_boarded.json` demo the rule (each carries the mutator in its
   config).
+- Enemies read terrain (Block D3, `docs/PROGRESSION_REVIEW.md` §6.4; the review
+  finding 5.2 "enemies are terrain-blind"): both halves are data.
+  **Avoid lists.** A `Content.ENEMIES` row may carry `avoid: [terrain kinds]`
+  (default `[]` = terrain-blind, exactly the pre-D3 chase). Seven rows carry
+  `["fire"]` — `drill_bot`, `oil_sludge`, `sludgeling`, `leech_drone`,
+  `tar_spitter`, `rust_hound`, `magnet_crane`; `welded_hulk` (nothing stops the
+  hulk), `coal_golem` (made of coal), `cinder_mite` (the igniter WANTS fire),
+  the three stationary kinds and every boss carry none, and each row that
+  deviates from its family carries the one-line reason. `Game._chase_step` is a
+  Dijkstra over integer costs: entering a tile costs 1, plus
+  `Content.ENEMY_AVOID_COST` (4) when its terrain kind is in the row's `avoid`;
+  passability stays `_open()`; the goal is any tile at manhattan 1 from the
+  tender; the first step of the cheapest path is returned; the tile the enemy
+  stands on is never charged. The cost is a price, never a wall — a detour up
+  to ENEMY_AVOID_COST longer is taken and a longer one is not (the equal-cost
+  tie rule below, fewer avoided tiles first, is what makes the "up to"
+  inclusive: a detour exactly ENEMY_AVOID_COST longer ties on cost and wins
+  on avoided tiles; grid detours differ by an even count, so at 4 the bracket
+  is +4 taken, +6 not), so a ring of
+  fire is never an immortal fence (the enemy walks in when that is the cheapest
+  way) and the constant is the one tuning lever. Ties break deterministically:
+  ascending cost, then fewer avoided tiles, then push order with neighbours
+  pushed in `DIRS` order — so for an empty `avoid` list every key is
+  `(cost, 0)`, nothing is ever re-pushed, the drain order IS the old BFS's
+  dequeue order and the returned step is byte-identical to the pre-D3 chase
+  (`tests/test_grammar.gd` keeps that BFS as a reference implementation and
+  asserts equality over 210 generated floors x every enemy x sampled tender
+  positions). The `move` intent and the boss `advance` intent both call it, so
+  both gained the rule with no special-casing.
+  **Smoke screens.** `Content.TERRAIN` gained the bool key `screens` (true on
+  `smoke` alone) and `Content.SCREENED_INTENTS` is the closed list `drain`,
+  `gum`, `drag`. `Game._screened` is read at `_execute_intent` ONLY — the
+  intent is still computed and telegraphed, so a gum is something the tender
+  can step into smoke to dodge — and it fizzles such an intent when the
+  tender's own tile or any of its four `DIRS` neighbours screens, the enemy is
+  not adjacent (manhattan > 1: you cannot smoke-screen at arm's length) and its
+  row lacks the `massive` trait (bosses see through smoke, the same exemption
+  `_apply_status` uses). It is adjacency-based on purpose: not a `_line_clear`,
+  never consulting intervening enemies or walls. A screened intent emits
+  `{t: "screened", id, intent}` and ends that enemy's action; `tests/tally.gd`
+  counts it as `screened_by_intent` (the denial line prints `screened n/run`
+  beside `enemy fire dmg n/run`), and the shell logs it as
+  "<Name>'s <intent> is lost in the smoke" and adds an `avoids: fire` line to
+  the enemy tooltip straight off the row. `tests/test_content.gd` lints `avoid`
+  entries against `Content.TERRAIN`, `ENEMY_AVOID_COST` as an int >= 1,
+  `SCREENED_INTENTS` as a subset of the intent vocabulary and `screens` as a
+  TERRAIN bool. Five demos, each of which a targeted mutation breaks in plain
+  (non-strict) mode: `tests/regressions/d3_avoid_detour.json` (a drill bot pays
+  two extra tiles to go round a burning corridor — the `sap_snare` after the
+  turn is an illegal action unless it did), `d3_avoid_no_fence.json` (ringed by
+  fire with no detour it walks in and eats the enter plus tick damage),
+  `d3_coal_walks_fire.json` (the same board and a coal golem takes the short
+  burning corridor — the list is per kind, and no kind is named in
+  `sim/game.gd`), `d3_screened_gum.json` (a telegraphed gum fizzles beside
+  smoke, lands one tile away with that same smoke still standing, and fizzles
+  again on the step back — the adjacency rule, not the ttl) and
+  `d3_screen_melee.json` (the same smoke, an adjacent spitter, gummed).
 - Hook dispatcher (`Game._hook(kind, ctx)`, C3): reactive rules are data.
   Kinds are `Content.HOOK_KINDS` — `ignite`, `staggered`, `cleanse`,
   `growth_planted`, `kill`, `shield_break`, `collision` — each fired at the sim
@@ -476,10 +534,24 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (10
-  today: Block D2 — the shrine reroll, legal only under the `spinning_shrine`
-  mutator. No old action became illegal and no main-rng draw moved (the
-  redraw is side-rng), but `shop.rerolls` is stored stock, so every record
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (11
+  today: Block D3 — enemies read terrain. `_chase_step` prices a tile whose
+  kind is in the row's `avoid` list at 1 + `Content.ENEMY_AVOID_COST` instead
+  of 1, so an avoider takes a different step the moment fire lies on or beside
+  its path, and a `Content.SCREENED_INTENTS` intent from a non-adjacent,
+  non-massive enemy fizzles when the tender is on or beside smoke. Both are
+  ordinary default-config content, so a bot log desyncs from the first floor
+  that lights up. The 11 re-stamp rewrote `sim_version` across all 72 old
+  records with 69 stamp-only — no outcome, event-pattern or hash diff at all,
+  because the hand-authored demos put no avoider beside fire and no smoke
+  beside the tender — and three logs whose actions no longer replay
+  (`det_deeproot_s11`, `det_deeproot_s42`, `det_magpie_s11`) were re-recorded
+  on their personas: `det_deeproot_s42` now WINS on floor 7 in 74 turns where
+  it used to die on floor 5 in 86, which is the enemy-AI change arriving as
+  difficulty rather than as a stale log. The corpus went 72 -> 77 with the five
+  `d3_*` demos. Bump 10 was Block D2 — the shrine reroll, legal only under
+  the `spinning_shrine` mutator. No old action became illegal and no main-rng
+  draw moved (the redraw is side-rng), but `shop.rerolls` is stored stock, so every record
   whose final shop is still stocked hashes differently: the 10 re-stamp
   rewrote `sim_version` across all 68 old records — 46 with the hash
   unchanged, 18 hash-only (a stocked final shop now stores `rerolls: 0`) —

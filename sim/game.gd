@@ -67,7 +67,17 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## action becomes illegal and no main-rng draw moved, so every pre-10 log
 ## replays to the same outcome and the re-stamp is hash-only. snapshot().shop
 ## also carries the derived reroll_price / rerolls_left (0 with the switch off).
-const SIM_VERSION := 10
+## 11: Block D3 - enemies read terrain. _chase_step is a shortest-path search
+## over integer step costs (1 per tile, plus Content.ENEMY_AVOID_COST for a
+## tile whose terrain kind is in the row's "avoid" list; ties fall to the
+## path with fewer avoided tiles, then to expansion order), byte-identical to
+## the old BFS for a row with no avoid list; seven ENEMIES rows now avoid
+## fire, so any log in which a fire and an avoider met diverges. The smoke
+## screen: a SCREENED_INTENTS intent (drain, gum, drag) from a non-adjacent,
+## non-massive enemy fizzles ({t: "screened", id, intent}) while the tender
+## stands on or beside a TERRAIN row with "screens" (smoke). No main-rng draw
+## moved: the search and the screen never touch the rng.
+const SIM_VERSION := 11
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -879,6 +889,29 @@ func _apply_status(e: Dictionary, status: String, turns: int) -> bool:
 	return true
 
 
+## Smoke screen (Block D3): true when `itype` is a Content.SCREENED_INTENTS
+## intent, the enemy is not adjacent (you cannot smoke-screen at arm's length),
+## its row lacks the massive trait (bosses see through smoke - the same
+## exemption _apply_status uses), and the tender stands on a TERRAIN kind with
+## "screens" or one lies on any of the four DIRS neighbours. Adjacency-based
+## on purpose: this is not _line_clear and never consults intervening enemies
+## or walls. Read at _execute_intent only, never at _compute_intents, so the
+## telegraph still shows what the tender is dodging. No rng.
+func _screened(e: Dictionary, itype: String) -> bool:
+	if not Content.SCREENED_INTENTS.has(itype):
+		return false
+	if _manhattan(e["pos"], player["pos"]) <= 1:
+		return false
+	if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
+		return false
+	if bool(Content.terrain(_terrain_kind(player["pos"]), "screens", false)):
+		return true
+	for d in DIRS:
+		if bool(Content.terrain(_terrain_kind(player["pos"] + d), "screens", false)):
+			return true
+	return false
+
+
 func _compute_boss_intent(e: Dictionary, edef: Dictionary) -> void:
 	var c: int = e.get("cycle", 0)
 	if edef["traits"].has("dredges"):
@@ -967,6 +1000,11 @@ func _execute_intent(e: Dictionary) -> void:
 			e["status"][sname] -= 1
 			_emit({"t": String(Content.STATUSES[sname].get("blocked_event", sname)), "id": e["id"]})
 			return
+	# smoke screen (Block D3): the intent was computed and telegraphed, but a
+	# screened one is lost at execution and the enemy's action ends here
+	if _screened(e, itype):
+		_emit({"t": "screened", "id": e["id"], "intent": itype})
+		return
 	match String(it.get("type", "idle")):
 		"fuse":
 			var partner = null
@@ -2748,10 +2786,45 @@ func _enemy_enter_tile(e: Dictionary) -> void:
 		_damage_enemy(e, dmg, k + ":" + _fire_by(e["pos"]))
 
 
+## First step of the cheapest path to any tile at manhattan 1 from the player
+## (Block D3). Shortest-path search over integer costs: entering a tile costs
+## 1, plus Content.ENEMY_AVOID_COST when its terrain kind is in the row's
+## "avoid" list (the tile the enemy stands on is never charged - it is leaving
+## it); passability stays _open(). Bucket queue: buckets[c] holds the nodes
+## reached at cost c in push order, buckets are drained in ascending cost and,
+## within one, entries with fewer avoided tiles first (so at equal cost the
+## path through fewer avoided tiles wins) and otherwise in push order,
+## neighbours pushed in DIRS order; the goal test runs when a node is drained.
+## A node is re-pushed only on a strictly cheaper (cost, avoided) key and its
+## stale entries are skipped. With an empty avoid list every key is (c, 0),
+## nothing is ever re-pushed and the drain order is exactly the old BFS's
+## dequeue order, so the result is byte-identical to the pre-D3 chase
+## (tests/test_grammar.gd keeps that BFS as a reference and asserts it against
+## both entry points). The weighted search costs about 2.4x the BFS and the
+## clone-based bots pay it on every enemy every ply, so it runs only when it
+## can matter: a kind with an empty avoid list, or a board holding no tile of
+## an avoided kind, takes the plain BFS directly (_chase_bfs) - with nothing
+## to avoid the two are step-for-step identical, which is the parity claim.
+## Returns the enemy's own tile when no path exists. Never touches the rng.
 func _chase_step(e: Dictionary) -> Vector2i:
-	# BFS toward a tile adjacent to the player; occupied tiles are impassable.
-	var start: Vector2i = e["pos"]
-	var goal: Vector2i = player["pos"]
+	var avoid: Array = Content.ENEMIES[e["kind"]].get("avoid", [])
+	if avoid.is_empty() or not _terrain_has_any(avoid):
+		return _chase_bfs(e["pos"], player["pos"])
+	return _chase_dijkstra(e["pos"], player["pos"], avoid)
+
+
+## Whether any tile on the board carries one of `kinds` (a scan of the
+## terrain dict, which is a few dozen entries against a few hundred tiles).
+func _terrain_has_any(kinds: Array) -> bool:
+	for t in terrain:
+		if kinds.has(String(terrain[t]["kind"])):
+			return true
+	return false
+
+
+## The pre-D3 chase, verbatim: BFS toward a tile adjacent to the player,
+## neighbours in DIRS order, occupied tiles impassable.
+func _chase_bfs(start: Vector2i, goal: Vector2i) -> Vector2i:
 	var prev := {}
 	prev[start] = start
 	var queue: Array = [start]
@@ -2770,6 +2843,53 @@ func _chase_step(e: Dictionary) -> Vector2i:
 				continue
 			prev[nxt] = cur
 			queue.append(nxt)
+	return start
+
+
+## The weighted chase (the doc above _chase_step): with an empty `avoid` it
+## reproduces _chase_bfs step for step, which the grammar test asserts.
+func _chase_dijkstra(start: Vector2i, goal: Vector2i, avoid: Array) -> Vector2i:
+	var prev := {}
+	prev[start] = start
+	var best := {}  # pos -> [cost, avoided tiles on that path]
+	best[start] = [0, 0]
+	var buckets: Array = [[[start, 0]]]  # cost -> [[pos, avoided], ...] in push order
+	var bucket_max_f: Array = [0]  # cost -> largest "avoided" pushed into that bucket
+	var c := 0
+	while c < buckets.size():
+		var bucket: Array = buckets[c]
+		for f in range(int(bucket_max_f[c]) + 1):
+			for entry in bucket:
+				if int(entry[1]) != f:
+					continue
+				var cur: Vector2i = entry[0]
+				var key: Array = best[cur]
+				if int(key[0]) != c or int(key[1]) != f:
+					continue  # stale: a cheaper key reached this node
+				if _manhattan(cur, goal) == 1:
+					var node := cur
+					while prev[node] != start:
+						node = prev[node]
+					return node
+				for d in DIRS:
+					var nxt: Vector2i = cur + d
+					if not _open(nxt):
+						continue
+					var a := 1 if (not avoid.is_empty() and avoid.has(_terrain_kind(nxt))) else 0
+					var nc: int = c + 1 + Content.ENEMY_AVOID_COST * a
+					var nf: int = f + a
+					if best.has(nxt):
+						var have: Array = best[nxt]
+						if int(have[0]) < nc or (int(have[0]) == nc and int(have[1]) <= nf):
+							continue
+					best[nxt] = [nc, nf]
+					prev[nxt] = cur
+					while buckets.size() <= nc:
+						buckets.append([])
+						bucket_max_f.append(0)
+					buckets[nc].append([nxt, nf])
+					bucket_max_f[nc] = maxi(int(bucket_max_f[nc]), nf)
+		c += 1
 	return start
 
 
