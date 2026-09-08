@@ -1146,14 +1146,22 @@ triples on a 3-ability kit, all legal, one price", "bots: OK (147 checks)",
 1400 + 1540 procgen generations with 0 violations).
 
 **What remains in the whole roadmap.** Nothing from 6.2 or 6.3 is outstanding.
-**Block D (6.4) is five bullets of six done**: per-ability stat surges (07d),
-repeatable economy sinks (07e), enemies that read terrain (07f), the
-affinity-slotted draft (07g) and evolve forks (this entry). The **one Block D
-bullet still unimplemented is "one resonance per element"** - one bonus per
-element over kit and graft tags through the hook and mod layer - and its stated
-precondition ("growth x2 is met from turn one under the fixed starter, so this
-waits for loadouts") has been discharged since Block A closed at 07, so it is
-unblocked rather than deferred. Carried forward from earlier blocks and
+**Block D (6.4) is SIX of six bullets done and CLOSED**: per-ability stat
+surges (07d), repeatable economy sinks (07e), enemies that read terrain (07f),
+the affinity-slotted draft (07g), evolve forks (this entry) and, at bump 14
+(2026-09-08), one resonance per element - `Content.RESONANCES`, a third
+passive source read by the existing `_passive_stat` / `_passive_mod` / `_hook`
+machinery, with every tag that ships nothing documented in data. That last
+bullet shipped as ONE element rather than four: `cinder_grip` (fire 3) is the
+only row. Two others were authored, implemented and measured out inside the
+same uncommitted bump - a displace row on its own pre-registered falsifier and
+a growth row on the greed canary, the second by the owner, after the measure
+phase's named lever (`need` 3 -> 4) was itself measured and FAILED. The
+readings are in BALANCE.md 2026-09-08 and beside the table in
+`sim/content.gd`: *displace joins control as an element waiting for
+vocabulary, not for reach*, and *growth waits for a payoff that pays on an act
+rather than on a turn spent in place, because a rate over turns is a greed
+subsidy at every threshold*. Carried forward from earlier blocks and
 unchanged: the **mutator picker** has no shell surface (6.1's last piece; the
 three C4 mutators and the two D-block mutators have data, descs and invariants
 but no menu), and the two unlock-layer consumers `unlocked_grafts` and the
@@ -1168,6 +1176,119 @@ check and the two forge demos. New to the open list: a single 3-card draft can
 spend two of its cards on the two siblings of one base (~10-12% of rolls by
 direct probe), which is legal, follows from `universe = bases + upgrades`, and
 is pinned by no demo.
+
+**Bump 14 (2026-09-08) implemented the LAST item in the 6.4 roadmap, and it
+shipped as ONE element.** "One resonance per element" is
+`Content.RESONANCES`: one row per resonating tag, `{name, desc, tag, need}`
+plus exactly one of `stat` / `mod` / `hooks` - the same three-way shape a
+`Content.GRAFTS` row makes, read by the same `_passive_stat` / `_passive_mod`
+/ `_hook` machinery, so the block added a SOURCE and not a system, with zero
+new ops, stat keys, mod keys, hook kinds, predicates or terrain keys. **One
+row ships**: `cinder_grip`, fire 3, an `ignite` hook that roots a machine
+standing on the tile as it lights. "Mobility never counts" is enforced as a
+lint against `AFFINITY_IGNORED_TAGS` rather than by a tag literal in
+`sim/game.gd`, and **ten** tags ship nothing with the reason recorded per tag
+beside the table.
+
+Two rows were authored, implemented, measured and CUT, and both cuts are
+worth more to a later block than the row that survived. `follow_through`
+(displace 2, a `collision` hook) went first, on its own pre-registered
+falsifier: 22 hooks over 30 optimizer runs against a stated cut line of 30, 21
+out of sample, and only 5 landing anything, because a collision that kills
+erases the body before the hook runs. `deep_loam` (growth 3,
+`stat {regen_on_growth: 1}`) then failed a DIFFERENT pre-registered line - at
+300 seeds per loadout the greed canary rose on all six loadouts and its Wilson
+lower bound cleared the 10% trip line on `spiker` (56/300 = 18.7%
+[14.7, 23.5] against 38/300 = 12.7% [9.4, 16.9] pre-D5) - and the measure
+phase held the block with the lever named. **The lever was then measured and
+it failed too**: `need` 4 reads 48/300 = 16.0% [12.3, 20.6], a lower bound
+still clear of the 10 line, and `need` 5 passes only at 39/300 = 13.0%
+[9.7, 17.3] - one win and +0.3 points over the row's absence, which is a pass
+bought by switching the row off. The owner cut it. The row
+pays per turn BEGUN standing on growth and the greed persona stands there
+about twice as often as the skilled one (23.6-26.7% of turns against
+13.4-15.8%), so `need` changes how OFTEN the row is on and never WHO it pays:
+its canary cost is proportional to its effect. **A pre-registered lever is a
+hypothesis about the remedy, not a promise that the remedy works** - and the
+whole reason this was visible at all is that the row, the loadout, the persona
+and the lever were all written down before the numbers. That is also the only
+reason any of the three outcomes here is trustworthy.
+
+**What now remains in this whole review, plainly.** Nothing from 6.1, 6.2, 6.3
+or 6.4 is unimplemented. What is left in the document is of three kinds, and
+none of it is a queued feature:
+
+1. **6.5 is the dropped list** - a record of refusals with their reasons
+   (overcharge and tithe, per-HP heal, an early reroll, a tag-scored optimizer
+   draft list, alternative boss-gate keys, `damp` and slippery collision,
+   constraint tiers 9-10, shrinking `DRAFT_POOL`, a shover starter without
+   `seed_bomb`, a `player['mobility']` field, a lance-free pyro). Re-opening
+   one of those is a design decision, not a backlog item. D5 adds TWO entries
+   in the same spirit, and both are refusals with a measurement attached
+   rather than opinions. **(a) Displace, and control before it, are elements
+   waiting for VOCABULARY, not for reach.** `collision` is the only
+   `HOOK_KINDS` entry forced movement produces and the band persona
+   essentially never produces it (0.03 collisions a run free drafting, 0.73 on
+   a kit of nothing but pushers); nothing fires when a status lands, so
+   control has no seat at all. Both would need a new hook kind and a dispatch
+   site - a system change, which is what a source-shaped block may not do.
+   **(b) Growth is waiting for a payoff SHAPE, not a threshold.** The only
+   payoff the closed key set can give it is a rate over turns
+   (`regen_on_growth`), and a rate over turns spent somewhere the player
+   chooses pays the greed persona about twice what it pays the skilled one, at
+   every value of `need` - so the row's canary cost is proportional to its
+   effect and no threshold buys a pass with the row still doing anything.
+   Growth resonates when a key exists that pays on an ACT (a cast, a plant, a
+   cleanse); every closed `PASSIVE_STAT` / `PASSIVE_MOD` key today is
+   survivability, charge or bloom.
+2. **6.6 is two design tensions reserved to the owner, both still open.** The
+   turtle remains a designed canary with no win condition and whether a
+   `bark_burst` finisher should exist is an owner decision, not a content fix;
+   the `fire x growth` and `smoke x fire` reaction rows stay disabled data. D5
+   walked up to the first of those and stopped: `bark` was refused a resonance
+   partly because every payoff the closed vocabulary offers it is
+   survivability (`shield_cap`, `floor_start_shield`, and the `shield` /
+   `thorns` ops that `HOOK_FORBIDDEN_OPS` blocks as the documented stall
+   vector), and the one non-defensive payoff anyone has named for it is that
+   same `bark_burst`. A content block may not settle 6.6 by shipping it inside
+   a resonance.
+3. **7.7 carries two runner questions no lens ever considered**, and they are
+   the only genuinely un-scoped proposals left in the review: `measure_bosses`
+   still has no per-boss-BY-KIT reading (the `BOSS_KIT` axis exists; the
+   measurement has never been taken at 30 seeds with deeproot), and **a
+   `weak_to` / `resist` by damage-source family on `Content.ENEMIES`** - the
+   cheapest "world reacts to build" surface in the document, raised by the
+   completeness critic, picked up by no lens, no design phase and no block
+   since. D5 is the block that makes it interesting rather than decorative: a
+   run now has a machine-readable element identity (`snapshot().resonances`
+   and the tag counts under it), so an enemy row that resists or is weak to a
+   damage family would meet a build the sim can already name.
+
+Carried forward from earlier blocks and untouched by D5: the **mutator picker**
+has no shell surface; `unlocked_grafts` and the `MILESTONES` seam it would need
+still have nothing to consume; `solar_core` remains the largest graft effect on
+record and unpriced against its own measurement; `quota_reclamp` has still
+never fired in a bot run; **`hook_capped` has still never fired in play** (D5
+predicted the cut displace row would produce the first firing through a
+collision kill-chain into `compost`, so cutting it left that counter at zero);
+and the **press and the forge remain dead sinks** at `upcycles 0/0` for every
+persona. Four findings D5 hands to whoever writes the next content block, all
+transferable. **(i)** A hook whose effect targets a BODY is worth what its
+**landing** rate says, not what its firing rate says (`cinder_grip` fires 9.5
+times a run on a locked fire-3 kit and lands 0.80, an 8.4% landing rate
+against a 29% prediction extrapolated from a damage hook). **(ii)** A derived
+`snapshot()` key must be erased from the `state_hash()` view or it moves the
+whole corpus for nothing - `resonances` is, so 88 of 93 records hashed
+identically across the bump, and after both cuts all 93 are stamp-only against
+bump 13 with all 20 bot logs byte-identical. **(iii)** A FREE permanent must
+be measured on the persona that maximises its trigger before the persona whose
+band it is priced against; `regen_on_growth` had a priced-graft optimizer
+reading (+1 win in 30 at 8 bloom, p = 1.00) and no canary reading at all, and
+the missing half is what the block turned on. **(iv)** A pre-registered lever
+is a hypothesis about the remedy, not a promise that it works: `need` 3 -> 4
+was named before the code, aimed at the right row on the right loadout, and
+still failed - write the lever down anyway, and budget for the lever itself
+failing.
 
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
@@ -2201,9 +2322,30 @@ loadouts, one package, and unlocked keystones. New mutators `no_lance`
   defaults and the gardener's lift is measured; cap `per` at 1 when surged if
   lift is excessive. Drop the overcharge-from-bank op (bank is always 0
   during the player's turn).
-- **One resonance per element** over kit and graft tags, through the hook and
+- ~~**One resonance per element** over kit and graft tags, through the hook and
   mod layer; growth x2 is met from turn one under the fixed starter, so this
-  waits for loadouts; mobility never counts.
+  waits for loadouts; mobility never counts.~~ **IMPLEMENTED and SHIPPED at
+  bump 14 (2026-09-08) as ONE element, not four**: `Content.RESONANCES` holds
+  `cinder_grip` (fire 3) alone, plus a lint that makes "mobility never counts"
+  a data rule (`AFFINITY_IGNORED_TAGS`). Two rows were written, built,
+  measured and cut inside the same bump - displace on its own pre-registered
+  falsifier, growth on the greed canary after the measure phase's named lever
+  (`need` 3 -> 4) was measured at 48/300 = 16.0% [12.3, 20.6] and FAILED too,
+  against a pre-D5 38/300 = 12.7% [9.4, 16.9] and a need-3 56/300 = 18.7%
+  [14.7, 23.5]. The loadout, the persona and the row were all named in writing
+  by the pre-D5 baseline before the code existed; only the remedy was wrong.
+  Four things the block learned that a later one should not have to re-learn:
+  a hook whose effect targets a body is worth what its LANDING rate says, not
+  its firing rate (cinder_grip fires 9.5 times a run on a locked fire-3 kit
+  and lands 0.80); `collision` is a trigger the band persona essentially never
+  produces (0.03 a run free drafting, 0.73 on a kit of nothing but pushers),
+  which is what cut the displace row; a payoff shaped as a RATE over turns
+  spent where the player chooses is a greed subsidy at every threshold, which
+  is what cut the growth row; and a free permanent has to be measured on the
+  canary persona BEFORE the band persona, which is the measurement that was
+  missing. Displace and control share one blocker - neither has an event worth
+  hanging a rule on, so both wait for vocabulary - and growth waits for a key
+  that pays on an act rather than on a turn spent in place.
 - **Repeatable economy sinks, one at a time.** Bloom verified never to bind
   after floor 2, so a sink is eventually needed, but every cheap bloom-to-power
   sink in BALANCE.md history became a farm line and the enemy-oil faucet must

@@ -147,12 +147,16 @@ const TERRAIN_BOOL_KEYS := ["corruption", "shields_core", "flammable", "washable
 ## must be a positive int - a 0 or a float would silently disable it.
 const STATUS_REQUIRED := ["stack", "blocks", "tick_dmg", "cap"]
 # --- grafts as data (section 9) ------------------------------------------------
-## Closed stat keys Game._graft_stat sums, and mod keys Game._graft_mod reads.
+## Closed stat keys Game._passive_stat sums, and mod keys Game._passive_mod
+## reads - shared by the GRAFTS lint and the D5 RESONANCES lint, because both
+## tables are read by the same two helpers.
 ## regen_on_growth is the conditional half of regen: Game._begin_player_turn
-## adds it only while the tender stands on growth. No shipped row uses it; the
-## key exists so a conditional alternative to solar_core can be measured.
-const GRAFT_STAT_KEYS := ["bank_cap", "shield_cap", "regen", "regen_on_growth", "growth_heal", "cleanse_bloom"]
-const GRAFT_MOD_KEYS := ["floor_start_shield", "oil_cast_discount"]
+## adds it only while the tender stands on growth. No shipped row of either
+## table uses it - the D5 growth resonance that did (deep_loam) was cut on the
+## canary, see the Content.RESONANCES header - so it is an orphan key by
+## design, kept live and lint-legal for the row that measures well one day.
+const PASSIVE_STAT_KEYS := ["bank_cap", "shield_cap", "regen", "regen_on_growth", "growth_heal", "cleanse_bloom"]
+const PASSIVE_MOD_KEYS := ["floor_start_shield", "oil_cast_discount"]
 ## Positional ops only the hook dispatcher (Game._hook_effect) implements.
 const HOOK_OP_KEYS := {
 	"damage_at": ["dmg"],
@@ -160,7 +164,7 @@ const HOOK_OP_KEYS := {
 	"terrain_at": ["kind"],
 }
 ## Ops a hook row may never carry: shield and thorns credit are the stall
-## vector BALANCE.md documents, so no graft hook grants them.
+## vector BALANCE.md documents, so no graft and no resonance hook grants them.
 const HOOK_FORBIDDEN_OPS := ["shield", "thorns"]
 const HOOK_ROW_KEYS := ["on", "effects", "cap_per_turn", "if"]
 const GRAFT_ROW_KEYS := ["name", "desc", "tags", "price", "stat", "mod", "hooks"]
@@ -396,6 +400,22 @@ func _init() -> void:
 	print("draft slots: %s (roles %s, reports %s); affinity ignores %s" % [
 		str(Content.DRAFT_SLOTS), str(Content.DRAFT_SLOT_ROLES), str(Content.DRAFT_SLOT_REPORTS),
 		str(Content.AFFINITY_IGNORED_TAGS)])
+
+	# 14) Block D5: resonances as data - the live table, its reach, then the
+	# lint's own self-test
+	failures.append_array(_lint_resonances(Content.RESONANCES))
+	failures.append_array(_lint_resonance_reach())
+	failures.append_array(_lint_resonance_selftest())
+	var rshape := {"stat": 0, "mod": 0, "hooks": 0}
+	var rrows: Array = []
+	for rid in Content.RESONANCES:
+		for k in rshape:
+			if Content.RESONANCES[rid].has(k):
+				rshape[k] += 1
+		rrows.append("%s %s:%d" % [rid, String(Content.RESONANCES[rid]["tag"]), int(Content.RESONANCES[rid]["need"])])
+	print("resonances: %d rows (%d stat, %d mod, %d hooks): %s; %d of %d tags carry one" % [
+		Content.RESONANCES.size(), rshape["stat"], rshape["mod"], rshape["hooks"],
+		", ".join(rrows), Content.RESONANCES.size(), Content.TAGS.size()])
 
 	if failures.is_empty():
 		print("content: OK")
@@ -1008,8 +1028,8 @@ func _lint_grafts(grafts: Dictionary) -> Array:
 				out.append("%s: stat must be a non-empty dictionary" % gid)
 			else:
 				for k in stat:
-					if not GRAFT_STAT_KEYS.has(String(k)):
-						out.append("%s: stat key '%s' not in %s" % [gid, str(k), str(GRAFT_STAT_KEYS)])
+					if not PASSIVE_STAT_KEYS.has(String(k)):
+						out.append("%s: stat key '%s' not in %s" % [gid, str(k), str(PASSIVE_STAT_KEYS)])
 					if not (stat[k] is int):
 						out.append("%s: stat['%s'] must be an int" % [gid, str(k)])
 		if row.has("mod"):
@@ -1018,8 +1038,8 @@ func _lint_grafts(grafts: Dictionary) -> Array:
 				out.append("%s: mod must be a non-empty dictionary" % gid)
 			else:
 				for k in mod:
-					if not GRAFT_MOD_KEYS.has(String(k)):
-						out.append("%s: mod key '%s' not in %s" % [gid, str(k), str(GRAFT_MOD_KEYS)])
+					if not PASSIVE_MOD_KEYS.has(String(k)):
+						out.append("%s: mod key '%s' not in %s" % [gid, str(k), str(PASSIVE_MOD_KEYS)])
 					if not (mod[k] is int):
 						out.append("%s: mod['%s'] must be an int" % [gid, str(k)])
 		if row.has("hooks"):
@@ -1158,6 +1178,248 @@ func _lint_graft_selftest() -> Array:
 		out.append("graft lint self-test: rule-graft fixture rejected: %s" % f)
 	print("graft lint self-test: %d bad rows -> %d failures; %d good rows -> %d failures" % [
 		BAD_GRAFTS.size(), bad.size(), GOOD_GRAFTS.size(), good.size()])
+	return out
+
+
+# --- 9b) resonances as data (Block D5) ------------------------------------------
+
+const RESONANCE_ROW_KEYS := ["name", "desc", "tag", "need", "stat", "mod", "hooks"]
+## A resonance is free, permanent and automatic, so `need` 1 would be a gift
+## handed to every run holding one card: two is the smallest threshold that is
+## a build statement.
+const RESONANCE_NEED_MIN := 2
+## PASSIVE_STAT_KEYS is shared with GRAFTS, where every key is PRICED - the
+## player pays bloom for it and can decline it. A resonance is free and
+## permanent, so the keys that MAKE the currency are the stat-side twin of
+## HOOK_FORBIDDEN_OPS: cleanse_bloom on a graft is bloom_surge, a 3-bloom
+## purchase; the same key on a resonance is a free permanent bloom faucet,
+## which is the farm vector BALANCE.md documents (and 6.4 wants the
+## enemy-oil faucet CLOSED before another is opened). Keys that grant charge
+## are deliberately NOT here: regen and regen_on_growth are power questions
+## the measure phase answers with a number, not lint rules.
+const RESONANCE_FORBIDDEN_STAT_KEYS := ["cleanse_bloom"]
+
+
+## Lints a RESONANCES-shaped table; failure strings start with the resonance
+## id. Shape is the GRAFTS shape minus "price"/"tags" and plus {tag, need}:
+## exactly one of stat | mod | hooks, over the same closed key sets and the
+## same hook lint (HOOK_FORBIDDEN_OPS included - a free permanent granting
+## shield or thorns is the documented stall vector). The four D5 rules on top:
+## the tag is a real TAGS entry, it is NOT in AFFINITY_IGNORED_TAGS (this is
+## where "mobility never counts" is enforced), `need` is an int >= 2, and no
+## two rows share a tag ("one resonance per element"). Ids must also be
+## disjoint from GRAFTS and ABILITIES: hook sources share one hook_uses
+## namespace, so a collision would silently share a cap.
+func _lint_resonances(table: Dictionary) -> Array:
+	var out: Array = []
+	var by_tag := {}
+	for rid in table.keys():
+		var row = table[rid]
+		if not (row is Dictionary):
+			out.append("%s: row is not a dictionary" % rid)
+			continue
+		for k in row:
+			if not RESONANCE_ROW_KEYS.has(String(k)):
+				out.append("%s: unknown key '%s' %s" % [rid, str(k), str(RESONANCE_ROW_KEYS)])
+		for key in ["name", "desc"]:
+			if not (row.get(key, null) is String) or String(row.get(key, "")) == "":
+				out.append("%s: missing or empty '%s'" % [rid, key])
+		if Content.GRAFTS.has(String(rid)) or Content.ABILITIES.has(String(rid)):
+			out.append("%s: id collides with a GRAFTS / ABILITIES id (one hook_uses namespace)" % rid)
+		var tag = row.get("tag", null)
+		if not (tag is String) or not Content.TAGS.has(String(tag)):
+			out.append("%s: tag '%s' not in Content.TAGS" % [rid, str(tag)])
+		elif Content.AFFINITY_IGNORED_TAGS.has(String(tag)):
+			out.append("%s: tag '%s' is in AFFINITY_IGNORED_TAGS - it defines no build and may not resonate" % [rid, str(tag)])
+		else:
+			by_tag[String(tag)] = by_tag.get(String(tag), [])
+			by_tag[String(tag)].append(String(rid))
+		if not (row.get("need", null) is int):
+			out.append("%s: need must be an int" % rid)
+		elif int(row["need"]) < RESONANCE_NEED_MIN:
+			out.append("%s: need %d must be >= %d" % [rid, int(row["need"]), RESONANCE_NEED_MIN])
+		var shapes := 0
+		for shape in ["stat", "mod", "hooks"]:
+			if row.has(shape):
+				shapes += 1
+		if shapes != 1:
+			out.append("%s: wants exactly one of stat | mod | hooks, has %d" % [rid, shapes])
+		if row.has("stat"):
+			var stat = row["stat"]
+			if not (stat is Dictionary) or (stat as Dictionary).is_empty():
+				out.append("%s: stat must be a non-empty dictionary" % rid)
+			else:
+				for k in stat:
+					if not PASSIVE_STAT_KEYS.has(String(k)):
+						out.append("%s: stat key '%s' not in %s" % [rid, str(k), str(PASSIVE_STAT_KEYS)])
+					elif RESONANCE_FORBIDDEN_STAT_KEYS.has(String(k)):
+						out.append("%s: stat key '%s' is a free permanent currency faucet %s" % [
+							rid, str(k), str(RESONANCE_FORBIDDEN_STAT_KEYS)])
+					if not (stat[k] is int):
+						out.append("%s: stat['%s'] must be an int" % [rid, str(k)])
+		if row.has("mod"):
+			var mod = row["mod"]
+			if not (mod is Dictionary) or (mod as Dictionary).is_empty():
+				out.append("%s: mod must be a non-empty dictionary" % rid)
+			else:
+				for k in mod:
+					if not PASSIVE_MOD_KEYS.has(String(k)):
+						out.append("%s: mod key '%s' not in %s" % [rid, str(k), str(PASSIVE_MOD_KEYS)])
+					if not (mod[k] is int):
+						out.append("%s: mod['%s'] must be an int" % [rid, str(k)])
+		if row.has("hooks"):
+			var hooks = row["hooks"]
+			if not (hooks is Array) or (hooks as Array).is_empty():
+				out.append("%s: hooks must be a non-empty array of rows" % rid)
+			else:
+				for i in range((hooks as Array).size()):
+					out.append_array(_lint_hook_row(hooks[i], "%s hook %d" % [rid, i]))
+	for tag in by_tag:
+		var ids: Array = by_tag[tag]
+		if ids.size() > 1:
+			for rid in ids:
+				out.append("%s: tag '%s' carries %d resonances %s - one per element" % [rid, tag, ids.size(), str(ids)])
+	return out
+
+
+## The D5 equivalent of the loadout-affinity lint: a row the content tables
+## cannot reach is dead data. Counts the carriers ONE RUN can actually hold,
+## which is not the same as the carriers the tables hold: Block A made a
+## package a one-per-run commitment, so a tag spread across two packages can
+## never be counted twice. Carriers are therefore the BASE draft-pool
+## abilities (a kit holds at most one variant per base, so variants would
+## over-count) plus every GRAFTS row, plus the BEST SINGLE package's
+## contribution - the same arithmetic profile.game_config does. Counting the
+## whole ABILITIES table instead would pass a `smoke` row at need 3
+## (steam_vent is hydraulics, gust and clear_air are aeolian) that no default
+## run can ever meet, which the D5 design phase measured at 0 of 360 runs.
+## The count is still an UPPER bound - it assumes the run drafts every
+## carrier and buys every graft - so it catches dead data, not thin data.
+func _lint_resonance_reach() -> Array:
+	var out: Array = []
+	var parts: Array = []
+	var met := 0
+	for rid in Content.RESONANCES:
+		var row: Dictionary = Content.RESONANCES[rid]
+		var tag := String(row.get("tag", ""))
+		var carriers := 0
+		for aid in Content.DRAFT_POOL:
+			if Content.base_id(String(aid)) == String(aid) and Content.ABILITIES.get(aid, {}).get("tags", []).has(tag):
+				carriers += 1
+		for gid in Content.GRAFTS:
+			if Content.GRAFTS[gid].get("tags", []).has(tag):
+				carriers += 1
+		var best_pkg := 0
+		for pid in Content.PACKAGES:
+			var n := 0
+			for aid in Content.PACKAGES[pid]:
+				if Content.ABILITIES.get(aid, {}).get("tags", []).has(tag):
+					n += 1
+			best_pkg = maxi(best_pkg, n)
+		carriers += best_pkg
+		parts.append("%s %d" % [tag, carriers])
+		if carriers >= int(row.get("need", 0)):
+			met += 1
+		else:
+			out.append("%s: tag '%s' has %d carriers, need %d - unreachable" % [rid, tag, carriers, int(row.get("need", 0))])
+	print("resonance reach: %d / %d rows can be met (%s)" % [met, Content.RESONANCES.size(), ", ".join(parts)])
+	return out
+
+
+## Resonance rows the lint MUST reject, one violation each (the duplicate-tag
+## pair is reported against both of its rows).
+const BAD_RESONANCES := {
+	"za_no_name": {"desc": "x", "tag": "fire", "need": 3, "stat": {"regen": 1}},
+	"zb_no_desc": {"name": "x", "tag": "fire", "need": 3, "stat": {"regen": 1}},
+	"zc_no_tag": {"name": "x", "desc": "x", "need": 3, "stat": {"regen": 1}},
+	"zd_bad_tag": {"name": "x", "desc": "x", "tag": "lava", "need": 3, "stat": {"regen": 1}},
+	"ze_mobility": {"name": "x", "desc": "x", "tag": "mobility", "need": 3, "stat": {"regen": 1}},
+	"zf_no_need": {"name": "x", "desc": "x", "tag": "bark", "stat": {"regen": 1}},
+	"zg_need_float": {"name": "x", "desc": "x", "tag": "control", "need": 2.5, "stat": {"regen": 1}},
+	"zh_need_one": {"name": "x", "desc": "x", "tag": "smoke", "need": 1, "stat": {"regen": 1}},
+	"zi_no_shape": {"name": "x", "desc": "x", "tag": "wind", "need": 2},
+	"zj_two_shapes": {"name": "x", "desc": "x", "tag": "economy", "need": 2, "stat": {"regen": 1}, "mod": {"floor_start_shield": 1}},
+	"zk_stat_key": {"name": "x", "desc": "x", "tag": "sun", "need": 2, "stat": {"luck": 1}},
+	"zl_stat_float": {"name": "x", "desc": "x", "tag": "water", "need": 2, "stat": {"regen": 1.5}},
+	"zm_mod_key": {"name": "x", "desc": "x", "tag": "displace", "need": 2, "mod": {"discount": 1}},
+	"zn_hook_kind": {"name": "x", "desc": "x", "tag": "growth", "need": 3, "hooks": [{"on": "sneeze", "effects": [{"op": "damage_at", "dmg": 1}]}]},
+	"zo_hook_shield": {"name": "x", "desc": "x", "tag": "bark", "need": 2, "hooks": [{"on": "cleanse", "effects": [{"op": "shield", "amount": 1}]}]},
+	"zp_hook_thorns": {"name": "x", "desc": "x", "tag": "bark", "need": 2, "hooks": [{"on": "shield_break", "effects": [{"op": "thorns", "dmg": 1, "turns": 2}]}]},
+	"zq_hook_then_shield": {"name": "x", "desc": "x", "tag": "bark", "need": 2, "hooks": [{"on": "kill", "effects": [
+		{"op": "damage", "dmg": 1, "then": [{"op": "shield", "amount": 1}]}]}]},
+	"zr_row_key": {"name": "x", "desc": "x", "tag": "sun", "need": 2, "price": 4, "stat": {"regen": 1}},
+	"zr_bloom_faucet": {"name": "x", "desc": "x", "tag": "economy", "need": 2, "stat": {"cleanse_bloom": 2}},
+	"zs_dup_a": {"name": "x", "desc": "x", "tag": "control", "need": 2, "stat": {"regen": 1}},
+	"zs_dup_b": {"name": "x", "desc": "x", "tag": "control", "need": 3, "stat": {"regen": 1}},
+	"compost": {"name": "x", "desc": "x", "tag": "growth", "need": 3, "stat": {"regen": 1}},
+	"seed_bomb": {"name": "x", "desc": "x", "tag": "growth", "need": 3, "stat": {"regen": 1}},
+}
+
+## Resonance rows the lint MUST accept. Only ONE shape ships (the fire hook
+## row), so this fixture is where the other two legal shapes stay covered:
+## `stat` and `mod` have no shipped row at all - the growth stat row that had
+## one (deep_loam) was cut on the canary and the displace collision-hook row
+## was cut on its own falsifier, both recorded in the Content.RESONANCES
+## header - and a shape only the lint accepts is a shape nothing proves legal.
+## rb_stat_row is therefore the ONLY thing exercising the stat branch's accept
+## path (PASSIVE_STAT_KEYS membership, the int check and the
+## RESONANCE_FORBIDDEN_STAT_KEYS pass-through); do not drop it because no row
+## ships that shape. rc_collision_hook keeps the cut displace row's exact shape
+## and re_hook_if a hook carrying an `if` and a plain effect-vocabulary op.
+const GOOD_RESONANCES := {
+	"ra_cinder_grip": {"name": "x", "desc": "x", "tag": "fire", "need": 3,
+		"hooks": [{"on": "ignite", "effects": [{"op": "status_at", "status": "root", "turns": 1}], "cap_per_turn": 3}]},
+	"rb_stat_row": {"name": "x", "desc": "x", "tag": "growth", "need": 3, "stat": {"regen_on_growth": 1}},
+	"rc_collision_hook": {"name": "x", "desc": "x", "tag": "displace", "need": 2,
+		"hooks": [{"on": "collision", "effects": [{"op": "damage_at", "dmg": 1}], "cap_per_turn": 2}]},
+	"rd_mod_row": {"name": "x", "desc": "x", "tag": "bark", "need": 2, "mod": {"floor_start_shield": 1}},
+	"re_hook_if": {"name": "x", "desc": "x", "tag": "water", "need": 2,
+		"hooks": [{"on": "cleanse", "effects": [{"op": "aoe_damage", "dmg": 1, "radius": 1, "ignite": false}],
+			"if": [{"target_adjacent": ["oil"]}], "cap_per_turn": 0}]},
+}
+
+
+## The bad rows whose violation is a RELATIONSHIP between rows rather than a
+## property of one: legal alone, rejected only together, which is exactly what
+## "one resonance per element" means. Every OTHER bad row must be rejected on
+## its own - see the isolation pass below.
+const BAD_RESONANCE_PAIR_ONLY := ["zs_dup_a", "zs_dup_b"]
+
+
+func _lint_resonance_selftest() -> Array:
+	var out: Array = []
+	var bad: Array = _lint_resonances(BAD_RESONANCES)
+	for rid in BAD_RESONANCES.keys():
+		var caught := false
+		for f in bad:
+			if String(f).begins_with(String(rid)):
+				caught = true
+		if not caught:
+			out.append("resonance lint self-test: '%s' is a deliberate violation the lint accepted" % rid)
+	# Isolation pass. Content.TAGS is smaller than this fixture set, so 16 of
+	# the 23 bad rows share a tag with another one and the one-row-per-tag rule
+	# reports them whatever else is wrong with them - which means the
+	# whole-table pass above stays GREEN when the rule a row was written for is
+	# deleted. Measured on this fixture set: dropping the unknown-key,
+	# name/desc, id-collision, stat-key-set, RESONANCE_FORBIDDEN_STAT_KEYS or
+	# _lint_hook_row check each left test_content passing, because the dup-tag
+	# failure stood in for the missing one. Linting each row ALONE is what
+	# makes its own rule load-bearing: nothing else can be the reason.
+	var alone := 0
+	for rid in BAD_RESONANCES.keys():
+		var lone: Array = _lint_resonances({rid: BAD_RESONANCES[rid]})
+		if BAD_RESONANCE_PAIR_ONLY.has(String(rid)):
+			if not lone.is_empty():
+				out.append("resonance lint self-test: '%s' is meant to be legal alone (it violates only in company): %s" % [rid, str(lone)])
+		elif lone.is_empty():
+			out.append("resonance lint self-test: '%s' is rejected only in company - the rule it was written for is unexercised" % rid)
+		else:
+			alone += 1
+	var good: Array = _lint_resonances(GOOD_RESONANCES)
+	for f in good:
+		out.append("resonance lint self-test: good fixture rejected: %s" % f)
+	print("resonance lint self-test: %d bad rows -> %d failures (%d rejected alone); %d good rows -> %d failures" % [
+		BAD_RESONANCES.size(), bad.size(), alone, GOOD_RESONANCES.size(), good.size()])
 	return out
 
 

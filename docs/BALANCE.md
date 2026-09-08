@@ -19,7 +19,7 @@ Reference numbers for TENDER's difficulty, and the discipline for changing them.
 |-----------|-------------------------|-----|
 | deeproot  | 70–90% wins             | the search ceiling: near-perfect play should nearly always win. **2026-09-07g (D4) reads 26/30 = 87% [70, 95]** at 30 seeds against 22/30 [56, 86] at 07f (the first D4 pass read 28/30 [79, 98]) - the gate still passes (the interval straddles the band) but two readings at or above its top mean the band may be measuring the pre-D4 game; see the bump-12 watch item |
 | deeproot_plan | **informational, no gate** | the combo-depth instrument (review 7.5): deeproot plus option-value terms, one-setup-ahead planning and shrine shopping. Measured 29/30 = 97% [83, 99] at tier 0 and 27/30 = 90% [74, 97] at tier 6 (2026-09-06f, both pre-routing-fix); after 07's routing guards and bump 8's per-offer graft pricing it reads 26/30 = 87% [70, 95] at tier 0 and 19/20 = 95% [76, 99] at tier 6 (2026-09-07b), and 25/30 = 83% [66, 93] at tier 0 after bump 9 (2026-09-07d, delta against deeproot +3 wins on the same seeds). Quote its **delta against deeproot**, never its absolute rate as a band — it is a measuring stick, and tier 0 is saturated for it |
-| optimizer | 45–65% wins             | skilled play should win often but never be safe (raised from 30–50 after the tempo fix — the old band measured a bot flaw) |
+| optimizer | 45–65% wins             | skilled play should win often but never be safe (raised from 30–50 after the tempo fix — the old band measured a bot flaw). **2026-09-08 (D5) reads 16/30 = 53% [36, 70]** at 30 seeds, identical to the pre-D5 tree on the same seeds |
 | fanatic   | every build > 0 at 100 seeds (hard); 20–40% total (soft) | committing to a niche build must stay viable; the total tracks content difficulty and moves when content does |
 | magpie    | 0–5% design target, top bloom; gate trips at a 10% CI lower bound | full greed loses to the current game almost always; a RISE means greed got cheap (canary, like turtle). Under instrument v2 the recorded baseline is 10/100 [6, 17] (2026-09-07d reads 7/100 [3, 14], a fall inside noise); a 100-seed lower bound clearing 17% is the signal — see 2026-09-05d. **2026-09-07e (the D2 shrine reroll) is the first reading to fail the merge gate**: 7/30 CI [12, 41] at 30 seeds, 13/100 [8, 21] in sample and 18/100 [12, 27] out of sample, pooled 31/200 = 15.5% [11, 21] against 16/200 = 8% [5, 13] before, paired sign p = 0.0026 — the sink shipped behind the `spinning_shrine` mutator, so the default-config reading is 07d's 7/100 [3, 14] again. Bump 12 (D4, 2026-09-07g) re-reads it at 8/100 [4, 15] wins - unmoved from 07f - with stall floors 71 against 59 (1.20x, inside the 1.25x limit and the highest recorded) |
 | sprout    | avg depth 3.5–5, wins rare | noobs feel progress; full clears are earned |
@@ -7773,8 +7773,1048 @@ All on the final tree:
   legal and it follows from `universe = bases + upgrades`, but it is a real
   narrowing of the draft and it is not pinned by any demo.
 
+## 2026-09-08 - bump 14 (D5): one resonance per element
+
+**Status: SHIPPED, with ONE row.** `Content.RESONANCES` holds `cinder_grip`
+(fire 3) and nothing else. The 6.4 roadmap bullet reads *one resonance per
+element* and it shipped as **one element, not four**: eleven tags in
+`Content.TAGS`, three rows authored, one row shipped.
+Two rows were authored, implemented, measured and CUT inside this same
+uncommitted bump - `follow_through` (displace 2) on the design phase's own
+pre-registered falsifier, and `deep_loam` (growth 3) on the greed canary,
+after the gate table below, by the owner. Both cut sections are kept in full:
+they are the two most transferable readings in this entry, and re-adding
+either row is one dict entry in `Content.RESONANCES`.
+
+`Game.SIM_VERSION` STAYED at 14 through the `deep_loam` cut - nothing outside
+the working tree ever ran SIM_VERSION 14, so the cut is a change inside an
+uncommitted bump, the precedent the D4 upgrade-slot filter set at bump 12.
+
+**Read this entry in three layers**, because they were measured on three
+different trees and this file's own rule against mixing instruments applies
+WITHIN one entry. The `follow_through` and `cinder_grip` sections and the
+six-line gate table are the TWO-ROW tree - that is the measurement that cut
+`deep_loam`, so it has to stay on the page as it was taken. The `deep_loam`
+section is the four-threshold canary sweep that decided the cut. The corpus,
+the suite and the final gate table are the ONE-ROW tree that ships. Every
+table below says which tree it was taken on, and the definitive one-row gate
+table is not in this entry yet (see the verdict).
+
+Instrument v2, this tree, `tests/playtest.gd` and `tests/sweep_lib.gd`.
+**Nothing recorded before this entry may be compared against anything recorded
+after it**: `Content.RESONANCES` adds a third passive source, `_graft_stat` /
+`_graft_mod` became `_passive_stat` / `_passive_mod`, `tests/tally.gd` SPLIT
+the hook column (`hooks_by_graft` / `hooks_by_resonance`, with
+`hooks_by_kind` and the `hooks` KPI still counting both), and
+`bots/deeproot_plan.gd` gained a `RESONANCE_POINTS` term in the same bump - so
+no `deeproot_plan` column from before bump 14 is comparable to one after it
+(the deeproot_plan-minus-deeproot delta now contains a term that rewards
+holding a resonance on top of whatever the resonance is worth). If that delta
+is ever the acceptance number for a block, measure it once with the term
+disabled first. Both claims were re-checked against the code after the cut and
+both still hold: `tests/tally.gd` still routes a `Content.RESONANCES` id to
+`hooks_by_resonance` and everything else to `hooks_by_graft`, and
+`bots/deeproot_plan.gd` still scores `_resonances().size() * RESONANCE_POINTS`
+(30.0). One thing the cut ADDS to this paragraph: a two-row bump-14 column is
+not comparable to a one-row one either, because `bots/optimizer.gd`'s drop
+guard has one fewer row to protect and its drafting moves with it - measured
+below on `cinder_grip`'s own free-mode firing count, 34 against 39 on the same
+seeds.
+
+### The table as shipped
+
+ONE row: `cinder_grip` (fire, need 3, `ignite` hook -> `status_at` root 1,
+`cap_per_turn` 3). TEN tags ship nothing; `sim/content.gd` carries the reason
+per tag beside the table, and for the two tags that were authored a row and
+then lost it - displace and growth - it carries the measurement.
+`tests/test_content.gd` prints the table back:
+
+    resonances: 1 rows (0 stat, 0 mod, 1 hooks): cinder_grip fire:3;
+      1 of 11 tags carry one
+
+No shipped row carries `stat` or `mod`. Both shapes stay live vocabulary,
+exercised by lint fixtures and by injected probe rows in
+`tests/test_grammar.gd` and `tests/test_economy.gd` rather than by any record
+- which has one measured consequence, recorded under The corpus below: no
+regression record can catch the deletion of `_passive_stat`'s resonance loop
+any more.
+
+### follow_through (displace 2) was CUT on its own pre-registered falsifier
+
+The design phase wrote the kill line down before the measurement: *"if
+`hooks_by_graft["follow_through"]` totals fewer than 30 over the 30 optimizer
+runs (under 1.0 per run), the row does not fire even when the bot is forced to
+hold nothing but displacement cards, and it should be cut rather than shipped
+as a fourth dead row. My prediction from the probe is 2-6 hooks per run on that
+locked kit."* Run on exactly that config:
+
+| bot | config | seeds | hooks | hooks/run | landed | dmg/run | wins |
+|-----|--------|-------|-------|-----------|--------|---------|------|
+| optimizer | `{kit: [vine_whip, water_jet, seed_bomb, mycelium_dash], pool: same}` | 1..30 | 22 | 0.73 | 5 | 0.17 | 4/30 [5, 30] |
+| optimizer | same | 31..60 | 21 | 0.70 | 5 | 0.17 | - |
+| magpie | same | 1..30 | 30 | 1.00 | - | 0.43 | 3/30 |
+| deeproot | same | 1..30 | 263 | 8.77 | - | 5.1 | 28/30 [79, 98] |
+| deeproot | same | 1..12 | 109 | 9.08 | 75 | 6.25 | 11/12 |
+| optimizer | `{loadout: tidewarden}` | 1..30 | 3 | 0.10 | 0 | 0.00 | - |
+| optimizer | `{loadout: lasher}` | 1..30 | 1 | 0.03 | 0 | 0.00 | - |
+| optimizer | default (tender), free drafting | 1..30 | 0 | 0.00 | 0 | 0.00 | - |
+
+22 < 30, and 21 out of sample: consistent, not noise, and 3-8x under the
+prediction. The paired on/off control (this tree vs an identical copy with
+`const RESONANCES := {}`) reads 4/30 ON vs 5/30 OFF on the locked kit, sign
+test discordant 0:1, p = 1.00; at the ceiling 28/30 [79, 98] ON vs 30/30 OFF,
+discordant 0:2, p = 0.50, and `enemy_dmg_by_src["follow_through"]` is 152 of
+2568 = **5.9%** of that kit's enemy damage. So the block's *budget* half
+passed comfortably - it is the *fire-rate* half that fired.
+
+**Why it does not fire, which is the transferable finding.** Of the 22 hooks,
+only 5 landed anything. `_damage_enemy` erases a dead enemy before `_hook`
+runs, so `damage_at` on a `collision` hook finds no target whenever the
+collision killed - and on a kit of nothing but pushers, roughly three quarters
+of collisions kill. The payoff shape was anti-correlated with its own trigger.
+The ceiling persona lands 69% (75 of 109) because it deliberately shoves big
+bodies that survive; the band persona shoves small ones that do not.
+
+**Why no number could fix it.** `need` 2 is the lint minimum and is not the
+problem - the row was ACTIVE in 30 of 30 of those runs and simply never got
+the geometry. `cap_per_turn` 2 never binds at 0.73 hooks a run. And displace
+has nowhere else to sit with zero new vocabulary: `collision` is the only
+`HOOK_KINDS` entry forced movement produces, and every closed `PASSIVE_STAT` /
+`PASSIVE_MOD` key is survivability, charge or bloom. **Displace therefore
+joins control as an element waiting for vocabulary, not for reach.**
+
+Counter-evidence the owner should see before reversing this: `undertow` is a
+SHIPPED graft priced at 4 that reads 8 hooks over 30 optimizer runs against
+128 over 30 deeproot runs, i.e. follow_through fires ~3x and ~2x more than a
+shipped precedent on the same two columns. The asymmetry that decided it is
+that a graft is PRICED and declinable while a resonance is free, permanent and
+automatic: a priced row that rarely fires is a choice, a free row that rarely
+fires is dead data in the table, the lint, the shell strip and the docs.
+Re-adding the row is one dict entry in `Content.RESONANCES` and the honest
+label if it is re-added is **ceiling-only**, never PASS on the band column.
+
+Side effect of the cut, worth recording because it was a real coupling while
+the row existed: `undertow` is `[water, displace, control]` and its own
+`staggered` trigger can only come from a collision, which can only come from a
+displace ability - so **any run that bought undertow was at displace >= 2 and
+got follow_through free for 4 bloom**. Every pre-bump-14 undertow measurement
+is unaffected (the row never shipped), but a future displace row must be
+priced knowing that undertow buys it.
+
+### cinder_grip: a payoff, at a third of the predicted rate
+
+Locked fire-3 config `{kit: [solar_lance, sun_flare, seed_bomb,
+mycelium_dash], pool: same, grafts: [ember_sap]}`, optimizer, seeds 1..30,
+this tree vs the same tree with `RESONANCES := {}`:
+
+| | hooks | hooks/run | roots | roots/run | landing rate | resisted | wins |
+|-|-------|-----------|-------|-----------|--------------|----------|------|
+| ON | 286 | 9.53 | 24 | 0.80 | **8.4%** | 0 | 11/30 [22, 54] |
+| OFF | - | - | 0 | 0.00 | - | 0 | 11/30 [22, 54] |
+
+Win-for-win identical seed by seed, paired discordant 0:0, p = 1.00. The
+design phase predicted +1.5 to +2.5 roots a run by extrapolating ember_sap's
+**damage** landing rate (29%) to a **status**; measured is +0.80, above the
+row's own "+0.5 is dead" floor and a third of the estimate. `resisted = 0` in
+both trees, so root's cooldown is NOT the limiter - 92% of ignitions simply
+have nobody standing on the tile, and `cap_per_turn 3 -> 0` is therefore not
+the lever the prediction named. Ceiling: same kit, deeproot 30 seeds, root 58
+ON vs 21 OFF (+1.23 a run), 30/30 wins both.
+
+Per persona on that same locked kit, through `tests/sweep_resonance.gd` (the
+runner added by this entry, which reproduces the scratch probe exactly):
+
+| persona | fired | landed | landing rate | wins |
+|---------|-------|--------|--------------|------|
+| optimizer, 30 seeds | 286 (9.53/run) | 24 (0.80/run) | 8.4% | 11/30 |
+| magpie, 30 seeds | 369 (12.30/run) | 44 (1.47/run) | 11.9% | 8/30 |
+| deeproot, 8 seeds | 125 (15.62/run) | 6 (0.75/run) | 4.8% | 8/8 |
+
+The firing column tracks how much fire a persona makes; the landing column
+tracks whether anything was standing on it, and the two do not move together -
+the ceiling persona lights the most fire and lands the least, because it kills
+what it lights.
+
+### The locked kit is the row's REACH ceiling, not its payoff ceiling
+
+Found in review, after those numbers were recorded, and it changes how they
+should be read. `_locked_config` fills the kit from `Content.DRAFT_POOL` and
+then tops the tag count up with grafts **in `Content.GRAFTS` table order**.
+Fire has only two pool bases, so a graft is always appended, and table order
+(`... carapace, ember_sap, undertow, compost, oil_tithe`) reaches `ember_sap`
+first. `ember_sap` is itself an `ignite` hook - `damage_at 1` on the body
+standing where the tile just lit - and `Game._hook` scans grafts BEFORE
+resonances. So the partner the runner picks kills, on the same event, the body
+`cinder_grip` was about to root.
+
+Measured on the runner's own kit with only the graft varied
+(`RESONANCE_GRAFTS=`, added by this entry so the confound is measurable
+without moving the default):
+
+| third fire tag | fired | landed | landing rate | wins |
+|----------------|-------|--------|--------------|------|
+| `ember_sap` (what the runner picks) | 286 (9.53/run) | 24 (0.80/run) | **8.4%** | 11/30 [22, 54] |
+| `oil_tithe` (the other fire graft) | 297 (9.90/run) | 57 (1.90/run) | **19.2%** | 12/30 [25, 58] |
+
+A 2.4x landing gap on the row's headline number, and it is an upper bound on
+the cannibalisation rather than a clean estimate: `oil_tithe` also discounts
+oil-aimed casts, so the personas do not play identically (286 vs 297 firings).
+The wins column separates neither pairing from the other.
+
+Two things follow. The recorded `8.4%` stands as what the DEFAULT runner
+reports and every earlier number in this entry is on that config, so nothing
+above is retracted; but "the row at its own best case", which the runner's own
+doc block claimed, was wrong, and that line is corrected in
+`tests/sweep_resonance.gd`. And the general rule the next resonance row will
+hit: a locked kit that tops up its tag count from the graft table can pick a
+partner that PRE-EMPTS the row being measured, because grafts are scanned
+first. `RESONANCE_GRAFTS` exists to check that; use it before quoting a
+landing rate.
+
+At the reach free drafting actually produces the row is much smaller, and this
+number is measured by ATTRIBUTION rather than by subtraction: count the event
+immediately after each `{t: "hook", id: "cinder_grip"}` and see whether it is
+the root. Optimizer, default config, seeds 1..30 (probe: the same event walk
+`tests/tally.gd` cannot do, because the tally counts hooks and statuses in
+separate buckets):
+
+    bot=optimizer cfg={ } seeds 1..30: cinder_grip hooks 34 (1.13/run)
+      landed 4 (0.13/run) rate 11.8% | all roots 25
+
+So **4 roots in 30 runs, 0.13 a run, 11.8% of 34 hooks** - a sixth of the
+locked-kit rate, because free drafting reaches fire 3 in 12 of 30 runs and only
+from floor ~4.2. An earlier draft of this entry inferred "about 7 roots, ~0.23
+a run" by subtracting the 18 `then` riders from the 25 root statuses; that
+over-counts, because `sap_snare` and `pollen_burst` also root. Where a
+subtraction and an attribution disagree, the attribution is the number.
+**Do not read `hooks_by_resonance` as a payoff count**: `hook_uses` is
+incremented BEFORE the effects run, so that counter counts ignitions and looks
+healthy either way. Read the `{t: "status"}` delta against a control tree, or
+the event after the hook.
+
+**Re-measured on the shipped ONE-ROW tree** (`tests/sweep_resonance.gd`, free
+mode, optimizer, seeds 1..30). The LOCKED column reproduces to the event -
+286 fired, 9.53/run, 24 landed, 0.80/run. The FREE column moves: **39 fired
+(1.30/run), active 18% of turns**, with met 12/30 and landed 4 (0.13/run)
+unchanged. Nothing about the row changed; `bots/optimizer.gd`'s drop guard has
+one fewer row to protect, so the persona's drafting moved. Under this file's
+own rule against mixing instrument trees, the free-mode FIRING count to quote
+for the shipped tree is 1.30/run and the LANDING count is still 0.13/run.
+
+### deep_loam (growth 3) was CUT on the greed canary, and its pre-registered lever FAILED
+
+The owner cut this row after the gate table below. Deep Loam was
+`{tag: growth, need: 3, stat: {regen_on_growth: 1}}`: +1 charge on every turn
+BEGUN standing on growth, and the `regen_on_growth` key's first and only
+shipped consumer. It was not cut for failing to do anything. It was cut for
+what it pays FOR.
+
+**The four-threshold sweep.** Paired on the greed canary (magpie, `spiker`
+loadout - the loadout that starts at growth 2 - 300 seeds a setting) against
+the shipped `tests/playtest.gd` gate `MAGPIE_MAX_LOWER := 0.10`, which trips
+when the Wilson LOWER bound clears 10%:
+
+| setting | wins | rate | CI | gate | delta |
+|---------|------|------|----|------|-------|
+| pre-D5 (row absent) | 38/300 | 12.7% | [ 9.4, 16.9] | pass | +0.0 |
+| **need 3 (as implemented)** | **56/300** | **18.7%** | **[14.7, 23.5]** | **FAIL** | **+6.0** |
+| **need 4 (the pre-registered lever)** | **48/300** | **16.0%** | **[12.3, 20.6]** | **FAIL** | **+3.3** |
+| need 5 | 39/300 | 13.0% | [ 9.7, 17.3] | pass | +0.3 |
+
+**The pre-registered lever was measured and it FAILED.** `need` 3 -> 4 is the
+lever the design phase wrote down for exactly this failure mode before the
+code existed, and the baseline phase named the row, the loadout and the
+persona it would fail on. All of that was right, and the remedy still did not
+work: at need 4 the lower bound is 12.3, still clear of the 10 line. That is
+the honest and the interesting result of this block. **A pre-registered lever
+is a pre-registered HYPOTHESIS about the remedy, not a promise that the remedy
+works** - the whole value of writing it down before the numbers is that it can
+be falsified, and this one was, by the same discipline that made the failure
+detectable in the first place.
+
+**need 5 passes only by switching the row off.** 39/300 against the row's
+absence at 38/300 is one win, +0.3 points, well inside its own noise floor (a
+Wilson half-width is about 5.6 points at 300 seeds): a threshold high enough to clear the canary is a
+threshold high enough that the row is not on. There is no setting at which
+`deep_loam` both clears the canary and does anything, because its canary cost
+is **proportional to its effect**.
+
+**The mechanism, which is why `need` is the wrong lever at every value.** The
+row pays per turn BEGUN standing on growth, and the greed persona spends about
+twice the share of its turns standing there that the skilled one does:
+
+| persona | tender | spiker |
+|---------|--------|--------|
+| magpie (greed canary) | 23.6% of turns | 26.7% of turns |
+| optimizer (band persona) | 13.4% of turns | 15.8% of turns |
+
+Lingering on a floor to farm it IS standing on your own growth, so the row
+subsidises exactly the behaviour the canary exists to detect. `need` changes
+how OFTEN the row is on; it never changes WHO it pays. Every value therefore
+trades effect against canary cost at one fixed exchange rate, and none of them
+buys a pass with the row still doing something.
+
+**The transferable conclusion: a growth-conditional charge bonus is
+structurally a greed subsidy.** Not "this row was tuned wrong" - any free
+permanent whose payoff is a RATE over turns spent somewhere the player
+controls pays the persona that maximises time spent there. Growth is therefore
+not a threshold problem but a payoff-SHAPE one, and it waits for a key that
+pays on an ACT - a cast, a plant, a cleanse - rather than on a turn spent in
+place. Every closed `PASSIVE_STAT` / `PASSIVE_MOD` key today is survivability,
+charge or bloom, so that key does not exist yet.
+
+**The measurement asymmetry, which is the lesson of this block.** This file
+had already measured `regen_on_growth` once, from the other side. BALANCE.md
+2026-09-07b ran the key as a PRICED graft at 8 bloom - `solar_core` rewritten
+`{stat: {regen_on_growth: 1}}`, price unchanged - and read **14/30 against
+that tree's own 13/30 base row at tier 0: delta +1, sign test 7:6, p = 1.00**.
+Measured-cheap, comfortably inside noise, and that is the reading which made
+it feel safe to hand the key out free. But the probe scored it on the
+**optimizer**, the persona whose 45-65 band the content is priced against, and
+it was never run on the **magpie**, the persona the canary gate exists for. So
+the key was measured for the BAND gate and not at all for the CANARY gate,
+which is the wrong way round for a block whose entire risk is FREE PERMANENT
+POWER. A priced row is declinable and its worst case is a wasted purchase; a
+free permanent is taken by every run that meets the threshold, including the
+runs that meet it by playing badly. **Measure a free permanent on the persona
+that maximises its trigger BEFORE measuring it on the persona whose band you
+are protecting** - and a price-8 reading is not a free-row reading of the same
+key.
+
+Everything below in this section is the two-row tree's exposure and control
+data for the row, kept because it is what made the canary reading believable
+rather than merely observed.
+
+The row most often active. 30-seed gated-off playtest exposure (runs reached,
+first floor, share of turns active):
+
+| persona | cinder_grip | deep_loam |
+|---------|-------------|-----------|
+| optimizer | 12/30, floor ~4.2, 17% of turns | 11/30, floor ~4.5, 17% of turns |
+| magpie | 8/30, floor ~2.9, 17% | 14/30, floor ~2.7, 37%, broken 1 |
+| fanatic | 4/30, floor ~3.5, 8% | 9/30, floor ~3.7, 20% |
+| sprout | 2/30, floor ~5.5, 2% | 1/30, floor ~4.0, 2%, broken 1 |
+| wanderer | 0/30 | 0/30 |
+| **deeproot** | **0/30** | **0/30** |
+
+And per loadout, which is where the row actually lives
+(`tests/sweep_resonance.gd`, free mode, 30 seeds): on `spiker` - the loadout
+that starts at growth 2 - `deep_loam` is met in **28/30 magpie runs from floor
+~1.8, active 83% of turns** and 22/30 optimizer runs from floor ~2.7, active
+57% of turns. On the default `tender` config the same row is 14/30 (magpie,
+37% of turns) and 11/30 (optimizer, 17%). One row, a 5x spread in how much of
+a run it is switched on.
+
+`deep_loam` also gets the paired locked-kit control `cinder_grip` got, because
+free drafting reaches growth 3 in only 11 of 30 optimizer runs and never on
+`deeproot`. Locked gardener core `{kit: [seed_bomb, overgrowth, grow_spike,
+mycelium_dash], pool: same}`, optimizer, this tree vs the same tree with
+`RESONANCES := {}` (the row is active 30/30 runs from floor 1.0, 100% of turns,
+in every ON cell):
+
+| seeds | ON wins | ON CI | OFF wins | OFF CI | paired sign | ON turns/run | OFF turns/run | ON stall floors | OFF stall floors |
+|-------|---------|-------|----------|--------|-------------|--------------|---------------|-----------------|------------------|
+| 1..30 | 12/30 | [24.6, 57.7] | 17/30 | [39.2, 72.6] | 3:8, p = 0.23 | 76.6 | 72.3 | 8 | 8 |
+| 31..60 | 20/30 | [48.8, 80.8] | 17/30 | [39.2, 72.6] | 8:5, p = 0.58 | 60.9 | 67.2 | 7 | 9 |
+| **pooled** | **32/60** | **[40.9, 65.4]** | **34/60** | **[44.1, 68.4]** | **11:13, p = 0.84** | 68.8 | 69.8 | 15 | 17 |
+
+A wash, in both directions and at 60 seeds: the sign test never leaves noise,
+zero timeouts either side, and the stall columns move the safe way. The
+in-sample half alone reads as a five-win DROP for a row that only adds charge,
+which is why the out-of-sample half was run before anything was concluded from
+it - a 30-seed cell on this kit carries about +-17 points. This also reproduces
+BALANCE.md 2026-09-07b's finding on the same key from the other side: paid for
+at 8 bloom it measured +1 win in 30 at tier 0, and given free to a kit that
+holds it from turn one it measures -2 in 60.
+
+The stall watch the design phase asked for, paired against the pre-D5 tree
+(`git archive HEAD` at bump 13), same seeds, same config:
+
+| | optimizer wins | opt stall floors | opt turns/floor | magpie wins | magpie stall floors | magpie turns/floor | timeouts |
+|-|----------------|------------------|-----------------|-------------|---------------------|--------------------|----------|
+| pre-D5 (bump 13) | 16/30 [36, 70] | 6 | 15.5 | 4/30 [5, 30] | 21 | 44.5 | 0 |
+| bump 14 (shipped) | 16/30 [36, 70] | 7 | 15.5 | 2/30 [2, 21] | 22 | 44.8 | 0 |
+
+No stall signal at this sample size: magpie stall floors 1.05x against a 1.25x
+limit, turns/floor flat on both personas, zero timeouts on all six. The magpie
+canary FELL 4 -> 2 here - **and that reading is wrong**, which is the whole
+argument for the 300-seed tables below: at 30 seeds a canary cell carries +-17
+points, and at 300 seeds per loadout the same canary RISES on all six loadouts
+and fails its line on `spiker` (56/300 = 18.7% [14.7, 23.5] against 38/300 =
+12.7% [9.4, 16.9]). A 30-seed default-config read is not evidence that a
+loadout-shaped row is safe. (An intermediate reading of this same pair *with*
+follow_through in the table read optimizer 14/30 and magpie 2/30; cutting the
+row put the optimizer column back on its pre-D5 number.)
+
+### Band reads, 30 seeds, gate off, default config (TWO-ROW tree)
+
+wanderer 0/30 floor 1.0 · sprout 1/30 floor 3.5 · magpie 2/30 [2, 21] ·
+fanatic 5/30 [7, 34] (pyro 2/8, shover 1/8, turtle 0/7, gardener 2/7) ·
+optimizer **16/30 [36, 70]** against the 45-65 band · deeproot **26/30
+[70, 95]** against the 70-90 band. Zero timeouts, zero illegal actions,
+zero quota reclamps anywhere.
+
+**deeproot reaches NEITHER threshold in 30 seeds** (0/30 on both rows), so its
+26/30 is a control that D5 cannot have moved: the ceiling persona's own
+drafting never builds a fire-3 or growth-3 kit. That is the same
+opportunity-rate split every hook row in this project has hit, and it means a
+ceiling reading for either D5 row has to come from a LOCKED kit, which is
+where the two tables above come from - and it is still true of the one row
+that shipped.
+
+### Baselines first: the gate lines, measured on the UNCHANGED tree
+
+This project has retired three gate lines across two blocks (oracle regret,
+its within-instrument replacement, and "zero timeouts anywhere"), every one
+written before its baseline was taken. So D5's lines were measured on the
+pre-D5 tree (`git archive HEAD` at bump 13, SIM_VERSION 13) BEFORE any post-D5
+number was looked at, with the instrument that would score them. Noise at each
+sample size, for reading the tables below: a Wilson half-width is about **17
+points at 30 seeds, 10 at 100, 5.6 at 300**.
+
+Instrument: a scratch `loadout_baseline.gd` (win rate + starting-kit tag
+multiset per `Content.LOADOUTS` row) run at 100 seeds x 3 ranges = 300 seeds
+per loadout per persona, because the shipped `tests/playtest.gd` gate builds
+every run as `Game.new(seed)` and so can only ever see `tender`.
+
+**Line 1 - the shipped playtest gate passes.** `tests/playtest.gd` at 30
+seeds, default config: optimizer inside 35-65%, deeproot inside 70-90%, magpie
+Wilson lower bound under 10%, wanderer avg floor <= 2.0, sprout <= 1 win, zero
+timeouts for optimizer and deeproot, zero illegal actions for everyone. It
+passes on the unchanged tree (exit 0).
+
+**Line 2 - no loadout's optimizer Wilson interval sits WHOLLY outside the
+45-65% band, at 300 seeds per loadout.** Holds pre-D5: all six straddle.
+
+    tender       163/300  54.3%  [48.7, 59.9]      lasher     130/300  43.3%  [37.8, 49.0]
+    spiker       175/300  58.3%  [52.7, 63.8]      tidewarden 123/300  41.0%  [35.6, 46.6]
+    flarekeeper  149/300  49.7%  [44.0, 55.3]      skyrunner  122/300  40.7%  [35.3, 46.3]
+
+**Line 3 - no loadout's magpie Wilson LOWER bound clears 10%, at 300 seeds per
+loadout.** This is the greed canary and it is the line this block was predicted
+to move. Holds pre-D5, with spiker closest at 9.4:
+
+    spiker        38/300  12.7%  [ 9.4, 16.9]      flarekeeper 26/300   8.7%  [ 6.0, 12.4]
+    tender        32/300  10.7%  [ 7.7, 14.7]      skyrunner   18/300   6.0%  [ 3.8,  9.3]
+    tidewarden    16/300   5.3%  [ 3.3,  8.5]      lasher      14/300   4.7%  [ 2.8,  7.7]
+
+**Line 4 - every fanatic build stays above zero wins** at 100 seeds
+(`tests/measure_fanatic.gd`), and **line 5 - the canary personas' timeout rate
+does not rise** (pre-D5, magpie over 1800 runs: **11 timeouts**, 5 of them
+on spiker; the optimizer records **1**, on skyrunner).
+
+**Line 6 - every shipped row must actually FIRE in play.** Per row: in how many
+runs of N was its threshold met, and how many times did it fire. A row that
+never fires is dead data in the table, the lint, the shell strip and the docs,
+and the block drops it rather than shipping it. There is no pre-D5 baseline for
+this line by construction; it is the line that cut `follow_through`.
+
+**Retired before it was quoted: "the loadout spread must not increase."** The
+spread statistic (best loadout minus worst, optimizer, 100 seeds) reads **19,
+24 and 21** on three ranges of the UNCHANGED tree - spiker alone swings 63, 62,
+50 - so it carries a noise floor of about +-5 points at 100 seeds and cannot
+detect anything D5 could plausibly do. The same measurement retired "spiker has
+2 points of headroom", which was a 100-seed artifact: pooled at 300 spiker is
+58.3% [52.7, 63.8] against tender's 54.3% [48.7, 59.9], overlapping.
+
+### The gate table on the TWO-ROW tree (the measurement that cut deep_loam)
+
+Same instrument, same seeds, run against the tree as implemented - two rows.
+This is the measurement the cut came out of, so it stays on the page exactly
+as it was taken. The shipped one-row tree's own table is under the verdict.
+
+**Line 1 - shipped playtest gate, 30 seeds, default config: PASS on both
+trees**, and the two trees agree cell for cell where it matters:
+
+| | wanderer | sprout | magpie | fanatic | optimizer | deeproot | exit |
+|-|----------|--------|--------|---------|-----------|----------|------|
+| pre-D5 (bump 13) | 0/30 floor 1.0 | 1/30 | 4/30 [5, 30] | 5/30 | 16/30 [36, 70] | 26/30 [70, 95] | 0 |
+| bump 14 | 0/30 floor 1.0 | 1/30 | **2/30 [2, 21]** | 5/30 | 16/30 [36, 70] | 26/30 [70, 95] | 0 |
+
+Zero timeouts and zero illegal actions on both. Read alone, this says the block
+is invisible - which is exactly what a 30-seed default-config gate can say
+about content that is loadout-shaped, and why lines 2 and 3 exist.
+
+**Line 2 - optimizer band per loadout, 300 seeds each: PASS**, all six
+intervals straddle 45-65 as they did pre-D5. But every loadout moved the same
+way:
+
+| loadout | pre-D5 | post-D5 | delta |
+|---------|--------|---------|-------|
+| tender | 163/300  54.3% [48.7, 59.9] | 179/300  59.7% [54.0, 65.1] | +16 |
+| spiker | 175/300  58.3% [52.7, 63.8] | 186/300  62.0% [56.4, 67.3] | +11 |
+| flarekeeper | 149/300  49.7% [44.0, 55.3] | 158/300  52.7% [47.0, 58.2] | +9 |
+| lasher | 130/300  43.3% [37.8, 49.0] | 143/300  47.7% [42.1, 53.3] | +13 |
+| tidewarden | 123/300  41.0% [35.6, 46.6] | 129/300  43.0% [37.5, 48.7] | +6 |
+| skyrunner | 122/300  40.7% [35.3, 46.3] | 137/300  45.7% [40.1, 51.3] | +15 |
+| **pooled** | **862/1800  47.9% [45.6, 50.2]** | **932/1800  51.8% [49.5, 54.1]** | **+70** |
+
+Six of six in the same direction, and the pooled intervals do not overlap. No
+single cell is separated - each delta is inside its own +-5.6 - so the reading
+is "a small uniform rise", not "a loadout broke". The attribution section below
+assigns +74 of that +70 to `deep_loam` and -4 to `cinder_grip`.
+
+**Line 3 - magpie greed canary per loadout, 300 seeds each: FAIL on spiker.**
+
+| loadout | pre-D5 | post-D5 | delta | lower bound vs the 10% line |
+|---------|--------|---------|-------|------------------------------|
+| **spiker** | 38/300  12.7% [9.4, 16.9] | **56/300  18.7% [14.7, 23.5]** | **+18** | **14.7 - FAIL** |
+| tender | 32/300  10.7% [7.7, 14.7] | 35/300  11.7% [8.5, 15.8] | +3 | 8.5 - pass |
+| lasher | 14/300  4.7% [2.8, 7.7] | 29/300  9.7% [6.8, 13.5] | +15 | 6.8 - pass |
+| flarekeeper | 26/300  8.7% [6.0, 12.4] | 29/300  9.7% [6.8, 13.5] | +3 | 6.8 - pass |
+| tidewarden | 16/300  5.3% [3.3, 8.5] | 28/300  9.3% [6.5, 13.2] | +12 | 6.5 - pass |
+| skyrunner | 18/300  6.0% [3.8, 9.3] | 25/300  8.3% [5.7, 12.0] | +7 | 5.7 - pass |
+| **pooled** | **144/1800  8.0% [6.8, 9.3]** | **202/1800  11.2% [9.8, 12.8]** | **+58** | intervals disjoint |
+
+This is the line the pre-D5 baseline predicted would move, on the loadout it
+predicted, for the reason it predicted: `spiker` starts at growth 2, reaches
+growth 3 in 71.7% [63.0, 79.0] of runs (the highest activation of any proposed
+row on any loadout), and magpie BEGINS a turn standing on growth 23.6-26.7% of
+turns against the optimizer's 13.4-15.8% - so `deep_loam` pays the greed
+persona roughly twice per turn what it pays the persona whose band the block
+was priced against. The prediction is in the scratch baseline file, written
+before the row existed.
+
+**Line 5 - canary timeouts do not rise: FAIL as stated.** Magpie over the same
+1800 runs: **11 -> 19** (spiker 5 -> 9, flarekeeper 1 -> 4, tender 2 -> 4).
+Optimizer: 1 -> 1 (skyrunner, both trees). The counts are small - 19 against 11
+is about 2.2 Poisson sd, and bump 13's watch list already records that a
+timeout at this scale is a marginal cap-crossing - but the line as written says
+"does not rise" and it rose, so it is recorded as a failure and not re-worded.
+
+**Line 4 - every fanatic build above zero, 100 seeds: PASS, and flat.**
+`tests/measure_fanatic.gd`, all eight builds, pre-D5 -> bump 14:
+pyro 28 -> 28, gardener 39 -> 40, turtle 2 -> 2, shover 24 -> 24,
+pyro_nolance 45 -> 44, shover_nolance 24 -> 23, ember 36 -> 36, anchor 7 -> 7;
+**total 205/800 -> 204/800**, timeouts 0 -> 1 (anchor seed 63, floor 4). The
+fanatic column is the block's control: a persona that commits to one archetype
+kit rarely reaches a threshold, so 800 runs of it move by one win.
+
+**Line 6 - every shipped row fires: PASS for both, and it is now a runner.**
+`tests/sweep_resonance.gd` (added by this entry) builds, per row, a kit that
+meets the row's threshold from the draft pool plus tag-carrying grafts, runs it
+locked beside the free-drafting config on the same seeds, and reports exposure,
+firings and LANDINGS - the last matched against the row's own effects, because
+`hook_uses` is charged before a row's effects run. Optimizer, seeds 1..30:
+
+    cinder_grip  fire >= 3  (hooks on ignite)
+      locked   kit [solar_lance, sun_flare, seed_bomb, mycelium_dash]  grafts [ember_sap]
+               met 30/30 runs from floor ~1.0, 100% of turns, 0 break(s)
+               fired 286 (9.53/run)  landed 24 (0.80/run = 8.4%)  refused 0
+      free     met 12/30 runs from floor ~4.2, 17% of turns, 0 break(s)
+               fired 34 (1.13/run)  landed 4 (0.13/run = 11.8%)  refused 0
+    deep_loam  growth >= 3  (stat {regen_on_growth: 1})
+      locked   met 30/30 runs from floor ~1.0, 100% of turns, 0 break(s)
+      free     met 11/30 runs from floor ~4.5, 17% of turns, 0 break(s)
+
+Both rows fire; the runner reproduces the two scratch probes this entry quotes
+to the event (24 landed locked, 4 free). Its gate is the design phase's own
+pre-registered cut line - a `hooks` row must fire at least once per run on the
+kit built for it - which `cinder_grip` clears at 9.53 and the cut
+`follow_through` failed at 0.73. A `stat` or `mod` row has no firing to count
+and is exposure-only.
+
+### Attribution: it is `deep_loam`, and it is the content, not the bots
+
+Two control trees, both built from the bump-14 tree, both run on the same seeds
+with the same instrument. `off` empties `Content.RESONANCES` (so the
+`bots/optimizer.gd` drop guard and `bots/deeproot_plan.gd`'s
+`RESONANCE_POINTS`, which shipped in this bump, are still present but inert);
+`noloam` keeps `cinder_grip` and deletes `deep_loam`. Magpie, 100 seeds x 3
+ranges:
+
+| loadout | pre-D5 (bump 13) | `off` (bump 14 code, no rows) | `noloam` (cinder_grip only) | bump 14 (both rows) |
+|---------|------------------|-------------------------------|------------------------------|----------------------|
+| **spiker** | 38/300  12.7% | **38/300  12.7%** | **37/300  12.3% [9.1, 16.5]** | **56/300  18.7% [14.7, 23.5]** |
+| tender | 32/300  10.7% | 32/300  10.7% | 29/300  9.7% | 35/300  11.7% |
+| tidewarden | 16/300  5.3% | 16/300  5.3% | 16/300  5.3% | 28/300  9.3% |
+| flarekeeper | 26/300  8.7% | 26/300  8.7% | 27/300  9.0% | 29/300  9.7% |
+| lasher | 14/300  4.7% | 14/300  4.7% | 4/100 (partial) | 29/300  9.7% |
+| skyrunner | 18/300  6.0% | 7/100 (partial) | 5/100 (partial) | 25/300  8.3% |
+
+Two readings, and the first one is the cleaner result:
+
+1. **`off` reproduces the pre-D5 tree cell for cell** - 32, 16, 26, 38, 14 of
+   300 against 32, 16, 26, 38, 14 - so everything bump 14 changed apart from
+   the two data rows (the rename to `_passive_stat` / `_passive_mod`, the third
+   hook source, the derived snapshot key, the tally split, the optimizer drop
+   guard, the planner term) moves **nothing**. The same is true on the other
+   persona: `off` optimizer reads **163, 123, 149, 175, 130, 122 of 300**
+   against pre-D5's **163, 123, 149, 175, 130, 122** - six of six identical
+   over 1800 runs. The block is additive as designed, and the failing line is
+   content, not policy.
+2. **`noloam` passes gate 3 on every loadout** (spiker 37/300 = 12.3%, lower
+   bound 9.1 against the 10 line) and is within noise of pre-D5 everywhere.
+   `cinder_grip` is not the row. **`deep_loam` carries the whole rise**:
+   37 -> 56 wins on spiker with nothing else changed.
+
+The optimizer column says the same thing at full size. Pooled over six
+loadouts x 300 seeds: pre-D5 **862/1800 (47.9%)**, `off` **862/1800** (cell for
+cell identical), `noloam` **858/1800 (47.7%)**, bump 14 **932/1800 (51.8%)**.
+Per loadout, `noloam` against pre-D5: tender 165/163, tidewarden 122/123,
+flarekeeper 146/149, spiker 173/175, lasher 130/130, skyrunner 122/122. So
+`cinder_grip` is worth **-4 wins in 1800** to the skilled persona and
+`deep_loam` is worth **+74**; the block's entire measured effect on both
+personas is one `stat` row.
+
+The mechanism is visible in the exposure columns, which is why the reading is
+believed rather than merely observed. `tests/sweep_resonance.gd`, free mode,
+30 seeds, `SWEEP_LOADOUT=spiker`:
+
+    magpie      deep_loam met 28/30 runs from floor ~1.8, active 83% of turns
+    optimizer   deep_loam met 22/30 runs from floor ~2.7, active 57% of turns
+
+Same row, same loadout: the greed persona holds it in 93% of runs from floor 2
+and stands in it for five turns in six, the skilled persona in 73% of runs from
+floor 3 for four turns in seven. A row that pays per turn spent standing on
+your own growth pays the persona that stands still.
+
+### Verdict: SHIP `cinder_grip`, CUT `deep_loam`
+
+The measure phase held the block on line 3 and named the lever. The lever was
+then measured and it failed (the four-threshold table above), and the owner
+cut the row rather than tune it further. **The block ships one row.**
+
+On the two-row tree four lines passed and two failed, and both failures are
+the same finding: a free permanent that pays per turn pays the GREED persona
+most. Both failing lines are carried entirely by `deep_loam`, which the two
+control trees pin cell for cell.
+
+| line | stated before the measurement | TWO-ROW tree (as implemented) | shipped ONE-ROW tree |
+|------|-------------------------------|-------------------------------|-----------------------|
+| 1 | shipped playtest gate, 30 seeds, default config | **PASS** (exit 0, pre and post) | **PASS** (exit 0) |
+| 2 | no loadout's optimizer interval wholly outside 45-65, 300 seeds each | **PASS** (six of six straddle; all six rose, pooled 47.9% -> 51.8%) | **PASS** (858/1800 = 47.7%, -4 on pre-D5) |
+| 3 | no loadout's magpie Wilson lower bound clears 10%, 300 seeds each | **FAIL - spiker 56/300 = 18.7% [14.7, 23.5]** (pre-D5 38/300 = 12.7% [9.4, 16.9]) | **PASS** (spiker 37/300 = 12.3% [9.1, 16.5]) |
+| 4 | every fanatic build above zero, 100 seeds | **PASS** (205/800 -> 204/800, per-build flat) | **PASS** (204/800, per-build flat) |
+| 5 | the canary personas' timeout rate does not rise | **FAIL as stated** (magpie 11 -> 19 over 1800 runs) | **PASS** (magpie 11, same per-loadout distribution) |
+| 6 | every row in the table actually fires in play | **PASS** (cinder_grip 9.53 fired / 0.80 landed per run locked, 1.13 / 0.13 free; deep_loam active 30/30 locked, 11/30 free) | **PASS** - `cinder_grip` 9.53 fired / 0.80 landed per run locked, 1.30 / 0.13 free (`tests/sweep_resonance.gd`, exit 0) |
+
+**The definitive gate table for the shipped one-row tree is being run
+separately and its numbers are not in this entry yet.** They belong here:
+
+**The definitive gate table for the shipped one-row tree**, run on the shipped
+tree itself rather than on a control built by deletion, same seeds and same
+instrument as the pre-D5 column. All six lines pass.
+
+| line | pre-D5 (bump 13) | shipped ONE-ROW tree | verdict |
+|------|------------------|----------------------|---------|
+| 1 shipped playtest gate, 30 seeds, default | exit 0 | `gate: all PASS`, exit 0 (magpie 3/30, optimizer 16/30 [36,70], deeproot 26/30 [70,95], 0 timeouts, 0 illegal) | **PASS** |
+| 2 optimizer band 45-65, 300 seeds x 6 loadouts | 862/1800 = 47.9% [45.6, 50.2] | 858/1800 = 47.7% [45.4, 50.0] | **PASS** - six of six straddle; **-4 wins in 1800** |
+| 3 magpie canary, lower bound may not clear 10%, 300 seeds x 6 | spiker 38/300 = 12.7% [9.4, 16.9]; pooled 144/1800 = 8.0% | spiker 37/300 = 12.3% [9.1, 16.5]; pooled 141/1800 = 7.8% | **PASS** on all six; **-3 wins in 1800** |
+| 4 every fanatic build above zero, 100 seeds x 8 | 205/800, min turtle 2/100 | 204/800, min turtle 2/100 | **PASS** |
+| 5 canary timeouts do not rise, 1800 runs | magpie 11 (spiker 5, tender 2, skyrunner 2, flarekeeper 1, lasher 1); optimizer 1 (skyrunner) | magpie 11, **the same per-loadout distribution**; optimizer 1 (skyrunner) | **PASS** |
+| 6 every row in the table actually fires | n/a | `cinder_grip` 9.53 fired / 0.80 landed per run locked, 1.30 / 0.13 free | **PASS** |
+
+Per-loadout, lines 2 and 3 in full (300 seeds each, pre -> post):
+
+| loadout | optimizer | magpie |
+|---------|-----------|--------|
+| tender | 163 -> 165 (+2) | 32 -> 29 (-3) |
+| tidewarden | 123 -> 122 (-1) | 16 -> 16 (0) |
+| flarekeeper | 149 -> 146 (-3) | 26 -> 27 (+1) |
+| spiker | 175 -> 173 (-2) | 38 -> 37 (-1) |
+| lasher | 130 -> 130 (0) | 14 -> 14 (0) |
+| skyrunner | 122 -> 122 (0) | 18 -> 18 (0) |
+
+**Read this honestly: the shipped block is statistically indistinguishable from
+bump 13 on every gate.** -4 optimizer wins and -3 magpie wins in 1800 runs
+each, and a timeout distribution that is identical loadout by loadout. That is
+the correct outcome for the two failing lines - the canary is back to its
+baseline, which is what cutting `deep_loam` was for - and it is also the honest
+verdict on `cinder_grip`: the row FIRES (line 6, and three legacy corpus records
+run 24, 1 and 0 hooks), but nothing here shows it changing a run's outcome. It
+is content that happens, measured as an event count and not as a win rate.
+
+The pooled optimizer figure was reached twice by different routes - the
+`noloam` control tree built by deleting the row read 858/1800, and the shipped
+tree independently reads 858/1800. Two builds, one number.
+
+**What the lever bought, for the record.** The pre-D5 baseline named the row,
+the loadout and the persona before the code existed - "if any shipped-constant
+gate moves under D5, it is gate 2 (greed canary) on spiker, driven by
+`deep_loam`" - and the design phase named the remedy ("the lever if either
+fires is need 3 -> 4, reach falls 50.8% -> 19.4% across loadouts, NOT shaving
+the key, which is already the smallest int available"). The prediction was
+right and the remedy was wrong. Reach did fall as predicted - spiker 30.0% at
+need 4 against 71.7% at need 3 - and the canary still failed at 16.0%
+[12.3, 20.6], because reach is how OFTEN the row is on and the failure is
+about WHO it pays.
+
+**Why the failure is real rather than an artifact.** (i) It is monotone across
+six independent loadouts, not one cell: magpie rose on all six and the pooled
+intervals are disjoint (8.0% [6.8, 9.3] -> 11.2% [9.8, 12.8]). (ii) It is
+concentrated exactly where the mechanism predicts - `spiker` is the loadout
+that starts at growth 2 and reaches growth 3 in 71.7% of runs, and magpie
+BEGINS a turn standing on growth 23.6-26.7% of turns against the optimizer's
+13.4-15.8%, so the same row pays greed about twice per turn what it pays skill.
+(iii) The line held on the unchanged tree at the same sample size, which is
+what makes it a gate rather than a wish.
+
+**Three things this verdict deliberately does NOT do.** It does not re-word
+line 3 or line 5 after seeing them fail - the retired-gate-line history in this
+file is a history of exactly that, and both lines are recorded as failures
+even though the row that failed them is now gone. It does not read the passing
+30-seed default-config gate as evidence of safety, because that gate cannot
+see five of the six loadouts. And it does not shave `regen_on_growth` from 1,
+which is already the smallest int the key takes - the alternative to `need`
+was never a smaller number, it was a different KEY, and that key does not
+exist.
+
+**What ships.** `cinder_grip` is untouched by any failing line: it is a fire
+row, `spiker` reaches fire 3 in 6.7% of runs (against tender's 40.0%), its own
+paired control is a dead heat (11/30 both trees, root +0.80/run), and the
+`noloam` tree - which keeps it and deletes `deep_loam` - measures it at **-4
+optimizer wins in 1800** while passing gate 3 on all six loadouts. It is a
+real payoff and a small one, and the honest label on it is *measured, clean
+and barely paid*: 0.13 landed roots a run at free-drafting reach, 0.80 on a
+kit built for it, no win-column effect in either paired control.
+
+**What shipping one row means for the roadmap bullet.** "One resonance per
+element" now has exactly one element. Two of the eleven tags were tried and
+measured out, and the remaining eight are refused on reach, on trigger rate or
+on vocabulary with the reason recorded per tag in `sim/content.gd`. The block
+is closed - the bullet is answered, the machinery is generic over the table
+and a second row is a dict entry - but nobody should read "D5 shipped" as
+"every element has an identity". Fire does. The rest do not, and two of them
+now have a measurement saying why.
+
+### Cost of the third source
+
+`_passive_stat` / `_passive_mod` rebuild the derived set on every read
+(`_resonance_rows` -> `_resonances` -> `_tag_counts`, two dicts and an array
+per call) at eight call sites including `_bank_cap` and `_shield_cap`, and
+`legal_actions` reads them four times per call. Micro-benchmark against the
+pre-D5 tree on `{kit: [solar_lance, sun_flare, seed_bomb, mycelium_dash],
+grafts: [ember_sap, solar_core]}`: `_bank_cap` x200000 **2919 ms vs 428 ms
+(6.4-6.8x)**, `legal_actions` x20000 **2984 ms vs 1869 ms (+55%)**. End to end
+it is invisible - a deeproot search on a kit that lights nothing runs 61328 ms
+vs 60401 ms (**+1.5%**) with identical play, and `tests/test_bots.gd` reports
+factor 3.36x against its 6.0 cap. If a later block puts a resonance reader on
+a hotter path, memoise the active list per step - never in `snapshot()` and
+never in the hash.
+
+Measured on the two-row tree and not re-taken on the one-row one, deliberately:
+the cost is `_tag_counts()` walking the kit and the grafts on every call, which
+the TABLE SIZE does not enter, so cutting a row moves the constant and not the
+shape. A benchmark re-run would report a slightly smaller number for the same
+finding.
+
+### The corpus
+
+`Game.SIM_VERSION` 13 -> **14**. Before any regen, `tests/test_regressions.gd`
+read **"regressions: 0 ok, 93 failed"** and every one of the 93 failures was
+the same line, `stale record: sim_version 13 != 14`; only ONE record carried a
+second problem line (`det_fanatic_s42`, "1 illegal + 0 error events during
+replay"). That is the additivity result and it is the strongest number in this
+bump: **88 of 93 records hashed IDENTICALLY** across the version bump, because
+`snapshot()["resonances"]` is derived and `state_hash()` erases it. Had the
+key entered the hash view, all 93 would have moved for nothing - the bump-8
+watch item ("a derived snapshot field moved 18 corpus hashes") repeating.
+
+**Final state, after both cuts: 96 records, "regressions: 96 ok, 0 failed" in
+plain mode and with `REGRESS_STRICT=1`.** Three new `d5_*` demos
+(`d5_cinder_grip`, `d5_resonance_off`, `d5_upcycle_keeps_count`); the other two
+authored for this block were deleted with their rows - `d5_follow_through`
+with the displace row, `d5_deep_loam` with the growth one.
+
+**The cut made the corpus quieter than the bump did.** Against bump 13 all 93
+pre-existing records are now STAMP-ONLY - `sim_version` is the single
+differing key in every one of them, with zero outcome, action, event-pattern
+or hash diffs (`git diff --numstat tests/regressions/` reads 93 files, 93
+added and 93 deleted lines, and filtering the diff for non-`sim_version` lines
+returns nothing) - and all **20 bot logs are byte-identical to their bump-13
+recordings**, re-recorded on their personas to prove it rather than merely
+replayed. Three of them had been re-recorded while `deep_loam` existed, and
+every one landed exactly back on its bump-13 recording when the row went:
+
+| bot log | bump 13 | two-row bump 14 | shipped (one row) |
+|---------|---------|-----------------|-------------------|
+| `det_fanatic_s3` | died floor 4, 161 turns | died floor 4, 118 turns | died floor 4, 161 turns |
+| `det_magpie_s11` | died floor 2, 93 turns | reached floor 3, 131 turns | died floor 2, 93 turns |
+| `det_optimizer_s42` | won floor 7, 123 turns | won floor 7, 93 turns | won floor 7, 123 turns |
+
+Those three are **exactly** the records that reach growth 3 - `det_fanatic_s3`
+at action 155, `det_magpie_s11` at action 101 and `det_optimizer_s42` at
+action 201 (which reaches growth 4) - established by probing all 96 records
+for the maximum tag count each run ever holds, not by reading the failures
+backwards. The moved set and the mechanism coincide with nothing left over, on
+both cuts: `c3_undertow` moved while `follow_through` existed - its kit plus
+`undertow` is displace 2, so the row fired on that board - and reverted to its
+bump-13 hash when that row went, the same way.
+
+`REGEN=1` was run against a SCRATCH copy rather than the live corpus, so the
+diffs could be read before anything was stamped. It printed three lines, all
+on those three bot logs, and a re-stamp would have FROZEN 30 / 8 / 41 illegal
+actions and 160 / 256 / 119 error events into their expected outcomes. A
+re-stamp is the wrong tool for a desynced bot log; the log is re-recorded on
+its persona instead. The live corpus never had REGEN applied to it.
+
+**What the legacy corpus does and does not pin.** Three legacy records reach
+fire 3 and the shipped row fires inside them - `canary_fanatic_s1` (24 hooks,
+3 root statuses, exactly one of which blocked a move), `det_magpie_s42` (1
+hook, 1 root status, no blocked move) and `det_optimizer_s3` (fire 3 reached
+at action 295, 0 hooks) - and all three are byte-identical WITH and WITHOUT
+the row, established by replaying every record twice, the second time through
+a `Game` subclass whose `_resonance_rows()` returns `[]`. **A run can fire the
+row 24 times and land 3 roots without moving its own outcome or its final
+state.** So the whole of `cinder_grip`'s pinning power sits in the three
+`d5_*` demos, and they were re-checked by mutation on this tree - four
+mutations fail a record in plain (non-strict) mode, and the fifth fails
+nothing at all:
+
+| mutation | records that fail |
+|----------|-------------------|
+| `_resonance_rows` iterates `[]` | `d5_cinder_grip`, `d5_upcycle_keeps_count` |
+| `_resonances()` stops re-checking `need` | `d5_resonance_off` |
+| `_tag_counts` skips variant ids | `d5_upcycle_keeps_count` |
+| `cinder_grip.need` 3 -> 4 | `d5_cinder_grip`, `d5_upcycle_keeps_count` |
+| **`_passive_stat` drops its resonance loop** | **none - 96/96 still pass** |
+
+The last row is a coverage LOSS and it is recorded rather than papered over.
+With no shipped `stat` or `mod` row, no replay can observe either passive
+loop; `d5_deep_loam` was the only record that could ever fail that mutation
+and it went with its row. The rule is still enforced - the same mutation
+fails six checks in `tests/test_grammar.gd` and four in
+`tests/test_economy.gd` through injected `_ResProbe` rows, and deleting the
+`_passive_mod` loop fails one - plus a tripwire that fails if a `stat` or
+`mod` row ever ships without that probe being revisited. But it is enforced by
+unit test only, and a mutation that survives all 96 records is worth knowing
+about before the next passive source is added.
+
+`d5_resonance_off` and `d5_upcycle_keeps_count` are the
+pair that pins turning a resonance OFF: the same seed, board, kit
+(`[solar_lance, sun_flare+corona, moss_filter, seed_bomb]` + the fire-tagged
+`oil_tithe` = fire 3) and actions, differing only in the forge's `scrap`
+index. Scrapping `sun_flare+corona` drops the kit to fire 2 and
+`_resonances()` returns nothing on the next read; scrapping `seed_bomb`
+instead keeps fire 3 - and the card the forge KEEPS is upcycled, which never
+moves a count, because a variant row carries its base's tags verbatim and
+`_tag_counts` reads the kit row straight rather than folding through
+`Content.base_id`. The mechanism they pin is `_resonances()` re-comparing
+`_tag_counts()` against `need` on every read, which is why nothing had to be
+un-applied when the row went out.
+
+### The suite
+
+    tests/test_content.gd       content: OK
+                                "resonances: 1 rows (0 stat, 0 mod, 1 hooks):
+                                 cinder_grip fire:3; 1 of 11 tags carry one"
+                                "resonance reach: 1 / 1 rows can be met
+                                 (fire 4)"
+                                "resonance lint self-test: 23 bad rows -> 37
+                                 failures (21 rejected alone); 5 good rows ->
+                                 0 failures"
+    tests/test_grammar.gd       grammar: OK (941 checks)
+    tests/test_economy.gd       economy: OK (274 checks)
+                                "d5 resonances: no main-rng draw over set /
+                                 hooks / stat; graft + resonance sum, graft
+                                 mod shadows"
+                                "d3 rng: floor-entry pins 10 seeds / 61
+                                 entries, 0 moved"
+    tests/test_invariants.gd    1400 + 1540 generations, 0 violations
+    tests/test_bots.gd          bots: OK (165 checks)
+                                "d5 resonances: lit [cinder_grip]; optimizer
+                                 keeps it (drop 3) and drops 0 without it;
+                                 planner 30/row"
+    tests/test_shell.gd         shell smoke: OK  ("d5 shell: FIRE 3/3 Cinder Grip")
+    tests/test_meta.gd          meta: OK  ("tier-0 career: 63 runs, 31 wins,
+                                 best floor 7, grow_spike casts 607, locked
+                                 milestones [aeolian, brittle, parched]")
+    tests/test_determinism.gd   determinism: OK (61 checks, 8 personas)
+    tests/test_regressions.gd   96 ok, 0 failed (plain and REGRESS_STRICT=1)
+    tests/sweep_resonance.gd    1 row, 30 seeds, bot optimizer (exit 0)
+
+All ten were re-run in one pass on the ONE-ROW tree that ships, after both
+cuts.
+
+Two lines moved for the cut rather than for the bump, and both are worth
+naming because neither is a stale pin. **The rng floor-entry pin, 59 -> 61
+entries.**
+`tests/test_economy.gd`'s floor-entry rng table had ONE of its ten seed rows
+re-stamped by D5, and `deep_loam` was the whole of it; with the row cut, seed
+8 is back to 7 floor entries and the table is byte-identical to the bump-13
+table the constant was renamed from - so the shipped block provably adds no
+main-rng draw, and it says so in ten rows rather than in prose.
+**`TIER0_CAREER_RUNS` 36 -> 63** in `tests/test_meta.gd`: the tier-0 career's
+`no_lance` witness was a win at seed 31, and with `deep_loam` gone the
+optimizer's growth-heavy careers play differently and seed 31 is no longer a
+win, so at 36 runs the suite reported `no_lance` unreachable. Causation was
+confirmed by temporarily restoring the row (witness back at seed 31) and
+removing it again. Over 60 runs on the cut tree the last four witnesses are
+seeds 5 / 9 / 13 / 58 and nothing lands after 58, so 63 keeps the same
+five-run margin the old 36/31 pair had; `TIER0_UNREACHABLE` is unchanged, which
+is the rule that file states for itself - raise the budget, never move a
+reachable milestone into the unreachable set.
+
+The `economy` line is the one that carries this block's central sim claim: a
+resonance is derived from kit and grafts, costs no draw, and cannot move a
+seed. `d3 rng: ... 0 moved` says the same thing from the other side - the ten
+pinned optimizer floor-entry rng states are unmoved by the content AND by the
+`bots/optimizer.gd` drop guard shipped beside it.
+
+### Instrument changes made in this bump
+
+- `tests/tally.gd` splits `hooks_by_graft` / `hooks_by_resonance` and adds
+  four exposure columns (`resonance_runs`, `resonance_first_floor`,
+  `resonance_turns`, `resonance_breaks`) plus a `resonance:` report line
+  naming every row, reached or not. `hooks_by_kind` and the `hooks` KPI count
+  BOTH sources.
+- `tests/sweep_grafts.gd` prints `by resonance` beside `by graft` and sums
+  both into its hooks/run figure. This matters on that runner specifically:
+  `ember_sap` and `oil_tithe` are fire-tagged, so a `{grafts: [x]}` sweep row
+  whose run then drafts the second fire card reaches fire 3 and cinder_grip
+  fires - **a graft's measured value there is graft + resonance**, and the
+  30-seed optimizer playtest shows exactly that shape (`by graft {compost 41,
+  ember_sap 46}  by resonance {cinder_grip 34}`; that 34 is the TWO-ROW tree's
+  free-drafting firing count and reads 39 on the shipped one, because the
+  optimizer drop guard has one fewer row to protect - the coupling is the
+  point, not the digit).
+- `tests/test_content.gd` gained `RESONANCE_FORBIDDEN_STAT_KEYS`
+  (`cleanse_bloom`): `PASSIVE_STAT_KEYS` is shared with GRAFTS, where every
+  key is PRICED, so a currency-making key that is a 3-bloom purchase as
+  `bloom_surge` would be a free permanent bloom faucet as a resonance - the
+  stat-side twin of `HOOK_FORBIDDEN_OPS`. `_lint_resonance_reach` now counts
+  the carriers ONE RUN can hold (draft-pool bases + all grafts + the best
+  SINGLE package) rather than the whole table, because Block A made a package
+  a one-per-run commitment; the old count passed a `smoke` row at need 3 that
+  no default run can meet.
+- `tests/test_content.gd`'s resonance lint SELF-TEST gained an isolation pass,
+  found while auditing the cut. Its "caught" criterion is that some failure
+  names the fixture row, and `Content.TAGS` has 11 entries against 23 bad
+  fixtures, so 16 of them shared a tag with another fixture and the
+  one-row-per-tag rule reported them whatever else was wrong with them.
+  Deleting six of the fifteen rules individually - the unknown-row-key check,
+  name/desc, id disjointness from GRAFTS/ABILITIES, `PASSIVE_STAT_KEYS`,
+  `RESONANCE_FORBIDDEN_STAT_KEYS` and the hook rows' `HOOK_FORBIDDEN_OPS` pass
+  - left `content: OK` while the failure count fell 37 -> 36 / 35 / 33. Four
+  of those six are rules this block's own contract names. Every bad row is now
+  ALSO linted alone, with the two whose violation is a relationship declared
+  in `BAD_RESONANCE_PAIR_ONLY`; the same fifteen mutations now give 14
+  detected, each naming its own fixture. The printed line carries the second
+  number: `23 bad rows -> 37 failures (21 rejected alone)`. **A self-test's
+  fixtures can shadow each other, and a shared table constraint is the usual
+  way it happens.** The `mod` value's int-ness is the one rule with no fixture
+  in either table, GRAFTS included, and it is left as found rather than fixed
+  inside a cut.
+- **`tests/sweep_resonance.gd`** is new in this entry: per `Content.RESONANCES`
+  row it builds a kit that MEETS the threshold from the draft pool plus
+  tag-carrying grafts, runs it locked beside the free-drafting config on the
+  same seeds, and prints exposure (runs met, first floor, share of turns,
+  breaks), firings and LANDINGS, the last matched against the row's own
+  effects. It gates on the D5 design phase's pre-registered cut line (a `hooks`
+  row must fire at least once a run on its own kit; `RESONANCE_GATE=0`
+  disables). It replaces the two throwaway probes this entry quotes and
+  reproduces them to the event. It is generic over the table with no per-row
+  special-casing, so it went from two rows to one without an edit. One
+  caveat on its locked mode, found in review and NOT changed here because
+  changing it would silently move numbers this entry quotes: `_locked_config`
+  fills a kit from `Content.DRAFT_POOL` and then appends tag-carrying grafts
+  in `Content.GRAFTS` TABLE ORDER. Fire has only two pool bases, so a graft is
+  always appended and table order picks `ember_sap` - whose own `ignite` hook
+  damages the body on the tile that just lit, and which is scanned BEFORE the
+  resonance. Probed on the runner's own kit, optimizer, seeds 1..30, varying
+  only that third fire tag: with `ember_sap` 286 fired / 24 landed (8.4%) and
+  26 bodies dead immediately before a `cinder_grip` hook; with `oil_tithe`
+  297 fired / 57 landed (19.2%) and 7. So the runner's "the row at its own
+  best case" is measured with its worst-case partner, and the 2.4x is an upper
+  bound on the cannibalisation (`oil_tithe` also discounts oil-aimed casts).
+  Changing the graft choice is a measure-phase decision with a re-quote
+  attached, not a cleanup.
+- **`bots/deeproot_plan.gd`'s `RESONANCE_POINTS` (30.0) is now the entire
+  resonance signal in the combo-depth instrument**, and it is priced at
+  "roughly `ember_sap`'s measured contribution" - a 5-bloom SHIP graft - for a
+  row measured at -4 optimizer wins in 1800 and 0.13 landed roots a run. The
+  term is flat, so it only bites at a shrine buy or a forge scrap, but any
+  future `deeproot_plan`-minus-`deeproot` delta should be read knowing that.
+
+### Watch list for this bump
+
+- **The shipped row is measured as an event count, not as a win rate.** The
+  one-row gate table landed and all six lines pass, but the honest reading is
+  that the block is statistically indistinguishable from bump 13: -4 optimizer
+  wins and -3 magpie wins in 1800 runs each, and a timeout distribution
+  identical loadout by loadout. `cinder_grip` fires (9.53/run on a locked kit,
+  1.30/run free; 24 hooks in one legacy corpus record) and nothing yet shows it
+  changing an outcome. If a later block wants the fire element to MEAN
+  something, this row is the seam to widen, not evidence that the seam works.
+- **Never quote the bump-14 two-row column for the shipped tree.** It measured
+  two rows and was dominated by the one that is gone. The one-row column in the
+  definitive gate table is the shipped tree's only correct reference.
+- **A pre-registered lever is a hypothesis, not a remedy.** `need` 3 -> 4 was
+  written down before the code, aimed at the right row on the right loadout,
+  and it failed at 16.0% [12.3, 20.6] against a 10 line. Write the lever down
+  anyway - it is what made the failure legible - but budget for the lever
+  itself failing, and say so in the design phase rather than treating the
+  block as done once a lever exists.
+- **A free permanent must be measured on the persona that maximises its
+  trigger BEFORE the persona whose band it is priced against.** The
+  `regen_on_growth` key had a price-8 optimizer reading (+1 in 30, p = 1.00)
+  and no magpie reading at all, and the missing half is what the whole block
+  turned on. A priced row is declinable; a free permanent is taken by every
+  run that meets the threshold, including the runs that meet it by playing
+  badly.
+- **The canary was already above its design target before this block.** The
+  DESIGN target is 0-5% and the trip line is a 10% lower bound; pre-D5 magpie
+  pools at 8.0% [6.8, 9.3] and spiker sat at 12.7% with 0.6 points of margin.
+  the two-row tree did not create that drift, it consumed the last of the
+  margin, and cutting `deep_loam` hands the margin back rather than widening
+  it - so a future block still cannot assume the canary has room.
+- **A per-turn payoff is a greed payoff.** `regen_on_growth` was measured as
+  worth about nothing to the optimizer (BALANCE.md 2026-09-07b: +1 win in 30
+  at tier 0 for 8 bloom) and it moved the greed canary by 18 wins in 300 when
+  it was made free. The mechanism generalises past this key: a reward shaped
+  as a RATE over turns spent somewhere the player chooses pays whoever spends
+  the most turns there, and that is the greed persona by construction.
+- **`cinder_grip` is measured, clean and barely paid, and it is now the only
+  row.** 0.13 landed roots a run at free-drafting reach, 0.80 on a kit built
+  for it, no win-column effect in either paired control. It is the row whose
+  value should be re-argued next - not because it failed anything, but because
+  nothing has yet shown it buying a run, and it is now carrying the whole
+  block. Two structural facts belong with that: fire's entire reachable
+  carrier set is FOUR ids (`solar_lance`, `sun_flare`, `ember_sap`,
+  `oil_tithe` - packages carry none), so `need` 3 has a margin of exactly one
+  and only `tender` and `flarekeeper` start with a fire card; and free
+  drafting on the other loadouts fires it 0.03-0.17 times a run
+  (`tidewarden` 0.03 and 0.00 landed over 30 seeds), BELOW the once-a-run cut
+  line that killed `follow_through`. That line was stated for LOCKED kits,
+  which `cinder_grip` clears at 9.53, so this is not a gate failure - it is a
+  reach statement, and it means the row is a lance/flare-build identity rather
+  than a game-wide one.
+- **The reach lint is mutator-blind.** `resonance reach: 1 / 1 rows can be met
+  (fire 4)` counts `solar_lance` + `sun_flare` + `ember_sap` + `oil_tithe`.
+  Under `no_lance` (which bans the lance from the pool AND the kit) the true
+  ceiling is 3, so the only fire-3 run possible under that mutator holds
+  `sun_flare` plus BOTH fire grafts - and the lint still prints 4. It catches
+  dead data, not thin data, and it does not model mutators.
+- **The control trees are reproducible and should be rebuilt, not trusted from
+  here.** On the shipped one-row tree `off` and `noloam` are the same tree:
+  `const RESONANCES := {}`. Scoring either against pre-D5 takes six
+  `loadout_baseline` runs. The bump-14 two-row tree is recoverable only from
+  this entry and from the cut sections in `sim/content.gd`.
+
 ## Watch list
 
+- **A free permanent is priced by its LANDING rate, not its firing rate.**
+  D5's `cinder_grip` fires 9.5 times a run on a locked fire-3 kit and lands
+  0.80 - an 8.4% landing rate, against the 29% the design phase extrapolated
+  from `ember_sap`, whose effect is `damage_at` on a body the ignite may have
+  already killed. `hook_uses` is incremented BEFORE a row's effects run, so
+  `hooks_by_resonance` (and `hooks_by_graft`) count TRIGGERS and will look
+  healthy for a row that does nothing. Any hook row whose effect targets a
+  body needs a `{t: "status"}` or `enemy_dmg_by_src` delta against a control
+  tree before it is quoted.
+- **`collision` is a trigger the band persona does not produce.** Measured at
+  bump 14: the optimizer collides 0.03 times a run free drafting on EVERY
+  loadout including the two displace ones, and 0.73 times a run when its whole
+  kit is pushers, against deeproot's 18.8 and 9.1 on the same configs. Any
+  future content seated on `collision` is a ceiling-persona payoff and must be
+  measured on a locked kit, and reported UNREAD on the band column if it is
+  not. This is what cut D5's displace row.
+- **A pre-registered cut line only helps if the run that fires it is actually
+  made.** D5's design phase wrote the falsifier and the number; no phase after
+  it ran either, and all three reports said "MEASUREMENT still owed" while the
+  row sat in the shipped table. Write the falsifier, then run it before the
+  bump, not after.
 - Turtle canary baseline is now 5/25 (post loop-fixes). A sharp rise from
   there still means the clock has weakened.
 - Deeproot eval bias: flat +12/shield point with no tempo cost makes cheap
@@ -8317,3 +9357,57 @@ All on the final tree:
   same treatment, so read `casts_by_id` beside `effective_casts_by_id` before
   quoting a locked-kit row - and never read effective casts at all on the ops
   that set no outcome counter (`shield`, `anchor`, `undim`).
+
+### Bump-14 additions (2026-09-08)
+
+- **D5 SHIPPED one row, `cinder_grip`, and `deep_loam` was CUT on the greed
+  canary after its pre-registered lever failed.** At 300 seeds per loadout the
+  two-row tree raised the canary on all six loadouts (pooled 8.0% [6.8, 9.3]
+  -> 11.2% [9.8, 12.8]) and cleared the 10% trip line on `spiker` (56/300 =
+  18.7% [14.7, 23.5]). Two control trees pinned it to one row: with
+  `RESONANCES := {}` the bump-14 tree reproduces bump 13 cell for cell on both
+  personas over 1800 runs each, and with `deep_loam` deleted the canary is
+  back at 37/300 on spiker. The named lever, `need` 3 -> 4, was then measured
+  at 48/300 = 16.0% [12.3, 20.6] - still FAIL - and `need` 5 passes only by
+  switching the row off (39/300 against 38/300, +0.3 points). There is no
+  threshold at which a growth-conditional charge bonus both clears the canary
+  and does anything, because its canary cost is proportional to its effect.
+  Do not read the passing 30-seed default-config gate as a second opinion - it
+  cannot see five of the six loadouts.
+
+- **`tests/tally.gd` has no LANDED counter, and every landing number in the D5
+  entry came from a scratch probe.** The tally counts hooks in
+  `hooks_by_resonance` / `hooks_by_graft` and statuses in `status_by_kind`,
+  with nothing joining them, so "did this hook do anything" is answerable only
+  by walking the event AFTER each `{t: "hook"}` in a throwaway script. Two of
+  this bump's three decisions (cut `follow_through`, keep `cinder_grip`) turned
+  on exactly that number. Half-closed by this entry:
+  `tests/sweep_resonance.gd` ships a LANDED column matched against the row's
+  own effects and reproduces both scratch probes to the event - but it is a
+  runner, not the tally, so a landing number still costs a deliberate run and
+  never appears in a playtest line.
+- **A row can be simultaneously the most active and the least measurable.**
+  `deep_loam` was active in about a third of free-drafting runs and in 100% of
+  a locked gardener kit's turns, and its paired 60-seed control is a wash
+  (32/60 vs 34/60, sign p = 0.84) - while at 300 seeds on the greed persona it
+  was the whole of the block's canary failure. Exposure is not effect, effect
+  is not the same on every persona, and `resonance_turns` is neither.
+- **`cinder_grip` is not reachable by `deeproot`'s own drafting** (0/30, and
+  the cut row was 0/30 too), so the ceiling column for any resonance is a
+  locked-kit reading by construction, exactly like the C3 hook grafts before
+  it.
+- **No shipped resonance carries `stat` or `mod`, so no regression record can
+  catch the deletion of either passive loop.** `d5_deep_loam` was the only one
+  that could, and it went with its row; the rule now lives in injected probe
+  rows in `tests/test_grammar.gd` and `tests/test_economy.gd` plus a tripwire
+  that fails if such a row ever ships. A corpus of 96 records is not coverage
+  of a code path no record can reach.
+- **`Content.RESONANCES` ids live in the same `hook_uses` namespace as grafts
+  and abilities** and the lint enforces disjointness; a shared id would
+  silently share a `cap_per_turn`.
+- **Six loadouts, one gated config.** `tests/playtest.gd` builds every gate run
+  as `Game.new(seed)` (tier 0, no mutators, `tender`), so the per-loadout band
+  and canary tables in the 2026-09-08 entry are scratch-instrument readings
+  that no CI run reproduces. Any block whose content is loadout-shaped - a
+  resonance is, by construction - has to run them by hand or it has not been
+  measured.

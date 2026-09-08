@@ -4,6 +4,6 @@
 "actions": [{"target":[1,1],"type":"cleanse"},{"dir":[1,0],"type":"move"},{"type":"reroll"},{"type":"reroll"},{"type":"reroll"},{"target":[3,2],"type":"cleanse"}],
 "expect": {"events":[{"bloom":14,"t":"cleanse"},{"cost":2,"n":1,"t":"reroll"},{"cost":3,"n":2,"t":"reroll"},{"ability":"root_wall","cost":4,"grafts":["bloom_surge","verdant_pulse"],"n":3,"t":"reroll"},{"bloom":6,"t":"cleanse"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "D2 reroll price escalation and cap (under the spinning_shrine mutator): a spin costs SHOP_COSTS.reroll 2 plus SHOP_REROLL_STEP 1 per spin already taken, so three spins take 2 + 3 + 4 = 9 of a 14-bloom purse (the first cleanse pins the 14, the last pins the 5 left as 5 + 1 = 6). Five is exactly the fourth spin.s price (2 + 3 * 1), so the fourth reroll is refused by SHOP_REROLL_CAP alone and not by the purse - the runner fails on any illegal event, so the refusal itself is asserted in tests/test_economy.gd. Exclusion is against what is on the counter, never the history: the third spin lands back on the floor.s own root_wall / [bloom_surge, verdant_pulse] draw",
-"sim_version": 13,
+"sim_version": 14,
 "hash": "24bae9027a9d796ad1c755da36b6e5b7bb341a5c6f9b785a1f24194375ff9780"
 }

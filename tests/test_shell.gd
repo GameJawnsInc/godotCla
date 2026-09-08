@@ -561,6 +561,58 @@ func _init() -> void:
 		cfgf.store_string(cfg_before)
 		cfgf.close()
 
+	# --- Block D5: the resonance surface ------------------------------------
+	# The shell must never re-derive the threshold rule; _resonance_state only
+	# counts, and the ACTIVE flag has to come from the sim. These are the only
+	# reachable checks headless (nothing calls a _draw*), so they pin the two
+	# things the drawing code reads: the state rows and the card note.
+	var rs = _bare_shell()
+	for kit in [["seed_bomb", "overgrowth", "grow_spike"], ["solar_lance", "sun_flare", "mycelium_dash"],
+			["water_jet", "vine_whip", "seed_bomb"], Content.LOADOUTS["tender"]["kit"]]:
+		rs.game = Game.new(1, {"kit": kit, "pool": kit})
+		var snap: Dictionary = rs.game.snapshot()
+		var lit: Array = []
+		for r in rs._resonance_state(snap):
+			if bool(r["active"]):
+				lit.append(String(r["id"]))
+		_check(lit == rs.game._resonances(),
+			"the shell's active set is the sim's, never re-derived: %s vs %s (%s)" % [
+				str(lit), str(rs.game._resonances()), str(kit)])
+	# counts fold a graft in, and a variant carries its base's tags
+	rs.game = Game.new(1, {"kit": ["solar_lance", "sun_flare+corona", "mycelium_dash"], "grafts": ["oil_tithe"]})
+	var fsnap: Dictionary = rs.game.snapshot()
+	var fire_row := {}
+	for r in rs._resonance_state(fsnap):
+		if String(r["tag"]) == "fire":
+			fire_row = r
+	_check(int(fire_row.get("count", 0)) == 3 and bool(fire_row.get("active", false)),
+		"the strip counts a variant and a graft toward the threshold: %s" % str(fire_row))
+	_check(rs._resonance_line(fsnap).contains("FIRE 3/3"),
+		"a lit row is upper-cased in the strip: %s" % rs._resonance_line(fsnap))
+	# the swap arithmetic: a same-element drop must NOT badge BREAKS. Fire is
+	# the one element that ships a row and only two BASES carry it, so a kit at
+	# the threshold holds a sibling - the shape a forge or a locked kit makes.
+	rs.game = Game.new(1, {"kit": ["solar_lance", "solar_lance+noon", "sun_flare", "seed_bomb", "mycelium_dash"]})
+	var dsnap: Dictionary = rs.game.snapshot()
+	_check(rs._resonance_note(dsnap, rs._ability_tags("solar_lance"), true, []).contains("BREAKS"),
+		"dropping a fire card for an off-element pick breaks Cinder Grip")
+	_check(rs._resonance_note(dsnap, rs._ability_tags("solar_lance"), true,
+			rs._ability_tags("sun_flare+smoulder")) == "",
+		"...and does not when the card being taken carries the same tag: %s" % rs._resonance_note(
+			dsnap, rs._ability_tags("solar_lance"), true, rs._ability_tags("sun_flare+smoulder")))
+	# an offer that would cross a threshold on a FULL kit owes a drop first
+	rs.game = Game.new(1, {"kit": ["solar_lance", "sun_flare", "seed_bomb", "overgrowth", "mycelium_dash"]})
+	var osnap: Dictionary = rs.game.snapshot()
+	_check(rs._resonance_note(osnap, rs._ability_tags("solar_lance+pierce"), false, [], true).contains("would light")
+			and rs._resonance_note(osnap, rs._ability_tags("solar_lance+pierce"), false).contains("- lights"),
+		"a threshold-crossing offer says 'would light' while a drop is still owed: %s" % rs._resonance_note(
+			osnap, rs._ability_tags("solar_lance+pierce"), false, [], true))
+	print("d5 shell: %s" % rs._resonance_line(fsnap))
+	if rs._run_save != null:
+		rs._run_save.close()
+		rs._run_save = null
+	rs.free()
+
 	shell.free()
 	shell2.free()
 	print("FAILURES: %d" % fails if fails > 0 else "shell smoke: OK")

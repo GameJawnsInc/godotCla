@@ -680,12 +680,14 @@ const ROOM_BLOOM_BONUS := 2  # extra bloom when a room's last corruption falls
 ## Grafts as data (docs/PROGRESSION_REVIEW.md 6.3 C3). Every row carries
 ## name, desc, tags (a TAGS subset, read by bots to rank shop offers) and
 ## exactly one of:
-##   stat:  {key: int}   summed over held grafts by Game._graft_stat(key);
+##   stat:  {key: int}   summed over held grafts AND the active resonances
+##          (Content.RESONANCES) by Game._passive_stat(key);
 ##          keys: bank_cap, shield_cap, regen, regen_on_growth, growth_heal,
 ##          cleanse_bloom (regen_on_growth is added to regen only on the turns
 ##          the tender begins standing on growth; no shipped row uses it - it
 ##          exists so a conditional alternative to solar_core can be measured)
-##   mod:   {key: value} first held value wins, Game._graft_mod(key, default);
+##   mod:   {key: value} first value wins over the held grafts then the
+##          active resonances, Game._passive_mod(key, default);
 ##          keys: floor_start_shield, oil_cast_discount
 ##   hooks: [{on: kind, effects: [...], cap_per_turn?: n, if?: [...]}] rows
 ##          the Game._hook dispatcher runs when `kind` (HOOK_KINDS) happens;
@@ -762,6 +764,120 @@ const HOOK_DEPTH_MAX := 3
 ## Total hook rows run in one step(); beyond it hooks are skipped and
 ## {t: hook_capped} is emitted once for the step.
 const HOOK_STEP_CAP := 12
+
+## Resonances as data (Block D5, docs/PROGRESSION_REVIEW.md 6.4 "one resonance
+## per element"). A run's kit and grafts carry TAGS; when the count of one tag
+## reaches that row's `need` the element RESONATES and its row takes effect for
+## the rest of the run - and stops the moment the count drops again (a draft
+## drop, a forge scrap; grafts are only ever appended, so a graft-borne count
+## can only rise). Nothing is stored: Game._tag_counts and Game._resonances
+## derive the set on every read, so a resonance never enters state_hash() and
+## cannot by itself desync a replay.
+##
+## A row is {name, desc, tag, need} plus EXACTLY ONE of:
+##   stat:  {key: int}   summed with the held grafts by Game._passive_stat
+##   mod:   {key: value} scanned after the grafts by Game._passive_mod, so a
+##                       graft mod shadows a resonance mod (first hit wins)
+##   hooks: [rows]       run by Game._hook, which scans kit rows, then grafts,
+##                       then the active resonances in the key order below
+## - the same three-way choice a GRAFTS row makes, read by the same machinery
+## with the ROW ID as the source id, so cap_per_turn, hook_uses and
+## tests/tally.gd need no change. D5 adds a SOURCE, not a system: no new op,
+## stat key, mod key, hook kind, predicate or terrain key.
+##
+## KEY ORDER IS LOAD-BEARING: it is the hook scan order after the grafts and
+## the order of snapshot()["resonances"]. Rows are listed in TAGS order.
+## Ids are NAMES, never tags ("cinder_grip", not "fire"): the id shows up in
+## {t: "hook", id}, in hook_uses and in the shell, where it has to read as a
+## source. "One resonance per element" is therefore a lint rule and not a
+## dictionary key - tests/test_content.gd rejects two rows on one tag, a row
+## whose tag is in AFFINITY_IGNORED_TAGS (this is where "mobility never
+## counts" lives, in data instead of an id literal in sim/game.gd), a `need`
+## below 2, an id colliding with a GRAFTS or ABILITIES id (they share the
+## hook_uses namespace) and a tag the content tables cannot reach `need` of.
+## Hook rows go through the same lint as graft hooks, shield / thorns
+## rejection included: a free permanent that grants survivability is the stall
+## vector BALANCE.md documents.
+##
+## Resonance tags do NOT feed the D4 affinity set: Game._affinity_tags reads
+## the kit and the grafts only, so the draft never chases a threshold that a
+## resonance itself created.
+##
+## ONE row ships, on fire. The other ten tags ship nothing, on measured reach,
+## on trigger rate, on vocabulary and - for the two that were authored and then
+## cut - on their own measurements (BALANCE.md 2026-09-08, bump 14):
+## mobility is lint-excluded; sun is 90% of tender optimizer runs at need 2 and
+## double-pays off the two fire cards; water is an ability-side subset of
+## displace; wind and smoke are package-locked (wind 2 is met from turn one on
+## the skyrunner kit, the exact failure the roadmap bullet deferred this item
+## on); bark's own seat (shield_break) fires 0.83 times a run and every payoff
+## its vocabulary offers is survivability; control has NO event (nothing fires
+## when a status lands); economy is carried by zero abilities; displace and
+## growth each shipped a row that was cut, below.
+##
+## So no shipped row carries `stat` or `mod` today - both shapes are live data
+## the lint and tests/test_grammar.gd keep exercised through fixture rows, not
+## dead vocabulary.
+##
+## displace shipped a row in the D5 design phase and it was CUT on its own
+## pre-registered falsifier before the bump landed. Follow Through was
+## {tag: displace, need: 2, hooks: [{on: collision, effects:
+## [{op: damage_at, dmg: 1}], cap_per_turn: 2}]} and the design phase declared:
+## "if it totals fewer than 30 hooks over 30 optimizer runs on the locked kit
+## [vine_whip, water_jet, seed_bomb, mycelium_dash] it should be cut rather
+## than shipped as a fourth dead row". Measured on exactly that kit: 22 hooks
+## in seeds 1..30 and 21 in 31..60 (0.73 and 0.70 per run against a predicted
+## 2-6), of which only 5 landed any damage - the other 17 fired on a body the
+## collision had already killed, because _damage_enemy erases the enemy before
+## _hook runs, so damage_at finds no target. Free-drafting, the band persona
+## reaches displace 2 in 3 of 30 runs and fires the row 0.00 times a run.
+## The row is NOT dead at the ceiling (deeproot 8.8-9.1 hooks and ~6 damage a
+## run on the same kit, 5.9% of its enemy damage), so it is a ceiling-only
+## row - but a FREE permanent that pays only the search bot is not the
+## build-identity payoff the block set out to ship, and the 45-65 band is read
+## off the persona that never collects it. `need` is not the lever (the row is
+## active on 30/30 of those runs and simply does not fire) and neither is
+## cap_per_turn (it never binds at 0.73 hooks a run). Re-seating displace
+## needs a trigger the collision hook cannot give: `collision` is the only
+## displacement-shaped HOOK_KIND, and every closed stat/mod key is
+## survivability, charge or bloom. So displace waits for vocabulary, exactly
+## as control does. Re-adding the row is one dict entry if the owner wants the
+## ceiling-only reading shipped anyway; the numbers are in BALANCE.md.
+##
+## growth shipped a row too, and it was CUT on the canary - by the owner, after
+## the block was implemented. Deep Loam was {tag: growth, need: 3, stat:
+## {regen_on_growth: 1}}: +1 charge on every turn BEGUN standing on growth, and
+## the regen_on_growth key's first and only shipped consumer. It was not cut
+## for failing to do anything - it was cut for what it pays FOR. Paired on the
+## greed canary (magpie, spiker loadout, 300 seeds a setting) against the
+## tests/playtest.gd gate MAGPIE_MAX_LOWER 0.10, which trips when the Wilson
+## LOWER bound clears 10%:
+##   row absent   38/300  12.7%  [ 9.4, 16.9]  pass   +0.0
+##   need 3       56/300  18.7%  [14.7, 23.5]  FAIL   +6.0
+##   need 4       48/300  16.0%  [12.3, 20.6]  FAIL   +3.3
+##   need 5       39/300  13.0%  [ 9.7, 17.3]  pass   +0.3
+## `need` was the design phase's pre-registered lever and it is the wrong one:
+## there is no threshold at which the row both clears the canary and does
+## anything, because its canary cost is PROPORTIONAL to its effect. The row
+## pays per turn BEGUN on growth, and the greed persona spends about twice the
+## share of its turns standing there that the skilled one does (magpie 23.6% of
+## turns on tender / 26.7% on spiker, against optimizer 13.4% / 15.8%).
+## Lingering on a floor to farm it IS standing on your own growth, so the row
+## subsidises exactly the behaviour the canary exists to detect; raising `need`
+## changes how OFTEN the row is on, never WHO it pays, which is why need 5 buys
+## a pass by being switched off in most runs (+0.3 over the row's absence).
+## Growth is therefore not a threshold problem but a payoff-SHAPE one, and it
+## waits for a key that pays on an ACT - a cast, a plant, a cleanse - rather
+## than on a turn spent in place; every closed stat/mod key today is
+## survivability, charge or bloom, so that key does not exist yet. Re-adding
+## the row is one dict entry; the numbers are in BALANCE.md.
+const RESONANCES := {
+	"cinder_grip": {
+		"name": "Cinder Grip", "desc": "a machine standing on a tile as it catches fire is rooted a turn (3 times a turn)",
+		"tag": "fire", "need": 3,
+		"hooks": [{"on": "ignite", "effects": [{"op": "status_at", "status": "root", "turns": 1}], "cap_per_turn": 3}],
+	},
+}
 
 ## One-line effect text per ability (a + form without its own entry falls back
 ## to the base). Rider rows (docs/PROGRESSION_REVIEW.md 6.3 C2) name the rider

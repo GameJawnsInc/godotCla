@@ -4,6 +4,6 @@
 "actions": [{"dir":[1,0],"type":"move"},{"type":"descend"}],
 "expect": {"events":[{"t":"descend","to_floor":2},{"offers":["seed_bomb+reclaim","mycelium_dash+trail","solar_lance+pierce"],"slots":["upgrade","upgrade","upgrade"],"t":"draft_offer"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "C4 upgrades_only mutator (draft_upgrades_only): the draft never reaches the pool - the candidate list is every upgrade variant of every held ability, which since Block D6 is SIX ids for the three-ability starting kit and not three, and the list is deliberately left unfiltered (under this mutator the + list IS the universe, so filtering it could empty a draft that today has offers). So this roll deals both siblings and the pure-mobility form alike - seed_bomb+reclaim, mycelium_dash+trail and solar_lance+pierce - and it is the one slot pin in the corpus where a mobility variant appears at all; a kit already all-variant has no candidates and the draft is skipped as before; the `slots` key pins the roles that rolled the offers, so a change that stops steering offer i by Content.DRAFT_SLOTS fails this record in plain mode",
-"sim_version": 13,
+"sim_version": 14,
 "hash": "43f312085e287ff057e8dfccca067fb5b8cc1ebdc775196ba7e794c2cb9ba537"
 }

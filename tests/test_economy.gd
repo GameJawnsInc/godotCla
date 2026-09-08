@@ -26,7 +26,7 @@ extends SceneTree
 ##     stripped, differs from hashing the full snapshot wherever the shrine
 ##     stocks grafts, and is identical either way on a graftless shrine
 ##  d3) the regen_on_growth stat key (bump 8): _begin_player_turn adds
-##     _graft_stat("regen_on_growth") to regen only while the tender stands on
+##     _passive_stat("regen_on_growth") to regen only while the tender stands on
 ##     growth. No shipped GRAFTS row uses it - it exists so a conditional
 ##     alternative to solar_core can be measured - so the behaviour is driven
 ##     through a subclass that pretends to hold one
@@ -60,7 +60,7 @@ extends SceneTree
 ##     rng.state untouched; and a Game subclass that swaps only the two D3
 ##     entry points back (the reference BFS for _chase_step, _screened false)
 ##     drives the optimizer over seeds 1..10 to the rng.state recorded at
-##     every floor entry (RNG_FLOOR_ENTRY_BUMP13) - so nothing outside those
+##     every floor entry (RNG_FLOOR_ENTRY_BUMP14) - so nothing outside those
 ##     two functions moved a draw
 ##  n) Block D4 (bump 12): the draft draws moved on purpose (exactly one
 ##     main-rng draw per slot, see tests/test_grammar.gd (d)), so the
@@ -75,7 +75,15 @@ extends SceneTree
 ##     and listing or forging spends no main-rng draw. The floor-entry pins
 ##     were re-recorded again: the draw COUNT per draft slot is still one, but
 ##     the universe now holds both siblings of every held base, so each index
-##     resolves differently (see the note on RNG_FLOOR_ENTRY_BUMP13)
+##     resolves differently (see the note on RNG_FLOOR_ENTRY_BUMP14)
+##  p) Block D5 (bump 14): a resonance is a passive SOURCE, so it must not
+##     touch the main rng - firing the shipped ignite hook, and a stat row,
+##     leaves rng.state where it was, and so do _resonances / snapshot /
+##     state_hash - and it must read through the same two helpers a graft
+##     does: _passive_stat SUMS a graft and a resonance granting one key,
+##     _passive_mod scans the grafts first so a graft mod SHADOWS a resonance
+##     mod. Only the `hooks` shape ships, so the stat and mod orders are both
+##     pinned through hand-built rows
 ## Run: godot --headless --path . --script tests/test_economy.gd
 
 const Content := preload("res://sim/content.gd")
@@ -129,8 +137,20 @@ const RNG_STATE_BUMP8 := [
 ## pins: they are how a bot-side suffix bug shows up as numbers. Re-stamp
 ## by running an optimizer run per seed on RefGame below and printing
 ## rng.state at Game.new and after every floor entry.
+## Block D5 (bump 14) re-stamped them once more: a resonance changes what
+## happens in play, so a persona whose kit crosses a threshold plays a
+## different run from that floor on. Mid-bump that moved ONE of the ten seeds
+## (seed 8, identical through three floor entries and then diverging, ending on
+## floor 5 where it used to reach 7) and the growth row was the whole of it:
+## with deep_loam cut on the greed canary, seed 8 came back to its bump-13 row
+## exactly and the table is now byte-identical, in all ten rows, to the
+## bump-13 table this constant was renamed from (so there is no
+## RNG_FLOOR_ENTRY_BUMP13 left to diff against - `git show` the rename). So
+## the whole of D5's movement in this table was the growth
+## row: the fire row and the persona's new drop guard together change nothing
+## these ten runs can see, which is the strongest form of "adds no draw".
 ## From here on, anything that moves one of these is a stray main-rng draw.
-const RNG_FLOOR_ENTRY_BUMP13 := [
+const RNG_FLOOR_ENTRY_BUMP14 := [
 	[5089575408282122190, -184513544007953650, 8759944363161018601, 2868822161275640310, -8152873371107847509],
 	[-1543445859615755461, -8411093148249300473, 1787517375204971321, 8582635207152789512],
 	[5249088221260300708, -8668300741929293400, 4694250479173219183, 5574227338355628461, -3061484965246952852, -1172107250573503496],
@@ -201,6 +221,7 @@ func _init() -> void:
 	_check_reroll_state()
 	_check_d3_rng_untouched()
 	_check_d6_forge_actions()
+	_check_d5_resonances()
 	if failures.is_empty():
 		print("economy: OK (%d checks)" % checks)
 		quit(0)
@@ -569,6 +590,10 @@ func _check_graft_prices() -> void:
 ## stored reroll counter. state_hash() swaps in the raw stored shop dict, so a
 ## price table that moves never moves the hash.
 const DERIVED_SHOP_KEYS := ["graft_prices", "reroll_price", "rerolls_left"]
+## Derived TOP-LEVEL snapshot keys, same rule: "resonances" (Block D5) is a
+## pure function of the kit and the grafts, both already hashed, so
+## state_hash() erases it rather than hashing a threshold read.
+const DERIVED_TOP_KEYS := ["resonances"]
 
 
 func _check_state_hash_view() -> void:
@@ -585,6 +610,8 @@ func _check_state_hash_view() -> void:
 		stripped["shop"] = snap["shop"].duplicate(true)
 		for k in DERIVED_SHOP_KEYS:
 			stripped["shop"].erase(k)
+		for k in DERIVED_TOP_KEYS:
+			stripped.erase(k)
 		if g.state_hash() != str(stripped).sha256_text():
 			bad_strip += 1
 		if snap["shop"].has("graft_prices"):
@@ -607,13 +634,16 @@ func _check_state_hash_view() -> void:
 	var sall: Dictionary = gall.snapshot()
 	var sall_stripped: Dictionary = sall.duplicate(true)
 	sall_stripped["shop"] = gall.shop
+	sall_stripped.erase("resonances")
 	_ok(not sall["shop"].has("graft_prices") and sall["shop"].has("reroll_price")
 			and gall.state_hash() == str(sall_stripped).sha256_text() and gall.state_hash() != str(sall).sha256_text(),
 		"state_hash: graftless shrine %s" % str(sall["shop"]))
 	# a boarded shop is {} with no derived key at all: full and stored views agree
 	var gbd = Game.new(1, {"mutators": ["boarded"]})
 	var sbd: Dictionary = gbd.snapshot()
-	_ok(sbd["shop"].is_empty() and gbd.state_hash() == str(sbd).sha256_text(),
+	var sbd_stripped: Dictionary = sbd.duplicate(true)
+	sbd_stripped.erase("resonances")
+	_ok(sbd["shop"].is_empty() and gbd.state_hash() == str(sbd_stripped).sha256_text(),
 		"state_hash: boarded shop %s" % str(sbd["shop"]))
 	# and the hash still tracks stored state: buying a graft moves it
 	var gb = Game.new(1, {"bloom": 30})
@@ -632,7 +662,7 @@ func _check_state_hash_view() -> void:
 class _StatProbe extends Game:
 	var probe_stat: Dictionary = {}
 
-	func _graft_stat(key: String) -> int:
+	func _passive_stat(key: String) -> int:
 		return super(key) + int(probe_stat.get(key, 0))
 
 
@@ -1475,6 +1505,7 @@ func _check_reroll_state() -> void:
 		"reroll: derived values %s / %s" % [str(snap["reroll_price"]), str(snap["rerolls_left"])])
 	var view: Dictionary = g2.snapshot()
 	view["shop"] = g2.shop
+	view.erase("resonances")
 	_ok(g2.state_hash() == str(view).sha256_text() and g2.state_hash() != str(g2.snapshot()).sha256_text(),
 		"reroll: state_hash saw a derived key")
 	# a tier change moves reroll_price but not the hash of the stored shop view
@@ -1523,7 +1554,7 @@ func _check_d3_rng_untouched() -> void:
 	var seeds_checked := 0
 	var floors_checked := 0
 	var moved := 0
-	for i in range(RNG_FLOOR_ENTRY_BUMP13.size()):
+	for i in range(RNG_FLOOR_ENTRY_BUMP14.size()):
 		var s := i + 1
 		var rg = RefGame.new(s)
 		var bot = Roster.make("optimizer", s)
@@ -1540,7 +1571,7 @@ func _check_d3_rng_untouched() -> void:
 				last_floor = rg.floor_num
 				states.append(rg.rng.state)
 		seeds_checked += 1
-		var want: Array = RNG_FLOOR_ENTRY_BUMP13[i]
+		var want: Array = RNG_FLOOR_ENTRY_BUMP14[i]
 		if states.size() != want.size():
 			moved += 1
 			failures.append("floor-entry pins: seed %d reached %d floors, the pinned run reached %d" % [s, states.size(), want.size()])
@@ -1626,3 +1657,92 @@ func _check_d6_forge_actions() -> void:
 	_ok(gr.rng.state == st and gr.player["kit"] == ["seed_bomb+reclaim", "mycelium_dash"],
 		"D6 forge branch: listing and forging spend no main-rng draw: %s" % str(gr.player["kit"]))
 	print("d6 forge: %d (keep, scrap, variant) triples on a 3-ability kit, all legal, one price" % triples.size())
+
+
+# --- p) Block D5: resonances draw nothing and read like a graft ----------------
+
+## A Game carrying extra, hand-built resonance rows. Content.RESONANCES is a
+## const and ships nothing but a `hooks` row - the growth `stat` row that once
+## shipped was cut on the greed canary - so the stat SUM and the
+## graft-shadows-resonance mod order are both pinned through the one seam
+## _passive_stat / _passive_mod / _hook share, on injected rows. A probe row is
+## unconditionally active: what these pin is what the machinery does with an
+## active row, never the threshold rule (tests/test_grammar.gd owns that, on
+## shipped data).
+class _ResProbe extends Game:
+	var probe_rows: Array = []
+
+	func _resonance_rows() -> Array:
+		return super() + probe_rows
+
+
+const D5_GROWTH3 := ["seed_bomb", "overgrowth", "grow_spike"]
+const D5_FIRE3 := ["solar_lance", "sun_flare", "mycelium_dash"]
+## The one shipped row's threshold from the kit alone: fire has two bases, so
+## the third card is a sibling (what a locked-kit sweep or a forge produces).
+const D5_FIRE3_KIT := ["solar_lance", "solar_lance+noon", "sun_flare"]
+
+
+func _check_d5_resonances() -> void:
+	# 1) no draw: reading the set, the snapshot and the hash
+	var g = Game.new(1, {"kit": D5_FIRE3_KIT})
+	var st: int = g.rng.state
+	var active: Array = g._resonances()
+	g.snapshot()
+	g.state_hash()
+	g._tag_counts()
+	_ok(active == ["cinder_grip"] and g.rng.state == st, "d5 rng: reading the active set drew (%s)" % str(active))
+	# 2) no draw: a resonance stat, on the turn it pays. No shipped row carries
+	# one, so the stat side of the seam is driven through a probe row.
+	var gs = _ResProbe.new(1, {"kit": D5_GROWTH3})
+	gs.probe_rows = [["probe_res", {"stat": {"regen_on_growth": 1}}]]
+	gs.terrain[gs.player["pos"]] = {"kind": "growth"}
+	st = gs.rng.state
+	gs._begin_player_turn()
+	_ok(gs.player["charge"] == Content.BASE_REGEN + 1 and gs.rng.state == st,
+		"d5 rng: a resonance stat paid %d and moved the rng %s" % [gs.player["charge"], str(gs.rng.state != st)])
+	# 3) no draw: a resonance hook fired for real
+	var gf = Game.new(2, {"kit": D5_FIRE3, "grafts": ["oil_tithe"]})
+	var ef = gf._spawn("drill_bot", gf.player["pos"] + Vector2i(1, 0))
+	ef["hp"] = 10
+	gf.terrain[ef["pos"]] = {"kind": "oil"}
+	gf.player["charge"] = 10
+	st = gf.rng.state
+	gf._step_events = []
+	gf._hook("ignite", {"tile": ef["pos"], "by": "probe"})
+	_ok(int(ef["status"].get("root", 0)) == 1 and gf.rng.state == st,
+		"d5 rng: cinder_grip fired and moved the rng %s" % str(gf.rng.state != st))
+	# 4) _passive_stat sums the held grafts and THEN the active resonances, so a
+	# graft and a resonance granting the same key add up rather than shadow
+	var p = _ResProbe.new(1, {"kit": D5_GROWTH3, "grafts": ["solar_core"]})
+	p.probe_rows = [["probe_res", {"stat": {"regen": 2}}]]
+	_ok(p._passive_stat("regen") == 3, "d5 passive: graft + resonance sum %d" % p._passive_stat("regen"))
+	# the two halves of the regen key: the graft pays every turn, the resonance
+	# only on the turns begun on growth
+	var p2 = _ResProbe.new(1, {"kit": D5_GROWTH3, "grafts": ["solar_core"]})
+	p2.probe_rows = [["probe_res", {"stat": {"regen_on_growth": 1}}]]
+	p2._begin_player_turn()
+	var off: int = p2.player["charge"]
+	p2.terrain[p2.player["pos"]] = {"kind": "growth"}
+	p2._begin_player_turn()
+	_ok(off == Content.BASE_REGEN + 1 and p2.player["charge"] == Content.BASE_REGEN + 2,
+		"d5 passive: both halves pay, charge off growth %d, on growth %d" % [off, p2.player["charge"]])
+	# with no probe row the SHIPPED table contributes nothing to either key
+	var p0 = Game.new(1, {"kit": D5_GROWTH3, "grafts": ["solar_core"]})
+	_ok(p0._passive_stat("regen") == 1 and p0._passive_stat("regen_on_growth") == 0,
+		"d5 passive: the shipped table grants no stat key (%d / %d)" % [
+			p0._passive_stat("regen"), p0._passive_stat("regen_on_growth")])
+	# 5) _passive_mod: grafts are scanned first, so a graft mod shadows a
+	# resonance mod; with no graft holding the key the resonance value wins
+	var m = _ResProbe.new(1, {"kit": D5_GROWTH3, "grafts": ["carapace"]})
+	m.probe_rows = [["probe_res", {"mod": {"floor_start_shield": 5}}]]
+	_ok(int(m._passive_mod("floor_start_shield", 0)) == 2, "d5 passive: a graft mod must shadow a resonance mod (%s)" % str(m._passive_mod("floor_start_shield", 0)))
+	var m2 = _ResProbe.new(1, {"kit": D5_GROWTH3})
+	m2.probe_rows = [["probe_res", {"mod": {"floor_start_shield": 5}}]]
+	_ok(int(m2._passive_mod("floor_start_shield", 0)) == 5, "d5 passive: a resonance mod reads when no graft carries the key")
+	_ok(int(m2._passive_mod("oil_cast_discount", 7)) == 7, "d5 passive: an unheld mod key still returns the default")
+	# and two resonance stat rows sum with each other, in table order
+	var m3 = _ResProbe.new(1, {"kit": D5_GROWTH3})
+	m3.probe_rows = [["probe_a", {"stat": {"regen_on_growth": 2}}], ["probe_b", {"stat": {"regen_on_growth": 1}}]]
+	_ok(m3._passive_stat("regen_on_growth") == 3, "d5 passive: resonance stats sum %d" % m3._passive_stat("regen_on_growth"))
+	print("d5 resonances: no main-rng draw over set / hooks / stat; graft + resonance sum, graft mod shadows")

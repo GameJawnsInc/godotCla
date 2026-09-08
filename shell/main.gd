@@ -1938,6 +1938,107 @@ func _chip(x: float, ypos: float, icon: String, value: String, vw: float, vh: fl
 	return x + isz + vw * 0.008 + font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x + vw * 0.035
 
 
+## Block D5 resonance readout, one entry per Content.RESONANCES row in table
+## order: {id, name, desc, tag, need, count, active}. A resonance is free,
+## permanent and automatic, so the player has to be able to SEE the counts and
+## the thresholds - "fire 2 of 3" - or the whole element is invisible until it
+## silently starts working.
+##
+## `active` is read from snapshot()["resonances"], the sim's own derived
+## answer; only `count` is computed here, over the same two sources the sim
+## counts (the kit rows' tags and the held grafts' tags), so the shell never
+## re-implements the threshold rule - it only shows how far along the count is.
+## A variant row carries its base's tags verbatim, so the row is read straight
+## with the base row as the fallback.
+func _resonance_state(snap: Dictionary) -> Array:
+	var pl: Dictionary = snap["player"]
+	var counts := {}
+	for aid in pl["kit"]:
+		var row: Dictionary = Content.ABILITIES.get(String(aid),
+			Content.ABILITIES.get(Content.base_id(String(aid)), {}))
+		for tag in row.get("tags", []):
+			counts[tag] = int(counts.get(tag, 0)) + 1
+	for gid in pl.get("grafts", []):
+		for tag in Content.GRAFTS.get(String(gid), {}).get("tags", []):
+			counts[tag] = int(counts.get(tag, 0)) + 1
+	var active: Array = snap.get("resonances", [])
+	var out: Array = []
+	for rid in Content.RESONANCES:
+		var r: Dictionary = Content.RESONANCES[rid]
+		out.append({
+			"id": String(rid), "name": String(r["name"]), "desc": String(r["desc"]),
+			"tag": String(r["tag"]), "need": int(r["need"]),
+			"count": int(counts.get(String(r["tag"]), 0)), "active": active.has(String(rid)),
+		})
+	return out
+
+
+## The elements strip under the skies bar: every resonance the run has any
+## claim on. A lit row reads "FIRE 3/3 Cinder Grip"; a row one card short reads
+## "fire 2/3 Cinder Grip", which is the state the player has to be able to see
+## to aim a draft at it. Rows the run holds nothing for are dropped, so an
+## empty strip costs no space at all - and with fire the only element that
+## ships a row, that IS a state a run reaches: a kit holding neither fire card
+## draws no strip until it drafts one or buys a fire graft.
+func _resonance_line(snap: Dictionary) -> String:
+	var parts: Array = []
+	for r in _resonance_state(snap):
+		if int(r["count"]) <= 0:
+			continue
+		var tag := String(r["tag"])
+		parts.append("%s %d/%d %s" % [
+			tag.to_upper() if r["active"] else tag, r["count"], r["need"], r["name"]])
+	return " · ".join(parts)
+
+
+## The one-clause note a card earns from the resonance table: what taking it
+## (or, with `losing` set, dropping it) does to an element. "" when the card
+## touches no resonance tag - most cards, most of the time.
+##   +fire 3/3 - lights Cinder Grip     the card that crosses the threshold
+##   +fire 3/3 - would light Cinder Grip  the same, but the kit is full and
+##                                        the drop is not chosen yet
+##   +fire 2/3 Cinder Grip              progress toward one
+##   BREAKS Cinder Grip (fire 2/3)      a drop that puts a lit row out
+##
+## A draft on a FULL kit is a SWAP, so neither half of it can be read off one
+## card. `swap_tags` carries the tags of the OTHER card in the swap and the
+## arithmetic nets both sides - the same sum bots/optimizer.gd
+## _drop_breaks_resonance does. Without it the drop sheet badges BREAKS on a
+## same-element swap (drop one growth card, take another: the count never
+## moves). It is only ever known on the drop sheet, where the pick is already
+## made; on the offer sheet the drop is still unchosen, so a card that would
+## cross a threshold says "would light" and leaves the arithmetic to the
+## sheet that has both halves.
+func _resonance_note(snap: Dictionary, tags: Array, losing: bool,
+		swap_tags: Array = [], unresolved_swap: bool = false) -> String:
+	var parts: Array = []
+	for r in _resonance_state(snap):
+		var tag := String(r["tag"])
+		if not tags.has(tag):
+			continue
+		var need := int(r["need"])
+		var n: int = int(r["count"]) + (-1 if losing else 1)
+		if swap_tags.has(tag):
+			n += 1 if losing else -1
+		if losing:
+			if bool(r["active"]) and n < need:
+				parts.append("BREAKS %s (%s %d/%d)" % [r["name"], tag, n, need])
+		elif bool(r["active"]):
+			continue  # already lit; a fourth fire card buys nothing
+		elif n >= need:
+			parts.append("+%s %d/%d - %s %s" % [
+				tag, n, need, "would light" if unresolved_swap else "lights", r["name"]])
+		else:
+			parts.append("+%s %d/%d %s" % [tag, n, need, r["name"]])
+	return "  ·  ".join(parts)
+
+
+## Tags of an ability id: its own row, the base row as the fallback (a Block D6
+## variant carries its base's tags verbatim, so the two agree).
+func _ability_tags(aid: String) -> Array:
+	return Content.ABILITIES.get(aid, Content.ABILITIES.get(Content.base_id(aid), {})).get("tags", [])
+
+
 ## The run's config in one line, from the sim's own snapshot: which loadout is
 ## being played, then the package and the mutator that shaped the run. Drawn
 ## under the skies bar so what a run is set to is never a mystery mid-floor.
@@ -2019,6 +2120,17 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 		_txt(Vector2(vw - fw - gw - vw * 0.055, y2 + mh), gl,
 			Color(0.6, 0.85, 0.55) if not done else COL_DIM_TEXT, int(vh * 0.016))
 	_status_end = pad + row_h * 1.35 + mh + vh * 0.022
+	# Block D5: the elements strip, drawn under the config line - a lit tag in
+	# caps, a tag still short of its threshold in lower case with its count.
+	# Nothing is drawn (and no space is taken) while the run holds no card of
+	# any resonating element.
+	var rline := _resonance_line(snap)
+	if rline != "":
+		_txt(Vector2(mx, y2 + mh + vh * 0.031), "ELEMENTS", COL_DIM_TEXT, int(vh * 0.0125))
+		_txt_fit(Vector2(mx + vw * 0.075, y2 + mh + vh * 0.031), rline,
+			COL_GOLD if not snap.get("resonances", []).is_empty() else COL_DIM_TEXT,
+			int(vh * 0.0125), vw * 0.85)
+		_status_end += vh * 0.0155
 
 
 func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
@@ -2645,6 +2757,12 @@ func _shop_cards(snap: Dictionary) -> Array:
 		var gid: String = offers[i]
 		var gcost: int = int(gprices[i]) if i < gprices.size() else game.shop_cost("graft", gid)
 		var gdesc: String = "Graft (permanent): %s" % Content.GRAFTS[gid]["desc"]
+		# a graft carries tags too, so a shrine purchase is the other way an
+		# element is crossed (Block D5) - undertow takes a hydraulics kit from
+		# displace 1 to displace 2 with no kit change at all
+		var gnote := _resonance_note(snap, Content.GRAFTS[gid].get("tags", []), false)
+		if gnote != "":
+			gdesc += "  ·  %s" % gnote
 		if offers.size() > 1:
 			gdesc += "  ·  take one, the other is lost"
 		cards.append(["shrine", "%s  -  %d bloom" % [Content.GRAFTS[gid]["name"], gcost],
@@ -2778,7 +2896,20 @@ func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 		head = "Your skip found nothing left to focus on - no extra offer here:"
 	elif slots.has("affinity"):
 		head = "Choose one to take down with you - AFFINITY cards match your build:"
-	_txt_fit(Vector2(vw * 0.06, y), head, COL_TEXT, int(vh * 0.024), vw * 0.88); y += vh * 0.055
+	_txt_fit(Vector2(vw * 0.06, y), head, COL_TEXT, int(vh * 0.024), vw * 0.88); y += vh * 0.038
+	# the run's elements, so the counts a card moves are on the same sheet as
+	# the cards (Block D5). Nothing is drawn - and the head keeps exactly its
+	# old spacing - when no element is started, and the drop sheet skips the
+	# strip because it is the taller of the two (five kit cards) and its cards
+	# carry the BREAKS badge anyway.
+	var rline := _resonance_line(snap)
+	if rline != "" and mode != "draft_drop":
+		_txt_fit(Vector2(vw * 0.06, y), "ELEMENTS  %s" % rline,
+			COL_GOLD if not snap.get("resonances", []).is_empty() else COL_DIM_TEXT,
+			int(vh * 0.019), vw * 0.88)
+		y += vh * 0.028
+	else:
+		y += vh * 0.017
 	var bh := vh * 0.105
 	if mode != "draft_drop":
 		for i in snap["draft_offers"].size():
@@ -2789,9 +2920,17 @@ func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 			# the badge already says UPGRADE when the slot was the upgrade one;
 			# a "+" card off a wild slot still needs the word in its title
 			var up := "  (upgrade)" if Content.is_upgrade(aid) and role != "upgrade" else ""
+			# Block D5: what this card does to an element, straight off the
+			# resonance table - the card is where a threshold is crossed, so
+			# it is where the count has to be legible
+			var cdesc := _ability_desc(aid)
+			var note := _resonance_note(snap, _ability_tags(aid), false, [],
+				snap["player"]["kit"].size() >= Content.KIT_MAX)
+			if note != "":
+				cdesc = "%s   ·   %s" % [cdesc, note]
 			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), icon,
 				"%s  —  %d charge%s" % [adef["name"], adef["cost"], up],
-				_ability_desc(aid), "draft:%d" % i, vh, String(DRAFT_SLOT_LABEL.get(role, "")))
+				cdesc, "draft:%d" % i, vh, String(DRAFT_SLOT_LABEL.get(role, "")))
 			y += bh + vh * 0.02
 		y += vh * 0.015
 		_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.65),
@@ -2803,8 +2942,18 @@ func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 		for i in snap["player"]["kit"].size():
 			var kid: String = snap["player"]["kit"][i]
 			var kicon := _ability_icon(kid)
+			# Block D5: dropping a card can put a lit element OUT, and that is
+			# the one consequence of a drop the kit list cannot otherwise show
+			var ddesc := _ability_desc(kid)
+			var offers_d: Array = snap.get("draft_offers", [])
+			var taking: Array = _ability_tags(String(offers_d[mode_pick])) \
+				if mode_pick >= 0 and mode_pick < offers_d.size() else []
+			var dnote := _resonance_note(snap, _ability_tags(kid), true, taking)
+			if dnote != "":
+				ddesc = "%s   ·   %s" % [ddesc, dnote]
 			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), kicon,
-				Content.ABILITIES[kid]["name"], _ability_desc(kid), "drop:%d" % i, vh)
+				Content.ABILITIES[kid]["name"], ddesc, "drop:%d" % i, vh,
+				"BREAKS" if dnote != "" else "")
 			y += bh + vh * 0.02
 		y += vh * 0.02
 		_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.65), "BACK", "draft_back", int(bh * 0.26))
@@ -2843,6 +2992,15 @@ func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 	if run_tier > 0:
 		seedline += "  ·  difficulty %d" % run_tier
 	_txt_c(vw / 2.0, oy, seedline, COL_DIM_TEXT, int(vh * 0.02))
+	# Block D5: what the run's build ended up being, from the sim's own active
+	# set - the free permanents a player earns are worth naming at the end
+	var lit: Array = []
+	for r in _resonance_state(snap):
+		if bool(r["active"]):
+			lit.append(String(r["name"]))
+	if not lit.is_empty():
+		oy += vh * 0.032
+		_txt_c_fit(vw / 2.0, oy, "resonating: %s" % ", ".join(lit), COL_GOLD, int(vh * 0.021), vw * 0.92)
 	oy += vh * 0.05
 	for u in _run_unlocks.slice(0, 4):
 		var us := String(u)
@@ -2890,7 +3048,9 @@ func _draw_intro(vw: float, vh: float) -> void:
 		["Shrines UPCYCLE: press 2 items into one, forge an ability into one of its two variants.", COL_TEXT],
 		["Swarming drill bots WELD into hulks - break the pair up first.", COL_RED],
 		["Green growth heals you while you stand on it.", COL_TEXT],
-		["", COL_TEXT],
+		# the intro is exactly as long as the screen: this line took the blank
+		# that used to sit above the HOLD line rather than adding a 22nd row
+		["ELEMENTS: enough cards of one element and it RESONATES, all run.", COL_GOLD],
 		["HOLD your finger on anything to see what it is.", COL_GOLD],
 	]:
 		if pair[0] != "":

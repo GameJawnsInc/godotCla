@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[3,2],"type":"ability"},{"slot":1,"target":[3,2],"type":"ability"},{"type":"end_turn"},{"dir":[1,0],"type":"move"},{"type":"descend"}],
 "expect": {"events":[{"id":"seed_bomb","t":"ability"},{"id":"mycelium_dash","t":"ability"},{"t":"teleport","to":"(3, 2)"},{"t":"descend","to_floor":2},{"offers":["root_wall","seed_bomb+tangle","overgrowth"],"slots":["affinity","upgrade","wild"],"t":"draft_offer"}],"floor":1,"timeout":true,"turns":1,"won":false},
 "note": "C4 no_lance mutator (pool_ban solar_lance + kit_ban): the run starts on a two-ability kit whose slots 0 and 1 are seed_bomb and mycelium_dash - the lance is gone from the kit, and the descent draft draws from a pool that no longer holds it (the offers are pinned below and the state hash pins the whole kit and pool). Bump 13 (Block D6) re-pinned the list without touching the mutator: the three offers are the affinity slot (root_wall, growth, shared with seed_bomb), the upgrade slot (seed_bomb+tangle - floor 2 is even, so Content.variant_for deals the A sibling) and one wild (overgrowth) - what the record still proves is that solar_lance and BOTH of its variants, solar_lance+noon and solar_lance+pierce, are unreachable here; the `slots` key pins the roles that rolled the offers, so a change that stops steering offer i by Content.DRAFT_SLOTS fails this record in plain mode",
-"sim_version": 13,
+"sim_version": 14,
 "hash": "ee55cad26ba33031e39776c3a26f8c212c933c7948cc65d88c6f72e6dc645543"
 }

@@ -316,15 +316,83 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 	var protected := _protected_ids(snap)
 	var best_a: Dictionary = candidates[0]
 	var best_u := 999999
-	for a in candidates:
-		var slot: int = a["drop"]
-		if protected.has(CONTENT.base_id(String(kit[slot]))):
-			continue
-		var u: int = uses.get(kit[slot], 0)
-		if u < best_u:
-			best_u = u
-			best_a = a
+	# Block D5: a drop that would break a resonance the run has ALREADY lit is
+	# taken only when every other drop would too. The pass runs first over the
+	# non-breaking drops and falls back to the whole list, so the tie-break
+	# inside each pass is the unchanged "least-used, never protected" rule.
+	for pass_keeps_resonance in [true, false]:
+		for a in candidates:
+			var slot: int = a["drop"]
+			if protected.has(CONTENT.base_id(String(kit[slot]))):
+				continue
+			if pass_keeps_resonance and _drop_breaks_resonance(snap, slot, best_pick):
+				continue
+			var u: int = uses.get(kit[slot], 0)
+			if u < best_u:
+				best_u = u
+				best_a = a
+		if best_u < 999999:
+			break
 	return best_a
+
+
+## Would taking offer `pick` in place of kit slot `drop` switch OFF a resonance
+## the run currently has? The ACTIVE set is read from snapshot()["resonances"] -
+## the sim's own derived answer, never re-derived here - and only the arithmetic
+## of the swap is done bot-side, against the Content.RESONANCES row's own tag
+## and need. No tag and no resonance id is named in this file.
+##
+## The persona deliberately does NOT chase a threshold it has not met: the
+## Block D5 `need` values were priced off the reach this policy already
+## produces (fire 3 in 40.0% of tender optimizer runs, growth 3 in 36.7%), and
+## a persona that drafted toward thresholds would move the very number the
+## thresholds were chosen from - the same abstention Block D6 made when it
+## refused to give this persona an opinion about which fork is better. Holding
+## on to what the run has already built is a different question, and this is
+## the only side of it a heuristic drafter can answer.
+func _drop_breaks_resonance(snap: Dictionary, drop: int, pick: int) -> bool:
+	var active: Array = snap.get("resonances", [])
+	if active.is_empty():
+		return false
+	var kit: Array = snap["player"]["kit"]
+	if drop < 0 or drop >= kit.size():
+		return false
+	var counts := _tag_counts(snap)
+	var offers: Array = snap.get("draft_offers", [])
+	var gained: Array = _ability_tags(String(offers[pick])) if pick >= 0 and pick < offers.size() else []
+	var lost: Array = _ability_tags(String(kit[drop]))
+	for rid in active:
+		var row: Dictionary = CONTENT.RESONANCES.get(String(rid), {})
+		if row.is_empty():
+			continue
+		var tag := String(row["tag"])
+		var n: int = int(counts.get(tag, 0))
+		if lost.has(tag):
+			n -= 1
+		if gained.has(tag):
+			n += 1
+		if n < int(row["need"]):
+			return true
+	return false
+
+
+## Tags of an ability id, from its own row with the base row as the fallback -
+## a Block D6 variant carries its base's tags verbatim, so both reads agree.
+func _ability_tags(aid: String) -> Array:
+	var row: Dictionary = CONTENT.ABILITIES.get(aid, CONTENT.ABILITIES.get(CONTENT.base_id(aid), {}))
+	return row.get("tags", [])
+
+
+## Tag histogram over the kit AND the held grafts, counted with multiplicity -
+## the same two sources a resonance counts. Kept separate from _kit_tag_counts,
+## which ranks a shop graft against the KIT only and must not start counting the
+## grafts already owned.
+func _tag_counts(snap: Dictionary) -> Dictionary:
+	var counts := _kit_tag_counts(snap)
+	for gid in snap["player"].get("grafts", []):
+		for tag in CONTENT.GRAFTS.get(String(gid), {}).get("tags", []):
+			counts[tag] = int(counts.get(tag, 0)) + 1
+	return counts
 
 
 ## Rank of an ability id in DRAFT_PREF; lower is better. Unlisted ids rank

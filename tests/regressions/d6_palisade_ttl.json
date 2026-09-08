@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[4,2],"type":"ability"},{"type":"end_turn"},{"type":"end_turn"},{"slot":1,"target":[1,0],"type":"ability"}],
 "expect": {"events":[{"id":"overgrowth+palisade","t":"ability","target":"(4, 2)"},{"t":"convert","tile":"(5, 2)"},{"id":"water_jet","t":"ability","target":"(1, 0)"},{"amt":2,"src":"collision:water_jet","t":"damage","who":"smokestack"}],"floor":1,"timeout":true,"turns":2,"won":false},
 "note": "D6 `ttl`, the convert_radius key that pairs with `kind` and is dead without it: roots is the one TERRAIN row that decays with a table ttl of 0 (its comment already says the creator decides), so a palisade that did not stamp a ttl would raise a hedge that is gone on the next environment tick. Here the oil at (5,2) becomes roots with ttl 3, two end_turns take it to 1, and the water_jet on the third turn still finds a wall to slam the smokestack into (collision 2). Ignore the override - pass -1 into _tile_dict so the row's own ttl 0 is written - and the hedge is gone before the shove, the collision never happens and the record fails in plain mode on its last pattern. d6_palisade_kind is the same board pinning what the tile becomes",
-"sim_version": 13,
+"sim_version": 14,
 "hash": "f5e7c7acfc26ac316b1087b72f73403f8291e2d3eb2334a1f425790c0b54b5a2"
 }

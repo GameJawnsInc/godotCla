@@ -4,6 +4,6 @@
 "actions": [{"type":"end_turn"},{"slot":0,"target":[2,1],"type":"ability"}],
 "expect": {"events":[{"amt":1,"src":"fire:env","t":"damage","who":"coal_golem"},{"amt":1,"src":"fire:env","t":"damage","who":"coal_golem"},{"t":"ash","tile":"(2, 1)"},{"id":"sap_snare","t":"ability"},{"status":"root","t":"status","turns":2}],"floor":1,"timeout":true,"turns":1,"won":false},
 "note": "D3 the avoid list is per kind, not a global rule: the board of d3_avoid_detour with a coal golem where the drill bot stood (its Content.ENEMIES row carries no avoid - it is made of coal and does not mind fire). With no fire penalty to price, the north corridor is simply the shorter one, so the golem steps onto the burning (2,1), pays 1 entering and 1 to the environment tick, and sap_snare pins it standing on what is now ash - the same first step, the same seed, the same fire, the opposite decision to d3_avoid_detour. No enemy kind is named in sim/game.gd for any of it: _chase_step reads Content.ENEMIES[kind].avoid",
-"sim_version": 13,
+"sim_version": 14,
 "hash": "b08c8262c013bf6813672a00750ab745a596e6beae334bd401cc5f167c2221e7"
 }

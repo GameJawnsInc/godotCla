@@ -92,7 +92,7 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## So every log that reached a draft diverges at its first draft_offer: the
 ## offers differ, and every downstream draw shifts. `draft_slots` (the role
 ## that produced each offer) and `focus` join snapshot() and the hash.
-## SIM_VERSION 13 (Block D6, evolve forks): every base "+" ability row is
+## 13: Block D6 (evolve forks) - every base "+" ability row is
 ## gone. The fifteen base-pool abilities each fork into TWO named variants
 ## keyed "<base>+<word>" - variant A is the pre-D6 "+" row renamed (same cost,
 ## target, range, effects, riders and surge), variant B is a new fork - so
@@ -119,7 +119,50 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## tile carries its "bloom" flag into the growth like every other terrain
 ## write (hash-visible, no rule reads it). Content.MILESTONES' won_with
 ## ["seed_bomb+"] became ["seed_bomb+tangle"].
-const SIM_VERSION := 13
+## SIM_VERSION 14 (Block D5, one resonance per element): Content.RESONANCES is
+## a third passive source beside the kit rows and the grafts. A run's kit and
+## graft TAGS are counted (_tag_counts) and a row whose tag reaches its `need`
+## is active (_resonances) for as long as the count holds - both derived on
+## read, never stored, so no new key enters the hash and a resonance cannot
+## desync a replay by itself. ONE row ships: cinder_grip (fire 3, an ignite
+## hook rooting whoever the tile lit under). So a stored log diverges at the
+## FIRST IGNITION of a run that reaches fire 3, and at nothing else: a log
+## that never reaches fire 3 replays byte for byte, no main-rng draw moved
+## (the ten pinned floor-entry rng states in tests/test_economy.gd are
+## byte-identical to bump 13's), and snapshot() gained only the DERIVED key
+## "resonances" (the active ids, for the shell and the bots), which
+## state_hash() erases - so a state whose resonances changed nothing hashes
+## exactly as it did at 13. _graft_stat / _graft_mod became _passive_stat /
+## _passive_mod: same reads, plus the active resonances after the grafts.
+##
+## TWO more rows were authored and cut inside this same uncommitted bump,
+## which is why 14 is a one-row version and not a three-row one:
+## follow_through (displace 2, a collision hook for 1) on the design phase's
+## own pre-registered falsifier, and deep_loam (growth 3, the regen_on_growth
+## stat key's only consumer) on the greed canary it lifted 12.7% -> 18.7%,
+## still 16.0% at the pre-registered lever of need 4 - see the
+## Content.RESONANCES header and BALANCE.md. SIM_VERSION deliberately STAYED
+## at 14 across the second cut: nothing outside this tree ever ran 14, so it
+## is a change inside an uncommitted bump, the precedent the D4 upgrade-slot
+## filter set at 12.
+##
+## The cuts are what make the corpus quiet. Against bump 13 all 93
+## pre-existing records are STAMP-ONLY (sim_version the single differing key,
+## no action, outcome, event-pattern or hash diff) and all 20 bot logs are
+## byte-identical to their bump-13 recordings, re-recorded on their personas
+## rather than merely replayed. The three logs the growth row had moved
+## (det_fanatic_s3, det_magpie_s11, det_optimizer_s42) are exactly the three
+## records that reach growth 3, and each landed back on its bump-13 recording
+## when the row went; c3_undertow is the same story for the displace row
+## (its kit plus undertow is displace 2). The corpus is 96 records with three
+## d5_* demos. Four targeted mutations fail one in plain mode - empty
+## _resonance_rows, _resonances() skipping its need re-check, _tag_counts
+## skipping variant ids, and cinder_grip.need 3 -> 4 - but dropping the
+## resonance loop from _passive_stat fails NONE of them: with no shipped stat
+## or mod row, no replay can observe either passive loop, and that rule is
+## held by the injected _ResProbe rows in tests/test_grammar.gd and
+## tests/test_economy.gd alone.
+const SIM_VERSION := 14
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -441,7 +484,7 @@ func legal_actions() -> Array:
 		# oil_cast_discount: each target is priced on its own while the
 		# discount is still available this turn (a cheaper oil cast may be
 		# legal on 1 charge when the flat price is not)
-		var tithe: bool = _graft_mod("oil_cast_discount", 0) > 0 and not tithe_used_this_turn
+		var tithe: bool = _passive_mod("oil_cast_discount", 0) > 0 and not tithe_used_this_turn
 		for tgt in _ability_targets(aid):
 			var c: int = ability_cost(aid, tgt) if tithe else flat
 			if player["charge"] >= c:
@@ -539,6 +582,7 @@ func snapshot() -> Dictionary:
 		"phase": phase, "draft_offers": draft_offers.duplicate(),
 		"draft_slots": draft_slots.duplicate(), "focus": focus,
 		"pool": draft_pool.duplicate(), "packages": packages.duplicate(), "loadout": loadout,
+		"resonances": _resonances(),
 		"player": {
 			"pos": player["pos"], "hp": player["hp"], "max_hp": player["max_hp"],
 			"charge": player["charge"], "bank": player["bank"], "shield": player["shield"],
@@ -565,12 +609,15 @@ func snapshot() -> Dictionary:
 ## enter the hash - snapshot()["shop"] carries "graft_prices", "reroll_price"
 ## and "rerolls_left", which are recomputed per snapshot from the stock, the
 ## owned grafts and the tier, so the hash reads the raw stored shop dict
-## instead (shop.rerolls IS stored, so a reroll moves the hash). A hash that
-## moved because a price table moved would report a state change that never
+## instead (shop.rerolls IS stored, so a reroll moves the hash), and
+## "resonances" (Block D5) is a pure function of the kit and the grafts, both
+## already hashed, so it is dropped outright. A hash that moved because a
+## price table or a threshold moved would report a state change that never
 ## happened.
 func state_hash() -> String:
 	var view := snapshot()
 	view["shop"] = shop
+	view.erase("resonances")
 	return str(view).sha256_text()
 
 
@@ -645,7 +692,7 @@ func _enter_floor(n: int) -> void:
 			e["elite"] = true
 			e["hp"] += Content.ELITE_HP_BONUS
 	shop = _stock_shop() if bool(_mut("shop", true)) else {}
-	var floor_shield := int(_graft_mod("floor_start_shield", 0))
+	var floor_shield := int(_passive_mod("floor_start_shield", 0))
 	if floor_shield > 0:
 		player["shield"] = mini(maxi(player["shield"], floor_shield), _shield_cap())
 	_emit({"t": "floor", "floor": n, "name": fdef["name"]})
@@ -834,9 +881,9 @@ func _reclamp_quota() -> void:
 func _begin_player_turn() -> void:
 	# regen_on_growth is the conditional half of the regen key: it only pays
 	# on the turns the tender begins standing on growth
-	var regen: int = maxi(1, Content.BASE_REGEN - dim) + _graft_stat("regen")
+	var regen: int = maxi(1, Content.BASE_REGEN - dim) + _passive_stat("regen")
 	if _terrain_kind(player["pos"]) == "growth":
-		regen += _graft_stat("regen_on_growth")
+		regen += _passive_stat("regen_on_growth")
 	player["charge"] = player["bank"] + regen
 	player["bank"] = 0
 	casts_this_turn = 0
@@ -1275,7 +1322,7 @@ func _environment_phase() -> void:
 				_damage_enemy(e, tick, sname)
 	var heal := int(Content.terrain(_terrain_kind(player["pos"]), "heal", 0))
 	if heal > 0 and player["hp"] < player["max_hp"]:
-		var heal_amt: int = heal + _graft_stat("growth_heal")
+		var heal_amt: int = heal + _passive_stat("growth_heal")
 		player["hp"] = mini(player["hp"] + heal_amt, player["max_hp"])
 		_emit({"t": "heal", "amt": heal_amt})
 
@@ -1434,7 +1481,7 @@ func _act_cleanse(action: Dictionary) -> void:
 	var yield_: int = int(terrain[target].get("bloom", Content.terrain(k, "bloom", 1)))
 	terrain[target] = {"kind": "growth"}
 	if yield_ > 0:
-		bloom += yield_ + _graft_stat("cleanse_bloom")
+		bloom += yield_ + _passive_stat("cleanse_bloom")
 	# tending the world buys time, but the sky can only mend so fast per
 	# floor: quota cleanses thin the smog by 2 (funds the gate's detour),
 	# the next few thin it by 1, and beyond that cleansing still pays
@@ -1901,34 +1948,83 @@ func _act_buy(action: Dictionary) -> void:
 			_emit({"t": "illegal", "action": "buy"})
 
 
-## Sum of `key` over the "stat" dicts of every held graft (Content.GRAFTS).
-## Keys: bank_cap, shield_cap, regen, regen_on_growth, growth_heal,
-## cleanse_bloom (the closed set tests/test_content.gd lints).
-func _graft_stat(key: String) -> int:
+## Sum of `key` over the "stat" dicts of every held graft (Content.GRAFTS) and
+## every active resonance (Content.RESONANCES, Block D5 - a resonance is a
+## second passive source, not a second system). Keys: bank_cap, shield_cap,
+## regen, regen_on_growth, growth_heal, cleanse_bloom (the closed set
+## tests/test_content.gd lints).
+func _passive_stat(key: String) -> int:
 	var v := 0
 	for gid in player["grafts"]:
 		v += int(Content.GRAFTS[gid].get("stat", {}).get(key, 0))
+	for row in _resonance_rows():
+		v += int((row[1] as Dictionary).get("stat", {}).get(key, 0))
 	return v
 
 
-## The first held graft's "mod" value for `key` (held order), else `default`.
-func _graft_mod(key: String, default):
+## The first "mod" value for `key` over the held grafts (held order) and then
+## the active resonances (table order), else `default`. Grafts are scanned
+## first, so a graft mod shadows a resonance mod.
+func _passive_mod(key: String, default):
 	for gid in player["grafts"]:
 		var mod: Dictionary = Content.GRAFTS[gid].get("mod", {})
 		if mod.has(key):
 			return mod[key]
+	for row in _resonance_rows():
+		var rmod: Dictionary = (row[1] as Dictionary).get("mod", {})
+		if rmod.has(key):
+			return rmod[key]
 	return default
+
+
+## Tag counts over the held kit and the held grafts (Block D5). A variant row
+## carries its base's tags verbatim, so no base_id fold is needed - the row is
+## read straight, with a guarded get so an unknown id from a sweep config
+## counts nothing instead of throwing. Derived, recomputed on read, never
+## stored: nothing here enters snapshot() or state_hash().
+func _tag_counts() -> Dictionary:
+	var counts := {}
+	for aid in player["kit"]:
+		for t in Content.ABILITIES.get(aid, {}).get("tags", []):
+			counts[t] = int(counts.get(t, 0)) + 1
+	for gid in player["grafts"]:
+		for t in Content.GRAFTS.get(gid, {}).get("tags", []):
+			counts[t] = int(counts.get(t, 0)) + 1
+	return counts
+
+
+## The active resonance ids in Content.RESONANCES key order: a row resonates
+## while _tag_counts()[row.tag] >= row.need. Derived like the counts, so a
+## draft drop or a forge scrap turns a row off between one step and the next
+## with nothing to unwind.
+func _resonances() -> Array:
+	var counts := _tag_counts()
+	var out: Array = []
+	for rid in Content.RESONANCES:
+		var row: Dictionary = Content.RESONANCES[rid]
+		if int(counts.get(String(row["tag"]), 0)) >= int(row["need"]):
+			out.append(String(rid))
+	return out
+
+
+## The active resonances as [id, row] pairs in table order - the one seam the
+## three readers (_passive_stat, _passive_mod, _hook) share.
+func _resonance_rows() -> Array:
+	var out: Array = []
+	for rid in _resonances():
+		out.append([rid, Content.RESONANCES[rid]])
+	return out
 
 
 func _bank_cap() -> int:
 	var cap := int(_mut("bank_cap", -1))
 	if cap >= 0:
 		return cap
-	return Content.BANK_CAP + _graft_stat("bank_cap")
+	return Content.BANK_CAP + _passive_stat("bank_cap")
 
 
 func _shield_cap() -> int:
-	return Content.SHIELD_CAP + _graft_stat("shield_cap")
+	return Content.SHIELD_CAP + _passive_stat("shield_cap")
 
 
 func _act_ability(action: Dictionary) -> void:
@@ -2024,7 +2120,7 @@ func ability_cost(aid: String, target = null) -> int:
 	if base >= 2 and _terrain_kind(player["pos"]) == "growth":
 		cost = maxi(1, base + _surge_cost_delta(adef))
 	if target != null and cost > 1 and not tithe_used_this_turn:
-		var discount := int(_graft_mod("oil_cast_discount", 0))
+		var discount := int(_passive_mod("oil_cast_discount", 0))
 		if discount > 0 and _targets_oil(adef, target):
 			cost = maxi(1, cost - discount)
 	return cost
@@ -2787,7 +2883,8 @@ const HOOK_OPS := ["damage_at", "status_at", "terrain_at"]
 
 ## Dispatch a hook of `kind` (Content.HOOK_KINDS) with its ctx (see the table
 ## comment there). Sources are scanned in fixed order: kit slots 0..n (an
-## ABILITIES row may carry "hooks"), then player.grafts in held order; each
+## ABILITIES row may carry "hooks"), then player.grafts in held order, then
+## the active resonances in Content.RESONANCES key order (Block D5); each
 ## source row {on, effects, cap_per_turn?, if?} whose `on` matches runs once
 ## per dispatch, unless its per-turn cap (hook_uses, per source id) is spent
 ## or its `if` predicates (Game._rider_if against the hook tile) fail.
@@ -2807,6 +2904,12 @@ func _hook(kind: String, ctx: Dictionary) -> void:
 	for gid in player["grafts"]:
 		for row in Content.GRAFTS[gid].get("hooks", []):
 			sources.append([String(gid), row])
+	# Block D5: the active resonances are the third source, appended after the
+	# grafts in Content.RESONANCES key order, with the resonance id as the
+	# source id - so cap_per_turn / hook_uses are shared with nothing else.
+	for rpair in _resonance_rows():
+		for row in (rpair[1] as Dictionary).get("hooks", []):
+			sources.append([String(rpair[0]), row])
 	var tile = _hook_tile(kind, ctx)
 	for src in sources:
 		var sid: String = src[0]

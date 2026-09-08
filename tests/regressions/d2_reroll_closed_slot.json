@@ -4,6 +4,6 @@
 "actions": [{"dir":[1,0],"type":"move"},{"item":"graft","pick":0,"type":"buy"},{"type":"reroll"},{"item":"ability","type":"buy"}],
 "expect": {"events":[{"discarded":"verdant_pulse","id":"bloom_surge","item":"graft","t":"buy"},{"ability":"moss_filter","cost":2,"item":"clearair_pod","n":1,"t":"reroll"},{"id":"moss_filter","item":"ability","t":"buy"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "D2 bought slots stay bought (under the spinning_shrine mutator): taking bloom_surge closes the graft counter (its pair is discarded) and the spin that follows never re-creates it - the reroll event carries ability and item only, no grafts key, and the ability bought after it is moss_filter, the redraw, not the root_wall the floor stocked. Heal / press / forge are not re-drawable and are untouched throughout",
-"sim_version": 13,
+"sim_version": 14,
 "hash": "b5396f4b7c8c9bb2959429c02e3ac6dc973153f38610dd8270d687443c3d6eb6"
 }

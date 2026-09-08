@@ -13,6 +13,11 @@ extends "res://bots/deeproot.gd"
 ## the kit currently holds, read from Content.ABILITIES rows - no ability id
 ## is named anywhere in this file.
 ##
+## Layer 1b - resonance (Block D5): _score also values each ACTIVE resonance,
+## which turns "buy the graft that crosses the threshold" into a scored setup
+## the 1-ply search can already see (the clone resonates one ply after the buy)
+## and makes a forge scrap that would break one cost what it is worth.
+##
 ## Layer 2 - plan mode: a candidate whose first effect op is a setup op is
 ## scored not only as "setup, then end_turn" but as the best of "setup, then
 ## one follow-up ability this same turn, then end_turn" over a round-robin of
@@ -105,6 +110,25 @@ const GRAFT_POINTS := 10.0
 ## Score points per filled kit slot: a shrine ability (4 bloom = 16 points)
 ## is a small gain while the kit has room; the tier markup prices it out.
 const KIT_SLOT_POINTS := 20.0
+## Score points per ACTIVE resonance (Block D5). A resonance is the one payoff
+## in the game that is bought a whole ACTION EARLIER than it pays: the graft or
+## the draft card that crosses the threshold does nothing that turn and pays
+## for the rest of the run. That is precisely the setup-then-payoff this
+## persona exists to measure, and it needs no distance heuristic to see it -
+## the search's own clone already RESONATES one ply after the buy, so the term
+## is a flat value on the state and the 1-ply search finds the setup by itself.
+## Scale: ember_sap is weight 3 (30 points) and the design phase priced
+## cinder_grip at roughly ember_sap's measured contribution, so 30 puts a
+## resonance at one mid graft, 1.5 kit slots, or 7.5 bloom - far under
+## solar_core (120) and under a single realised 3-damage hit (30 hp points at
+## 10 each is 30, and a hit also removes the threat). Being flat, it cancels
+## out of every decision that cannot change the kit or the grafts, so ordinary
+## play is untouched; it bites exactly at a shrine graft buy and at a forge
+## scrap that would break a row the run has already lit.
+## Legacy deeproot deliberately does NOT get this term: the deeproot ->
+## deeproot_plan delta is the instrument, and a resonance is content the delta
+## is supposed to measure.
+const RESONANCE_POINTS := 30.0
 
 const END_TURN := {"type": "end_turn"}
 const NO_GOAL := Vector2i(-99, -99)
@@ -242,6 +266,7 @@ func _score(g) -> float:
 	if g.won or g.over:
 		return s
 	s += _graft_value(g)
+	s += _resonance_value(g)
 	s += float(g.player["kit"].size()) * KIT_SLOT_POINTS
 	if g.phase == "play":
 		s += _option_value(g)
@@ -255,6 +280,15 @@ func _graft_value(g) -> float:
 	for gid in g.player["grafts"]:
 		v += float(GRAFT_WEIGHTS.get(String(gid), 0)) * GRAFT_POINTS
 	return v
+
+
+## Active resonances by RESONANCE_POINTS (Block D5). The active set comes from
+## the sim (Game._resonances on the clone being scored), never from a bot-side
+## re-derivation of the threshold rule, and no resonance id, tag or need is
+## named in this file - so a new Content.RESONANCES row is valued with no bot
+## change, and a row the sim turns off stops being valued on the same step.
+func _resonance_value(g) -> float:
+	return float(g._resonances().size()) * RESONANCE_POINTS
 
 
 ## Sum of the option-value terms (see _option_terms).

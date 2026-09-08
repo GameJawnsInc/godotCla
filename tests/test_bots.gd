@@ -30,6 +30,10 @@ extends SceneTree
 ##      ability id. The two personas' draft preference, the kit-slot fold every
 ##      trigger matches on, deeproot's row fallback, the tally's per-variant
 ##      split, and the profile's won_with fold plus its pre-D6 id migration
+##   3h) Block D5 resonances, consumer side: the optimizer's draft DROP guard
+##      (a drop that would put a lit element out is taken last), the planner's
+##      flat per-active-resonance term, and the tally's split hook columns plus
+##      its four exposure columns through merge() and kpis()
 ##   4) determinism: two fresh instances agree over 40 steps
 ##   5) runtime factor: deeproot vs deeproot_plan over 5 seeds (test-side
 ##      Time.get_ticks_msec only; the bots never read a clock)
@@ -70,6 +74,7 @@ func _init() -> void:
 	_check_d3_denial_tally()
 	_check_d4_draft_tally()
 	_check_d6_variants()
+	_check_d5_resonances()
 	_check_determinism()
 	_check_runtime_factor()
 	if failures.is_empty():
@@ -912,6 +917,134 @@ func _check_d6_variants() -> void:
 	print("d6 variants: %s forks into %s; pref ranks %d/%d (base %d), casts_by_id %s" % [
 		forked, str(sibs), opt._pref_rank(a_id), opt._pref_rank(b_id), opt._pref_rank(forked),
 		str(tally.casts_by_id)])
+
+
+## (3h) Block D5, the consumer half. The sim owns the threshold rule and the
+## active set; what is tested here is what the three consumers do with it.
+## Seated on cinder_grip (fire 3), the ONE row that ships - the design phase's
+## displace row was cut on its own falsifier and the growth row on the greed
+## canary. Fire has only two BASES, so every kit at the threshold here holds a
+## sibling of one of them, which is what a forge or a locked kit produces.
+func _check_d5_resonances() -> void:
+	# (i) the optimizer's draft drop guard. A five-slot kit at fire 3 has
+	# Cinder Grip lit; the offer is off-element, so the pick must drop
+	# something - and three of the four unprotected slots are what light the
+	# element. With every use count at 0 the OLD rule took the first
+	# unprotected slot, which is the lance.
+	var kit := ["solar_lance", "solar_lance+noon", "sun_flare", "moss_filter", "mycelium_dash"]
+	var g = _game(kit)
+	_ok(g.snapshot()["resonances"] == ["cinder_grip"],
+		"the fire-3 kit lights exactly Cinder Grip: %s" % str(g.snapshot()["resonances"]))
+	g.phase = "draft"
+	g.draft_offers = ["overgrowth"]
+	g.draft_slots = ["wild"]
+	var opt = Roster.make("optimizer", 1)
+	var dsnap: Dictionary = g.snapshot()
+	_ok(opt._tag_counts(dsnap).get("fire", 0) == 3,
+		"the persona counts the kit's three fire cards: %s" % str(opt._tag_counts(dsnap)))
+	_ok(opt._drop_breaks_resonance(dsnap, 0, 0) and opt._drop_breaks_resonance(dsnap, 1, 0)
+			and opt._drop_breaks_resonance(dsnap, 2, 0),
+		"dropping any of the three fire cards for an off-element offer breaks the row")
+	_ok(not opt._drop_breaks_resonance(dsnap, 3, 0),
+		"dropping the off-element moss filter does not")
+	var pick: Dictionary = opt.choose_action(dsnap, g.legal_actions())
+	_ok(int(pick.get("pick", -9)) == 0 and int(pick.get("drop", -9)) == 3,
+		"the optimizer drops the moss filter, not a fire card, to keep Cinder Grip: %s" % str(pick))
+
+	# ...and with the kit's grafts counted too: ember_sap is fire, so the same
+	# board with the graft held survives dropping ONE of the three cards.
+	var gg = Game.new(1, {"fixed_floor": {"gen": _gen(ROOM), "fdef": {}}, "kit": kit,
+			"grafts": ["ember_sap"]})
+	gg.phase = "draft"
+	gg.draft_offers = ["overgrowth"]
+	gg.draft_slots = ["wild"]
+	var gsnap: Dictionary = gg.snapshot()
+	_ok(opt._tag_counts(gsnap).get("fire", 0) == 4,
+		"the held graft's tag is counted with the kit's: %s" % str(opt._tag_counts(gsnap)))
+	_ok(not opt._drop_breaks_resonance(gsnap, 0, 0),
+		"with the graft held, dropping one fire card no longer breaks the row")
+	var pick2: Dictionary = opt.choose_action(gsnap, gg.legal_actions())
+	_ok(int(pick2.get("drop", -9)) == 0,
+		"...so the persona goes back to its plain least-used drop: %s" % str(pick2))
+
+	# (ii) the fallback: when EVERY legal drop breaks the row the guard must not
+	# leave the pick unmade. A kit whose three unprotected slots are the three
+	# fire cards that light cinder_grip has no non-breaking drop. (A locked-kit
+	# config may hold both siblings of one base; the tag counts twice, which is
+	# what makes an exactly-at-need kit constructible here.)
+	var g3 = _game(["solar_lance", "sun_flare", "solar_lance+noon", "seed_bomb", "mycelium_dash"])
+	g3.phase = "draft"
+	g3.draft_offers = ["overgrowth"]
+	g3.draft_slots = ["wild"]
+	var s3: Dictionary = g3.snapshot()
+	_ok(s3["resonances"] == ["cinder_grip"], "the fire-3 kit lights cinder_grip: %s" % str(s3["resonances"]))
+	_ok(opt._drop_breaks_resonance(s3, 0, 0) and opt._drop_breaks_resonance(s3, 1, 0)
+			and opt._drop_breaks_resonance(s3, 2, 0),
+		"every unprotected drop breaks the row")
+	var pick3: Dictionary = opt.choose_action(s3, g3.legal_actions())
+	_ok(int(pick3.get("pick", -9)) == 0 and int(pick3.get("drop", -9)) >= 0,
+		"a pick is still made when every drop breaks a row: %s" % str(pick3))
+
+	# (iii) the planner's term is flat per ACTIVE resonance and reads the sim,
+	# so a board that lights nothing scores exactly RESONANCE_POINTS lower per
+	# row than the same board that lights one.
+	var plan = Roster.make("deeproot_plan", 1)
+	var lit = _game(["solar_lance", "solar_lance+noon", "sun_flare"])
+	var dark = _game(["solar_lance", "seed_bomb", "mycelium_dash"])
+	_ok(plan._resonance_value(lit) == plan.RESONANCE_POINTS
+			and plan._resonance_value(dark) == 0.0,
+		"deeproot_plan values one lit resonance at %.0f and none at 0 (%.0f / %.0f)" % [
+			plan.RESONANCE_POINTS, plan._resonance_value(lit), plan._resonance_value(dark)])
+
+	# (iv) the tally: a resonance hook must NOT land in the graft column, and
+	# the four exposure columns must survive merge() into kpis().
+	var t = Tally.new()
+	var rid := String(Content.RESONANCES.keys()[0])
+	t.add({"t": "hook", "id": rid, "on": "ignite"}, {}, lit)
+	t.add({"t": "hook", "id": "ember_sap", "on": "ignite"}, {}, lit)
+	_ok(t.hooks_by_resonance.get(rid, 0) == 1 and not t.hooks_by_graft.has(rid)
+			and t.hooks_by_graft.get("ember_sap", 0) == 1,
+		"the hook column splits by source: graft %s / resonance %s" % [
+			str(t.hooks_by_graft), str(t.hooks_by_resonance)])
+	_ok(int(t.hooks_by_kind.get("ignite", 0)) == 2,
+		"...while hooks_by_kind still counts both")
+	# exposure: one step on the lit board, then a run finished
+	t.begin_step(lit)
+	t.end_step(lit, {"type": "end_turn"})
+	t.finish(lit)
+	_ok(int(t.resonance_runs.get(rid, 0)) == 1
+			and int(t.resonance_first_floor.get(rid, 0)) == lit.floor_num
+			and int(t.resonance_turns.get(rid, 0)) == 1,
+		"the tally records the run, its first floor and its turns: %s / %s / %s" % [
+			str(t.resonance_runs), str(t.resonance_first_floor), str(t.resonance_turns)])
+	# a drop that breaks the row counts as a break, not as a second run
+	var t2 = Tally.new()
+	t2.begin_step(lit)
+	t2.end_step(lit, {"type": "end_turn"})
+	t2.begin_step(dark)
+	t2.end_step(dark, {"type": "end_turn"})
+	t2.finish(dark)
+	_ok(int(t2.resonance_breaks.get(rid, 0)) == 1
+			and int(t2.resonance_runs.get(rid, 0)) == 1,
+		"a row that goes out counts one break and still one run: %s / %s" % [
+			str(t2.resonance_breaks), str(t2.resonance_runs)])
+	t.merge(t2)
+	var k := Tally.kpis(t, 2, [])
+	_ok(int((k["resonance_runs"] as Dictionary).get(rid, 0)) == 2
+			and int((k["hooks_by_resonance"] as Dictionary).get(rid, 0)) == 1
+			and int((k["resonance_breaks"] as Dictionary).get(rid, 0)) == 1,
+		"merge and kpis carry the resonance columns: %s" % str(k["resonance_runs"]))
+	# the report line names every row: the reached one with its numbers, and -
+	# on a tally that never met it - the same row at 0, which is how a row
+	# nobody reaches stays visible in a sweep
+	_ok(t.resonance_line(2).begins_with("resonance: ")
+			and t.resonance_line(2).contains("%s 2/2" % rid)
+			and Tally.new().resonance_line(2).contains("%s 0/2" % rid),
+		"the report line names every row, reached or not: %s | %s" % [
+			t.resonance_line(2), Tally.new().resonance_line(2)])
+	print("d5 resonances: lit %s; optimizer keeps it (drop %d) and drops %d without it; planner %.0f/row; %s" % [
+		str(lit.snapshot()["resonances"]), int(pick["drop"]), int(pick2["drop"]),
+		plan.RESONANCE_POINTS, t.resonance_line(2)])
 
 
 static func _sum_dict(d: Dictionary) -> int:

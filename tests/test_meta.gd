@@ -27,7 +27,7 @@ const Sweep := preload("res://tests/sweep_lib.gd")
 const Roster := preload("res://bots/roster.gd")
 
 const CAREER_RUNS := 40
-const TIER0_CAREER_RUNS := 36
+const TIER0_CAREER_RUNS := 63
 const MUTATOR_SEEDS := 8
 ## Winnability floor per starting loadout (review §6.1 item 7): the optimizer
 ## over seeds 1..LOADOUT_SEEDS must clear LOADOUT_MIN_WINS with each
@@ -47,15 +47,22 @@ const SKYRUNNER_MIN_WINS := 1
 ## _act_draft), and every Block A loadout row. An exact set, so a milestone
 ## that quietly becomes unreachable fails here.
 ## The run count is a reachability budget, not a target. Block D6 moved the
-## last witness again: with every base "+" forked in two, the draft deals a
+## last witness once: with every base "+" forked in two, the draft deals a
 ## parity-picked variant where it used to deal the single "+" form, which
 ## reshuffles which wins drop the lance - `no_lance` (a win whose final kit
-## dropped Solar Lance) now lands at seed 31, where under D4 `lasher` was last
-## at seed 23. So 31 is the minimum and 36 leaves five runs of margin. A
-## bot-routing or draft change moves which seed witnesses what - raise the
-## count, do not move a reachable milestone into the unreachable set (measured
-## over 60 runs: every milestone but the three tier-gated ones lands, the last
-## four at seeds 9 / 13 / 31 and nothing after 31).
+## dropped Solar Lance) landed at seed 31 there, where under D4 `lasher` was
+## last at seed 23, so 36 left five runs of margin.
+## CUTTING THE D5 GROWTH RESONANCE MOVED IT AGAIN, and this is the clearest
+## reading of how far a passive can reach: deep_loam paid +1 charge on the
+## turns begun on growth, so the optimizer's growth-heavy careers played
+## differently top to bottom, and the seed-31 witness (a win on
+## [moss_filter+prism, seed_bomb, mycelium_dash, sun_flare+corona,
+## grow_spike+throng]) is not a win any more. The next lance-free win is seed
+## 58, so 63 keeps the same five runs of margin. A bot-routing, draft or
+## content change moves which seed witnesses what - raise the count, do not
+## move a reachable milestone into the unreachable set (measured over 60 runs
+## on the cut tree: every milestone but the three tier-gated ones lands, the
+## last four at seeds 5 / 9 / 13 / 58 and nothing after 58).
 const TIER0_UNREACHABLE := ["aeolian", "brittle", "parched"]
 
 ## Fixture milestone table for the dispatch check (Content.MILESTONES is

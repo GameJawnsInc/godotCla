@@ -10,8 +10,8 @@ extends SceneTree
 ## controlled boards and their numbers, statuses and rider events asserted.
 ## Block C3: the hook dispatcher (Game._hook) is exercised through the four
 ## rule grafts installed via config {grafts: [...]} (ember_sap, undertow,
-## compost, oil_tithe), the depth / step caps, and the _graft_stat /
-## _graft_mod table reads that replaced the six _has_graft sites.
+## compost, oil_tithe), the depth / step caps, and the _passive_stat /
+## _passive_mod table reads that replaced the six _has_graft sites.
 ## Block C4: the nine package "+" rows (spore_cloud+, fungal_ring+, burrow+,
 ## tide+, steam_vent+, geyser+, gust+, updraft+, clear_air+) are cast for real
 ## through Game.step next to their bases: the bumped number and any rider
@@ -48,6 +48,16 @@ extends SceneTree
 ## interaction), the shrine forge listing one action per (keep, scrap,
 ## variant), and the draft dealing the parity variant while a wild slot may
 ## deal either - with the one-main-rng-draw-per-slot contract still pinned.
+## Block D5 (one resonance per element): Content.RESONANCES as a third passive
+## source. The tag count is over kit AND grafts (a variant carries its base's
+## tags, an unknown id counts nothing), mobility can never resonate, the
+## active set is derived - a draft pick turns a row on and a draft drop or a
+## forge scrap turns it off again, all driven through step() - and the one
+## shipped row is fired on a hand-built board: cinder_grip roots the machine
+## the tile lit under (cap 3). The `stat` shape ships in no row (the growth row
+## that carried it was cut on the canary), so the _passive_stat machinery is
+## driven through an injected fixture row instead.
+## snapshot() carries the derived "resonances" list and state_hash() does not.
 ## Run: godot --headless --path . --script tests/test_grammar.gd
 
 const Content := preload("res://sim/content.gd")
@@ -135,6 +145,11 @@ func _init() -> void:
 	_check_d6_draft_parity()
 	_check_d6_dir_enemy()
 	_check_d6_locked_kit()
+	_check_d5_counts()
+	_check_d5_active_set()
+	_check_d5_cinder_grip()
+	_check_d5_stat_row()
+	_check_d5_toggle()
 	if failures.is_empty():
 		print("grammar: OK (%d checks)" % checks)
 		quit(0)
@@ -1350,16 +1365,17 @@ static func _hooks(events: Array, id: String) -> Array:
 	return outl
 
 
-## _graft_stat sums stat keys over held grafts, _graft_mod returns the first
-## held mod value; the six legacy grafts read through them with their old numbers.
+## _passive_stat sums stat keys over held grafts (and, since D5, the active
+## resonances), _passive_mod returns the first held mod value; the six legacy
+## grafts read through them with their old numbers.
 func _check_c3_graft_tables() -> void:
 	var g = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], ["deep_cells", "thick_bark", "solar_core", "carapace"])
-	_ok(g._graft_stat("bank_cap") == 2 and g._bank_cap() == Content.BANK_CAP + 2, "deep_cells: bank cap %d" % g._bank_cap())
-	_ok(g._graft_stat("shield_cap") == 2 and g._shield_cap() == Content.SHIELD_CAP + 2, "thick_bark: shield cap %d" % g._shield_cap())
-	_ok(g._graft_stat("regen") == 1 and g.player["charge"] == Content.BASE_REGEN + 1, "solar_core: regen +1, charge %d" % g.player["charge"])
-	_ok(g._graft_stat("growth_heal") == 0 and g._graft_stat("cleanse_bloom") == 0 and g._graft_stat("no_such_stat") == 0, "unheld stats read 0")
-	_ok(int(g._graft_mod("floor_start_shield", 0)) == 2 and g.player["shield"] == 2, "carapace: floor_start_shield 2, shield %d" % g.player["shield"])
-	_ok(int(g._graft_mod("oil_cast_discount", 0)) == 0 and String(g._graft_mod("oil_cast_discount", "none")) == "none", "unheld mod returns the default")
+	_ok(g._passive_stat("bank_cap") == 2 and g._bank_cap() == Content.BANK_CAP + 2, "deep_cells: bank cap %d" % g._bank_cap())
+	_ok(g._passive_stat("shield_cap") == 2 and g._shield_cap() == Content.SHIELD_CAP + 2, "thick_bark: shield cap %d" % g._shield_cap())
+	_ok(g._passive_stat("regen") == 1 and g.player["charge"] == Content.BASE_REGEN + 1, "solar_core: regen +1, charge %d" % g.player["charge"])
+	_ok(g._passive_stat("growth_heal") == 0 and g._passive_stat("cleanse_bloom") == 0 and g._passive_stat("no_such_stat") == 0, "unheld stats read 0")
+	_ok(int(g._passive_mod("floor_start_shield", 0)) == 2 and g.player["shield"] == 2, "carapace: floor_start_shield 2, shield %d" % g.player["shield"])
+	_ok(int(g._passive_mod("oil_cast_discount", 0)) == 0 and String(g._passive_mod("oil_cast_discount", "none")) == "none", "unheld mod returns the default")
 	var g0 = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], [])
 	_ok(g0._bank_cap() == Content.BANK_CAP and g0._shield_cap() == Content.SHIELD_CAP and g0.player["charge"] == Content.BASE_REGEN and g0.player["shield"] == 0,
 		"no grafts: base numbers")
@@ -1396,8 +1412,10 @@ func _check_c3_graft_tables() -> void:
 ## caster when a flare lights the oil underfoot; three times a turn, then it
 ## rests until the next turn.
 func _check_c3_ember_sap() -> void:
-	# lance lights oil under an enemy: ember 1 + lance 2
-	var g = _game_g(["solar_lance", "sun_flare", "mycelium_dash"], ["ember_sap"])
+	# lance lights oil under an enemy: ember 1 + lance 2. The kit is fire 2 on
+	# purpose: fire 3 would light the D5 resonance cinder_grip and put a second
+	# hook in the event order this case pins.
+	var g = _game_g(["solar_lance", "seed_bomb", "mycelium_dash"], ["ember_sap"])
 	var e = g._spawn("drill_bot", Vector2i(7, 3))
 	e["hp"] = 10
 	g.terrain[Vector2i(7, 3)] = {"kind": "oil"}
@@ -3924,3 +3942,284 @@ func _check_d6_locked_kit() -> void:
 						illegal += 1
 	_ok(bad == 0 and illegal == 0 and drafts >= 30,
 		"D6 locked kit {kit: K, pool: K}: %d drafts, %d duplicate offers, %d illegal draft actions" % [drafts, bad, illegal])
+
+
+# --- Block D5: one resonance per element ---------------------------------------
+## Content.RESONANCES rows are active while _tag_counts() over the held kit and
+## grafts meets their `need`; the active set is derived on every read, so it
+## never enters state_hash() and a card leaving the kit turns a row off.
+
+const D5_FIRE3 := ["solar_lance", "sun_flare", "mycelium_dash"]      # fire 2 + oil_tithe
+## Fire 3 from the kit alone: only two BASES carry fire, so a third fire card
+## is a sibling of one of them - which a locked-kit config may hold and a forge
+## produces. Kits, not grafts, are what a draft and a forge move, so this is
+## the kit the toggle checks drive.
+const D5_FIRE3_KIT := ["solar_lance", "solar_lance+noon", "sun_flare"]
+const D5_GROWTH3 := ["seed_bomb", "overgrowth", "grow_spike"]        # growth 3: no row (cut)
+const D5_GROWTH2 := ["seed_bomb", "overgrowth", "mycelium_dash"]     # growth 2
+const D5_DISPLACE2 := ["vine_whip", "water_jet", "seed_bomb"]        # displace 2: no row (cut)
+
+
+## A Game carrying extra, hand-built resonance rows on top of the shipped
+## table, injected at the one seam _passive_stat / _passive_mod / _hook share.
+## Content.RESONANCES is a const and ships nothing but a `hooks` row, so this is
+## how the `stat` and `mod` shapes stay driven end to end: a probe row is
+## unconditionally active, which is fine - what these checks pin is what the
+## machinery does with an active row, not the threshold rule (_check_d5_counts
+## and _check_d5_toggle own that, on shipped data).
+class _ResProbe extends Game:
+	var probe_rows: Array = []
+
+	func _resonance_rows() -> Array:
+		return super() + probe_rows
+
+
+## _game_g on a _ResProbe: the same fixed board, plus hand-built [id, row]
+## resonance rows that are active whatever the kit counts.
+static func _probe(kit: Array, grafts: Array, rows: Array) -> RefCounted:
+	var g = _ResProbe.new(1, {"fixed_floor": {"gen": _gen(ROOM), "fdef": {}}, "kit": kit, "grafts": grafts})
+	g.probe_rows = rows
+	return g
+
+
+## _tag_counts counts the kit and the grafts, a variant carries its base's
+## tags, an unknown id counts nothing, and no count of a mobility tag can ever
+## light a row.
+func _check_d5_counts() -> void:
+	var g = _game(D5_FIRE3)
+	_ok(g._tag_counts() == {"sun": 2, "fire": 2, "mobility": 1}, "d5 counts: kit only %s" % str(g._tag_counts()))
+	_ok(g._resonances().is_empty(), "d5 counts: fire 2 does not resonate: %s" % str(g._resonances()))
+	var gg = _game_g(D5_FIRE3, ["oil_tithe"])
+	_ok(gg._tag_counts() == {"sun": 2, "fire": 3, "mobility": 1, "water": 1, "economy": 1},
+		"d5 counts: grafts count too %s" % str(gg._tag_counts()))
+	_ok(gg._resonances() == ["cinder_grip"], "d5 counts: fire 3 resonates: %s" % str(gg._resonances()))
+	# a variant carries its base's tags verbatim, so a forge or an upgrade
+	# draft never moves a count
+	var gv = _game_g(["solar_lance+pierce", "sun_flare+smoulder", "mycelium_dash+trail"], ["ember_sap"])
+	_ok(gv._tag_counts() == {"sun": 2, "fire": 3, "mobility": 1} and gv._resonances() == ["cinder_grip"],
+		"d5 counts: variants carry base tags %s" % str(gv._tag_counts()))
+	for aid in Content.ABILITIES:
+		var base := Content.base_id(String(aid))
+		if base != String(aid) and Content.ABILITIES[aid].get("tags", []) != Content.ABILITIES[base].get("tags", []):
+			failures.append("d5 counts: %s tags %s differ from base %s" % [aid, str(Content.ABILITIES[aid]["tags"]), str(Content.ABILITIES[base]["tags"])])
+	# an unknown kit id counts nothing rather than throwing (sweep configs)
+	var gu = _game(["no_such_ability", "seed_bomb"])
+	_ok(gu._tag_counts() == {"growth": 1} and gu._resonances().is_empty(), "d5 counts: unknown id counts nothing %s" % str(gu._tag_counts()))
+	# the known edge: a locked-kit config may hold both siblings of one base
+	# and the tag counts twice - that is what lets a sweep force a resonance
+	# off a two-base element (fire has exactly two carriers in the pool)
+	var gs = _game(D5_FIRE3_KIT)
+	_ok(int(gs._tag_counts().get("fire", 0)) == 3 and gs._resonances() == ["cinder_grip"],
+		"d5 counts: both siblings count twice %s" % str(gs._tag_counts()))
+	# a growth-3 kit lights nothing: the growth row was cut on the canary
+	var gr = _game(D5_GROWTH3)
+	_ok(int(gr._tag_counts().get("growth", 0)) == 3 and gr._resonances().is_empty(),
+		"d5 counts: growth 3 resonates nothing (the row was cut): %s" % str(gr._resonances()))
+	# mobility never counts: no row names an ignored tag, and a kit of nothing
+	# but mobility resonates nothing however many it holds
+	for rid in Content.RESONANCES:
+		_ok(not Content.AFFINITY_IGNORED_TAGS.has(String(Content.RESONANCES[rid]["tag"])),
+			"d5: resonance %s names an ignored tag" % rid)
+	var gm = _game(["mycelium_dash", "mycelium_dash+trail", "mycelium_dash+scatter", "burrow"])
+	_ok(int(gm._tag_counts().get("mobility", 0)) == 4 and gm._resonances().is_empty(),
+		"d5: mobility 4 resonates nothing: %s" % str(gm._resonances()))
+
+
+## The active set is a derived snapshot key and stays out of the hash.
+func _check_d5_active_set() -> void:
+	var g = _game_g(D5_FIRE3, ["oil_tithe"])
+	var snap: Dictionary = g.snapshot()
+	_ok(snap.get("resonances", null) == ["cinder_grip"], "d5 snapshot: %s" % str(snap.get("resonances", null)))
+	_ok(_game(D5_FIRE3).snapshot()["resonances"] == [], "d5 snapshot: fire 2 lists nothing")
+	# state_hash erases the key: the hash equals the shop-swapped, resonance-
+	# stripped snapshot and differs from the full one
+	var stripped: Dictionary = snap.duplicate(true)
+	stripped["shop"] = g.shop
+	stripped.erase("resonances")
+	_ok(g.state_hash() == str(stripped).sha256_text(), "d5 hash: state_hash is the resonance-stripped view")
+	var full: Dictionary = snap.duplicate(true)
+	full["shop"] = g.shop
+	_ok(g.state_hash() != str(full).sha256_text(), "d5 hash: an active resonance is still IN the snapshot")
+	# two games on the same kit, one lit and one not: the hash moves only
+	# because the GRAFT is stored, never because the row is on
+	var a = _game_g(D5_FIRE3, ["oil_tithe"])
+	var b = _game(D5_FIRE3)
+	_ok(a._resonances() == ["cinder_grip"] and b._resonances().is_empty() and a.state_hash() != b.state_hash(),
+		"d5 hash: the stored graft that lights the row hashes differently")
+	# nothing new is stored: clone carries no resonance state, the set is
+	# recomputed, and the clone hashes exactly like its source
+	var c = a.clone()
+	_ok(c._resonances() == ["cinder_grip"] and c.state_hash() == a.state_hash(), "d5 clone: derived set survives a clone")
+
+
+## cinder_grip {fire 3, on ignite, status_at root 1, cap 3}: whoever stands on
+## the tile that just lit is rooted a turn - the machine cannot step off the
+## fire it is standing in.
+func _check_d5_cinder_grip() -> void:
+	var g = _game_g(D5_FIRE3, ["oil_tithe"])
+	_ok(g._resonances() == ["cinder_grip"], "cinder_grip: active on fire 3")
+	var e = g._spawn("drill_bot", Vector2i(7, 3))
+	e["hp"] = 10
+	g.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	var evs: Array = _cast(g, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "illegal").is_empty() and int(e["status"].get("root", 0)) == 1,
+		"cinder_grip: the machine under the lit oil is rooted: %s %s" % [str(e["status"]), str(evs)])
+	var hk := _hooks(evs, "cinder_grip")
+	_ok(hk.size() == 1 and String(hk[0]["on"]) == "ignite" and hk[0]["tile"] == Vector2i(7, 3),
+		"cinder_grip: hook event {cinder_grip, ignite, (7,3)}: %s" % str(hk))
+	_ok(int(g.hook_uses.get("cinder_grip", 0)) == 1, "cinder_grip: hook_uses counts the run: %s" % str(g.hook_uses))
+	_ok(_evs(evs, "damage").size() == 1, "cinder_grip: the row deals no damage of its own: %s" % str(_evs(evs, "damage")))
+	# fire 2 (the same kit without the graft): no hook, no root
+	var g2 = _game(D5_FIRE3)
+	var e2 = g2._spawn("drill_bot", Vector2i(7, 3))
+	e2["hp"] = 10
+	g2.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	evs = _cast(g2, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "ignite").size() == 1 and _evs(evs, "hook").is_empty() and not e2["status"].has("root"),
+		"cinder_grip: fire 2 roots nothing: %s" % str(evs))
+	# an ignition with nobody on the tile roots nothing (the row is inert
+	# unless the cast is aimed under a body)
+	var g3 = _game_g(D5_FIRE3, ["oil_tithe"])
+	g3.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	evs = _cast(g3, 0, Vector2i(1, 0))
+	_ok(_evs(evs, "ignite").size() == 1 and _hooks(evs, "cinder_grip").size() == 1 and _evs(evs, "status").is_empty(),
+		"cinder_grip: an empty tile is lit, nothing is rooted: %s" % str(evs))
+	# cap 3: a flare lighting four oiled tiles under four machines roots three
+	var g4 = _game_g(["sun_flare", "solar_lance", "mycelium_dash"], ["oil_tithe"])
+	var ens: Array = []
+	for t in [Vector2i(4, 3), Vector2i(6, 3), Vector2i(5, 2), Vector2i(5, 4)]:
+		var en = g4._spawn("drill_bot", t)
+		en["hp"] = 20
+		g4.terrain[t] = {"kind": "oil"}
+		ens.append(en)
+	evs = _cast(g4, 0, g4.player["pos"])
+	var rooted := 0
+	for en in ens:
+		if int(en["status"].get("root", 0)) > 0:
+			rooted += 1
+	_ok(_evs(evs, "ignite").size() == 4 and _hooks(evs, "cinder_grip").size() == 3 and rooted == 3,
+		"cinder_grip: cap 3 over four ignitions: %d hooks, %d rooted" % [_hooks(evs, "cinder_grip").size(), rooted])
+	_ok(int(g4.hook_uses.get("cinder_grip", 0)) == 3 and _evs(evs, "hook_capped").is_empty(),
+		"cinder_grip: the per-turn cap is silent: %s" % str(g4.hook_uses))
+	g4.step({"type": "end_turn"})
+	_ok(g4.hook_uses.is_empty(), "cinder_grip: hook_uses resets at the new turn")
+	# massive enemies are immune to the status, so the row buys nothing on a boss
+	var g5 = _game_g(D5_FIRE3, ["oil_tithe"])
+	var boss = g5._spawn("furnace_core", Vector2i(7, 3))
+	boss["hp"] = 20
+	g5.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	evs = _cast(g5, 0, Vector2i(1, 0))
+	_ok(_hooks(evs, "cinder_grip").size() == 1 and not boss["status"].has("root"),
+		"cinder_grip: a massive enemy shrugs the root off: %s" % str(boss["status"]))
+
+
+## A resonance built on a Game with an injected `stat` row: no SHIPPED row
+## carries that shape (the growth row that did, deep_loam {growth 3, stat
+## regen_on_growth 1}, was cut on the greed canary - see the Content.RESONANCES
+## header), so this drives the _passive_stat half of the machinery through a
+## probe. What is pinned is the machinery, not the fixture: a resonance stat
+## reaches the same sum a graft stat does, on the same read, and the shipped
+## table contributes nothing to a key no row grants.
+func _check_d5_stat_row() -> void:
+	var g = _probe(D5_GROWTH3, [], [["probe_res", {"stat": {"regen_on_growth": 1}}]])
+	_ok(g._passive_stat("regen_on_growth") == 1,
+		"d5 stat: an active resonance's stat key reads %d" % g._passive_stat("regen_on_growth"))
+	g.terrain.erase(g.player["pos"])
+	g._begin_player_turn()
+	var off: int = g.player["charge"]
+	g.terrain[g.player["pos"]] = {"kind": "growth"}
+	g._begin_player_turn()
+	var on: int = g.player["charge"]
+	_ok(off == Content.BASE_REGEN and on == Content.BASE_REGEN + 1,
+		"d5 stat: charge off growth %d, on growth %d" % [off, on])
+	# oil is not growth
+	g.terrain[g.player["pos"]] = {"kind": "oil"}
+	g._begin_player_turn()
+	_ok(g.player["charge"] == Content.BASE_REGEN, "d5 stat: oil pays nothing (%d)" % g.player["charge"])
+	# the SHIPPED table grants no stat at all, so the same board with no probe
+	# row reads 0 on every key - growth 3 included
+	var g2 = _game(D5_GROWTH3)
+	_ok(g2._passive_stat("regen_on_growth") == 0 and g2._passive_stat("regen") == 0,
+		"d5 stat: no shipped row grants a stat key")
+	# and the table agrees: ship a `stat` or `mod` row one day and it wants a
+	# live check of its own here, not this probe
+	var shapes := {"stat": 0, "mod": 0, "hooks": 0}
+	for rid in Content.RESONANCES:
+		for k in shapes:
+			if Content.RESONANCES[rid].has(k):
+				shapes[k] = int(shapes[k]) + 1
+	_ok(int(shapes["stat"]) == 0 and int(shapes["mod"]) == 0,
+		"d5 stat: the shipped table carries only hook rows: %s" % str(shapes))
+	g2.terrain[g2.player["pos"]] = {"kind": "growth"}
+	g2._begin_player_turn()
+	_ok(g2.player["charge"] == Content.BASE_REGEN, "d5 stat: growth alone pays base regen (%d)" % g2.player["charge"])
+	# through step(): end the turn standing on growth and the next turn opens +1
+	var g3 = _probe(D5_GROWTH3, [], [["probe_res", {"stat": {"regen_on_growth": 1}}]])
+	g3.terrain[g3.player["pos"]] = {"kind": "growth"}
+	g3.player["charge"] = 0  # nothing to bank, so the new turn is regen alone
+	g3.step({"type": "end_turn"})
+	_ok(g3.player["charge"] == Content.BASE_REGEN + 1, "d5 stat: through step, charge %d" % g3.player["charge"])
+	# grafts are summed FIRST and the resonances on top: a graft granting the
+	# flat key and a resonance granting the conditional one both pay
+	var g4 = _probe(D5_GROWTH3, ["solar_core"], [["probe_res", {"stat": {"regen_on_growth": 1}}]])
+	_ok(g4._passive_stat("regen") == 1 and g4._passive_stat("regen_on_growth") == 1,
+		"d5 stat: graft and resonance read separate keys")
+	g4.terrain[g4.player["pos"]] = {"kind": "growth"}
+	g4._begin_player_turn()
+	_ok(g4.player["charge"] == Content.BASE_REGEN + 2, "d5 stat: solar_core + resonance charge %d" % g4.player["charge"])
+	# and a graft and a resonance granting the SAME key sum rather than shadow
+	var g5 = _probe(D5_GROWTH3, ["solar_core"], [["probe_res", {"stat": {"regen": 2}}]])
+	_ok(g5._passive_stat("regen") == 3, "d5 stat: graft + resonance sum %d" % g5._passive_stat("regen"))
+
+
+## Turning on and off, driven through step(): a draft pick that meets a
+## threshold lights a row, a draft drop and a forge scrap put it out, and a
+## forge upcycle - a variant carrying its base's tags - changes nothing.
+## Fire is the one element that ships a row, and only two BASES carry the tag,
+## so every kit here counts a sibling: that is the shape a locked-kit sweep and
+## a forged run both produce.
+func _check_d5_toggle() -> void:
+	# ON: a fire-2 kit drafts the other fire base
+	var g = _drafted(1, {"kit": ["solar_lance", "solar_lance+noon", "mycelium_dash"], "pool": ["sun_flare"]})
+	_ok(g.phase == "draft" and String(g.draft_offers[0]) == "sun_flare",
+		"d5 toggle: the draft offers the fire card first: %s" % str(g.draft_offers))
+	_ok(g._resonances().is_empty() and g.snapshot()["resonances"] == [], "d5 toggle: fire 2 before the pick")
+	g.step({"type": "draft", "pick": 0})
+	_ok(g.player["kit"].has("sun_flare") and g._resonances() == ["cinder_grip"]
+			and g.snapshot()["resonances"] == ["cinder_grip"],
+		"d5 toggle: the pick lights cinder_grip: %s %s" % [str(g.player["kit"]), str(g._resonances())])
+	# OFF: a full fire-3 kit drops one of the three fire cards for an
+	# off-element pick (growth is on the affinity list through the seed bomb,
+	# so the offer is deterministic without carrying fire)
+	var full := ["solar_lance", "solar_lance+noon", "sun_flare", "seed_bomb", "mycelium_dash"]
+	var g2 = _drafted(1, {"kit": full, "pool": ["overgrowth"]})
+	_ok(g2._resonances() == ["cinder_grip"] and String(g2.draft_offers[0]) == "overgrowth"
+			and g2.player["kit"].size() == Content.KIT_MAX,
+		"d5 toggle: fire 3 and a full kit before the drop: %s %s" % [str(g2._resonances()), str(g2.draft_offers)])
+	g2.step({"type": "draft", "pick": 0, "drop": 1})
+	_ok(not g2.player["kit"].has("solar_lance+noon") and g2._resonances().is_empty(),
+		"d5 toggle: the drop puts cinder_grip out: %s %s" % [str(g2.player["kit"]), str(g2._resonances())])
+	# OFF: a forge scrap takes the third fire card away
+	var g3 = Game.new(1, {"bloom": 20, "kit": D5_FIRE3_KIT})
+	g3.player["pos"] = g3.map["shrine"]
+	_ok(g3._resonances() == ["cinder_grip"], "d5 toggle: fire 3 at the shrine")
+	var evs: Array = g3.step({"type": "upcycle_ability", "keep": 2, "scrap": 0, "variant": 0})
+	_ok(_evs(evs, "illegal").is_empty() and g3.player["kit"] == ["solar_lance+noon", "sun_flare+corona"]
+			and g3._resonances().is_empty(),
+		"d5 toggle: the scrap puts cinder_grip out: %s %s" % [str(g3.player["kit"]), str(evs)])
+	# UNCHANGED: a forge that scraps the off-element card - and the upcycled
+	# variant carries its base's tags, so the count never moves
+	var g4 = Game.new(1, {"bloom": 20, "kit": ["solar_lance", "solar_lance+noon", "sun_flare", "moss_filter"]})
+	g4.player["pos"] = g4.map["shrine"]
+	evs = g4.step({"type": "upcycle_ability", "keep": 2, "scrap": 3, "variant": 1})
+	_ok(_evs(evs, "illegal").is_empty()
+			and g4.player["kit"] == ["solar_lance", "solar_lance+noon", "sun_flare+smoulder"]
+			and g4._resonances() == ["cinder_grip"],
+		"d5 toggle: an upcycle leaves the count alone: %s %s" % [str(g4.player["kit"]), str(g4._resonances())])
+	# and the row it lights still fires on the very next ignition
+	var en = g4._spawn("drill_bot", g4.player["pos"] + Vector2i(1, 0))
+	en["hp"] = 10
+	g4._step_events = []
+	g4._hook("ignite", {"tile": en["pos"], "by": "probe"})
+	_ok(int(en["status"].get("root", 0)) == 1 and _hooks(g4._step_events, "cinder_grip").size() == 1,
+		"d5 toggle: the surviving row still fires: %s" % str(en["status"]))

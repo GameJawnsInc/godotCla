@@ -99,17 +99,25 @@ architecture below is designed to bend rather than block.
   - `godot --headless --path . --script tests/test_content.gd` — ability tags/roles,
     `Content.ARCHETYPES` cores, `base_id`, `archetypes_for`, and the effect-grammar
     lint (closed op/rider vocabulary, TERRAIN/REACTIONS/STATUSES rows, the D4
-    `DRAFT_SLOTS`/`AFFINITY_IGNORED_TAGS` shapes, plus a self-test that feeds
-    the lint deliberately bad rows and the planned rider rows)
+    `DRAFT_SLOTS`/`AFFINITY_IGNORED_TAGS` shapes, the D5 `RESONANCES` rows and
+    their reach, plus a self-test that feeds the lint deliberately bad rows
+    (including the mobility-tagged and need-1 resonances) both in the whole
+    table AND alone, so no fixture's own rule can be shadowed by the
+    one-row-per-tag rule, and the planned rider rows)
   - `godot --headless --path . --script tests/test_grammar.gd` — effect grammar
     behaviour: rider evaluation, returned outcomes, the data tables driven
-    through `Game._apply_effect` on hand-built states, and the D4 draft slots
-    (affinity/upgrade/wild candidates, the one-draw-per-slot count, focus)
+    through `Game._apply_effect` on hand-built states, the D4 draft slots
+    (affinity/upgrade/wild candidates, the one-draw-per-slot count, focus) and
+    the D5 tag counts, active set, the shipped hook row, the drop-below-need
+    toggle and the `stat` shape through an injected `_ResProbe` row (no
+    shipped row carries `stat` or `mod`, so the probe plus its
+    a-stat-row-shipped tripwire is that shape's only behaviour coverage)
   - `godot --headless --path . --script tests/test_economy.gd` — shrine economy
     and quota: config-independent main rng, shop stock filters, graft/ability/
     press/forge purchase rules, the shrine reroll (legality, price escalation,
     the cap, offer exclusion, closed slots, rng-state independence), quota
-    re-clamp, damage attribution
+    re-clamp, damage attribution, and the D5 resonances (no main-rng draw, the
+    graft + resonance stat sum, a graft mod shadowing a resonance mod)
   - `godot --headless --path . --script tests/test_regressions.gd` — replays every
     `tests/regressions/*.json` (seed, config, actions) pair: illegal/error events,
     outcome, expected event patterns; `REGRESS_STRICT=1` also checks the state
@@ -163,9 +171,10 @@ architecture below is designed to bend rather than block.
   left alone, so the printed header always names the config that actually ran.
   Callers today: `sweep_combos`, `sweep_grafts`, `sweep_tiers` (which sweeps
   the tier axis itself, so it drops `tier` from the base config and keeps the
-  other two) and `measure_bosses`; `verify_kit`, `measure_fanatic`,
-  `draft_oracle` and `sweep_packages` still build their configs inline and
-  ignore the three:
+  other two), `measure_bosses` and `sweep_resonance` (whose FREE mode takes
+  the three; its locked mode names its own kit); `verify_kit`,
+  `measure_fanatic`, `draft_oracle` and `sweep_packages` still build their
+  configs inline and ignore the three:
   - `tests/sweep_combos.gd` — locked-kit lift: every config is `{kit: K, pool: K}`,
     `lift = pair - max(single_x, single_y)` with Wilson CIs and a paired sign
     test; `SWEEP_PAIRS=a+b,c+d` selects pairs, `SWEEP_SHARD=i/n` slices the
@@ -193,6 +202,24 @@ architecture below is designed to bend rather than block.
     skip), rolls out with a fresh persona: P(win|pick) - P(win|skip), stakes
     per draft, policy regret (`ORACLE_BOT`, `ORACLE_SEEDS`, `ORACLE_SEED_FROM`,
     `ORACLE_TIER`, `ORACLE_SHARD=i/n`, `ORACLE_JSON=<path>`)
+  - `tests/sweep_resonance.gd` (D5) — per `Content.RESONANCES` row, a kit that
+    MEETS the row's threshold built from the draft pool plus tag-carrying
+    grafts, run locked beside the free-drafting config on the same seeds:
+    exposure (runs met, first floor, share of turns, breaks), firings and
+    LANDINGS, the last matched against the row's own effects because
+    `hook_uses` is charged BEFORE they run. Generic over the table with no
+    per-row special-casing. It GATES on the D5 design phase's pre-registered
+    cut line — a `hooks` row must fire at least once a run on its own kit
+    (`cinder_grip` 9.53, the cut `follow_through` 0.73); `RESONANCE_GATE=0`
+    disables, `RESONANCE_BOT` / `RESONANCE_SEEDS` / `RESONANCE_SEED_FROM` /
+    `RESONANCE_ROWS=a,b` / `RESONANCE_MODE=both|locked|free` narrow a run.
+    Caveat on locked mode, recorded in BALANCE.md and deliberately not
+    changed: `_locked_config` appends tag-carrying grafts in `Content.GRAFTS`
+    TABLE ORDER, which for fire picks `ember_sap` — whose own `ignite` hook
+    kills the body that `cinder_grip` would root, and which is scanned first.
+    Swapping it for `oil_tithe` on the same kit and seeds reads 57 landings
+    against 24, so the runner's "best case" is measured with the row's
+    worst-case partner
 - Measurement discipline: the harness changed on 2026-09-05 ("instrument v2",
   see BALANCE.md). Numbers recorded before that entry and numbers recorded
   after it are never mixed in one comparison; every runner prints a header
@@ -300,13 +327,20 @@ architecture below is designed to bend rather than block.
 - Grafts are data (`docs/PROGRESSION_REVIEW.md` §6.3 C3): every `Content.GRAFTS`
   row is `{name, desc, tags, price}` (tags a `Content.TAGS` subset, `price` an
   int >= 1 — both lint-enforced) plus exactly one of
-  `stat: {key: int}` — summed by `Game._graft_stat(key)` over the held grafts,
+  `stat: {key: int}` — summed by `Game._passive_stat(key)` over the held grafts
+  and then the active resonances (D5 renamed `_graft_stat`),
   keys `bank_cap`, `shield_cap`, `regen`, `regen_on_growth`, `growth_heal`,
   `cleanse_bloom` (`regen_on_growth` is added to regen only on the turns the
-  tender begins standing on growth; no shipped row uses it — the key exists so a
-  conditional alternative to `solar_core` can be probed in a scratch tree);
-  `mod: {key: value}` — first held value via `Game._graft_mod(key, default)`,
-  keys `floor_start_shield`, `oil_cast_discount`; or `hooks: [rows]`. There is
+  tender begins standing on growth; NOTHING uses it — no graft row, and no
+  resonance since `deep_loam` was cut, so it is a live, lint-legal ORPHAN key
+  with a `_begin_player_turn` read and no consumer, kept deliberately:
+  `docs/BALANCE.md` 2026-09-08 records that a growth-conditional charge bonus
+  is a greed subsidy at every threshold, so the key waits for a payoff shape
+  that pays on an ACT rather than on a turn spent in place);
+  `mod: {key: value}` — first held value via `Game._passive_mod(key, default)`
+  (grafts in held order, then the active resonances in table order, so a graft
+  mod shadows a resonance mod), keys `floor_start_shield`, `oil_cast_discount`;
+  or `hooks: [rows]`. There is
   no `_has_graft`: a graft that needs a new number needs a new stat/mod key and
   a table read at the site, never an id literal in `game.gd`. Ten rows today:
   `deep_cells`, `thick_bark`, `solar_core`, `verdant_pulse`, `bloom_surge`
@@ -425,8 +459,10 @@ architecture below is designed to bend rather than block.
   Kinds are `Content.HOOK_KINDS` — `ignite`, `staggered`, `cleanse`,
   `growth_planted`, `kill`, `shield_break`, `collision` — each fired at the sim
   site right after the matching `_emit`. Sources are scanned in fixed order:
-  kit slots 0..n (an `ABILITIES` row may carry `hooks`; none does yet) then
-  `player.grafts` in held order. A row is `{on, effects, cap_per_turn?, if?}`;
+  kit slots 0..n (an `ABILITIES` row may carry `hooks`; none does yet), then
+  `player.grafts` in held order, then (D5) the active resonances in
+  `Content.RESONANCES` key order, each with the resonance id as its source id.
+  A row is `{on, effects, cap_per_turn?, if?}`;
   effects are ordinary `_apply_effect` dicts aimed at the hook tile plus the
   three positional ops `damage_at {dmg}`, `status_at {status, turns}` and
   `terrain_at {kind}`. Every row that runs emits `{t: "hook", id, on, tile}`
@@ -439,7 +475,9 @@ architecture below is designed to bend rather than block.
   the same way. `tests/test_content.gd` lints every row (tags, the closed
   stat/mod key sets, hook `on` kinds, effect ops) and rejects hook effects that
   grant shield, thorns, heal or cleanse credit — the stall vector BALANCE.md
-  documents. `tests/regressions/c3_*.json` demos one rule each.
+  documents; since D5 the same `_lint_hook_row` walks the resonance hook rows,
+  so the forbidden-op list covers all three sources.
+  `tests/regressions/c3_*.json` demos one rule each.
 - Package `+` rows (C4): every `Content.PACKAGES` ability now has a `<id>+`
   row — `spore_cloud+`, `fungal_ring+`, `burrow+`, `tide+`, `steam_vent+`,
   `geyser+`, `gust+`, `updraft+`, `clear_air+`. The draft offers `<id>+` only
@@ -726,6 +764,142 @@ architecture below is designed to bend rather than block.
   `_build_defining` filter, `d4_starved_slot` under a `randi_range` draw).
   `blockb_forge_once.json` pins the third forge case — an action with no
   `variant` key at all, which is index 0.
+- Resonance (Block D5, `docs/PROGRESSION_REVIEW.md` §6.4, the last roadmap
+  item): one resonance per element, over kit and graft tags, through the hook
+  and mod layer. D5 adds a passive SOURCE, not a system — no new op, stat key,
+  mod key, hook kind, predicate, terrain key or status. `Content.RESONANCES` is
+  one row per resonating tag, `{name, desc, tag, need}` plus EXACTLY ONE of
+  `stat: {key: int}` / `mod: {key: value}` / `hooks: [rows]` — the same
+  three-way choice a `Content.GRAFTS` row makes, read by the same
+  `Game._passive_stat` / `_passive_mod` / `_hook` machinery with the ROW ID as
+  the source id, so `cap_per_turn`, `hook_uses` and `tests/tally.gd` needed no
+  change. ONE row ships, and the roadmap bullet therefore shipped as ONE
+  element, not four: `cinder_grip` (fire, need 3, hook on `ignite` ->
+  `status_at` root 1, `cap_per_turn` 3 — a machine standing on a tile as it
+  catches fire is rooted a turn). Key order is load-bearing (the hook scan
+  order after the grafts, and the order of `snapshot().resonances`); rows are
+  listed in `Content.TAGS` order, so A-before-B matters the day a second row
+  lands. TEN tags ship nothing and `sim/content.gd` records why beside the
+  table (mobility is lint-excluded; sun double-pays off the two fire cards;
+  water is an ability-side subset of displace; wind and smoke are
+  package-locked — wind 2 is met from turn one on the skyrunner kit, the exact
+  failure the roadmap bullet deferred this item on; bark's only seat fires
+  0.83 times a run and every payoff its vocabulary offers is survivability;
+  control has NO event, nothing fires when a status lands; economy is carried
+  by zero abilities) — and for the two tags that were authored a row and then
+  lost it, displace and growth, it records the measurement instead of a
+  reason. **BOTH cut rows are one dict entry away and their numbers are in
+  `docs/BALANCE.md` (2026-09-08).** `follow_through` (displace 2, hook on
+  `collision` -> `damage_at` 1, `cap_per_turn` 2) was cut in the design phase
+  on its own pre-registered falsifier: 22 hooks over 30 optimizer runs on the
+  locked displace kit against a stated cut line of 30, 21 out of sample, and
+  only 5 of the 22 landing anything — a collision that kills erases the body
+  before the hook runs, and on that kit three quarters of collisions kill. It
+  was alive at the ceiling (deeproot 8.8-9.1 hooks a run on the same kit) and
+  invisible to the band persona, which is a ceiling-only row, not the build
+  identity the block set out to ship; its levers were both dead ends (`need` 2
+  is the lint minimum and the row was active in 30/30 of those runs anyway,
+  and `cap_per_turn` never binds at 0.73 hooks a run) and displace has nowhere
+  else to sit — `collision` is the only hook kind forced movement produces,
+  and every closed stat/mod key is survivability, charge or bloom.
+  `deep_loam` (growth 3, `stat {regen_on_growth: 1}`) was implemented,
+  measured and then cut by the OWNER on the greed canary: magpie on `spiker`,
+  300 seeds a setting, against `tests/playtest.gd`'s `MAGPIE_MAX_LOWER` 0.10,
+  which trips when the Wilson LOWER bound clears 10% — row absent 38/300 =
+  12.7% [9.4, 16.9] pass, need 3 56/300 = 18.7% [14.7, 23.5] FAIL, need 4 (the
+  PRE-REGISTERED lever) 48/300 = 16.0% [12.3, 20.6] FAIL, need 5 39/300 =
+  13.0% [9.7, 17.3] pass at +0.3 POINTS (one win over the row's absence),
+  which is a pass bought by switching the row off. There is no threshold at
+  which it both clears the canary and does anything, because its canary cost
+  is proportional to its effect: it pays per
+  turn BEGUN standing on growth and the greed persona spends about twice the
+  share of its turns standing there (magpie 23.6% on tender / 26.7% on spiker
+  against optimizer 13.4% / 15.8%), so `need` changes how OFTEN a row is on
+  and never WHO it pays. A growth-conditional charge bonus is structurally a
+  greed subsidy; growth waits for a key that pays on an ACT, which the closed
+  stat/mod set does not contain. One consequence for the tables: NO shipped
+  row carries `stat` or `mod`, so both shapes are live-but-unshipped
+  vocabulary, exercised by lint fixtures and by injected `_ResProbe` rows in
+  `tests/test_grammar.gd` (six checks) and `tests/test_economy.gd` (four) —
+  and NO regression record can catch the deletion of `_passive_stat`'s or
+  `_passive_mod`'s resonance loop, so `tests/test_grammar.gd` carries a
+  tripwire that fails if such a row ever ships without those probes being
+  revisited. **The active set is derived.**
+  `Game._tag_counts()` counts tags over the held kit and the held grafts — the
+  ABILITIES row is read straight with a guarded get, never folded through
+  `Content.base_id`, because a variant row carries its base's tags verbatim, so
+  a forge or draft UPCYCLE never moves a count and an unknown sweep id counts
+  nothing. `Game._resonances()` returns the active ids in table order (a row is
+  active while `_tag_counts()[row.tag] >= row.need`) and `_resonance_rows()` is
+  the `[id, row]` seam its three readers share. Nothing is stored: a draft drop
+  or a forge scrap turns a row off between one step and the next with nothing to
+  unwind, and only those two can lower a count (grafts are only ever appended).
+  `snapshot()` gains a derived `resonances` array for the shell and the bots and
+  `state_hash()` ERASES it beside the shop swap, so a resonance can never move a
+  hash by itself — the derived-key rule the bump-8 note documents.
+  `_graft_stat` / `_graft_mod` became `_passive_stat` / `_passive_mod` in one
+  pass (nine call sites): the stat sum is grafts THEN active resonances, the mod
+  scan is grafts first, so a graft mod shadows a resonance mod (unobservable on
+  shipped data — no resonance carries a `mod` — and pinned in
+  `tests/test_economy.gd` through a subclass that injects one).
+  **The lint is where the rules live.** `tests/test_content.gd` `_lint_resonances`
+  reuses the graft shape checks (exactly one of stat|mod|hooks, the shared
+  `PASSIVE_STAT_KEYS` / `PASSIVE_MOD_KEYS`, every hook row through the existing
+  `_lint_hook_row` so `HOOK_FORBIDDEN_OPS` covers resonance hooks too) and adds
+  four D5 checks: the tag is in `Content.TAGS`, the tag is NOT in
+  `Content.AFFINITY_IGNORED_TAGS` (this is how "mobility never counts" is
+  enforced — in data, not by a tag literal in `sim/game.gd`), `need` is an int
+  >= 2, and at most one row per tag; ids must also be disjoint from the GRAFTS
+  and ABILITIES keys, which share the `hook_uses` cap namespace.
+  A resonance stat row may also not name a key in
+  `RESONANCE_FORBIDDEN_STAT_KEYS` (`cleanse_bloom` today): PASSIVE_STAT_KEYS is
+  shared with GRAFTS, where every key is PRICED and declinable, so the keys
+  that MAKE the currency are the stat-side twin of `HOOK_FORBIDDEN_OPS` — the
+  same key is a 3-bloom purchase as `bloom_surge` and a free permanent bloom
+  faucet as a resonance. `_lint_resonance_reach` fails a row ONE RUN cannot
+  meet, which is not the same as one the tables cannot: carriers are the
+  `Content.DRAFT_POOL` bases plus every graft plus the BEST SINGLE package,
+  because Block A made a package a one-per-run commitment — counting the whole
+  ABILITIES table would pass a `smoke` row at need 3 (steam_vent is
+  hydraulics, gust and clear_air aeolian) that no default run can meet. It
+  prints "resonance reach: 1 / 1 rows can be met (fire 4)" — a margin of
+  exactly one over `need`, and it is mutator-blind (under `no_lance` the true
+  ceiling is 3, so it catches dead data, not thin data). The lint SELF-TEST
+  lints every bad row BOTH in the whole table and ALONE, because `Content.TAGS`
+  has 11 entries against 23 bad fixtures and the one-row-per-tag rule was
+  standing in for six other rules' failures; the two rows whose violation is a
+  relationship are declared in `BAD_RESONANCE_PAIR_ONLY`, and the printed line
+  carries both numbers ("23 bad rows -> 37 failures (21 rejected alone)").
+  Resonance tags deliberately do NOT feed the D4 affinity set — feeding one back
+  would make the draft chase a threshold it created. Three demos:
+  `tests/regressions/d5_cinder_grip.json` (fire 3 from two kit cards plus
+  `oil_tithe`; the lance lights the oil under a coal golem, the hook roots it and
+  the golem's next action is a `{t: "rooted"}` in the fire) and the forge pair
+  `d5_upcycle_keeps_count.json` / `d5_resonance_off.json`: one seed,
+  one board and one action list differing ONLY in the forge's scrap index.
+  Its kit is [`solar_lance`, `sun_flare+corona`, `moss_filter`, `seed_bomb`]
+  plus `oil_tithe` — fire 3, one of the tags carried by a VARIANT row on
+  purpose. Scrapping `seed_bomb` upcycles `moss_filter` and takes no fire tag,
+  so the count is still 3 and the lance's ignite roots the drill bot into its
+  own fire; scrapping `sun_flare+corona` drops the count to 2, the same lance
+  lights the same oil, no hook runs, and the unrooted bot takes the D3
+  `avoid: ["fire"]` step off the tile, walks to the tender and bills it 2 —
+  that last `{t: "damage", who: "player"}` is the OFF record's positive pin,
+  because a record can pin only what happens, never that a hook did not run.
+  Each fails in plain (non-strict) mode under a targeted mutation; four were
+  run and checked (see the SIM_VERSION 14 note), and a fifth — dropping the
+  resonance loop from `_passive_stat` — passes all 96 records, which is the
+  coverage the `deep_loam` cut took with it.
+  The bots read the active set from `snapshot().resonances` and never re-derive
+  the threshold rule: `bots/optimizer.gd` `_drop_breaks_resonance` refuses a
+  draft drop that would put a lit row out (netting the incoming card's tags
+  against the dropped card's, with a fallback pass so a pick is still made when
+  every drop breaks one) and `bots/deeproot_plan.gd` scores an active row at a
+  flat `RESONANCE_POINTS`. Neither names a tag or a resonance id. The persona
+  change landed in the same bump as the content, so no `deeproot_plan` column
+  from before bump 14 is comparable to one after it — and neither is a two-row
+  bump-14 column comparable to a one-row one, because the optimizer drop guard
+  has one fewer row to protect and its drafting moved; BALANCE.md says so.
 - Run summary and effective casts (C4): `Game.effective_uses` (base id -> int)
   counts a cast only when something happened — an effect outcome fired or a
   rider ran — while `player.uses` stays the raw count. It is copied by
@@ -802,8 +976,66 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (13
-  today: Block D6 — evolve forks. Every base-pool `+` row is gone: the fifteen
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (14
+  today: Block D5 — one resonance per element. ONE `Content.RESONANCES` row
+  ships, `cinder_grip` (fire 3 -> an ignite hook that roots), and it changes
+  what happens in PLAY the moment a run's kit and grafts reach fire 3, so a
+  stored log diverges at its FIRST IGNITION after that and at nothing else —
+  a log that never reaches fire 3 replays byte for byte. Nothing else moved:
+  the row adds no main-rng draw (`tests/test_economy.gd`'s ten pinned
+  floor-entry rng states are byte-identical to bump 13's), and the derived
+  `snapshot().resonances` key is erased from the `state_hash()` view beside
+  the shop swap, so a state whose resonances changed nothing hashes exactly as
+  it did at 13 — the derived-key rule the bump-8 note documents. (Leaving
+  `resonances` in that view is a checked mutation: it fails every record in
+  strict mode.) TWO more rows were authored and CUT inside this same
+  uncommitted bump, which is why 14 is a one-row version and not a three-row
+  one. `follow_through` (displace 2, a collision hook for 1) went in the design
+  phase on its own pre-registered falsifier: 22 hooks over 30 optimizer runs on
+  the locked displace kit against a stated cut line of 30, 21 out of sample,
+  only 5 of the 22 landing anything (a collision that kills erases the body
+  before the hook runs). `deep_loam` (growth 3, `stat {regen_on_growth: 1}`)
+  went afterwards, by the owner, on the greed canary — 12.7% -> 18.7% at need
+  3 and still 16.0% at the PRE-REGISTERED lever of need 4, with need 5 passing
+  only by switching the row off. SIM_VERSION deliberately STAYED at 14 across
+  that cut: nothing outside the working tree ever ran 14, so it is a change
+  inside an uncommitted bump, exactly the precedent the D4 upgrade-slot filter
+  set at 12. `sim/content.gd` records both readings beside the table and
+  `docs/BALANCE.md` carries the numbers; re-adding either row is one dict entry.
+  The cuts are why the corpus is as quiet as it is. Against bump 13 ALL 93
+  pre-existing records are STAMP-ONLY — `sim_version` is the single differing
+  key in every one, with zero action, outcome, event-pattern or hash diffs —
+  and ALL 20 bot logs are byte-identical to their bump-13 recordings,
+  re-recorded on their personas to prove it rather than merely replayed (the
+  rule is re-record everything the change COULD have moved, not only what
+  stops replaying). Three logs had been re-recorded while `deep_loam` existed
+  and every one landed back on its bump-13 recording when the row went:
+  `det_fanatic_s3` (floor 4 in 161 turns, not 118), `det_magpie_s11` (died
+  floor 2 in 93, not floor 3 in 131) and `det_optimizer_s42` (won floor 7 in
+  123, not 93). Those three are EXACTLY the records that reach growth 3
+  (`det_fanatic_s3` at action 155, `det_magpie_s11` at 101,
+  `det_optimizer_s42` at 201, which reaches growth 4), established by probing
+  all 96 for the max tag count each run holds — the moved set and the
+  mechanism coincide with nothing left over. `c3_undertow` is the same story
+  for the other cut: its kit plus `undertow` is displace 2, it moved while
+  `follow_through` existed, and it reverted to its bump-13 hash when that row
+  went. The corpus went 93 -> 96 with three `d5_*` demos: `d5_cinder_grip`
+  (fire 3 from two kit cards plus `oil_tithe`; the lance lights the oil under
+  a coal golem and the hook roots it) and the forge pair
+  `d5_upcycle_keeps_count` / `d5_resonance_off` — one seed, one board, one
+  action list differing only in the forge's scrap index. Four targeted
+  mutations fail a record in plain (non-strict) mode: drop the resonance loop
+  from `_resonance_rows` (`d5_cinder_grip` and `d5_upcycle_keeps_count`), stop
+  `_resonances()` re-checking `need` (`d5_resonance_off`, the only demo that
+  pins a row being OFF), make `_tag_counts` skip variant ids
+  (`d5_upcycle_keeps_count`, whose kit holds `sun_flare+corona` for exactly
+  that reason) and raise `cinder_grip`'s `need` to 4. A FIFTH — dropping the
+  resonance loop from `_passive_stat` — passes all 96 records and is the
+  coverage the `deep_loam` cut took with it: with no shipped `stat` or `mod`
+  row no replay can observe either passive loop, so that rule lives in the
+  injected `_ResProbe` rows in `tests/test_grammar.gd` and
+  `tests/test_economy.gd` alone.
+  Bump 13 was Block D6 — evolve forks. Every base-pool `+` row is gone: the fifteen
   base abilities each fork into two `<base>+<word>` variants, so EVERY
   `solar_lance+`-style id in a stored log names an ability that no longer
   exists and its cast is an unknown ability. Beyond the rename the draft's

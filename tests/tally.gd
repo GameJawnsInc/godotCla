@@ -25,6 +25,17 @@ const Content := preload("res://sim/content.gd")
 ## the slot role that produced it (the draft_offer event's "slots" array), plus
 ## the drafts a skipped draft focused. That is the affinity draft's own metric -
 ## how often a build-matching slot is what the player actually takes.
+## Block D5 adds the resonance columns. A resonance hook arrives as an ordinary
+## {"t": "hook", id, on, tile} carrying a Content.RESONANCES id, so the C3 hook
+## counter would have silently mixed grafts and resonances into one
+## graft-labelled column: it is SPLIT instead (hooks_by_graft keeps the graft
+## and ability rows, hooks_by_resonance takes the resonance rows), which leaves
+## tests/sweep_grafts.gd's "hooks by graft" line meaning grafts exactly as it
+## did. Beside the hooks the tally samples the ACTIVE SET itself once a step
+## (game._resonances(), the sim's own derived rule - never re-derived here),
+## because "how often did it fire" is only half the question a free permanent
+## asks: the other half is how many runs reached it at all, from which floor,
+## and how often a draft drop or a forge scrap turned it back off.
 
 # --- actions ------------------------------------------------------------------
 var casts_by_base := {}
@@ -157,7 +168,15 @@ var screened_by_intent := {}
 ## Hook rows that ran ({"t": "hook", id, on, tile}), by source id (the graft or
 ## ability row that owns the hook) and by hook kind (the event that fired it).
 ## One count per row that ran, so a row carrying three effects still counts once.
+## Block D5 SPLIT this: a resonance is a third hook source with an id of its
+## own, and folding it in here would have made "hooks by graft" a lie in every
+## runner that prints it (tests/sweep_grafts.gd). A row whose id is a
+## Content.RESONANCES key goes to hooks_by_resonance; everything else - grafts
+## today, an ABILITIES row the day one carries hooks - stays here. The ids are
+## lint-disjoint (tests/test_content.gd), so the test is exact, and
+## hooks_by_kind still counts every hook of either source.
 var hooks_by_graft := {}
+var hooks_by_resonance := {}
 var hooks_by_kind := {}
 ## Hooks skipped by Content.HOOK_DEPTH_MAX / HOOK_STEP_CAP ({"t": "hook_capped"});
 ## the sim emits that at most once per step, so this counts steps that hit a cap.
@@ -166,7 +185,38 @@ var hook_capped := 0
 ## per turn while the graft is held.
 var tithes := 0
 
+# --- resonances (Block D5) ----------------------------------------------------
+## A resonance is free, permanent and automatic, so the numbers that decide
+## whether a row shipped well are EXPOSURE numbers, not just firing counts.
+## The active set is sampled once per step from game._resonances() - the sim's
+## own derived rule, never re-derived here - and folded into four columns:
+##   resonance_runs        runs in which the row was active at any point
+##   resonance_first_floor sum of the floor it first became active on (divide
+##                         by resonance_runs for the "first met on floor ~x"
+##                         number the design phase priced the thresholds from)
+##   resonance_turns       end_turns taken while it was active (its share of
+##                         end_turn_count is how much of a run it covered)
+##   resonance_breaks      times it went active -> inactive (a draft drop or a
+##                         forge scrap; grafts are only ever appended, so a
+##                         graft-borne count can only rise)
+## Firing counts live in hooks_by_resonance and, for a damaging row, in
+## enemy_dmg_by_src under the resonance id. A `stat` or `mod` row fires nothing
+## at all and would be READ ONLY through these four columns plus the clock
+## lines - which is exactly how the cut growth stat row was read.
+var resonance_runs := {}
+var resonance_first_floor := {}
+var resonance_turns := {}
+var resonance_breaks := {}
+
 # --- damage by raw source string ---------------------------------------------
+## NOTE (Block D5): a damaging resonance hook reaches this dict under its own
+## resonance id, exactly as a damaging graft hook (ember_sap) always has, so it
+## lands outside the strike / lance / fire families and counts as SIGNATURE
+## damage in kpis(). That is the same treatment the graft hooks get and it is
+## what makes a row's own budget falsifier readable: the per-run share of
+## enemy_dmg_by_src[<resonance id>] against the kit's total. No SHIPPED row
+## deals damage today - cinder_grip, the one row that ships, applies a status -
+## so this line is the seat a damaging row would land in, not a live column.
 var enemy_dmg_by_src := {}
 var player_dmg_by_src := {}
 var kills_by_kind := {}  # enemy death events by kind
@@ -208,6 +258,11 @@ var _eff0 := {}
 ## pick events name an ability, not an index, and a draft never offers the same
 ## id twice (Block D4), so the id is enough to attribute the pick to its slot.
 var _slot_by_offer := {}
+## Block D5 per-run resonance scratch: the active set as end_step last saw it
+## (so a change is an edge, not a level) and, per row, the floor it first went
+## active on. Committed to the four columns by finish(); never merged.
+var _res_prev: Array = []
+var _res_seen := {}
 
 
 ## Ability/source id folded onto its base. Content.base_id, NEVER
@@ -386,7 +441,10 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 		"screened":
 			_inc(screened_by_intent, String(ev.get("intent", "")))
 		"hook":
-			_inc(hooks_by_graft, String(ev.get("id", "")))
+			var hid := String(ev.get("id", ""))
+			# a resonance id never collides with a graft or ability id (the
+			# Block D5 lint), so the table read is the whole split
+			_inc(hooks_by_resonance if Content.RESONANCES.has(hid) else hooks_by_graft, hid)
 			_inc(hooks_by_kind, String(ev.get("on", "")))
 		"hook_capped":
 			hook_capped += 1
@@ -455,6 +513,22 @@ func end_step(game, action: Dictionary) -> void:
 		unspent_charge_total += _charge0
 		if _pos0 == game.map.get("shrine", Vector2i(-99, -99)):
 			shrine_turns += 1
+	# Block D5: sample the sim's own active set (game._resonances(), O(kit +
+	# grafts) and derived on read) and count the edges. Sampling AFTER the step
+	# is what makes the graft buy that crosses a threshold, and the draft drop
+	# that breaks one, land on the step that caused it.
+	var res_now: Array = game._resonances()
+	if res_now != _res_prev:
+		for rid in res_now:
+			if not _res_seen.has(rid):
+				_res_seen[rid] = game.floor_num
+		for rid in _res_prev:
+			if not res_now.has(rid):
+				_inc(resonance_breaks, String(rid))
+		_res_prev = res_now
+	if String(action.get("type", "")) == "end_turn":
+		for rid in res_now:
+			_inc(resonance_turns, String(rid))
 	if game.floor_num != _floor0:
 		_stall_flagged = false
 	if not _stall_flagged and not game.over:
@@ -470,6 +544,13 @@ func end_step(game, action: Dictionary) -> void:
 func finish(game) -> void:
 	turns_per_floor.append(game.turn)
 	runs += 1
+	# Block D5: commit the run's resonance exposure. _res_seen is per RUN, so a
+	# row that flickered on, off and on again counts one run and one first floor.
+	for rid in _res_seen:
+		_inc(resonance_runs, String(rid))
+		_inc(resonance_first_floor, String(rid), int(_res_seen[rid]))
+	_res_seen = {}
+	_res_prev = []
 	bloom_unspent += game.bloom
 	_choke_floor = -1
 	_stall_flagged = false
@@ -542,7 +623,12 @@ func merge(other) -> void:
 	_merge_dict(status_by_kind, other.status_by_kind)
 	_merge_dict(screened_by_intent, other.screened_by_intent)
 	_merge_dict(hooks_by_graft, other.hooks_by_graft)
+	_merge_dict(hooks_by_resonance, other.hooks_by_resonance)
 	_merge_dict(hooks_by_kind, other.hooks_by_kind)
+	_merge_dict(resonance_runs, other.resonance_runs)
+	_merge_dict(resonance_first_floor, other.resonance_first_floor)
+	_merge_dict(resonance_turns, other.resonance_turns)
+	_merge_dict(resonance_breaks, other.resonance_breaks)
 	hook_capped += other.hook_capped
 	tithes += other.tithes
 	_merge_dict(enemy_dmg_by_src, other.enemy_dmg_by_src)
@@ -729,13 +815,52 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 		"screened": _sum(t.screened_by_intent),
 		"screened_by_intent": t.screened_by_intent.duplicate(),
 		"enemy_fire_dmg": int(fire_dmg),
-		# graft hooks (Block C3): rows run by source id and by firing kind
+		# hooks (C3, widened at D5): "hooks" counts every hook row run - kit,
+		# graft AND resonance - because hooks_by_kind counts all three sources;
+		# the per-source split is hooks_by_graft / hooks_by_resonance below
 		"hooks": _sum(t.hooks_by_kind),
 		"hooks_by_graft": t.hooks_by_graft.duplicate(),
 		"hooks_by_kind": t.hooks_by_kind.duplicate(),
 		"hook_capped": t.hook_capped,
 		"tithes": t.tithes,
+		# resonances (Block D5): the exposure half (runs reached, first floor,
+		# turns covered, times broken) and the firing half (hooks by row, and -
+		# for a damaging row - its own enemy_dmg_by_src key)
+		"hooks_by_resonance": t.hooks_by_resonance.duplicate(),
+		"resonance_runs": t.resonance_runs.duplicate(),
+		"resonance_first_floor": t.resonance_first_floor.duplicate(),
+		"resonance_turns": t.resonance_turns.duplicate(),
+		"resonance_breaks": t.resonance_breaks.duplicate(),
 	}
+
+
+## The Block D5 resonance line: EVERY Content.RESONANCES row in table order,
+## reached or not, because a row nobody reached is exactly the failure mode the
+## design phase named (ten of the eleven tags ship nothing, and one of those
+## ten had a row that was cut on this very column) and a row
+## that prints nothing reads as a pass. Per row: runs reached of runs played,
+## the average floor it was first met on, its share of the run's end_turns, the
+## hooks it ran and the enemy damage it dealt (both 0 for a `stat` row, which
+## has nothing to fire), and the times a draft drop or a forge scrap broke it.
+## Firing counts come from hooks_by_resonance, NOT from any per-source cap
+## counter: the sim charges hook_uses BEFORE the effects run, so a counter of
+## attempts would read healthy for a row that lands nothing.
+func resonance_line(n_runs: int) -> String:
+	var n := maxf(1.0, float(n_runs))
+	var parts: Array = []
+	for rid in Content.RESONANCES:
+		var reached: int = int(resonance_runs.get(rid, 0))
+		if reached == 0:
+			parts.append("%s 0/%d" % [rid, n_runs])
+			continue
+		var fl: float = float(resonance_first_floor.get(rid, 0)) / float(reached)
+		var cover: float = _safe_div(float(resonance_turns.get(rid, 0)), float(end_turn_count))
+		var hooks: int = int(hooks_by_resonance.get(rid, 0))
+		var dmg: int = int(enemy_dmg_by_src.get(rid, 0))
+		parts.append("%s %d/%d (floor ~%.1f, %.0f%% of turns, %.2f hooks/run, %.2f dmg/run, broken %d)" % [
+			rid, reached, n_runs, fl, cover * 100.0, float(hooks) / n, float(dmg) / n,
+			int(resonance_breaks.get(rid, 0))])
+	return "resonance: %s" % ", ".join(parts)
 
 
 ## Compact report block; every line is indented so it nests under a runner's
@@ -794,8 +919,9 @@ func print_block(n_runs: int, kits: Array) -> void:
 	print("           denial: screened %.2f/run (%d total) %s  enemy fire dmg %.2f/run (%d total)" % [
 		float(_sum(screened_by_intent)) / n, _sum(screened_by_intent), str(screened_by_intent),
 		float(int(k["enemy_fire_dmg"])) / n, int(k["enemy_fire_dmg"])])
-	print("           hooks: by graft %s  by kind %s  capped %d  tithe %d" % [
-		str(hooks_by_graft), str(hooks_by_kind), hook_capped, tithes])
+	print("           hooks: by graft %s  by resonance %s  by kind %s  capped %d  tithe %d" % [
+		str(hooks_by_graft), str(hooks_by_resonance), str(hooks_by_kind), hook_capped, tithes])
+	print("           %s" % resonance_line(n_runs))
 	print("           bloom earned %.1f/run  spent %.1f/run  conversion %.2f  buys %s  grafts %s  ability buys %s  upcycles %d/%d  pickups %d  satchel_full %d" % [
 		bloom_earned / n, bloom_spent / n, k["bloom_conversion"], str(buys_by_kind), str(grafts_by_id),
 		str(ability_buys_by_id), upcycles, upcycle_abilities, item_pickups, satchel_full])

@@ -202,6 +202,46 @@ one consumable. Pods and shrines only ever hand out **base** items: the
 upgraded `+` forms exist solely through the shrine press. (Item `+` ids keep
 the plain `+` suffix - only abilities were forked into named variants.)
 
+## Elements (resonances)
+
+The status bar carries an **ELEMENTS** strip under the skies bar whenever the
+run holds a card of any resonating element. Each entry is one
+`Content.RESONANCES` row: `fire 2/3 Cinder Grip` while the element is short of
+its threshold, `FIRE 3/3 Cinder Grip` in caps and gold once it resonates. A
+run holding no card of any resonating element draws no strip and gives up no
+space for it - and since fire is the only resonating element that ships, that
+is an ORDINARY state, not a corner case: every run that starts without a fire
+card (four of the six loadouts) sees no strip until it drafts one.
+
+Whether an element is lit is read from `snapshot()["resonances"]` - the sim's
+own answer, never re-derived in the shell. Only the *count* is computed
+shell-side (`_resonance_state`), over the same two sources the sim counts: the
+tags on the kit's ability rows and the tags on the held grafts.
+
+The same readout appears on the three sheets where the count can move:
+
+- **the descent draft** - the strip is repeated under the sheet head, and any
+  card that touches a resonating element carries a clause of its own:
+  `+fire 3/3 - lights Cinder Grip` for the card that crosses the threshold,
+  `+fire 2/3 Cinder Grip` for progress toward one, and nothing at all for a
+  card of an element already lit. On a FULL kit the same card reads
+  `+fire 3/3 - would light Cinder Grip`: the draft is a swap and the drop is
+  not chosen yet, so the offer sheet cannot promise the light
+- **the drop sheet** (a full kit) - a card whose loss would put a lit element
+  out is badged **BREAKS** and says which:
+  `BREAKS Cinder Grip (fire 2/3)`. This sheet knows BOTH halves of the swap,
+  so the count is netted against the card being taken: dropping one fire card
+  to take another leaves the count where it was and is not badged. The
+  strip itself is left off that sheet - it is the taller of the two (five kit
+  cards) and the badges carry the same information. A forge scrap can break a
+  row the same way; there the status strip is what shows it afterwards
+- **the shrine** - a graft carries tags too, so its card gets the same clause
+  (`+fire 3/3 - lights Cinder Grip` on an Ember Sap or Oil Tithe offer, the
+  two fire-tagged grafts)
+
+The game-over sheet names what the run ended up resonating
+(`resonating: Cinder Grip`), and the intro card says the rule in one line.
+
 ## The descent draft
 
 Each descent opens the draft sheet: tap a card to take it (`1`-`5`, or

@@ -162,6 +162,18 @@ func _owned(id: String) -> bool:
 		or unlocked_loadouts.has(id) or unlocked_grafts.has(id)
 
 
+## Predicate evaluation. Block D5 (resonances) deliberately added NOTHING here.
+## A resonance is a pure function of the kit and the grafts, and both are
+## already stored per run by _compact, so "won a fire build" is already
+## expressible as `won_with: [solar_lance, sun_flare]` - with the exact cards
+## named, which is what an unlock ladder wants to teach. A `resonated: [ids]`
+## predicate would instead put a second copy of the threshold rule in meta/ (or
+## make Game.run_summary carry the active set), and it would add a fourth id
+## namespace to the load_from filter that keeps renamed content from bricking a
+## profile. It also has no customer: every MILESTONES row unlocks a package, a
+## mutator, a loadout or a graft, and D5 ships none of those. If a later block
+## wants a resonance milestone, the cheap shape is a `won_with` over the cards
+## that light it, not a new predicate.
 func _meets(req: Dictionary) -> bool:
 	if best_floor < int(req.get("best_floor", 0)):
 		return false

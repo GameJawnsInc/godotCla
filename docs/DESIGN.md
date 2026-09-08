@@ -407,6 +407,91 @@ tests a different build muscle so no single draft strategy trivializes it.
 - Grafts enter the combo-sweep harness the same as abilities, and can be
   pre-installed for a sweep via the run config (`tests/sweep_grafts.gd`).
 
+### Resonances (one per element)
+
+- Every ability and every graft carries **tags** — the elements: fire, growth,
+  displace, sun, water, bark, control, wind, smoke, economy, mobility. Hold
+  enough cards of one element and it **resonates**: a free, permanent rule
+  that runs for the rest of the run, with no charge cost, no Bloom cost and no
+  kit slot. It is a payoff for *committing*, not a stat stick you buy.
+- It counts the kit and the grafts together, so an element can be finished
+  with a card at a descent draft **or** with a graft at a shrine — and it
+  switches back off the moment the count drops, which a draft drop or a forge
+  scrap can do. That is the whole rule: no charges, no cooldown, no state.
+- **One ships.** It is the one element that had the reach, a verb of its own
+  to pay for, *and* a measured firing rate on the persona whose win band the
+  game is balanced against. Two more were written, built and measured, and
+  both were cut on tests written before the numbers — those are the two
+  bullets after this one, and they are worth more than the row that survived:
+  - **Cinder Grip** — *fire ×3*: a machine standing on a tile as it catches
+    fire is rooted a turn (three times a turn). Fire has been a positional
+    statement since enemies learned to path around it; this pays you for
+    lighting the oil *under* a machine instead of beside it — it cannot step
+    off, so it eats the extra burn tick and loses a step of approach. Fire has
+    exactly four carriers in the game (Solar Lance, Sun Flare, Ember Sap, Oil
+    Tithe), so ×3 is "the pyro pair plus a shrine purchase". Bosses are immune
+    the same way they are immune to every other status. Measured: it fires on
+    every ignition but only **8.4%** of those land on a body, which is +0.80
+    roots a run on a locked fire-3 kit and **0.13** a run at the reach free
+    drafting produces — a real but small payoff, and a third of what the
+    design phase predicted (BALANCE.md, bump 14). Being the only row also
+    makes its shape plain: with four carriers and ×3, only Tender and
+    Flarekeeper start with a fire card, so this is a lance-and-flare build's
+    identity rather than the game's.
+- **Displace was designed a row and it was cut**, on its own pre-registered
+  test, before the block shipped. Follow Through (*displace ×2*: every
+  collision you cause hits 1 harder, twice a turn) was meant to be the row
+  that makes the starting loadout mean something. The design phase wrote down
+  what would kill it — "fewer than 30 hooks over 30 optimizer runs on the
+  locked displace kit" — and the answer was **22**, and **21** out of sample:
+  0.73 a run against a predicted 2–6. Worse, only 5 of those 22 landed
+  anything, because a collision that kills erases the body before the hook
+  runs, and on that kit three quarters of collisions kill. Free drafting, the
+  band persona reached the threshold in 3 runs of 30 and fired the row zero
+  times. It was *not* dead at the ceiling — the search bot fired it nine times
+  a run on the same kit — but a free permanent that pays only a search bot is
+  not a build identity, and there is no smaller number to turn: the row was
+  active in every one of those runs and simply never got the geometry. Nor is
+  there anywhere else to seat it — `collision` is the only hook kind that
+  forced movement produces, and every passive stat the vocabulary offers is
+  survivability, charge or Bloom. So displace waits for vocabulary, the same
+  way control does, and the numbers are in BALANCE.md if it is ever revived.
+- **Growth was designed a row too, and the owner cut it** after the block was
+  built — on the greed canary, not on a fire rate. Deep Loam (*growth ×3*: +1
+  charge on the turns you begin standing on growth) worked exactly as
+  designed: it turned the tile you planted into income, it collided
+  productively with the surge rule, and it was the row most often switched on.
+  That was the problem. It pays **per turn spent standing on your own
+  growth**, and lingering on a floor to farm the garden *is* standing on your
+  own growth — so it paid the greedy, dawdling player about twice per turn
+  what it paid the skilled one, and the greed canary the game is gated on rose
+  from 12.7% to 18.7% wins. The threshold was the named remedy and it did not
+  work: ×4 still failed at 16.0%, even though it already cut the row's reach on
+  that loadout from 72% of runs to 30%, and ×5 passed at exactly one win above
+  the row's absence — a pass bought by not being switched on. The lesson is
+  bigger than the row: **a reward shaped as a rate over turns spent somewhere
+  you choose is a subsidy for taking your time**, and growth needs a payoff
+  that fires on an *act* (a cast, a plant, a cleanse) before it can resonate.
+  The numbers are in BALANCE.md.
+- **Ten elements ship nothing.** *Mobility* never counts — every
+  loadout is guaranteed a mobility ability, so it would be universal, and the
+  exclusion is a rule in the content lint rather than a special case in the
+  sim. *Sun* is the most reachable element in the game and shares both its
+  cards with fire, so a fire build would light two permanents off one
+  commitment. *Water* is a subset of displace on the ability side. *Wind* and
+  *smoke* are package-locked, and wind is met from turn one on the Skyrunner
+  kit — the exact failure the whole idea was held back for. *Bark*'s only
+  seat fires under once a run, and every payoff its vocabulary offers is
+  survivability, which is the stall pattern this game designs against.
+  *Control* is the one genuine omission: nothing fires when a status lands, so
+  the element has no event to hang a rule on. *Economy* is carried by no
+  ability at all — it would be bought, never built. And *displace* and
+  *growth* are the ninth and tenth: the two bullets above, rows written for
+  them, built, measured and taken back out.
+- Resonances are **not** part of what the draft's affinity slot chases: the
+  affinity set is read off the kit and the grafts only, so the draft never
+  hunts a threshold it created itself.
+
 ### Meta-progression
 
 - Permadeath; no permanent power. Milestones unlock **tech packages** of
