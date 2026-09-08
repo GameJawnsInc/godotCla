@@ -2,8 +2,8 @@
 "seed": 1,
 "config": {"bloom":6,"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#######","#..>..#","#@+...#","#.....#","#######"]},"kit":["solar_lance","seed_bomb","mycelium_dash"],"pool":["solar_lance","seed_bomb","mycelium_dash"]},
 "actions": [{"dir":[1,0],"type":"move"},{"keep":0,"scrap":1,"type":"upcycle_ability"},{"item":"item","type":"buy"}],
-"expect": {"events":[{"id":"seed_bomb","t":"upcycle_scrap"},{"id":"solar_lance+","t":"upcycle_ability"},{"id":"spore_vial","item":"item","t":"buy"}],"floor":1,"timeout":true,"turns":0,"won":false},
-"note": "the forge closes after one use (shop.forge erased) while the rest of the shrine stays open: upcycle_ability then a normal item buy",
-"sim_version": 12,
-"hash": "38949c4e9ca710019660e0c986d3d99a4e9d6d6a9e0992eb197d5dab7e8f0a7d"
+"expect": {"events":[{"id":"seed_bomb","t":"upcycle_scrap"},{"id":"solar_lance+noon","t":"upcycle_ability"},{"id":"spore_vial","item":"item","t":"buy"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "the forge closes after one use (shop.forge erased) while the rest of the shrine stays open: upcycle_ability then a normal item buy. Bump 13 (Block D6) also makes this the missing-variant pin: the stored action is {keep 0, scrap 1} with NO `variant` field, and the forge now lists one action per (keep, scrap, variant) triple over Content.variants_of(solar_lance) = [solar_lance+noon, solar_lance+pierce]. A missing index is 0 - the variant that reproduces the pre-D6 solar_lance+ row - so an old log forges what it forged then, which is exactly what the solar_lance+noon event below records; an out-of-range index is {t: illegal, action: upcycle_ability} and changes nothing",
+"sim_version": 13,
+"hash": "d7bce464865c223a03c72ded0d34874f8d8d5492dccc396d58007cd8a50b0087"
 }

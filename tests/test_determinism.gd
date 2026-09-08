@@ -15,7 +15,7 @@ const Roster := preload("res://bots/roster.gd")
 const SEEDS := [3, 11, 42]
 const RNG_SEEDS := 10
 const RNG_VARIANTS := [
-	{"kit": ["solar_lance+", "seed_bomb", "mycelium_dash", "vine_whip", "water_jet"]},
+	{"kit": ["solar_lance+noon", "seed_bomb", "mycelium_dash", "vine_whip", "water_jet"]},
 	{"grafts": ["deep_cells", "verdant_pulse", "thick_bark", "bloom_surge", "solar_core", "carapace"]},
 	{"pool": ["solar_lance", "seed_bomb", "vine_whip"]},
 	{"bloom": 9},

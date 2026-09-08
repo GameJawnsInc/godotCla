@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["##########","#.......>#","#.k......#","#.%......#","#.@k~k~..#","#........#","##########"]},"kit":["solar_lance+pierce"],"pool":["solar_lance+pierce"]},
+"actions": [{"slot":0,"target":[0,-1],"type":"ability"},{"type":"end_turn"},{"slot":0,"target":[1,0],"type":"ability"}],
+"expect": {"events":[{"id":"solar_lance+pierce","t":"ability","target":"(0, -1)"},{"id":"solar_lance+pierce","t":"ability","target":"(1, 0)"},{"amt":2,"src":"solar_lance+pierce","t":"damage","who":"smokestack"},{"t":"ignite","tile":"(4, 4)"},{"amt":2,"src":"solar_lance+pierce","t":"damage","who":"smokestack"},{"t":"ignite","tile":"(6, 4)"}],"floor":1,"timeout":true,"turns":1,"won":false},
+"note": "D6 `pierce`, the lance key: the beam no longer stops on the first body, so the east cast from (2,4) walks all four tiles of its range - smokestack (3,4) for 2, the oil at (4,4) BEHIND it lit, smokestack (5,4) for 2, the oil at (6,4) behind THAT lit. Oil a machine is standing in front of is unlightable by any other card in the base pool, which is why this is a capability and not a number: solar_lance+noon on the same board deals its 4 to the first stack and ignites nothing past it (d6_forge_variant_a and d6_forge_variant_b are that contrast on one board). Drop the key - restore the `break` after the first enemy - and the second damage and both ignites are gone, so the record fails in plain mode. The FIRST cast is the other half of the rule: fired north into the smoke at (2,3), it stops dead and the smokestack at (2,2) takes nothing, because a blocks_beam tile still ends the walk exactly as a wall does; an event pattern cannot assert an absence, so that half rides on the state hash (REGRESS_STRICT=1) and on the note",
+"sim_version": 13,
+"hash": "03ec9e6119a8b9f0c90599cbe9c9ce5856d05deef137ccb753b8620467e335b0"
+}

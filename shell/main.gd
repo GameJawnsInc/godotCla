@@ -112,7 +112,7 @@ const DRAFT_SLOT_LABEL := {
 var game
 var seed_v := 0
 var screen := "menu"  # menu | game | tutorial
-var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | up_keep | up_scrap | intro | help | shop | log | settings
+var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | up_keep | up_scrap | up_variant | intro | help | shop | log | settings
 ## Did the roll that produced the draft on screen spend an armed focus? Read
 ## off the draft_offer event, because a focus slot that found no candidate
 ## yields no FOCUS card and the snapshot cannot tell that from an ordinary
@@ -122,6 +122,10 @@ var _draft_focus_spent := false
 var mode_slot := -1
 var mode_targets: Array = []
 var mode_pick := -1
+## The forge's scrap slot, held between the up_scrap tap and the up_variant
+## sheet (Block D6: a base forks into two named variants, so a forge is a
+## three-tap choice - keep, scrap, then which fork).
+var mode_scrap := -1
 var flash := ""
 var font: Font
 var hotspots: Array = []
@@ -993,8 +997,25 @@ func _is_mobility(aid: String) -> bool:
 	return String(Content.ABILITIES.get(aid, {}).get("role", "")) == "mobility"
 
 
+## The legal forge actions for one (keep, scrap) pair, in legal_actions order -
+## which is Content.variants_of order, so entry 0 is always the variant that
+## reproduces the pre-Block-D6 "+" row. Straight off the sim: the shell never
+## builds a forge the sim would reject, and never names a variant id itself.
+func _forge_actions(keep: int, scrap: int) -> Array:
+	var out: Array = []
+	for a in _legal_of("upcycle_ability"):
+		if int(a.get("keep", -1)) == keep and int(a.get("scrap", -1)) == scrap:
+			out.append(a)
+	return out
+
+
 func _ability_press(slot: int) -> void:
 	if slot >= game.player["kit"].size():
+		return
+	if mode == "up_variant":
+		# the forge's fork sheet owns the screen: keep and scrap are already
+		# chosen, so a kit tap here would silently cast instead
+		_flash("pick which way it grows, or ESC")
 		return
 	if mode == "up_keep":
 		var can_keep := false
@@ -1013,10 +1034,19 @@ func _ability_press(slot: int) -> void:
 		if slot == mode_pick:
 			_flash("pick a DIFFERENT ability to scrap")
 			return
-		for a in _legal_of("upcycle_ability"):
-			if int(a.get("keep", -1)) == mode_pick and int(a.get("scrap", -1)) == slot:
-				_act(a)
-				return
+		# Block D6: the sim lists one forge action per (keep, scrap, VARIANT)
+		# triple, so a forked base offers two. One match acts at once (a package
+		# ability has a single "+" form); two or more open the fork sheet.
+		var acts_v := _forge_actions(mode_pick, slot)
+		if acts_v.size() == 1:
+			_act(acts_v[0])
+			return
+		if acts_v.size() > 1:
+			mode_scrap = slot
+			mode = "up_variant"
+			flash = ""
+			queue_redraw()
+			return
 		if _is_mobility(String(game.player["kit"][slot])):
 			_flash("cannot scrap your mobility ability")
 		else:
@@ -1142,6 +1172,22 @@ func _tap(tag: String) -> void:
 			_flash("the press is closed")
 	elif tag == "reroll":
 		_reroll()
+	elif tag.begins_with("forgevar:"):
+		var vi := int(tag.get_slice(":", 1))
+		var picked := false
+		for a in _forge_actions(mode_pick, mode_scrap):
+			if int(a.get("variant", 0)) == vi:
+				_act(a)
+				picked = true
+				break
+		if not picked:
+			_flash("the forge cooled")
+			mode = "normal"
+			queue_redraw()
+	elif tag == "forge_back":
+		mode = "up_scrap"
+		flash = ""
+		queue_redraw()
 	elif tag == "forge":
 		if _legal_of("upcycle_ability").is_empty():
 			_flash("the forge is cold")
@@ -1727,6 +1773,8 @@ func _draw() -> void:
 		_draw_draft(snap, vw, vh)
 	if mode == "shop":
 		_draw_shop(snap, vw, vh)
+	elif mode == "up_variant":
+		_draw_forge_variants(vw, vh)
 	elif mode == "log":
 		_draw_logsheet(vw, vh)
 	elif mode == "help":
@@ -2379,9 +2427,7 @@ func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
 		var usable: bool = int(pl["charge"]) >= live_cost and not pl["gummed"].has(i)
 		var aiming: bool = (mode == "target_dir" or mode == "target_tile") and mode_slot == i
 		_box(r, _sb_gold if aiming else _sb)
-		var icon := "ab_" + aid.trim_suffix("+")
-		if not Art.ART.has(icon):
-			icon = "ab_default"
+		var icon := _ability_icon(aid)
 		var isz := int(b * 0.68)
 		var tx := Art.tex(icon, isz)
 		if tx != null:
@@ -2392,7 +2438,9 @@ func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
 			if verdant:
 				pipc = Color(0.55, 0.9, 0.45) if usable else Color(0.4, 0.55, 0.38)
 			draw_circle(r.position + Vector2(b * 0.12 + c * b * 0.14, b * 0.88), b * 0.05, pipc)
-		if aid.ends_with("+"):
+		# Content.is_upgrade, never ends_with("+"): "solar_lance+noon" is an
+		# upgrade and does not end in "+"
+		if Content.is_upgrade(aid):
 			_txt(Vector2(r.position.x + b * 0.8, r.position.y + b * 0.24), "+", COL_GOLD, int(b * 0.3))
 		if pl["gummed"].has(i):
 			_txt_c(r.get_center().x, r.get_center().y + b * 0.12, "GUM %d" % pl["gummed"][i], COL_RED, int(b * 0.22))
@@ -2410,6 +2458,9 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 			col = COL_GOLD
 		"up_scrap":
 			msg = "Now tap the ability to SCRAP for parts (ESC cancels)"
+			col = COL_GOLD
+		"up_variant":
+			msg = "Choose which way it grows (ESC cancels)"
 			col = COL_GOLD
 		"cleanse":
 			msg = "CLEANSE: tap corruption beside you (or D-pad)"
@@ -2457,6 +2508,9 @@ func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
 	for i in 2:
 		var ir := Rect2(dx + (b + gap) * 2 * i, dy + (b + gap) * 2, b, b)
 		if i < items.size():
+			# ITEM ids, not ability ids: Content.ITEMS keeps the plain "+"
+			# convention (the shrine press is not forked by Block D6), so
+			# trim_suffix / ends_with on "+" stay exactly right here.
 			_icon_button(ir, "it_" + String(items[i]).trim_suffix("+"), "item:%d" % i, false)
 			if String(items[i]).ends_with("+"):
 				_txt(Vector2(ir.position.x + ir.size.x * 0.74, ir.position.y + ir.size.y * 0.3), "+", COL_GOLD, int(ir.size.y * 0.3))
@@ -2524,9 +2578,19 @@ func _sheet(vw: float, vh: float, title: String) -> float:
 	return vh * 0.16
 
 
+## Sprite key for an ability id. The art is per BASE ability, so the id is
+## folded with Content.base_id and NEVER with trim_suffix("+"): since Block D6
+## an upgrade id is "<base>+<variant>", which trim_suffix returns unchanged -
+## every variant would miss its icon and fall back to "ab_default".
+func _ability_icon(aid: String) -> String:
+	var icon := "ab_" + Content.base_id(aid)
+	return icon if Art.ART.has(icon) else "ab_default"
+
+
 func _ability_desc(aid: String) -> String:
-	# exact id first (the + forms carry their own rider clause), base as fallback
-	return Content.ABILITY_DESC.get(aid, Content.ABILITY_DESC.get(aid.trim_suffix("+"), ""))
+	# exact id first (every variant carries its own line), base as fallback -
+	# base_id, never trim_suffix("+"): Block D6 variant ids do not end in "+"
+	return Content.ABILITY_DESC.get(aid, Content.ABILITY_DESC.get(Content.base_id(aid), ""))
 
 
 ## A choice card: icon, title with cost, and the effect explained inline -
@@ -2568,9 +2632,7 @@ func _shop_cards(snap: Dictionary) -> Array:
 			"Restore 4 HP (up to your maximum)", "buy:heal"])
 	if shop.has("ability"):
 		var aid: String = shop["ability"]
-		var icon := "ab_" + aid.trim_suffix("+")
-		if not Art.ART.has(icon):
-			icon = "ab_default"
+		var icon := _ability_icon(aid)
 		var adesc := _ability_desc(aid)
 		cards.append([icon, "%s  -  %d bloom" % [Content.ABILITIES[aid]["name"], game.shop_cost("ability")],
 			adesc, "buy:ability"])
@@ -2602,11 +2664,13 @@ func _shop_cards(snap: Dictionary) -> Array:
 		var kid := String(pits[k])
 		var mat := String(pits[1 - k])
 		cards.append(["it_" + kid, "Press %s  -  %d bloom" % [Content.ITEMS[kid]["name"], game.shop_cost("press")],
+			# kid + "+" is an ITEM id: the press is not forked, so Content.ITEMS
+			# keeps the plain "+" convention (Block D6 forked abilities only)
 			"Press %s into it: makes %s" % [Content.ITEMS[mat]["name"], Content.ITEMS[kid + "+"]["name"]],
 			"upcycle:%d" % k])
 	if not _legal_of("upcycle_ability").is_empty():
 		cards.append(["ab_default", "Forge an ability  -  %d bloom" % game.shop_cost("forge"),
-			"One kit ability becomes its + form; scrap another (never mobility) - once per floor", "forge"])
+			"One kit ability grows into one of its two named variants; scrap another (never mobility) - once per floor", "forge"])
 	# the repeatable sink: the card shows while a re-drawable slot is stocked
 	# (a bought-out counter can never be redrawn) and prices itself from the
 	# derived snapshot keys - the price climbs with every spin
@@ -2642,6 +2706,40 @@ func _draw_shop(snap: Dictionary, vw: float, vh: float) -> void:
 	if cards.is_empty():
 		_txt(Vector2(vw * 0.06, y + vh * 0.04), "The shrine is boarded up.", COL_DIM_TEXT, int(vh * 0.024))
 	_button(Rect2(vw * 0.25, vh * 0.885, vw * 0.5, vh * 0.07), "CLOSE", "close", int(vh * 0.026))
+
+
+## The forge's fork sheet (Block D6). A base ability upgrades into one of two
+## named variants and the shrine sells both, so once keep and scrap are picked
+## the last question is which way it grows. The cards come straight off the
+## legal forge actions for that (keep, scrap) pair, so the sheet can only ever
+## offer a fork the sim would accept - and the sibling a floor's parity draft
+## cannot deal is always here.
+func _draw_forge_variants(vw: float, vh: float) -> void:
+	hotspots.clear()
+	var y := _sheet(vw, vh, "THE FORGE")
+	var kit: Array = game.player["kit"]
+	var acts := _forge_actions(mode_pick, mode_scrap)
+	var kid := String(kit[mode_pick]) if mode_pick >= 0 and mode_pick < kit.size() else ""
+	var sid := String(kit[mode_scrap]) if mode_scrap >= 0 and mode_scrap < kit.size() else ""
+	_txt_fit(Vector2(vw * 0.06, y), "Scrapping %s to grow %s - choose one:" % [
+		Content.ABILITIES.get(sid, {}).get("name", sid),
+		Content.ABILITIES.get(kid, {}).get("name", kid)],
+		COL_TEXT, int(vh * 0.024), vw * 0.88)
+	y += vh * 0.055
+	var variants: Array = Content.variants_of(Content.base_id(kid))
+	var bh := vh * 0.115
+	for a in acts:
+		var vi := int(a.get("variant", 0))
+		if vi < 0 or vi >= variants.size():
+			continue
+		var vid := String(variants[vi])
+		var adef: Dictionary = Content.ABILITIES[vid]
+		_card(Rect2(vw * 0.05, y, vw * 0.9, bh), _ability_icon(vid),
+			"%s  -  %d charge" % [adef["name"], adef["cost"]],
+			_ability_desc(vid), "forgevar:%d" % vi, vh)
+		y += bh + vh * 0.02
+	y += vh * 0.015
+	_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.6), "BACK", "forge_back", int(bh * 0.24))
 
 
 func _draw_logsheet(vw: float, vh: float) -> void:
@@ -2686,13 +2784,11 @@ func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 		for i in snap["draft_offers"].size():
 			var aid: String = snap["draft_offers"][i]
 			var adef: Dictionary = Content.ABILITIES[aid]
-			var icon := "ab_" + aid.trim_suffix("+")
-			if not Art.ART.has(icon):
-				icon = "ab_default"
+			var icon := _ability_icon(aid)
 			var role := String(slots[i]) if i < slots.size() else ""
 			# the badge already says UPGRADE when the slot was the upgrade one;
 			# a "+" card off a wild slot still needs the word in its title
-			var up := "  (upgrade)" if aid.ends_with("+") and role != "upgrade" else ""
+			var up := "  (upgrade)" if Content.is_upgrade(aid) and role != "upgrade" else ""
 			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), icon,
 				"%s  —  %d charge%s" % [adef["name"], adef["cost"], up],
 				_ability_desc(aid), "draft:%d" % i, vh, String(DRAFT_SLOT_LABEL.get(role, "")))
@@ -2706,9 +2802,7 @@ func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 		_txt_fit(Vector2(vw * 0.06, y), "Kit is full - tap what to DROP for it:", COL_RED, int(vh * 0.024), vw * 0.88); y += vh * 0.05
 		for i in snap["player"]["kit"].size():
 			var kid: String = snap["player"]["kit"][i]
-			var kicon := "ab_" + kid.trim_suffix("+")
-			if not Art.ART.has(kicon):
-				kicon = "ab_default"
+			var kicon := _ability_icon(kid)
 			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), kicon,
 				Content.ABILITIES[kid]["name"], _ability_desc(kid), "drop:%d" % i, vh)
 			y += bh + vh * 0.02
@@ -2793,7 +2887,7 @@ func _draw_intro(vw: float, vh: float) -> void:
 		["The stairs are DORMANT until you green the floor's quota.", COL_GOLD],
 		["Cast FROM growth: it fuels the ability (-1 charge, tile spent).", COL_TEXT],
 		["SPIKED enemies (golems, elites) hurt to punch - use abilities.", COL_TEXT],
-		["Shrines UPCYCLE: press 2 items into one, forge an ability to +.", COL_TEXT],
+		["Shrines UPCYCLE: press 2 items into one, forge an ability into one of its two variants.", COL_TEXT],
 		["Swarming drill bots WELD into hulks - break the pair up first.", COL_RED],
 		["Green growth heals you while you stand on it.", COL_TEXT],
 		["", COL_TEXT],

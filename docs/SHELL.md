@@ -199,7 +199,8 @@ The two free D-pad corner slots are the satchel: tap a stocked item to
 use it (free action - the turn does not advance), hold it to read what
 it does. Supply pods drop when a room blooms and shrines always stock
 one consumable. Pods and shrines only ever hand out **base** items: the
-upgraded `+` forms exist solely through the shrine press.
+upgraded `+` forms exist solely through the shrine press. (Item `+` ids keep
+the plain `+` suffix - only abilities were forked into named variants.)
 
 ## The descent draft
 
@@ -210,12 +211,14 @@ carries the **slot** that rolled it, gold on its right edge, straight off
 
 - **AFFINITY** - shares a tag with what you already carry (kit *and*
   grafts), so it feeds the build you are on
-- **UPGRADE** - the `+` form of an ability in your kit
+- **UPGRADE** - an upgrade of an ability in your kit (one of its two named
+  variants; which one is decided by the floor you are entering, and the forge
+  sells the other)
 - **WILD** - anything in the run's pool, build or no build
 - **FOCUS** - the extra affinity offer a previous skip bought
 
 The three slots are always dealt in that order (Wide Draft adds a fourth,
-wild; Upgrades Only makes every card a `+` form), so the sheet asks the
+wild; Upgrades Only makes every card an upgrade), so the sheet asks the
 same three questions every floor and the labels say which is which.
 
 The skip button is the draft's answer to a bad hand - it reads
@@ -227,7 +230,7 @@ draft whether you take a card or not, and the log line
 promise across the floor.
 
 A focus slot can find nothing left to offer - under Upgrades Only a
-three-ability kit has exactly three `+` forms and the ordinary slots take
+three-ability kit has exactly three upgrade candidates and the ordinary slots take
 them all - and then the roll spends the focus and deals no FOCUS card. The
 sheet says so ("Your skip found nothing left to focus on") rather than
 reading as an ordinary draft: it takes that from the `draft_offer` event's
@@ -252,9 +255,16 @@ or item card is still shown with its price and flashes when tapped:
   is a choice, not a shopping list.
 - **item** - one base consumable
 - **press** - two held items become the `+` form of the one you keep
-- **forge** - one kit ability becomes its `+` form and another is scrapped
-  for parts. Once per floor: using it closes the forge until the next
-  shrine, and a mobility ability can never be the scrap.
+- **forge** - one kit ability grows into an upgrade of itself and another is
+  scrapped for parts. Once per floor: using it closes the forge until the next
+  shrine, and a mobility ability can never be the scrap. Since Block D6 the
+  forge is a **three-tap** choice: tap what to keep, tap what to scrap, then
+  pick which of the two named variants that ability grows into off a card
+  sheet that shows both in full (a package ability has only one upgrade and
+  forges straight away on the second tap; `ESC` backs out of any step, and
+  the sheet's BACK button returns to the scrap tap). The forge is the way to
+  reach the sibling the current floor's draft cannot deal - the descent draft
+  offers only one variant per base, alternating by floor.
 - **reroll** (only under the Spinning Shrine mutator; a default run's sheet
   has no reroll card) - "Reroll (price) - n left": redraws the ability, graft and
   item cards in one go, each from the same table the floor stocked them

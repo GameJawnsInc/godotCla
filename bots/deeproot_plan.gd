@@ -34,12 +34,13 @@ extends "res://bots/deeproot.gd"
 const SETUP_OPS := [
 	"grow_radius", "grow_wall", "convert_radius", "apply_status", "aoe_status",
 	"create_terrain", "push_line", "push_all", "wash_push", "wash_all", "pull",
-	"teleport", "undim",
+	"pull_line", "teleport", "undim",
 ]
 ## The shove family: ops that displace an enemy along a line the caster picks.
 const PUSH_OPS := ["push_line", "push_all", "wash_push", "wash_all"]
-## Ops that displace an enemy at all (PUSH_OPS plus the lash).
-const DISPLACE_OPS := ["push_line", "push_all", "wash_push", "wash_all", "pull"]
+## Ops that displace an enemy at all (PUSH_OPS plus the two pulls - `pull`, the
+## lash, and Block D6's `pull_line`, the rake that hauls a whole line).
+const DISPLACE_OPS := ["push_line", "push_all", "wash_push", "wash_all", "pull", "pull_line"]
 ## Round-robin cap on follow-up ability actions enumerated after a setup.
 const PLAN_FOLLOWUPS := 12
 ## Follow-up clones one decision may spend in total, consumed in candidate
@@ -316,7 +317,8 @@ func _option_terms(g) -> Dictionary:
 	return t
 
 
-## Content.ABILITIES row for a held id, the base row when a "+" form has none.
+## Content.ABILITIES row for a held id, the base row when an upgrade has none.
+## Already base_id-based, so Block D6 variant ids need no change here.
 func _adef(aid: String) -> Dictionary:
 	return Content.ABILITIES.get(aid, Content.ABILITIES.get(Content.base_id(aid), {}))
 
@@ -392,7 +394,11 @@ func _pinnable(g, adef: Dictionary, op: String) -> Array:
 				var e = _enemy_at_tile(g, ppos + d)
 				if e != null and not _massive(e) and _blocked(g, ppos + d + d):
 					out.append(e["id"])
-		"pull":
+		# both pulls read the same way: an enemy on an axis within reach that
+		# has something solid behind it once it has been hauled a tile closer.
+		# `pull_line` takes a dir target rather than an enemy_line one, and
+		# every enemy it could reach still lies on one of those four axes.
+		"pull", "pull_line":
 			for e in g.enemies:
 				var delta: Vector2i = e["pos"] - ppos
 				if delta.x != 0 and delta.y != 0:

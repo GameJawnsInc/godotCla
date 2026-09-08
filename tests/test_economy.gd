@@ -60,12 +60,22 @@ extends SceneTree
 ##     rng.state untouched; and a Game subclass that swaps only the two D3
 ##     entry points back (the reference BFS for _chase_step, _screened false)
 ##     drives the optimizer over seeds 1..10 to the rng.state recorded at
-##     every floor entry (RNG_FLOOR_ENTRY_BUMP12) - so nothing outside those
+##     every floor entry (RNG_FLOOR_ENTRY_BUMP13) - so nothing outside those
 ##     two functions moved a draw
 ##  n) Block D4 (bump 12): the draft draws moved on purpose (exactly one
 ##     main-rng draw per slot, see tests/test_grammar.gd (d)), so the
 ##     floor-entry pins were re-recorded on this tree; the Game.new pins (k)
 ##     are untouched - the draft happens after floor 1
+##  o) Block D6 (bump 13, evolve forks): the shrine forge offers BOTH variants
+##     of the kept ability, so legal_actions lists one upcycle_ability per
+##     (keep, scrap, variant) triple - every listed triple resolves, none
+##     scraps mobility, none names an already-upgraded keep or an out-of-range
+##     index, all of them cost the one forge price (a fork is a choice, not a
+##     price tier), the once-per-floor rule and the tier markup are unchanged,
+##     and listing or forging spends no main-rng draw. The floor-entry pins
+##     were re-recorded again: the draw COUNT per draft slot is still one, but
+##     the universe now holds both siblings of every held base, so each index
+##     resolves differently (see the note on RNG_FLOOR_ENTRY_BUMP13)
 ## Run: godot --headless --path . --script tests/test_economy.gd
 
 const Content := preload("res://sim/content.gd")
@@ -104,17 +114,32 @@ const RNG_STATE_BUMP8 := [
 ## AFFINITY_IGNORED_TAGS filter: the draw COUNT is what these guard and it is
 ## untouched (one per slot), but a filtered candidate list resolves each index
 ## differently, so the persona plays a different run from its first draft.
+## RE-PINNED FOR BUMP 13 (Block D6, evolve forks) for the same reason: the
+## draw count is still exactly one per slot, but the draft universe now holds
+## BOTH variants of every held base and the upgrade slot deals the parity one,
+## so each index resolves to a different ability and the persona plays a
+## different run from its first draft on.
+## THESE VALUES DEPEND ON bots/optimizer.gd, WHICH THIS BUMP ALSO TOUCHES,
+## and they have now been RE-STAMPED for the converted bot: the persona's
+## _pref_rank reads Content.base_id / Content.is_upgrade instead of
+## trim_suffix("+") / ends_with("+"), so a variant offer ranks one step above
+## its base again instead of falling off DRAFT_PREF as "unlisted". Five of the
+## ten seeds moved when that landed (seeds 3, 5, 6, 7 and 8 - three of them
+## reaching a different number of floors), which is the whole point of the
+## pins: they are how a bot-side suffix bug shows up as numbers. Re-stamp
+## by running an optimizer run per seed on RefGame below and printing
+## rng.state at Game.new and after every floor entry.
 ## From here on, anything that moves one of these is a stray main-rng draw.
-const RNG_FLOOR_ENTRY_BUMP12 := [
-	[5089575408282122190, -184513544007953650, 8759944363161018601, 2868822161275640310, -8152873371107847509, -2237507896994325889],
+const RNG_FLOOR_ENTRY_BUMP13 := [
+	[5089575408282122190, -184513544007953650, 8759944363161018601, 2868822161275640310, -8152873371107847509],
 	[-1543445859615755461, -8411093148249300473, 1787517375204971321, 8582635207152789512],
 	[5249088221260300708, -8668300741929293400, 4694250479173219183, 5574227338355628461, -3061484965246952852, -1172107250573503496],
-	[-7365291246896200391, 9118581067688907677, 4174390183580078064, 4074606386311278477, -8986578202114716473, 7519982563720124719, 2737900482653066824],
+	[-7365291246896200391, 9118581067688907677, 4174390183580078064, -5937068460318379825, 516707025151674802, -3494329032662390890, 3201227568282568284],
 	[-4307724339993763098, -3504797669898524666, 6961354990307791117, 464051487255323640, -4057801299652768257, 7021950593982289331, -3832266116403619108],
-	[-5880482361733646265, -808239912685928521, -4338090631578911018, -8046437620736313008, 4196872015560688783, -422735934883274349],
-	[-2810552436854674636, 5839575857474482460, 4565013434687613195, -1843283859693427995, -7995792451489974632],
-	[-1230729324925988375, 1420908871602353461, 6357929784085942264, 5554448959087268275, -5917609727036472808, 4900310370508734588, 2386930102486495348],
-	[2921800532955938594, 1587407093833056826, 3824933404910214398, -8432045276868733401, 2928439803460290418],
+	[-5880482361733646265, -808239912685928521, -4338090631578911018, -8046437620736313008, 4196872015560688783, -422735934883274349, -1941129409381335253],
+	[-2810552436854674636, 5839575857474482460, 4565013434687613195, -1843283859693427995, -7995792451489974632, -174968855415995460],
+	[-1230729324925988375, 1420908871602353461, 6357929784085942264, -926346255672728079, -6150833711807613437, -7107847693446950901, -8495234952923389292],
+	[2921800532955938594, 1587407093833056826, 3824933404910214398, 3934717501292175332, 3378600504722340502, -5312019873132383350, 1260004648369663161],
 	[2473378904339026979, 8392605424486942015, 2657003823126323915, 5422367580079282869, 8572526701641051724],
 ]
 
@@ -175,6 +200,7 @@ func _init() -> void:
 	_check_reroll_redraw()
 	_check_reroll_state()
 	_check_d3_rng_untouched()
+	_check_d6_forge_actions()
 	if failures.is_empty():
 		print("economy: OK (%d checks)" % checks)
 		quit(0)
@@ -264,7 +290,7 @@ static func _has_action(acts: Array, type: String, keys: Dictionary = {}) -> boo
 
 func _check_rng_independence() -> void:
 	var variants: Array = [
-		{"kit": ["solar_lance+", "seed_bomb", "mycelium_dash", "vine_whip", "water_jet"]},
+		{"kit": ["solar_lance+noon", "seed_bomb", "mycelium_dash", "vine_whip", "water_jet"]},
 		{"grafts": Content.GRAFTS.keys()},
 		{"grafts": ["solar_core"]},  # prices are pure table reads: never an rng draw
 		{"pool": ["solar_lance", "seed_bomb", "vine_whip"]},
@@ -286,7 +312,7 @@ func _check_rng_independence() -> void:
 # --- b) stock filter ----------------------------------------------------------
 
 func _check_stock_filter() -> void:
-	var kit := ["solar_lance+", "seed_bomb", "mycelium_dash"]
+	var kit := ["solar_lance+noon", "seed_bomb", "mycelium_dash"]
 	# every graft but the last pre-installed: the one remaining is the only offer
 	var all_but_last: Array = Content.GRAFTS.keys().slice(0, Content.GRAFTS.size() - 1)
 	var last: String = Content.GRAFTS.keys()[Content.GRAFTS.size() - 1]
@@ -306,6 +332,8 @@ func _check_stock_filter() -> void:
 			bad_keys += 1
 		if not shop.has("ability") or shop["ability"] == "solar_lance" or kit.has(shop["ability"]):
 			bad_ability += 1
+		# ITEMS keep the plain "+" convention: the press is not the Block D6
+		# ability forge, so ends_with("+") is right on an item id
 		if not shop.has("item") or String(shop["item"]).ends_with("+"):
 			bad_item += 1
 		var gr: Array = shop.get("grafts", [])
@@ -358,12 +386,17 @@ func _check_pods_and_shops_in_play() -> void:
 			actions += 1
 			if game.floor_num != last_floor:
 				last_floor = game.floor_num
+				# items keep the plain "+" convention (not forked by Block D6)
 				if game.shop.has("item") and String(game.shop["item"]).ends_with("+"):
 					plus_shop_items += 1
 				if game.shop.has("ability"):
 					var aid := String(game.shop["ability"])
-					if game.player["kit"].has(aid) or game.player["kit"].has(aid + "+"):
-						owned_base_offers += 1
+					# an ability base is excluded when ANY of its variants is
+					# held, so fold the kit onto base ids
+					for kid in game.player["kit"]:
+						if Content.base_id(String(kid)) == aid:
+							owned_base_offers += 1
+							break
 			for t in game.terrain:
 				if game.terrain[t]["kind"] == "supply":
 					var key := "%d:%d:%s" % [seed_v, game.floor_num, str(t)]
@@ -702,7 +735,7 @@ func _check_press_forge_boarded() -> void:
 	# forge once
 	var bloom_before: int = g.bloom
 	var evs: Array = g.step({"type": "upcycle_ability", "keep": 0, "scrap": 1})
-	_ok(not _events_of(evs, "upcycle_ability").is_empty() and g.player["kit"] == ["solar_lance+", "mycelium_dash"],
+	_ok(not _events_of(evs, "upcycle_ability").is_empty() and g.player["kit"] == ["solar_lance+noon", "mycelium_dash"],
 		"forge: kit %s events %s" % [str(g.player["kit"]), str(evs)])
 	_ok(g.bloom == bloom_before - Content.SHOP_COSTS["forge"], "forge: bloom %d -> %d" % [bloom_before, g.bloom])
 	_ok(not g.shop.has("forge"), "forge: shop.forge survived a use")
@@ -1125,8 +1158,8 @@ func _check_d1_ability_cost() -> void:
 	_ok(bad.is_empty(), "ability_cost unchanged for every row on/off growth: %s" % str(bad))
 	# the surged cost-1 rows and sun_flare(+) named: 1 / 1 and 2 / 1
 	g.terrain[p] = {"kind": "growth"}
-	_ok(g.ability_cost("grow_spike") == 1 and g.ability_cost("water_jet") == 1 and g.ability_cost("seed_bomb+") == 1
-		and g.ability_cost("sun_flare") == 1 and g.ability_cost("sun_flare+") == 1 and g.ability_cost("seed_bomb") == 1,
+	_ok(g.ability_cost("grow_spike") == 1 and g.ability_cost("water_jet") == 1 and g.ability_cost("seed_bomb+tangle") == 1
+		and g.ability_cost("sun_flare") == 1 and g.ability_cost("sun_flare+corona") == 1 and g.ability_cost("seed_bomb") == 1,
 		"on growth: stat-surged cost-1 rows stay 1, cost-2 rows drop to 1")
 	g.terrain.erase(p)
 	_ok(g.ability_cost("grow_spike") == 1 and g.ability_cost("water_jet") == 1 and g.ability_cost("sun_flare") == 2 and g.ability_cost("seed_bomb") == 2,
@@ -1312,6 +1345,7 @@ func _check_reroll_redraw() -> void:
 		# the redraw obeys the stock rule: pool ids not held, unowned grafts, base items
 		if not g.draft_pool.has(g.shop["ability"]) or g.player["kit"].has(g.shop["ability"]):
 			bad_cands += 1
+		# items are not forked: the plain "+" convention holds here
 		if String(g.shop["item"]).ends_with("+") or not Content.ITEMS.has(g.shop["item"]):
 			bad_cands += 1
 		if rev["ability"] != g.shop["ability"] or rev["grafts"] != g.shop["grafts"] or rev["item"] != g.shop["item"]:
@@ -1489,7 +1523,7 @@ func _check_d3_rng_untouched() -> void:
 	var seeds_checked := 0
 	var floors_checked := 0
 	var moved := 0
-	for i in range(RNG_FLOOR_ENTRY_BUMP12.size()):
+	for i in range(RNG_FLOOR_ENTRY_BUMP13.size()):
 		var s := i + 1
 		var rg = RefGame.new(s)
 		var bot = Roster.make("optimizer", s)
@@ -1506,7 +1540,7 @@ func _check_d3_rng_untouched() -> void:
 				last_floor = rg.floor_num
 				states.append(rg.rng.state)
 		seeds_checked += 1
-		var want: Array = RNG_FLOOR_ENTRY_BUMP12[i]
+		var want: Array = RNG_FLOOR_ENTRY_BUMP13[i]
 		if states.size() != want.size():
 			moved += 1
 			failures.append("floor-entry pins: seed %d reached %d floors, the pinned run reached %d" % [s, states.size(), want.size()])
@@ -1517,6 +1551,78 @@ func _check_d3_rng_untouched() -> void:
 				moved += 1
 				if moved <= 3:
 					failures.append("floor-entry pins: seed %d floor %d state %d, pinned %d" % [s, f + 1, int(states[f]), int(want[f])])
-	_ok(moved == 0, "RefGame optimizer run: rng.state at every floor entry matches the bump-12 pins (%d seeds, %d floor entries, %d moved)" % [seeds_checked, floors_checked, moved])
+	_ok(moved == 0, "RefGame optimizer run: rng.state at every floor entry matches the bump-13 pins (%d seeds, %d floor entries, %d moved)" % [seeds_checked, floors_checked, moved])
 	_ok(RefGame.new(1).rng.state == int(RNG_STATE_BUMP8[0]) and Game.new(1).rng.state == int(RNG_STATE_BUMP8[0]), "RefGame and Game share the Game.new pins")
 	print("d3 rng: floor-entry pins %d seeds / %d entries, %d moved" % [seeds_checked, floors_checked, moved])
+
+
+# --- Block D6: the forge branch of legal_actions -------------------------------
+## The shrine forge now offers BOTH variants of the kept ability, so the
+## action carries a `variant` index and legal_actions lists one action per
+## (keep, scrap, variant) triple. Everything else about the branch is
+## unchanged: shop-gated, priced through shop_cost("forge") with the tier
+## markup, once per floor, never scraps a mobility ability, needs a kit of 2+,
+## and every listed action must be affordable.
+func _check_d6_forge_actions() -> void:
+	var kit := ["solar_lance", "seed_bomb", "mycelium_dash"]
+	var g = Game.new(1, {"bloom": 20, "kit": kit})
+	g.player["pos"] = g.map["shrine"]
+	var acts: Array = g.legal_actions()
+	var triples := {}
+	var bad_scrap := 0
+	var bad_keep := 0
+	var bad_index := 0
+	for a in acts:
+		if String(a.get("type", "")) != "upcycle_ability":
+			continue
+		var keep := int(a["keep"])
+		var scrap := int(a["scrap"])
+		var v := int(a.get("variant", -1))
+		triples["%d/%d/%d" % [keep, scrap, v]] = true
+		if String(kit[scrap]) == "mycelium_dash":
+			bad_scrap += 1
+		if Content.is_upgrade(String(kit[keep])) or Content.variants_of(String(kit[keep])).is_empty():
+			bad_keep += 1
+		if v < 0 or v >= Content.variants_of(String(kit[keep])).size():
+			bad_index += 1
+	_ok(triples.size() == 8 and bad_scrap == 0 and bad_keep == 0 and bad_index == 0,
+		"D6 forge branch: %d triples, %d mobility scraps, %d bad keeps, %d bad indices" % [
+			triples.size(), bad_scrap, bad_keep, bad_index])
+	# every listed triple is actually legal (nothing illegal is offered)
+	var accepted := 0
+	for key in triples:
+		var parts: PackedStringArray = String(key).split("/")
+		var gg = Game.new(1, {"bloom": 20, "kit": kit})
+		gg.player["pos"] = gg.map["shrine"]
+		var evs: Array = gg.step({"type": "upcycle_ability", "keep": int(parts[0]), "scrap": int(parts[1]), "variant": int(parts[2])})
+		if _events_of(evs, "illegal").is_empty() and not _events_of(evs, "upcycle_ability").is_empty():
+			accepted += 1
+	_ok(accepted == 8, "D6 forge branch: %d / 8 listed triples resolve" % accepted)
+	# price: still one forge price, whichever variant (a fork is a choice, not
+	# a price tier), and the tier markup still applies
+	var before: int = g.bloom
+	g.step({"type": "upcycle_ability", "keep": 0, "scrap": 1, "variant": 1})
+	_ok(g.bloom == before - Content.SHOP_COSTS["forge"], "D6 forge branch: variant 1 costs the plain forge price (%d)" % (before - g.bloom))
+	_ok(not _has_action(g.legal_actions(), "upcycle_ability"), "D6 forge branch: still once per floor")
+	var gt = Game.new(1, {"bloom": 20, "kit": kit, "tier": 5})
+	gt.player["pos"] = gt.map["shrine"]
+	var bt: int = gt.bloom
+	gt.step({"type": "upcycle_ability", "keep": 0, "scrap": 1, "variant": 1})
+	_ok(gt.bloom == bt - Content.SHOP_COSTS["forge"] - 1, "D6 forge branch: the tier markup still applies (%d)" % (bt - gt.bloom))
+	# a purse that covers nothing lists nothing
+	var gp = Game.new(1, {"bloom": 0, "kit": kit})
+	gp.player["pos"] = gp.map["shrine"]
+	_ok(not _has_action(gp.legal_actions(), "upcycle_ability"), "D6 forge branch: an empty purse lists no forge action")
+	# a kit whose only upgradable entry is already a variant lists nothing
+	var gu = Game.new(1, {"bloom": 20, "kit": ["solar_lance+noon", "seed_bomb+tangle"]})
+	gu.player["pos"] = gu.map["shrine"]
+	_ok(not _has_action(gu.legal_actions(), "upcycle_ability"), "D6 forge branch: an all-variant kit lists no forge action")
+	# the forge listing never touches the rng
+	var gr = Game.new(1, {"bloom": 20, "kit": kit})
+	gr.player["pos"] = gr.map["shrine"]
+	var st: int = gr.rng.state
+	gr.legal_actions()
+	gr.step({"type": "upcycle_ability", "keep": 1, "scrap": 0, "variant": 1})
+	_ok(gr.rng.state == st and gr.player["kit"] == ["seed_bomb+reclaim", "mycelium_dash"],
+		"D6 forge branch: listing and forging spend no main-rng draw: %s" % str(gr.player["kit"]))
+	print("d6 forge: %d (keep, scrap, variant) triples on a 3-ability kit, all legal, one price" % triples.size())

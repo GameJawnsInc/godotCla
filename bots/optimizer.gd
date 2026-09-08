@@ -12,8 +12,11 @@ const CONTENT := preload("res://sim/content.gd")
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
 ## Ability preference, best first: this ranks the draft offers. Base ids only;
-## a "+" form inherits its base's place and ranks just above it (see
-## _pref_rank).
+## an upgrade inherits its base's place and ranks just above it (see
+## _pref_rank). Since Block D6 an upgrade id is "<base>+<variant>", so the two
+## siblings of a fork share one rank and the earlier offer wins the tie -
+## deterministic, and a deliberate abstention: this persona has no opinion on
+## which fork is better, and the sweeps that answer that question lock the kit.
 const DRAFT_PREF := [
 	"sun_flare", "grow_spike", "geyser", "thorn_shield", "water_jet",
 	"tide", "sap_snare", "moss_filter", "spore_cloud", "gust", "vine_whip",
@@ -25,7 +28,9 @@ const DRAFT_PREF := [
 ## Effect ops that put damage on an enemy tile. _est_dmg reads their "dmg"
 ## (plus the rider arithmetic around it) and ignores every other op - a bot
 ## guess, not a sim call, so it stays cheap enough for every candidate.
-const DMG_OPS := ["damage", "aoe_damage", "lance", "pull"]
+## "pull_line" is the Block D6 rake (vine_whip+rake): a pull that runs down a
+## line, so its "dmg" is read exactly like `pull`'s.
+const DMG_OPS := ["damage", "aoe_damage", "lance", "pull", "pull_line"]
 
 
 func get_bot_name() -> String:
@@ -288,7 +293,7 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 	var best_pick := -1
 	# unlisted offers rank after every listed id (still pickable when nothing
 	# listed is on the table); the sentinel is huge so some offer always wins
-	# over skipping - a "+" of anything beats its plain form (r * 2 - 1)
+	# over skipping - an upgrade of anything beats its plain form (r * 2 - 1)
 	var best_rank := 1 << 30
 	for i in offers.size():
 		var r: int = _pref_rank(String(offers[i]))
@@ -324,12 +329,16 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 
 ## Rank of an ability id in DRAFT_PREF; lower is better. Unlisted ids rank
 ## after everything listed. The doubled scale leaves each base one step of
-## room so its "+" form ranks strictly better than the plain one.
+## room so an upgrade ranks strictly better than the plain base.
+## Block D6: read through Content.base_id / Content.is_upgrade, NEVER
+## trim_suffix("+") / ends_with("+") - a variant id ("grow_spike+impale") is
+## returned unchanged by trim_suffix and would fall off DRAFT_PREF entirely,
+## collapsing this persona's whole draft preference to "unlisted".
 func _pref_rank(aid: String) -> int:
-	var r: int = DRAFT_PREF.find(String(aid).trim_suffix("+"))
+	var r: int = DRAFT_PREF.find(CONTENT.base_id(String(aid)))
 	if r == -1:
 		r = DRAFT_PREF.size()
-	return r * 2 - (1 if String(aid).ends_with("+") else 0)
+	return r * 2 - (1 if CONTENT.is_upgrade(String(aid)) else 0)
 
 
 ## Base ids this persona never drops or scraps, from the run's loadout row
@@ -635,7 +644,8 @@ func _growth_adj_count(snap: Dictionary, pos: Vector2i) -> int:
 
 
 ## Kit slot id as written, upgrade suffix and all: _est_dmg needs the exact
-## row, and "grow_spike+" is not "grow_spike" (_kit_id strips the suffix).
+## row, and "grow_spike+impale" is not "grow_spike" (_kit_id folds it onto the
+## base).
 func _kit_full_id(snap: Dictionary, slot: int) -> String:
 	return String(snap["player"]["kit"][slot])
 

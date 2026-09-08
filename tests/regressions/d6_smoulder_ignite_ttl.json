@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#######","#....>#","#.@...#","#.....#","#######"],"terrain":[{"kind":"oil","pos":[2,2]}]},"kit":["sun_flare+smoulder"],"pool":["sun_flare+smoulder"]},
+"actions": [{"slot":0,"target":[2,2],"type":"ability"},{"type":"end_turn"},{"type":"end_turn"},{"type":"end_turn"},{"type":"end_turn"},{"type":"end_turn"}],
+"expect": {"events":[{"id":"sun_flare+smoulder","t":"ability"},{"t":"ignite","tile":"(2, 2)"},{"amt":1,"src":"fire","t":"damage","who":"player"},{"amt":1,"src":"fire","t":"damage","who":"player"},{"amt":1,"src":"fire","t":"damage","who":"player"},{"amt":1,"src":"fire","t":"damage","who":"player"},{"t":"ash","tile":"(2, 2)"}],"floor":1,"timeout":true,"turns":5,"won":false},
+"note": "D6 `ignite_ttl`, the aoe_damage key (sun_flare+smoulder): how long the fires THIS effect lights burn. The tender stands on oil and flares; the tile it is standing on lights with ttl 4 instead of the TERRAIN row's 2, so it ticks 1 on the tender for FOUR environment phases and only then becomes ash. Drop the override and the same cast lights a ttl-2 fire: two ticks, and patterns 5 and 6 are never found, so the record fails in plain mode. The record also prices the fork honestly - a long burn stands in the tender's way exactly as long as it stands in the pack's, and four turns of fire is four turns of pending corruption (Content.counts_as_corruption) before the ash the floor still has to be cleaned of. Nothing else about ignition moves: the ignite event, out.ignited, the ignite hook and the REACTIONS rows are untouched, and a fire that SPREADS from an overridden tile takes the table ttl so a long burn never propagates its length",
+"sim_version": 13,
+"hash": "f7e5965ffe6bcc2274ef3223ae1b1e272f7a238daab94b8cac123772d5954f2c"
+}

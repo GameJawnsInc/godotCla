@@ -5,6 +5,15 @@ extends SceneTree
 ## 3) ARCHETYPES cores and package requirements reference real ids
 ## 4) every draftable ability is in some archetype core, or is mobility/utility
 ## 5) base_id() round-trips; archetypes_for(DRAFT_POOL) = the package-free set
+## 5b) Block D6 evolve forks: every upgrade id is "<base>+<word>" (a forked
+##    base) or "<base>+" (a package base, not forked); Content.variants_of is
+##    derived from an ABILITIES scan and agrees with one done here, a base has
+##    1 or 2 variants (2 for each of the fifteen forked bases, 1 for each of
+##    the nine package bases), a variant carries its base's tags and role
+##    exactly (cost deliberately NOT checked - a fork may keep the base cost
+##    where its sibling cut it), Content.variant_for is a pure parity index
+##    into variants_of, every row has an ABILITY_DESC line, and every new D6
+##    key/op is declared in OP_KEYS and carried by a shipped row
 ## 7) SHOP_COSTS prices every shrine service (press, forge, reroll) with an
 ##    int >= 1, SHOP_REROLL_CAP is an int >= 1 and SHOP_REROLL_STEP an int >= 0
 ##    (Block D2); every base ITEMS id has a "+" form (the press can upcycle
@@ -57,9 +66,10 @@ const Content := preload("res://sim/content.gd")
 ## An effect dict may carry these, "op", and the rider keys below - nothing
 ## else, so a typo fails the lint instead of silently no-opping in play.
 const OP_KEYS := {
-	"lance": ["dmg", "clear_smog_bonus", "ignite"],
+	"lance": ["dmg", "clear_smog_bonus", "ignite", "pierce"],
 	"grow_radius": ["radius"],
 	"pull": ["dist", "dmg"],
+	"pull_line": ["dist", "dmg"],
 	"wash_push": ["push", "collision_dmg"],
 	"wash_all": ["push", "collision_dmg"],
 	"push_line": ["dist", "clear_smoke"],
@@ -74,9 +84,9 @@ const OP_KEYS := {
 	"thorns": ["dmg", "turns"],
 	"anchor": ["turns"],
 	"undim": ["amount"],
-	"aoe_status": ["status", "turns", "radius"],
-	"aoe_damage": ["dmg", "radius", "ignite"],
-	"convert_radius": ["radius"],
+	"aoe_status": ["status", "turns", "radius", "center"],
+	"aoe_damage": ["dmg", "radius", "ignite", "ignite_ttl"],
+	"convert_radius": ["radius", "kind", "ttl"],
 	"apply_status": ["status", "turns"],
 	"damage": ["dmg"],
 	"status_target": ["status", "turns", "who"],
@@ -90,11 +100,33 @@ const RIDER_KEYS := ["if", "per", "bonus", "then"]
 ## are the numeric effect keys a stat surge may add to (Game._apply_effect).
 const SURGE_KEYS := ["cost", "dmg", "push", "collision_dmg", "radius", "dist", "turns", "ttl"]
 ## Ops whose damage runs through Game._bonus_dmg.
-const BONUS_OPS := ["aoe_damage", "lance", "damage", "wash_push", "wash_all", "push_line", "push_all", "pull"]
+const BONUS_OPS := ["aoe_damage", "lance", "damage", "wash_push", "wash_all", "push_line", "push_all", "pull", "pull_line"]
 ## Ops that read the parent outcome and are therefore legal only inside "then".
 const THEN_ONLY_OPS := ["status_target"]
 const STATUS_OPS := ["aoe_status", "apply_status", "status_target"]
 const WHO_VALUES := ["affected", "on_planted"]
+## Closed values of the Block D6 aoe_status "center" key: the tile the radius
+## is measured from ("self" = the tender, the default and the pre-D6 rule).
+const CENTER_VALUES := ["self", "target"]
+## Block D6 vocabulary: every new effect key, and the op that reads it. The
+## budget is closed - a key here must be read by Game._apply_effect AND
+## carried by at least one shipped ABILITIES row, or it is dead vocabulary
+## (checked in section 14 below).
+const D6_NEW_KEYS := {
+	"pierce": "lance",
+	"center": "aoe_status",
+	"ignite_ttl": "aoe_damage",
+	"kind": "convert_radius",
+	"ttl": "convert_radius",
+}
+const D6_NEW_OPS := ["pull_line"]
+## The fifteen base-pool abilities Block D6 forks into two variants each; the
+## nine package abilities keep their single "+" form.
+const D6_FORKED_BASES := [
+	"solar_lance", "seed_bomb", "vine_whip", "water_jet", "mycelium_dash",
+	"root_wall", "pollen_burst", "sun_flare", "thorn_shield", "overgrowth",
+	"sap_snare", "grow_spike", "bramble_coat", "anchor_roots", "moss_filter",
+]
 const IF_PREDS := ["target_on", "target_adjacent", "self_on", "dim", "casts_this_turn_min"]
 const IF_PREDS_THEN := ["outcome", "outcome_crossed"]  # then-effect "if" only
 const OUTCOME_COUNTERS := ["hit", "ignited", "pushed", "collided", "converted", "planted", "washed", "statused"]
@@ -207,6 +239,17 @@ func _init() -> void:
 		var role: String = str(Content.ABILITIES[aid].get("role", ""))
 		if role != "mobility" and role != "utility":
 			failures.append("%s (role %s) appears in no archetype core" % [aid, role])
+	var bad_targets: Array = []
+	for aid in Content.ABILITIES:
+		var t := String(Content.ABILITIES[aid].get("target", ""))
+		if not Content.TARGET_SHAPES.has(t):
+			bad_targets.append("%s: target '%s' not in TARGET_SHAPES" % [aid, t])
+	failures.append_array(bad_targets)
+	var shapes := {}
+	for aid in Content.ABILITIES:
+		shapes[String(Content.ABILITIES[aid]["target"])] = true
+	print("target shapes: %d of %d in use (%s)" % [
+		shapes.size(), Content.TARGET_SHAPES.size(), ", ".join(shapes.keys())])
 	print("abilities: %d (%d '+' forms), archetypes: %d, draftable: %d" % [
 		Content.ABILITIES.size(), plus_count, Content.ARCHETYPES.size(), draftable.size()])
 	print("uncovered by any archetype core (mobility/utility allowed): %s" % str(uncovered))
@@ -218,8 +261,13 @@ func _init() -> void:
 			failures.append("base_id(%s) = '%s' still carries '+'" % [aid, base])
 		if Content.base_id(base) != base:
 			failures.append("base_id not idempotent on '%s'" % aid)
-		if not aid.begins_with(base) or (aid != base and aid != base + "+"):
+		# Block D6: an upgrade id is "<base>+<word>" (the word ^[a-z]+$, never
+		# a second "+"), so the pre-D6 "aid == base + \"+\"" shape is gone
+		if aid != base and not _valid_variant_id(String(aid), base):
 			failures.append("base_id(%s) = '%s' does not round-trip" % [aid, base])
+
+	# 5b) Block D6 evolve forks: variants_of / is_upgrade / variant_for
+	failures.append_array(_lint_variants())
 
 	# 6) archetypes_for(DRAFT_POOL) is exactly the package-free set, in key order
 	var expected: Array = []
@@ -252,6 +300,9 @@ func _init() -> void:
 	if not (Content.SHOP_REROLL_STEP is int) or Content.SHOP_REROLL_STEP < 0:
 		failures.append("SHOP_REROLL_STEP must be an int >= 0, got %s" % str(Content.SHOP_REROLL_STEP))
 	var base_items := 0
+	# ITEMS keep the plain "+" convention - the shrine press is not the Block
+	# D6 ability forge and item rows are NOT forked - so ends_with("+") and
+	# trim_suffix("+") stay correct on an item id and only on an item id
 	for iid in Content.ITEMS.keys():
 		if String(iid).ends_with("+"):
 			if not Content.ITEMS.has(String(iid).trim_suffix("+")):
@@ -403,6 +454,7 @@ func _lint_effect(eff, where: String, in_then: bool) -> Array:
 	# grow_radius always draws the plus, so its radius is honoured from 1 up
 	if op == "grow_radius" and not (eff.get("radius", 0) is int and int(eff.get("radius", 0)) >= 1):
 		out.append("%s: grow_radius radius must be an int >= 1" % where)
+	out.append_array(_lint_d6_keys(eff, op, where))
 	if eff.has("if"):
 		out.append_array(_lint_if(eff["if"], "%s if" % where, in_then))
 	if eff.has("per"):
@@ -418,6 +470,44 @@ func _lint_effect(eff, where: String, in_then: bool) -> Array:
 			var subs: Array = eff["then"]
 			for i in range(subs.size()):
 				out.append_array(_lint_effect(subs[i], "%s then %d" % [where, i], true))
+	return out
+
+
+## Block D6 key vocabulary, checked wherever an effect is linted:
+##   pierce      lance only, a bool
+##   center      aoe_status only, a CENTER_VALUES string
+##   ignite_ttl  aoe_damage only, an int >= 1
+##   kind        convert_radius only, a Content.TERRAIN key, and NEVER a
+##               corruption row: a player-made corruption tile is a bloom
+##               faucet and, because _act_cleanse credits `greened`
+##               unconditionally, a green-gate faucet too
+##   ttl         convert_radius only, an int >= 1; required when `kind` names
+##               a decaying kind whose table ttl is 0 (roots - its TERRAIN row
+##               leaves the length to the creator), rejected without a `kind`
+## (OP_KEYS already rejects each key on the wrong op; this is the value half.)
+func _lint_d6_keys(eff: Dictionary, op: String, where: String) -> Array:
+	var out: Array = []
+	if op == "lance" and eff.has("pierce") and not (eff["pierce"] is bool):
+		out.append("%s: pierce must be a bool" % where)
+	if op == "aoe_status" and not CENTER_VALUES.has(String(eff.get("center", "self"))):
+		out.append("%s: center '%s' not in %s" % [where, str(eff.get("center")), str(CENTER_VALUES)])
+	if op == "aoe_damage" and eff.has("ignite_ttl") \
+			and not (eff["ignite_ttl"] is int and int(eff["ignite_ttl"]) >= 1):
+		out.append("%s: ignite_ttl must be an int >= 1" % where)
+	if op == "convert_radius":
+		if eff.has("ttl") and not eff.has("kind"):
+			out.append("%s: convert_radius ttl without a kind is dead data" % where)
+		if eff.has("ttl") and not (eff["ttl"] is int and int(eff["ttl"]) >= 1):
+			out.append("%s: convert_radius ttl must be an int >= 1" % where)
+		if eff.has("kind"):
+			var ck := String(eff["kind"])
+			if not Content.TERRAIN.has(ck):
+				out.append("%s: convert_radius kind '%s' not in Content.TERRAIN" % [where, ck])
+			elif bool(Content.TERRAIN[ck].get("corruption", false)):
+				out.append("%s: convert_radius kind '%s' is corruption - no variant may create corruption" % [where, ck])
+			elif bool(Content.TERRAIN[ck].get("decays", false)) and int(Content.TERRAIN[ck].get("ttl", 0)) == 0 \
+					and not eff.has("ttl"):
+				out.append("%s: convert_radius kind '%s' decays with a table ttl of 0 and needs its own ttl" % [where, ck])
 	return out
 
 
@@ -559,8 +649,10 @@ func _lint_tables() -> Array:
 		if bool(row.get("decays", false)) and int(row.get("ttl", 0)) < 0:
 			out.append("TERRAIN %s: decays with a negative ttl" % kind)
 		out.append_array(_lint_terrain_bools(kind, row))
-		# convert_radius only ever turns corruption into growth, so a
-		# convertible row that is not corruption would be dead data
+		# convert_radius turns corruption into growth or (Block D6, the
+		# `kind` key) into another non-corruption kind, so a convertible row
+		# that is not corruption would still be dead data. The reverse -
+		# converting INTO corruption - is rejected by _lint_d6_keys.
 		if row.has("convertible") and not (row["convertible"] is bool):
 			out.append("TERRAIN %s: convertible must be a bool" % kind)
 		elif bool(row.get("convertible", false)) and not bool(row.get("corruption", false)):
@@ -621,6 +713,137 @@ func _lint_tables() -> Array:
 	return out
 
 
+# --- 5b) Block D6 evolve forks ------------------------------------------------
+
+## Is `aid` a well-formed upgrade id for `base`? Two legal shapes, and only
+## these - Content.base_id cuts at the first "+", so anything else would fold
+## onto a base while reading as something the table never named:
+##   "<base>+<word>"  a Block D6 fork variant, word ^[a-z]+$, no second "+"
+##   "<base>+"        the plain package upgrade (the nine PACKAGES abilities
+##                    are not forked and keep their single "+" row)
+## Which shape a given base must use is checked per base in _lint_variants.
+static func _valid_variant_id(aid: String, base: String) -> bool:
+	if not aid.begins_with(base + "+"):
+		return false
+	var word: String = aid.substr(base.length() + 1)
+	if word.find("+") >= 0:
+		return false
+	if word.is_empty():
+		return true  # the plain package "+" form
+	for i in word.length():
+		var c: String = word[i]
+		if c < "a" or c > "z":
+			return false
+	return true
+
+
+## Block D6: the fork machinery as data.
+##   - every variant id is "<base>+<word>" and its base is in ABILITIES
+##   - Content.variants_of is DERIVED (a scan of ABILITIES), so it agrees
+##     exactly with a scan done here - never a hand-maintained second list
+##   - a base has 1 or 2 variants, never more: exactly 2 for each of the
+##     fifteen forked base-pool abilities, exactly 1 for each of the nine
+##     package abilities, and >= 1 for every DRAFT_POOL and PACKAGES base
+##   - a variant carries its base's tags and role EXACTLY (cost is
+##     deliberately not checked: five B rows keep the base cost where A cut
+##     it, and two sit at the base cost where A is cheaper)
+##   - Content.is_upgrade agrees with base_id, and variant_for is a pure
+##     parity index into variants_of with no rng
+##   - every ABILITIES row, variants included, has an ABILITY_DESC line
+##   - every new Block D6 key/op is carried by at least one shipped row
+func _lint_variants() -> Array:
+	var out: Array = []
+	var scanned := {}
+	for aid in Content.ABILITIES.keys():
+		var key := String(aid)
+		var base: String = Content.base_id(key)
+		if Content.is_upgrade(key) != (base != key):
+			out.append("is_upgrade(%s) disagrees with base_id" % key)
+		if base == key:
+			continue
+		if not Content.ABILITIES.has(base):
+			out.append("variant %s: base '%s' missing from ABILITIES" % [key, base])
+			continue
+		if not _valid_variant_id(key, base):
+			out.append("variant %s: id is not '<base>+<word>' with word ^[a-z]+$" % key)
+		var adef: Dictionary = Content.ABILITIES[key]
+		var bdef: Dictionary = Content.ABILITIES[base]
+		if adef.get("tags", []) != bdef.get("tags", []):
+			out.append("variant %s: tags %s differ from base %s" % [key, str(adef.get("tags")), str(bdef.get("tags"))])
+		if adef.get("role", "") != bdef.get("role", ""):
+			out.append("variant %s: role '%s' differs from base '%s'" % [key, str(adef.get("role")), str(bdef.get("role"))])
+		if not scanned.has(base):
+			scanned[base] = []
+		scanned[base].append(key)
+	# variants_of is derived, not a stored list: it must reproduce the scan
+	for base in scanned:
+		var got: Array = Content.variants_of(String(base))
+		if got != scanned[base]:
+			out.append("variants_of(%s) = %s, table scan says %s" % [base, str(got), str(scanned[base])])
+		if got.size() > 2:
+			out.append("variants_of(%s) has %d entries (1 or 2)" % [base, got.size()])
+		# variant_for is parity over that list, and nothing else
+		for parity in range(0, 8):
+			var want: String = String(got[parity % got.size()])
+			if Content.variant_for(String(base), parity) != want:
+				out.append("variant_for(%s, %d) = '%s', expected '%s'" % [
+					base, parity, Content.variant_for(String(base), parity), want])
+	for base in D6_FORKED_BASES:
+		var fv: Array = Content.variants_of(String(base))
+		if fv.size() != 2:
+			out.append("forked base %s has %d variants, expected 2" % [base, fv.size()])
+		for v in fv:
+			# a forked base never keeps the plain "<base>+" key: every one of
+			# its variants is named, so no id in the game both ends with "+"
+			# and is an ability
+			if String(v) == String(base) + "+":
+				out.append("forked base %s still carries the plain '+' key" % base)
+	for pkg in Content.PACKAGES.keys():
+		for aid in Content.PACKAGES[pkg]:
+			var pv: Array = Content.variants_of(String(aid))
+			if pv != [String(aid) + "+"]:
+				out.append("package base %s has variants %s, expected ['%s+'] (packages are not forked)" % [
+					aid, str(pv), aid])
+	for aid in Content.DRAFT_POOL:
+		if Content.variants_of(String(aid)).is_empty():
+			out.append("draft pool base %s has no upgrade variant" % aid)
+	if Content.variant_for("no_such_ability", 3) != "":
+		out.append("variant_for on a base with no variant must return ''")
+	# every row, variants included, has a description line
+	for aid in Content.ABILITIES.keys():
+		if not Content.ABILITY_DESC.has(aid):
+			out.append("ABILITY_DESC has no line for '%s'" % aid)
+	# the D6 vocabulary budget is closed AND spent: every new key and op is
+	# carried by a shipped row (dead vocabulary is a data error)
+	var key_users := {}
+	var op_users := {}
+	for aid in Content.ABILITIES.keys():
+		for eff in Content.ABILITIES[aid].get("effects", []):
+			var op := String(eff.get("op", ""))
+			if D6_NEW_OPS.has(op):
+				op_users[op] = true
+			for k in D6_NEW_KEYS:
+				if eff.has(k) and String(D6_NEW_KEYS[k]) == op:
+					key_users[k] = true
+	for k in D6_NEW_KEYS:
+		if not key_users.has(k):
+			out.append("Block D6 key '%s' (op %s) is carried by no shipped row" % [k, str(D6_NEW_KEYS[k])])
+		if not OP_KEYS.get(String(D6_NEW_KEYS[k]), []).has(k):
+			out.append("Block D6 key '%s' is not declared on op '%s' in OP_KEYS" % [k, str(D6_NEW_KEYS[k])])
+	for op in D6_NEW_OPS:
+		if not op_users.has(op):
+			out.append("Block D6 op '%s' is used by no shipped row" % op)
+		if not OP_KEYS.has(op):
+			out.append("Block D6 op '%s' is not in OP_KEYS" % op)
+	var forked := 0
+	for base in scanned:
+		if scanned[base].size() == 2:
+			forked += 1
+	print("variants: %d bases carry an upgrade (%d forked into 2, %d package singles); ABILITY_DESC %d rows" % [
+		scanned.size(), forked, scanned.size() - forked, Content.ABILITY_DESC.size()])
+	return out
+
+
 ## Rows the lint MUST reject, one violation each; the id is the failure prefix.
 ## Kept here rather than in content so the check never needs a broken game.
 const BAD_ROWS := {
@@ -656,6 +879,23 @@ const BAD_ROWS := {
 	"xw_surge_on_effect": {"effects": [{"op": "damage", "dmg": 1, "surge": {"dmg": 1}}]},
 	"xx_plant_origin_kind": {"effects": [{"op": "teleport"}, {"op": "plant_origin", "kind": "lava"}]},
 	"xy_plant_origin_key": {"effects": [{"op": "plant_origin", "kind": "growth", "ttl": 2}]},
+	# Block D6 vocabulary: one fixture per bad shape
+	"y1_pierce_not_bool": {"effects": [{"op": "lance", "dmg": 2, "clear_smog_bonus": 0,
+		"ignite": true, "pierce": 1}]},
+	"y2_pierce_wrong_op": {"effects": [{"op": "damage", "dmg": 1, "pierce": true}]},
+	"y3_center_value": {"effects": [{"op": "aoe_status", "status": "stun", "turns": 1,
+		"radius": 2, "center": "enemy"}]},
+	"y4_center_wrong_op": {"effects": [{"op": "aoe_damage", "dmg": 1, "radius": 2, "center": "target"}]},
+	"y5_ignite_ttl_zero": {"effects": [{"op": "aoe_damage", "dmg": 1, "radius": 2,
+		"ignite": true, "ignite_ttl": 0}]},
+	"y6_ignite_ttl_wrong_op": {"effects": [{"op": "lance", "dmg": 2, "clear_smog_bonus": 0,
+		"ignite": true, "ignite_ttl": 4}]},
+	"y7_convert_kind_unknown": {"effects": [{"op": "convert_radius", "radius": 1, "kind": "lava"}]},
+	"y8_convert_kind_corruption": {"effects": [{"op": "convert_radius", "radius": 1, "kind": "oil"}]},
+	"y9_convert_decaying_no_ttl": {"effects": [{"op": "convert_radius", "radius": 1, "kind": "roots"}]},
+	"ya_convert_ttl_no_kind": {"effects": [{"op": "convert_radius", "radius": 1, "ttl": 3}]},
+	"yb_convert_ttl_zero": {"effects": [{"op": "convert_radius", "radius": 1, "kind": "roots", "ttl": 0}]},
+	"yc_pull_line_key": {"effects": [{"op": "pull_line", "dist": 2, "dmg": 2, "radius": 1}]},
 }
 
 ## Rows the lint MUST accept: the Block C2 rider rows exactly as the review
@@ -691,6 +931,17 @@ const GOOD_ROWS := {
 	"gm_surge_then_only": {"surge": {"turns": 1}, "effects": [{"op": "grow_radius", "radius": 1, "then": [
 		{"op": "status_target", "status": "root", "turns": 1, "who": "on_planted"}]}]},
 	"gn_spore_trail": {"effects": [{"op": "teleport"}, {"op": "plant_origin", "kind": "growth"}]},
+	# Block D6: the six new vocabulary items as shipped
+	"go_pierce": {"effects": [{"op": "lance", "dmg": 2, "clear_smog_bonus": 0,
+		"ignite": true, "pierce": true}]},
+	"gp_pull_line": {"effects": [{"op": "pull_line", "dist": 2, "dmg": 2,
+		"bonus": {"dmg": 1, "if": [{"target_on": ["fire"]}]}}]},
+	"gq_center": {"effects": [{"op": "aoe_status", "status": "stun", "turns": 1,
+		"radius": 2, "center": "target"}]},
+	"gr_ignite_ttl": {"effects": [{"op": "aoe_damage", "dmg": 1, "radius": 2,
+		"ignite": true, "ignite_ttl": 4}]},
+	"gs_convert_kind_ttl": {"effects": [{"op": "convert_radius", "radius": 1, "kind": "roots", "ttl": 3}]},
+	"gt_convert_default": {"effects": [{"op": "convert_radius", "radius": 2}]},
 }
 
 
@@ -944,7 +1195,9 @@ func _lint_mutators(muts: Dictionary) -> Array:
 					out.append("%s: config %s must be a non-empty Array" % [where, k])
 				else:
 					for aid in v:
-						if not (aid is String) or not Content.ABILITIES.has(aid) or String(aid).ends_with("+"):
+						# Block D6: a variant id is "<base>+<word>", so the base
+						# test is Content.is_upgrade, never ends_with("+")
+						if not (aid is String) or not Content.ABILITIES.has(aid) or Content.is_upgrade(String(aid)):
 							out.append("%s: config %s entry %s is not a base ability id" % [where, k, str(aid)])
 			elif MUTATOR_BOOL_KEYS.has(k):
 				if not (v is bool):
@@ -967,7 +1220,7 @@ const BAD_MUTATORS := {
 	"bool_as_int": {"name": "x", "desc": "x", "config": {"shop": 0}},
 	"ban_not_array": {"name": "x", "desc": "x", "config": {"pool_ban": "solar_lance"}},
 	"ban_unknown_id": {"name": "x", "desc": "x", "config": {"pool_ban": ["laser_lance"]}},
-	"ban_plus_form": {"name": "x", "desc": "x", "config": {"pool_ban": ["solar_lance+"]}},
+	"ban_plus_form": {"name": "x", "desc": "x", "config": {"pool_ban": ["solar_lance+noon"]}},
 	"extra_row_key": {"name": "x", "desc": "x", "config": {"kit_max": 3}, "hooks": []},
 }
 const GOOD_MUTATORS := {
@@ -1070,7 +1323,7 @@ const BAD_LOADOUTS := {
 	"two_ids": {"name": "x", "desc": "x", "kit": ["seed_bomb", "mycelium_dash"], "protect": [], "requires": {}},
 	"four_ids": {"name": "x", "desc": "x", "kit": ["solar_lance", "seed_bomb", "mycelium_dash", "vine_whip"], "protect": [], "requires": {}},
 	"unknown_id": {"name": "x", "desc": "x", "kit": ["laser_lance", "seed_bomb", "mycelium_dash"], "protect": [], "requires": {}},
-	"plus_form": {"name": "x", "desc": "x", "kit": ["solar_lance+", "seed_bomb", "mycelium_dash"], "protect": [], "requires": {}},
+	"plus_form": {"name": "x", "desc": "x", "kit": ["solar_lance+noon", "seed_bomb", "mycelium_dash"], "protect": [], "requires": {}},
 	"no_mobility": {"name": "x", "desc": "x", "kit": ["solar_lance", "seed_bomb", "vine_whip"], "protect": [], "requires": {}},
 	"two_mobility": {"name": "x", "desc": "x", "kit": ["updraft", "seed_bomb", "mycelium_dash"], "protect": [], "requires": {}},
 	"no_seed_bomb": {"name": "x", "desc": "x", "kit": ["solar_lance", "vine_whip", "mycelium_dash"], "protect": [], "requires": {}},

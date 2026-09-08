@@ -179,14 +179,41 @@ func _init() -> void:
 		"the forge refuses to scrap the mobility ability")
 	_check(shell3.flash == "cannot scrap your mobility ability", "...and says why")
 	shell3._ability_press(1)
-	_check(shell3.game.player["kit"].size() == ksz - 1 and String(shell3.game.player["kit"][0]).ends_with("+"),
-		"forge upgrades one ability and scraps another")
+	# Block D6: solar_lance is a FORKED base, so the sim lists one forge action
+	# per (keep, scrap, variant) triple and the scrap tap opens the fork sheet
+	# instead of forging. The kit is unchanged until a variant is tapped.
+	_check(shell3.mode == "up_variant" and shell3.game.player["kit"].size() == ksz,
+		"a forked base opens the fork sheet on the scrap tap")
+	_check(shell3._forge_actions(0, 1).size() == 2,
+		"the fork sheet offers both variants of a forked base")
+	shell3._tap("forgevar:0")
+	# Content.is_upgrade, never ends_with("+"): a variant id is "<base>+<word>"
+	_check(shell3.game.player["kit"].size() == ksz - 1
+			and Content.is_upgrade(String(shell3.game.player["kit"][0]))
+			and Content.base_id(String(shell3.game.player["kit"][0])) == "solar_lance",
+		"forge upgrades one ability into the chosen variant and scraps another")
 	_check(not shell3.game.shop.has("forge"), "one forge per floor: the card is spent")
 	_check(not _tags(shell3).has("forge"), "the forge card disappears after one forge")
 	shell3._tap("forge")
 	_check(shell3.mode == "normal" and shell3.flash == "the forge is cold",
 		"a spent forge cannot be entered again")
 	shell3.free()
+
+	# 5b. a PACKAGE base has ONE variant, so the scrap tap forges at once and
+	# the fork sheet never opens - the other half of the D6 forge branch
+	var shell3b = Shell.new()
+	shell3b._ready()
+	shell3b._tap("play")
+	shell3b._key(KEY_SPACE)
+	shell3b.game.player["pos"] = shell3b.game.map["shrine"]
+	shell3b.game.player["kit"] = ["spore_cloud", "seed_bomb", "mycelium_dash"]
+	shell3b.game.bloom = 10
+	shell3b._tap("forge")
+	shell3b._ability_press(0)
+	shell3b._ability_press(1)
+	_check(shell3b.mode == "normal" and shell3b.game.player["kit"][0] == "spore_cloud+",
+		"a one-variant (package) base forges on the scrap tap: %s" % str(shell3b.game.player["kit"]))
+	shell3b.free()
 
 	# 6. a killed app resumes byte-exact: replay from the on-disk action log
 	var shell4 = Shell.new()

@@ -1,9 +1,9 @@
 {
 "seed": 1,
-"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["###########","#........>#","#.........#","#@.k.#....#","#.........#","#.........#","###########"]},"kit":["water_jet+","seed_bomb","mycelium_dash"],"pool":["water_jet+","seed_bomb","mycelium_dash"]},
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["###########","#........>#","#.........#","#@.k.#....#","#.........#","#.........#","###########"]},"kit":["water_jet+pin","seed_bomb","mycelium_dash"],"pool":["water_jet+pin","seed_bomb","mycelium_dash"]},
 "actions": [{"slot":0,"target":[1,0],"type":"ability"}],
-"expect": {"events":[{"amt":3,"src":"collision:water_jet+","t":"damage","who":"smokestack"},{"status":"root","t":"status","turns":1},{"amt":1,"id":"water_jet+","kind":"then","t":"rider"}],"floor":1,"timeout":true,"turns":0,"won":false},
-"note": "C2 water_jet+ pin: the smokestack is shoved one tile into the pillar at (5,3) - the then rider needs both outcomes (pushed AND collided), so it roots for a turn and the lance lane stays open; an enemy already against a wall (collided, not pushed) is not pinned",
-"sim_version": 12,
-"hash": "bf762988d69d7f0572f33c7ac5bc14df72bf272fa880e4b51e9d9f2ce37e2d49"
+"expect": {"events":[{"amt":3,"src":"collision:water_jet+pin","t":"damage","who":"smokestack"},{"status":"root","t":"status","turns":1},{"amt":1,"id":"water_jet+pin","kind":"then","t":"rider"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "C2 water_jet+pin pin: the smokestack is shoved one tile into the pillar at (5,3) - the then rider needs both outcomes (pushed AND collided), so it roots for a turn and the lance lane stays open; an enemy already against a wall (collided, not pushed) is not pinned",
+"sim_version": 13,
+"hash": "334fca8ec1c5bec9eca67df4cd02f18e3c5eecefcc8b3f0f3dec16524c1c226f"
 }

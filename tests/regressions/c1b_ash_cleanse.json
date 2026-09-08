@@ -4,6 +4,6 @@
 "actions": [{"slot":0,"target":[1,0],"type":"ability"},{"type":"end_turn"},{"type":"end_turn"},{"target":[2,2],"type":"cleanse"}],
 "expect": {"events":[{"t":"ignite"},{"t":"ash"},{"bloom":1,"kind":"ash","t":"cleanse"},{"t":"room_bloom"},{"t":"floor_restored"}],"floor":1,"timeout":true,"turns":2,"won":false},
 "note": "C1b ash: solar_lance ignites the oil, the fire's ttl runs out and leaves {kind: ash} (event ash), and the ash is corruption like any other - one cleanse turns it to growth and pays the table's bloom 1",
-"sim_version": 12,
+"sim_version": 13,
 "hash": "68830cb8773b995a0771c9825e8c48fc4dd24ddf59a09074f19468d5db50346e"
 }

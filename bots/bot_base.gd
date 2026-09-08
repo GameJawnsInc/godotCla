@@ -17,6 +17,12 @@ func choose_action(_snap: Dictionary, legal: Array) -> Dictionary:
 	return legal[legal.size() - 1]
 
 
-## Kit slot id with any upgrade suffix stripped, for base-name matching.
+## Kit slot id folded onto its BASE id, for base-name matching.
+## Content.base_id, NEVER trim_suffix("+"): since Block D6 an upgrade id is
+## "<base>+<variant>" ("solar_lance+noon"), which trim_suffix returns
+## UNCHANGED - a persona folding its kit that way silently stops matching its
+## own base names.
 func _kit_id(snap: Dictionary, slot: int) -> String:
-	return String(snap["player"]["kit"][slot]).trim_suffix("+")
+	# an inline preload, not a const: every subclass already declares its own
+	# Content/CONTENT const and a parent member of that name would clash
+	return preload("res://sim/content.gd").base_id(String(snap["player"]["kit"][slot]))

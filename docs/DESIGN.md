@@ -128,12 +128,14 @@ The theme should do mechanical work, not just paint.
   rows scale with the board: **Grow Spike** deals 3 and +1 for one adjacent
   growth tile, **Sun Flare** deals 1 in a radius, ignites oil and adds +1 to
   anything standing in fire. Five `+` forms - offered only once the base is
-  owned, so the base pool's balance is untouched - carry the sharper versions:
-  **Grow Spike+** takes the same count to two stacks at range 4 (3 to 5),
-  **Sun Flare+** flashes for 2 with the same fire bonus, **Water Jet+** roots
-  an enemy that was actually shoved *and* then hit something, **Vine Whip+**
-  stuns an enemy dragged across a burning tile, and **Seed Bomb+** roots
-  whoever is standing on the growth it just planted. Four combos fall out of
+  owned, so the base pool's balance is untouched - carry the sharper versions
+  (Block D6 gave each of them a name of its own; these are the variants that
+  inherit the behaviour the numbers below were measured on):
+  **Impaling Spike** takes the same count to two stacks at range 4 (3 to 5),
+  **Corona Flare** flashes for 2 with the same fire bonus, **Pinning Jet**
+  roots an enemy that was actually shoved *and* then hit something,
+  **Vine Lash** stuns an enemy dragged across a burning tile, and
+  **Tangle Bomb** roots whoever is standing on the growth it just planted. Four combos fall out of
   them, and each is a charge budget as much as a board state: *seed on head*
   (bomb an enemy's own tile, then spike it for 5 - 2 + 1 = 3 charge, one turn),
   *light then flare* (lance the oil line an enemy stands on, then flare it for
@@ -173,14 +175,14 @@ The theme should do mechanical work, not just paint.
 - **The draft is slotted, not a lottery.** Each of the three offers is rolled
   by a *role* (`Content.DRAFT_SLOTS`), so the same descent always asks the same
   three questions: **affinity** (a pool ability sharing a tag with what you
-  already carry), **upgrade or affinity** (the `+` form of something you hold
+  already carry), **upgrade or affinity** (an upgrade of something you hold
   when there is one, another build-matching offer when there isn't), and
   **wild** (anything in the pool). A run that has committed to fire keeps
   seeing fire, so wanting a build is a thing you can *do* rather than a thing
   the roll does to you — the answer to review finding 5.1, "the draft is
   kit-blind in the sense that matters".
 - **The affinity set** is the union of the tags of every ability in the kit
-  (a `+` form counts as its base) and of every graft owned, minus
+  (an upgrade counts as its base) and of every graft owned, minus
   `Content.AFFINITY_IGNORED_TAGS` — today just `mobility`, because every
   loadout carries a mobility ability and a tag everyone has defines no build.
   Buying a graft therefore widens what the next draft is likely to show you:
@@ -211,14 +213,37 @@ The theme should do mechanical work, not just paint.
   against grafts and heals, and every persona would learn one Bloom-optimal
   skip rate. An extra affinity card is only worth taking when you actually
   want the build, so the choice stays a build choice.
+- **Every upgrade is a fork, not a grade** (Block D6). A base ability does not
+  have "a `+` form"; it has **two named variants**, keyed `<base>+<variant>`
+  (`solar_lance+noon` and `solar_lance+pierce`, `bramble_coat+briar` and
+  `bramble_coat+bristle`). One of each pair reproduces the row that used to be
+  the plain `+`, so the measured balance point survives and every number this
+  block moved is attributable to the new sibling alone; the other is a real
+  alternative - more reach against more damage, a different status, a
+  different centre, a different target class. Five of the new siblings are
+  deliberately *sidegrades of their own base* rather than supersets (Root Cage
+  loses the `tile` shape, Blight Snare swaps root for spore, Throng Spike
+  counts bodies instead of growth, Bristle Coat trades duration for bite,
+  Palisade grows roots instead of growth), which is the one place the package
+  convention of "numeric bumps only" is knowingly broken.
+- **How you get one.** The descent draft offers **one** variant per base,
+  chosen by the parity of the floor you are entering - no roll, so the draft's
+  one-draw-per-slot contract is untouched and *which* sibling a slot could deal
+  is a property of the floor, not of luck. Drafts happen on floors 2-7, so both
+  siblings are reachable inside a single run, and the shrine **forge** always
+  sells either one: it lists one action per (keep, scrap, variant) triple, and
+  the shell asks the third question with both cards face up. No fork is ever
+  unobtainable. The nine package abilities and every consumable keep their
+  single plain `+` form - only the fifteen base-pool abilities are forked.
 - Starting pool: **Horticulture** core set (~12 abilities). Examples:
   - Solar Lance — line damage, stronger in clear smog.
   - Seed Bomb — radius, creates growth.
   - Vine Whip — pull enemy 2 tiles.
   - Root Wall — create blocking terrain, 2-turn life.
   - Water Jet — push + washes oil/extinguishes fire.
-  - Mycelium Dash (mobility) — teleport between growth tiles (its `+` form
-    leaves growth behind: Spore Trail).
+  - Mycelium Dash (mobility) — teleport between growth tiles (Spore Trail
+    reaches further and leaves growth behind; Scattering Dash lands in a
+    1-damage burst instead).
 
 ### Enemies
 
@@ -293,10 +318,12 @@ tests a different build muscle so no single draft strategy trivializes it.
 - Shrines are Bloom stores, one per floor (the Furnace floor has none, and the
   Boarded mutator boards the shop for the whole run). Stock is fixed in shape:
   a **heal**, **one ability** drawn from the draft pool (never one already in
-  the kit, in either its base or `+` form), **two Grafts of which you buy
+  the kit, in either its base or an upgraded form), **two Grafts of which you buy
   one** (the other is discarded), **one base item**, the **press** (upcycle a
   held item to its `+` form) and the **forge** (scrap a kit ability to upgrade
-  another, at most once per floor). Every price runs through
+  another, at most once per floor - and since Block D6 the forge asks *which*
+  of the upgraded ability's two variants you want, so it is the reliable way
+  to the sibling this floor's draft parity cannot deal). Every price runs through
   `Content.SHOP_COSTS`, so the Gouging Prices tier marks the whole sheet up.
 - With a full kit the shrine's ability card is simply not buyable: that shop
   slot goes dead once you are kitted out (accepted), and the forge is the only
@@ -387,7 +414,9 @@ tests a different build muscle so no single draft strategy trivializes it.
   - **Mycology** — spores, tunneling, growth-network tricks.
   - **Hydraulics** — water, steam, washing/pushing.
   - **Aeolian** — wind, repositioning, smoke-clearing.
-- Every package ability has its own `+` form, so a package deepens as well as
+- Every package ability has its own single `+` form (packages are not forked
+  into named variants - a package is already a one-per-run commitment), so a
+  package deepens as well as
   widens: **Spore Cloud+** clouds a radius of 3 (two casts fill the spore
   stack cap exactly), **Fungal Ring+** roots whoever is standing where the ring
   sprouts, **Burrow+** tunnels 4, **Tide+** shoves 3 for 2 on impact and roots
@@ -459,7 +488,7 @@ Both replay hooks, both implemented as data over the same sim:
   draft pool and the shrine, so the run opens on two abilities and has to find
   its own damage; **Wide Draft** deals four offers instead of three (the fourth
   slot is a wild one, past the end of the role list); **Upgrades Only** never
-  offers a new ability at all, only the `+` forms of what you already hold, so
+  offers a new ability at all, only the upgrades of what you already hold, so
   the kit stops widening and starts deepening - every slot, the focus one
   included, draws from that same list.
 
@@ -475,6 +504,27 @@ Both replay hooks, both implemented as data over the same sim:
   turn; the instrument that measures how much combo depth the content holds.
 - Key metrics: win rate per persona, death cause distribution, floor-of-death,
   Bloom collected vs. smog deaths, per-ability draft-to-win correlation.
+- **Personas have no fork opinion, on purpose.** The heuristic bots rank a
+  draft offer by its *base* ability, so the two variants of a fork tie and the
+  earlier offer wins - deterministic, and an abstention rather than a guess:
+  which sibling is better is exactly the question the locked-kit sweeps
+  (`{kit: K, pool: K}`, one config per variant) are for, and a hand-tuned
+  preference would bake the answer into the instrument that is supposed to
+  measure it. The search personas do have one: they clone, forge or cast each
+  sibling and score the result, with ties falling to `Content.variants_of`
+  order. But no persona forges at all - deeproot ENUMERATES the (keep, scrap,
+  variant) triples and has never selected one, and a 10-seed playtest still
+  prints `upcycles 0/0` on every persona block including deeproot's - so in
+  practice the third question the shrine now asks is exercised by human play
+  only, which is why the acceptance sweeps lock the kit instead of reading a
+  playtest.
+- The harness therefore counts casts **twice**: `casts_by_base`, which folds a
+  fork onto one key and keeps every pre-D6 number comparable, and
+  `casts_by_id` / `effective_casts_by_id`, which keep the siblings apart.
+  Read the second pair for a fork question - and read it knowing that three
+  pairs are structurally skewed, because `shield`, `anchor` and `undim` set no
+  outcome counter and so can never be an effective cast while their siblings'
+  second clause always can.
 
 ## Open questions
 

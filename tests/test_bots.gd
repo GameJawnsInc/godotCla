@@ -25,6 +25,11 @@ extends SceneTree
 ##   3f) Block D4 draft slots: a real draft's offers and the pick count by
 ##      the slot role the sim reports, a skip's focus draft counts, and both
 ##      halves survive merge() into kpis()
+##   3g) Block D6 variant ids ("<base>+<variant>"): the suffix hazard - every
+##      consumer that used to test ends_with("+") or trim_suffix("+") on an
+##      ability id. The two personas' draft preference, the kit-slot fold every
+##      trigger matches on, deeproot's row fallback, the tally's per-variant
+##      split, and the profile's won_with fold plus its pre-D6 id migration
 ##   4) determinism: two fresh instances agree over 40 steps
 ##   5) runtime factor: deeproot vs deeproot_plan over 5 seeds (test-side
 ##      Time.get_ticks_msec only; the bots never read a clock)
@@ -35,6 +40,7 @@ const Game := preload("res://sim/game.gd")
 const Roster := preload("res://bots/roster.gd")
 const Sweep := preload("res://tests/sweep_lib.gd")
 const Tally := preload("res://tests/tally.gd")
+const Profile := preload("res://meta/profile.gd")
 
 const RUNTIME_MAX_FACTOR := 6.0
 const RUNTIME_SEEDS := 5
@@ -63,6 +69,7 @@ func _init() -> void:
 	_check_d1_surge_terms()
 	_check_d3_denial_tally()
 	_check_d4_draft_tally()
+	_check_d6_variants()
 	_check_determinism()
 	_check_runtime_factor()
 	if failures.is_empty():
@@ -186,7 +193,7 @@ static func _shrine_dist_after(game, a: Dictionary, goal: Vector2i) -> int:
 # --- 1) seed on head ----------------------------------------------------------
 
 func _check_seed_on_head() -> void:
-	var kit := ["solar_lance", "seed_bomb", "mycelium_dash", "grow_spike+"]
+	var kit := ["solar_lance", "seed_bomb", "mycelium_dash", "grow_spike+impale"]
 	var g = _game(kit)
 	# two tiles away on the diagonal: no lance line, no growth anywhere
 	var e = g._spawn("drill_bot", Vector2i(6, 4))
@@ -200,7 +207,7 @@ func _check_seed_on_head() -> void:
 		var d := _manhattan(a["target"], e["pos"])
 		_ok(d <= 1, "bomb lands on or beside the enemy: target %s enemy %s (d %d)" % [str(a["target"]), str(e["pos"]), d])
 	var fu: Dictionary = plan.last_plan.get("followup", {})
-	_ok(_kit_id(g, fu) == "grow_spike+", "the plan's follow-up is grow_spike+: %s" % str(fu))
+	_ok(_kit_id(g, fu) == "grow_spike+impale", "the plan's follow-up is grow_spike+impale: %s" % str(fu))
 	# legacy deeproot on the same board does not open with the bomb
 	var legacy = _bot("deeproot", g)
 	var la: Dictionary = _choose(legacy, g)
@@ -215,7 +222,7 @@ func _check_seed_on_head() -> void:
 	var terms: Dictionary = plan._option_terms(g)
 	_ok(float(terms["spike"]) == plan.SPIKE_POINTS, "spike term after the bomb: %s" % str(terms))
 	var b: Dictionary = _choose(plan, g)
-	_ok(_kit_id(g, b) == "grow_spike+" and b.get("target", null) == e["pos"],
+	_ok(_kit_id(g, b) == "grow_spike+impale" and b.get("target", null) == e["pos"],
 		"next choice is grow_spike+ on the enemy: %s" % str(b))
 	var evs: Array = g.step(b)
 	var killed := false
@@ -228,7 +235,7 @@ func _check_seed_on_head() -> void:
 # --- 2) pin -------------------------------------------------------------------
 
 func _check_pin() -> void:
-	var kit := ["water_jet+", "solar_lance", "mycelium_dash"]
+	var kit := ["water_jet+pin", "solar_lance", "mycelium_dash"]
 	var g = _game(kit)
 	g.player["pos"] = Vector2i(6, 3)
 	# hulk with one open tile between it and the east wall (10, 3) on the jet
@@ -239,7 +246,7 @@ func _check_pin() -> void:
 	var a: Dictionary = _choose(plan, g)
 	var terms: Dictionary = plan._option_terms(g)
 	_ok(float(terms["pin"]) == 0.0, "no pin yet: an open tile still separates the hulk from the wall: %s" % str(terms))
-	_ok(_kit_id(g, a) == "water_jet+" and a.get("target", null) == Vector2i(1, 0), "plan jets the hulk into the wall: %s" % str(a))
+	_ok(_kit_id(g, a) == "water_jet+pin" and a.get("target", null) == Vector2i(1, 0), "plan jets the hulk into the wall: %s" % str(a))
 	# plan mode values the lance as a follow-up: on the post-jet clone the
 	# lance down the same line is enumerated, and its forced continuation
 	# scores above both the plain jet-then-end_turn line and a bare end_turn
@@ -578,12 +585,12 @@ func _check_d1_surge_terms() -> void:
 	var on2: Dictionary = g.snapshot()
 	var est: int = opt._est_dmg("grow_spike", e["pos"], on2)
 	_ok(est == 5, "surge + one growth-adjacent rider: 3 + 1 + 1 = %d" % est)
-	var gp = _game(["grow_spike+", "solar_lance", "mycelium_dash"])
+	var gp = _game(["grow_spike+impale", "solar_lance", "mycelium_dash"])
 	gp._spawn("welded_hulk", Vector2i(8, 3))
 	gp.terrain[gp.player["pos"]] = {"kind": "growth"}
 	gp.terrain[Vector2i(8, 2)] = {"kind": "growth"}
 	gp.terrain[Vector2i(8, 4)] = {"kind": "growth"}
-	var estp: int = opt._est_dmg("grow_spike+", Vector2i(8, 3), gp.snapshot())
+	var estp: int = opt._est_dmg("grow_spike+impale", Vector2i(8, 3), gp.snapshot())
 	_ok(estp == 6, "grow_spike+ on growth with two growth beside the target: 3 + 1 + 2 = %d" % estp)
 	# the estimate is the sim's number: cast it for real
 	var hp0: int = int(e["hp"])
@@ -598,14 +605,14 @@ func _check_d1_surge_terms() -> void:
 
 	# the harness counts both halves: the stat surge per casting id, and the
 	# tile a Spore Trail dash left behind
-	var gt = _game(["mycelium_dash+", "grow_spike", "solar_lance"])
+	var gt = _game(["mycelium_dash+trail", "grow_spike", "solar_lance"])
 	var from: Vector2i = gt.player["pos"]
 	gt.terrain[Vector2i(8, 3)] = {"kind": "growth"}
 	var tally = Tally.new()
 	_step_into(tally, gt, {"type": "ability", "slot": 0, "target": Vector2i(8, 3)})
 	_ok(gt.player["pos"] == Vector2i(8, 3) and String(gt.terrain.get(from, {}).get("kind", "")) == "growth",
 		"the dash plants the tile it left: %s -> %s, terrain %s" % [str(from), str(gt.player["pos"]), str(gt.terrain.get(from, {}))])
-	_ok(int(tally.origin_plants_by_aid.get("mycelium_dash+", 0)) == 1,
+	_ok(int(tally.origin_plants_by_aid.get("mycelium_dash+trail", 0)) == 1,
 		"tally counts the origin plant: %s" % str(tally.origin_plants_by_aid))
 	gt.terrain[gt.player["pos"]] = {"kind": "growth"}
 	gt.player["charge"] = 3
@@ -644,7 +651,7 @@ func _check_d1_surge_terms() -> void:
 			and plan._surge_applies(Content.ABILITIES["seed_bomb"]),
 		"stat surges and cost-2 discounts both apply")
 	_ok(not plan._surge_applies(Content.ABILITIES["sap_snare"])
-			and not plan._surge_applies(Content.ABILITIES["mycelium_dash+"])
+			and not plan._surge_applies(Content.ABILITIES["mycelium_dash+trail"])
 			and not plan._surge_applies({}),
 		"a cost-1 row with the default surge (and an unknown row) applies nothing")
 	var ready: Array = []
@@ -776,6 +783,143 @@ func _descend_into(tally, game) -> void:
 
 
 # --- 4) determinism -----------------------------------------------------------
+
+## Block D6: a variant id is "<base>+<variant>" and does NOT end in "+", so
+## every consumer that folded ids with trim_suffix("+") or tested them with
+## ends_with("+") changed meaning silently. These are the consumer-side pins.
+func _check_d6_variants() -> void:
+	var forked := ""
+	for base in Content.DRAFT_POOL:
+		if Content.variants_of(String(base)).size() == 2:
+			forked = String(base)
+			break
+	_ok(forked != "", "the pool holds a forked base to test with: '%s'" % forked)
+	var sibs: Array = Content.variants_of(forked)
+	var a_id := String(sibs[0])
+	var b_id := String(sibs[1])
+	_ok(not a_id.ends_with("+") and Content.is_upgrade(a_id) and Content.base_id(a_id) == forked,
+		"a variant id is an upgrade that does not end in '+': %s" % a_id)
+
+	# (i) draft preference: both siblings rank one step above their base and
+	# strictly above an unlisted id. trim_suffix would have left them unlisted.
+	var opt = Roster.make("optimizer", 1)
+	var spr = Roster.make("sprout", 1)
+	for bot in [opt, spr]:
+		var base_r: int = bot._pref_rank(forked)
+		var unlisted: int = bot._pref_rank("no_such_ability")
+		_ok(bot._pref_rank(a_id) == base_r - 1 and bot._pref_rank(b_id) == base_r - 1,
+			"%s ranks both siblings one step above the base: %d/%d vs %d" % [
+				bot.get_bot_name(), bot._pref_rank(a_id), bot._pref_rank(b_id), base_r])
+		_ok(bot._pref_rank(a_id) < unlisted,
+			"%s ranks a variant above an unlisted id: %d < %d" % [
+				bot.get_bot_name(), bot._pref_rank(a_id), unlisted])
+
+	# (ii) the kit-slot fold: a variant in a slot still reads as its base, so
+	# every hand-tuned trigger keyed on a base name keeps firing. Both personas
+	# resolve to bot_base._kit_id (the two subclass overrides are gone, the
+	# base folds with Content.base_id), so this pins the base implementation.
+	var gk = _game(["solar_lance+pierce", "seed_bomb+reclaim", "mycelium_dash"])
+	var snap: Dictionary = gk.snapshot()
+	_ok(opt._kit_id(snap, 0) == "solar_lance" and opt._kit_id(snap, 1) == "seed_bomb"
+			and spr._kit_id(snap, 0) == "solar_lance",
+		"a variant in a kit slot folds onto its base: %s / %s" % [
+			opt._kit_id(snap, 0), opt._kit_id(snap, 1)])
+	_ok(opt._kit_full_id(snap, 0) == "solar_lance+pierce",
+		"...while the full id survives for the row reads: %s" % opt._kit_full_id(snap, 0))
+
+	# (iii) deeproot's row fallback reads the VARIANT's own row, not the base's,
+	# and falls back to the BASE row for an id ABILITIES does not carry.
+	# A variant that left its base's "self" shape discriminates the two rows:
+	# a "self" row scores 0 whatever the target, a tile-shaped one measures
+	# from the target tile, so the same call must return different numbers.
+	var dr = Roster.make("deeproot", 1)
+	var moved := ""
+	for vid in Content.ABILITIES:
+		var v := String(vid)
+		if not Content.is_upgrade(v) or Content.base_id(v) == v:
+			continue
+		var vt := String(Content.ABILITIES[v].get("target", ""))
+		var bt := String(Content.ABILITIES[Content.base_id(v)].get("target", ""))
+		if bt == "self" and vt != "self" and vt != "dir":
+			moved = v
+			break
+	_ok(moved != "", "some variant left its base's 'self' shape: '%s'" % moved)
+	var gd = _game(["solar_lance", "seed_bomb", "mycelium_dash"])
+	gd._spawn("drill_bot", Vector2i(8, 3))
+	var sd: Dictionary = gd.snapshot()
+	var ppos: Vector2i = sd["player"]["pos"]
+	var tgt := Vector2i(2, 3)  # six tiles from the enemy, so the shapes differ
+	if moved != "":
+		var dv: int = dr._target_enemy_dist(sd, ppos, moved, tgt)
+		var db: int = dr._target_enemy_dist(sd, ppos, Content.base_id(moved), tgt)
+		_ok(dv == 6 and db == 0,
+			"deeproot reads the variant's own row: %s (%s) -> %d, base (self) -> %d" % [
+				moved, String(Content.ABILITIES[moved]["target"]), dv, db])
+	# an id ABILITIES does not carry falls back to its base row, never to {}
+	# (the {} default would read target "tile" and measure from the tile)
+	var ghost: int = dr._target_enemy_dist(sd, ppos, "solar_lance+ghost", Vector2i(1, 0))
+	var real: int = dr._target_enemy_dist(sd, ppos, "solar_lance", Vector2i(1, 0))
+	var as_tile: int = absi(1 - 8) + absi(0 - 3)
+	_ok(ghost == real and ghost != as_tile,
+		"an unknown variant id falls back to its base row: %d (base %d, raw tile %d)" % [
+			ghost, real, as_tile])
+
+	# (iv) the tally splits the siblings, and only the tally does: casts_by_base
+	# still folds them, casts_by_id / effective_casts_by_id keep them apart.
+	var gt = _game([a_id, b_id, "mycelium_dash"])
+	gt._spawn("welded_hulk", Vector2i(8, 3))
+	gt.player["charge"] = 9
+	var tally = Tally.new()
+	var cast_a := false
+	var cast_b := false
+	for slot in 2:
+		for act in gt.legal_actions():
+			if String(act.get("type", "")) == "ability" and int(act["slot"]) == slot:
+				_step_into(tally, gt, act)
+				if slot == 0:
+					cast_a = true
+				else:
+					cast_b = true
+				break
+	_ok(cast_a and cast_b, "both siblings were cast on the fixture board")
+	_ok(int(tally.casts_by_base.get(forked, 0)) == 2,
+		"casts_by_base folds the fork onto one key: %s" % str(tally.casts_by_base))
+	_ok(int(tally.casts_by_id.get(a_id, 0)) == 1 and int(tally.casts_by_id.get(b_id, 0)) == 1,
+		"casts_by_id keeps the siblings apart: %s" % str(tally.casts_by_id))
+	_ok(int(tally.plus_casts) == 2, "plus_casts counts a variant as an upgrade: %d" % tally.plus_casts)
+	var eff: Dictionary = tally.effective_casts_by_id
+	_ok(_sum_dict(eff) == int(gt.effective_uses.get(forked, 0)),
+		"effective_casts_by_id totals the sim's own effective_uses: %s vs %s" % [
+			str(eff), str(gt.effective_uses)])
+	var kv: Dictionary = Tally.kpis(tally, 1, [])
+	_ok(kv["casts_by_id"].has(a_id) and kv["effective_casts_by_id"] is Dictionary,
+		"kpis carry the per-variant columns")
+	var mv = Tally.new()
+	mv.merge(tally)
+	mv.merge(tally)
+	_ok(int(mv.casts_by_id.get(a_id, 0)) == 2, "merge sums the per-variant columns: %s" % str(mv.casts_by_id))
+
+	# (v) the profile: base_id already folds a variant onto its base for
+	# won_with, and a career saved before the rename migrates instead of
+	# silently losing the id it earned.
+	_ok(Profile._holds([a_id, "mycelium_dash"], forked),
+		"won_with '%s' is satisfied by holding %s" % [forked, a_id])
+	_ok(not Profile._holds([b_id, "mycelium_dash"], a_id),
+		"...and a won_with naming one sibling is not satisfied by the other")
+	var legacy_ids: Array = Profile._known_ability_ids([forked + "+", "mycelium_dash", "no_such_ability"])
+	_ok(legacy_ids == [a_id, "mycelium_dash"],
+		"a pre-D6 '%s+' in stored history migrates to the inherited variant: %s" % [forked, str(legacy_ids)])
+	print("d6 variants: %s forks into %s; pref ranks %d/%d (base %d), casts_by_id %s" % [
+		forked, str(sibs), opt._pref_rank(a_id), opt._pref_rank(b_id), opt._pref_rank(forked),
+		str(tally.casts_by_id)])
+
+
+static func _sum_dict(d: Dictionary) -> int:
+	var n := 0
+	for k in d:
+		n += int(d[k])
+	return n
+
 
 func _check_determinism() -> void:
 	var seed_v := 3

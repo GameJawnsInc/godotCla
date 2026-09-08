@@ -31,6 +31,7 @@ extends SceneTree
 ## Runtime: optimizer ~0.2 s per fork; deeproot ~3-5 s per fork (shard it).
 
 const Game := preload("res://sim/game.gd")
+const Content := preload("res://sim/content.gd")
 const Sweep := preload("res://tests/sweep_lib.gd")
 const Roster := preload("res://bots/roster.gd")
 const Tally := preload("res://tests/tally.gd")
@@ -160,7 +161,9 @@ func _oracle_draft(game, bot, bot_name: String, seed_v: int, snap: Dictionary, l
 	var cpick := int(chosen.get("pick", -1))
 	var kind := "skip"
 	if cpick >= 0:
-		kind = "upgrade" if String(offers[cpick]).ends_with("+") else "new"
+		# Content.is_upgrade, never ends_with("+"): since Block D6 an upgrade id
+		# is "<base>+<variant>" and only the nine package rows end in "+"
+		kind = "upgrade" if Content.is_upgrade(String(offers[cpick])) else "new"
 	return {
 		"seed": seed_v,
 		"floor": int(snap["floor"]) + 1,  # the floor this draft leads into

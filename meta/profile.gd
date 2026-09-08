@@ -108,7 +108,7 @@ func _compact(summary: Dictionary) -> Dictionary:
 		"tier": int(summary.get("tier", 0)),
 		"turns": int(summary.get("turns", 0)),
 		"seed": int(summary.get("seed", 0)),
-		"kit": _known_ids(summary.get("kit", []), Content.ABILITIES),
+		"kit": _known_ability_ids(summary.get("kit", [])),
 		"grafts": _known_ids(summary.get("grafts", []), Content.GRAFTS),
 		# a legacy {won, floor, tier} record carries no kit: it must never
 		# satisfy a wins_without predicate by looking like an empty kit
@@ -207,9 +207,11 @@ func _win_holding(ids: Array, all_of: bool):
 	return null
 
 
-## Does `kit` hold `want`? An exact id always counts; a "+" form also counts
-## as its base ("solar_lance+" satisfies "solar_lance", but "seed_bomb+" is
-## satisfied only by "seed_bomb+" itself).
+## Does `kit` hold `want`? An exact id always counts; an upgrade also counts
+## as its base ("solar_lance+noon" satisfies "solar_lance", but
+## "seed_bomb+tangle" is satisfied only by "seed_bomb+tangle" itself).
+## Block D6 needed no change here: Content.base_id already cuts at the first
+## "+", so a "<base>+<variant>" id folds exactly as a "<base>+" one did.
 static func _holds(kit: Array, want: String) -> bool:
 	for aid in kit:
 		var s := String(aid)
@@ -358,8 +360,9 @@ static func load_from(path: String):  # -> Profile (or fresh if missing)
 	var stored_casts = data.get("casts_by_base", {})
 	if stored_casts is Dictionary:
 		for aid in stored_casts:
-			if Content.ABILITIES.has(String(aid)):
-				casts[Content.base_id(String(aid))] = int(stored_casts[aid])
+			var cid := _migrate_ability_id(String(aid))
+			if cid != "":
+				casts[Content.base_id(cid)] = int(stored_casts[aid])
 	profile.casts_by_base = casts
 	var hist: Array = []
 	var stored_hist = data.get("history", [])
@@ -384,6 +387,38 @@ static func load_from(path: String):  # -> Profile (or fresh if missing)
 
 ## `ids` kept in order, dropping anything `known` (a Dictionary of valid ids)
 ## does not carry.
+## Ability ids from a stored record, filtered and migrated. Block D6 renamed
+## every base "+" row to "<base>+<variant>", so a career saved before it holds
+## ids like "seed_bomb+" that are no longer Content.ABILITIES keys: dropping
+## them would silently un-satisfy a won_with milestone that the run really did
+## earn. A stored "<base>+" is therefore mapped to that base's FIRST variant -
+## derived through Content.variants_of, never a hand-written rename table, and
+## first because the table lists the variant that reproduces the pre-D6 row
+## first (sim/content.gd says the order is load-bearing). A variant id itself
+## is a live key and passes straight through.
+static func _known_ability_ids(ids) -> Array:
+	var out: Array = []
+	if not (ids is Array):
+		return out
+	for id in ids:
+		var mid := _migrate_ability_id(String(id))
+		if mid != "":
+			out.append(mid)
+	return out
+
+
+## One stored ability id -> the live id it means, "" when there is none.
+static func _migrate_ability_id(aid: String) -> String:
+	if Content.ABILITIES.has(aid):
+		return aid
+	if aid.ends_with("+"):
+		# pre-D6 upgrade id: "<base>+" with nothing after the "+"
+		var vs: Array = Content.variants_of(Content.base_id(aid))
+		if not vs.is_empty():
+			return String(vs[0])
+	return ""
+
+
 static func _known_ids(ids, known) -> Array:
 	var out: Array = []
 	if not (ids is Array):

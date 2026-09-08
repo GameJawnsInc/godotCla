@@ -1,9 +1,9 @@
 {
 "seed": 1,
-"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["###########","#........>#","#...\".....#","#@..k.....#","#...\".....#","#.........#","###########"]},"kit":["grow_spike+","seed_bomb","mycelium_dash"],"pool":["grow_spike+","seed_bomb","mycelium_dash"]},
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["###########","#........>#","#...\".....#","#@..k.....#","#...\".....#","#.........#","###########"]},"kit":["grow_spike+impale","seed_bomb","mycelium_dash"],"pool":["grow_spike+impale","seed_bomb","mycelium_dash"]},
 "actions": [{"slot":0,"target":[4,3],"type":"ability"}],
-"expect": {"events":[{"amt":2,"id":"grow_spike+","kind":"per","t":"rider"},{"amt":5,"src":"grow_spike+","t":"damage","who":"smokestack"},{"t":"death","who":"smokestack"}],"floor":1,"timeout":true,"turns":0,"won":false},
-"note": "C2 grow_spike+ rider: the smokestack stands between two growth tiles, so the per rider (count growth_adjacent_target, cap 2) adds 2 to the base 3 - one 5-damage hit that kills a 4-hp enemy the flat spike could not",
-"sim_version": 12,
-"hash": "b48a3d3e692f5e1cdddbe9b0d7f65c87f2a5bbf1c2b241c3f29bae29fb64c1a6"
+"expect": {"events":[{"amt":2,"id":"grow_spike+impale","kind":"per","t":"rider"},{"amt":5,"src":"grow_spike+impale","t":"damage","who":"smokestack"},{"t":"death","who":"smokestack"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "C2 grow_spike+impale rider: the smokestack stands between two growth tiles, so the per rider (count growth_adjacent_target, cap 2) adds 2 to the base 3 - one 5-damage hit that kills a 4-hp enemy the flat spike could not",
+"sim_version": 13,
+"hash": "462ff6265c773646ccd205be71b9f4ff64d6874e16fbd1be411345a2c7c2ce70"
 }

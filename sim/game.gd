@@ -92,7 +92,34 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## So every log that reached a draft diverges at its first draft_offer: the
 ## offers differ, and every downstream draw shifts. `draft_slots` (the role
 ## that produced each offer) and `focus` join snapshot() and the hash.
-const SIM_VERSION := 12
+## SIM_VERSION 13 (Block D6, evolve forks): every base "+" ability row is
+## gone. The fifteen base-pool abilities each fork into TWO named variants
+## keyed "<base>+<word>" - variant A is the pre-D6 "+" row renamed (same cost,
+## target, range, effects, riders and surge), variant B is a new fork - so
+## EVERY "solar_lance+"-style id in a stored log names an ability that no
+## longer exists and its cast is an unknown ability. The nine package "+" rows
+## and every ITEMS "+" row are untouched (packages sit behind a one-per-run
+## commitment; the item press is a different system and keeps the plain "+"
+## convention, ends_with("+") included). Beyond the rename: the draft's
+## universe holds both siblings of every held base and its upgrade slot lists
+## one per base picked by Content.variant_for(base, _pending_floor) - a PARITY
+## read, no rng draw, so the one-main-rng-draw-per-slot contract still holds -
+## which moves every draft offer list, so the bump-12 index-pick hazard applies
+## verbatim (a stored pick is an index: a log can replay legally and land on a
+## different ability, so re-record and diff every bot log, not only the ones
+## that stop replaying). The shrine forge action gained a `variant` index into
+## Content.variants_of(base) and legal_actions lists one action per
+## (keep, scrap, variant) triple; a MISSING `variant` is index 0, the variant
+## that reproduces the pre-D6 "+" row, so an old stored forge action forges
+## what it forged then, and an out-of-range index is
+## {t: "illegal", action: "upcycle_ability"} and changes nothing. New effect
+## vocabulary: `pierce` (lance), `pull_line` (op), `center` (aoe_status),
+## `ignite_ttl` (aoe_damage), `kind` and `ttl` (convert_radius) - a default
+## convert_radius now writes through _tile_dict, so a converted enemy-made oil
+## tile carries its "bloom" flag into the growth like every other terrain
+## write (hash-visible, no rule reads it). Content.MILESTONES' won_with
+## ["seed_bomb+"] became ["seed_bomb+tangle"].
+const SIM_VERSION := 13
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -384,7 +411,9 @@ func legal_actions() -> Array:
 		return acts
 	if phase == "draft":
 		for i in draft_offers.size():
-			var is_upgrade: bool = String(draft_offers[i]).ends_with("+")
+			# Block D6: an upgrade id is "<base>+<variant>", so ends_with("+")
+			# is false on one - Content.is_upgrade is the only safe test
+			var is_upgrade: bool = Content.is_upgrade(String(draft_offers[i]))
 			if is_upgrade or player["kit"].size() < _kit_max():
 				acts.append({"type": "draft", "pick": i})
 			else:
@@ -436,15 +465,24 @@ func legal_actions() -> Array:
 			acts.append({"type": "buy", "item": "item"})
 		if shop.get("press", false) and player["items"].size() == 2 and bloom >= shop_cost("press"):
 			for k in 2:
+				# ITEMS keep the plain "+" convention: items are not forked
+				# (Block D6 forks abilities only), so ends_with is right here
 				if not String(player["items"][k]).ends_with("+"):
 					acts.append({"type": "upcycle", "keep": k})
 		if shop.get("forge", false) and bloom >= shop_cost("forge") and player["kit"].size() >= 2:
 			for i in player["kit"].size():
 				var kid := String(player["kit"][i])
-				if not kid.ends_with("+") and Content.ABILITIES.has(kid + "+"):
-					for j in player["kit"].size():
-						if j != i and not _is_mobility(String(player["kit"][j])):
-							acts.append({"type": "upcycle_ability", "keep": i, "scrap": j})
+				# Block D6: a base has TWO variants and the forge offers both,
+				# so the action carries a `variant` index into
+				# Content.variants_of - the forge is the path to the sibling
+				# a floor's draft parity cannot deal
+				var kvars: Array = Content.variants_of(kid)
+				if Content.is_upgrade(kid) or kvars.is_empty():
+					continue
+				for j in player["kit"].size():
+					if j != i and not _is_mobility(String(player["kit"][j])):
+						for v in kvars.size():
+							acts.append({"type": "upcycle_ability", "keep": i, "scrap": j, "variant": v})
 		if _reroll_legal():
 			acts.append({"type": "reroll"})
 	acts.append({"type": "end_turn"})
@@ -653,9 +691,24 @@ func _stock_shop() -> Dictionary:
 func _shop_ability_candidates() -> Array:
 	var aids: Array = []
 	for aid in draft_pool:
-		if not player["kit"].has(aid) and not player["kit"].has(aid + "+"):
+		if not _kit_holds_base(String(aid)):
 			aids.append(aid)
 	return aids
+
+
+## Does the kit hold `base` or ANY upgrade variant of it? Block D6: a base has
+## two variants, so "kit.has(aid) or kit.has(aid + \"+\")" no longer covers the
+## question - fold every kit id onto its base instead. BOTH SIDES are folded:
+## the argument may itself be a variant id (a locked-kit sweep config passes
+## {kit: K, pool: K}, so `pool` holds the very ids the kit holds), and folding
+## only the kit side would let a held variant be offered as a draft card that
+## _act_draft then rejects, and stocked at the shrine as a duplicate.
+func _kit_holds_base(base: String) -> bool:
+	var b := Content.base_id(base)
+	for aid in player["kit"]:
+		if Content.base_id(String(aid)) == b:
+			return true
+	return false
 
 
 ## Graft counter candidates: every Content.GRAFTS row not already owned.
@@ -755,6 +808,7 @@ func _act_reroll() -> void:
 func _base_item_ids() -> Array:
 	var out: Array = []
 	for iid in Content.ITEMS:
+		# ITEMS keep the plain "+" convention (not forked by Block D6)
 		if not String(iid).ends_with("+"):
 			out.append(iid)
 	return out
@@ -1515,16 +1569,26 @@ func _draw_draft_offers(count: int) -> Dictionary:
 	var bases: Array = []
 	if not upgrades_only:
 		for aid in draft_pool:
-			if not player["kit"].has(aid) and not player["kit"].has(aid + "+"):
+			if not _kit_holds_base(String(aid)):
 				bases.append(aid)
 	var upgrades: Array = []
 	var deepenings: Array = []
 	for aid in player["kit"]:
-		var up: String = aid + "+"
-		if Content.ABILITIES.has(up) and not upgrades.has(up):
-			upgrades.append(up)
-			if _build_defining(up):
-				deepenings.append(up)
+		var kid := String(aid)
+		if Content.is_upgrade(kid):
+			continue  # already a variant: nothing deeper to draft
+		# Block D6: the universe holds BOTH variants of a held base (a wild
+		# slot may deal either), while the upgrade slot lists exactly ONE -
+		# Content.variant_for(base, floor), a parity read of the floor being
+		# entered. No rng draw: which sibling this slot could deal is a
+		# function of the floor, so the one-draw-per-slot contract below is
+		# untouched and the other sibling stays reachable at the forge.
+		for v in Content.variants_of(kid):
+			if not upgrades.has(v):
+				upgrades.append(v)
+		var pick := Content.variant_for(kid, _pending_floor)
+		if pick != "" and _build_defining(pick) and not deepenings.has(pick):
+			deepenings.append(pick)
 	var universe: Array = bases + upgrades
 	var affine: Array = []
 	var tags: Array = _affinity_tags()
@@ -1587,13 +1651,17 @@ func _act_draft(action: Dictionary) -> void:
 		return
 	if pick >= 0:
 		var aid: String = draft_offers[pick]
-		if aid.ends_with("+"):
-			var slot: int = player["kit"].find(aid.trim_suffix("+"))
+		if Content.is_upgrade(aid):
+			# Block D6: the id is "<base>+<variant>", so the kit slot and the
+			# uses seed come from base_id, never from trim_suffix("+") - which
+			# would hand back the variant id unchanged and find nothing
+			var abase: String = Content.base_id(aid)
+			var slot: int = player["kit"].find(abase)
 			if slot == -1:
 				_emit({"t": "illegal", "action": "draft"})
 				return
 			player["kit"][slot] = aid
-			player["uses"][aid] = int(player["uses"].get(aid.trim_suffix("+"), 0))
+			player["uses"][aid] = int(player["uses"].get(abase, 0))
 			_emit({"t": "draft_upgrade", "id": aid})
 		elif player["kit"].size() >= _kit_max():
 			var drop: int = action.get("drop", -1)
@@ -1660,6 +1728,8 @@ func _act_upcycle(action: Dictionary) -> void:
 	var keep := int(action.get("keep", -1))
 	var on_shrine: bool = player["pos"] == map["shrine"]
 	var cost := shop_cost("press")
+	# ITEMS keep the plain "+" convention: the press is not the Block D6 forge
+	# and item rows are not forked, so ends_with("+") is the right test here
 	if not on_shrine or not shop.get("press", false) or player["items"].size() != 2 or keep < 0 or keep > 1 \
 			or bloom < cost or String(player["items"][keep]).ends_with("+"):
 		_emit({"t": "illegal", "action": "upcycle"})
@@ -1675,13 +1745,20 @@ func _act_upcycle(action: Dictionary) -> void:
 func _act_upcycle_ability(action: Dictionary) -> void:
 	var keep := int(action.get("keep", -1))
 	var scrap := int(action.get("scrap", -1))
+	# Block D6: which fork to buy, an index into Content.variants_of(base).
+	# A MISSING key is index 0 - the variant that reproduces the pre-D6 "+"
+	# row - so a stored forge action from an old log forges what it forged
+	# then; an out-of-range index is illegal and changes nothing.
+	var variant := int(action.get("variant", 0))
 	var kmax: int = player["kit"].size()
 	var cost := shop_cost("forge")
 	var ok: bool = player["pos"] == map["shrine"] and shop.get("forge", false) and bloom >= cost \
 		and keep >= 0 and keep < kmax and scrap >= 0 and scrap < kmax and keep != scrap
+	var kvars: Array = []
 	if ok:
 		var kid := String(player["kit"][keep])
-		ok = not kid.ends_with("+") and Content.ABILITIES.has(kid + "+") \
+		kvars = Content.variants_of(kid)
+		ok = not Content.is_upgrade(kid) and variant >= 0 and variant < kvars.size() \
 			and not _is_mobility(String(player["kit"][scrap]))
 	if not ok:
 		_emit({"t": "illegal", "action": "upcycle_ability"})
@@ -1689,9 +1766,10 @@ func _act_upcycle_ability(action: Dictionary) -> void:
 	bloom -= cost
 	shop.erase("forge")
 	var kid2 := String(player["kit"][keep])
+	var vid := String(kvars[variant])
 	_emit({"t": "upcycle_scrap", "id": player["kit"][scrap]})
-	player["kit"][keep] = kid2 + "+"
-	player["uses"][kid2 + "+"] = int(player["uses"].get(kid2, 0))
+	player["kit"][keep] = vid
+	player["uses"][vid] = int(player["uses"].get(kid2, 0))
 	player["kit"].remove_at(scrap)
 	# gummed is keyed by slot: drop the scrapped slot, shift the ones above
 	var ng := {}
@@ -1701,7 +1779,7 @@ func _act_upcycle_ability(action: Dictionary) -> void:
 			continue
 		ng[ki - 1 if ki > scrap else ki] = player["gummed"][k]
 	player["gummed"] = ng
-	_emit({"t": "upcycle_ability", "id": kid2 + "+"})
+	_emit({"t": "upcycle_ability", "id": vid})
 
 
 func _room_of(p: Vector2i) -> int:
@@ -1910,9 +1988,12 @@ func _act_ability(action: Dictionary) -> void:
 
 ## Compact end-of-run record for the meta layer and the runners: what was
 ## held, what was cast (raw and effective, folded onto base ids) and how the
-## run ended. Pure read; the sim never consumes it. player.uses keeps both
-## keys when an ability is upgraded (the + key is seeded with the base's
-## count at upgrade time), so per base the larger count is the true total.
+## run ended. Pure read; the sim never consumes it. player.uses keeps the base
+## key AND every variant key an upgrade seeded (both the draft and the forge
+## seed the chosen variant's count from the base's), so uses_by_base is the
+## MAX over the base and all its variants - never the sum. The fold below is
+## already that: every key folds onto base_id and maxi keeps the largest,
+## which is unchanged by Block D6 turning one "+" key into two variant keys.
 func run_summary() -> Dictionary:
 	var uses_by_base := {}
 	for aid in player["uses"]:
@@ -2012,7 +2093,7 @@ func _surge_applied_keys(adef: Dictionary, stats: Dictionary) -> Array:
 func _targets_oil(adef: Dictionary, target) -> bool:
 	if not (target is Vector2i):
 		return false
-	if String(adef.get("target", "")) == "dir":
+	if _is_dir_shape(adef):
 		var ctx := {"adef": adef, "target": target, "origin": player["pos"]}
 		return _rider_per({"count": "oil_in_line"}, ctx) > 0
 	return _terrain_kind(target) == "oil"
@@ -2024,6 +2105,14 @@ func ability_targets(aid: String) -> Array:
 	return _ability_targets(aid)
 
 
+## Whether `adef` aims by direction: both "dir" and the D6 "dir_enemy" pass a
+## unit vector as the target, so every site that special-cases a direction
+## target reads this rather than one literal.
+static func _is_dir_shape(adef: Dictionary) -> bool:
+	var t := String(adef.get("target", ""))
+	return t == "dir" or t == "dir_enemy"
+
+
 func _ability_targets(aid: String) -> Array:
 	var adef: Dictionary = Content.ABILITIES[aid]
 	var rng_: int = adef["range"]
@@ -2031,6 +2120,23 @@ func _ability_targets(aid: String) -> Array:
 	match String(adef["target"]):
 		"dir":
 			out = DIRS.duplicate()
+		"dir_enemy":
+			# A direction is legal only when its line actually holds an enemy
+			# within range - the walk below is the one `pull_line` performs, so
+			# a legal target is exactly a target the cast would do something to.
+			# Every other "dir" ability writes terrain (a lance clears smog, a
+			# jet washes), so an empty cast still means something; a line-pull
+			# with nobody on the line is a pure no-op, and offering it lets a
+			# persona spend its whole charge budget on nothing.
+			for d in DIRS:
+				var lp: Vector2i = player["pos"]
+				for i in range(rng_):
+					lp += d
+					if _tile(lp) == MapGen.T_WALL:
+						break
+					if _enemy_at(lp) != null:
+						out.append(d)
+						break
 		"tile":
 			for dy in range(-rng_, rng_ + 1):
 				for dx in range(-rng_, rng_ + 1):
@@ -2153,6 +2259,13 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 	match String(eff["op"]):
 		"lance":
 			var dmg: int = eff["dmg"] + (int(eff["clear_smog_bonus"]) if dim == 0 else 0)
+			# pierce (Block D6): the beam does not stop on the first body, so
+			# every enemy on the line is hit and every flammable tile BEHIND
+			# them lights - oil a machine is standing in front of is otherwise
+			# unlightable at any price. Walls and blocks_beam smoke still end
+			# the walk, so smoke still blanks a piercing lance. Absent or
+			# false is the pre-D6 beam exactly.
+			var pierce: bool = bool(eff.get("pierce", false))
 			var p: Vector2i = player["pos"]
 			for i in range(int(adef["range"])):
 				p += target
@@ -2169,7 +2282,8 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 					if _damage_enemy(e, dmg + _bonus_dmg(eff, ctx, e), aid):
 						out["hit"] += 1
 					_affect(out, e)
-					break
+					if not pierce:
+						break
 		"grow_radius":
 			# every floor tile within manhattan eff.radius of the target: 1 is
 			# the plus, 2 the 13-tile diamond a surged seed_bomb+ reaches. The
@@ -2201,30 +2315,29 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 			var e = _enemy_at(target)
 			if e == null:
 				return out
-			# massive enemies cannot be dragged, but the lash still lands -
-			# no ability should be a dead button against bosses
-			if not Content.ENEMIES[e["kind"]]["traits"].has("massive"):
-				var delta: Vector2i = player["pos"] - e["pos"]
-				var dir := Vector2i(signi(delta.x), signi(delta.y))
-				var pulled := 0
-				for i in range(int(eff["dist"])):
-					var nxt: Vector2i = e["pos"] + dir
-					if _manhattan(e["pos"], player["pos"]) <= 1 or not _open(nxt):
-						break
-					e["pos"] = nxt
-					pulled += 1
-					_cross(out["crossed"], nxt)
-					_enemy_enter_tile(e)
-					if not enemies.has(e):
-						out["pushed"] += 1
-						_affect(out, e)
-						return out
-				if pulled > 0:
-					out["pushed"] += 1
-					_stagger(e)
-			if _damage_enemy(e, int(eff["dmg"]) + _bonus_dmg(eff, ctx, e), aid):
-				out["hit"] += 1
-			_affect(out, e)
+			if not _pull_one(out, e, eff, aid, ctx):
+				# pre-D6 behaviour kept exactly: a target that dies mid-drag
+				# ends the effect here, `then` included
+				return out
+		"pull_line":
+			# Block D6 (vine_whip+rake): the pull body against every enemy on
+			# a `dir` line, nearest first. Walk order is the whole order - no
+			# rng. A blocks_beam tile does NOT stop it (a rake, not a beam);
+			# only a wall does. Each enemy reads the live board, so one dragged
+			# adjacent can block the one behind it. Unlike `pull`, an enemy
+			# that dies to entry damage does not end the effect.
+			var lp: Vector2i = player["pos"]
+			var line: Array = []
+			for i in range(int(adef["range"])):
+				lp += target
+				if _tile(lp) == MapGen.T_WALL:
+					break
+				var le = _enemy_at(lp)
+				if le != null:
+					line.append(le)
+			for le in line:
+				if enemies.has(le):
+					_pull_one(out, le, eff, aid, ctx)
 		"wash_push":
 			_merge_wash(out, _wash_dir(target, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]), aid, eff, ctx))
 		"wash_all":
@@ -2323,16 +2436,26 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 				dim = maxi(0, dim - int(eff["amount"]))
 				_emit({"t": "undim", "dim": dim})
 		"aoe_status":
+			# center (Block D6): the tile the radius is measured from -
+			# "self" (default) is the tender, "target" the cast tile, so a
+			# cloud can be thrown at a clump instead of only around your head.
+			# Nothing else changes: same list order, same _apply_status rules.
+			var sc: Vector2i = target if String(eff.get("center", "self")) == "target" else player["pos"]
 			for e in enemies.duplicate():
-				if _manhattan(e["pos"], player["pos"]) <= int(eff["radius"]):
+				if _manhattan(e["pos"], sc) <= int(eff["radius"]):
 					if _apply_status(e, String(eff["status"]), int(eff["turns"])):
 						out["statused"] += 1
 						_affect(out, e)
 		"aoe_damage":
+			# ignite_ttl (Block D6): how long the fires THIS effect lights
+			# burn (absent = the TERRAIN row's own ttl). A fire that spreads
+			# from an overridden tile takes the table ttl, so a long burn
+			# never propagates its length.
+			var ittl: int = int(eff.get("ignite_ttl", -1))
 			for t in terrain.keys().duplicate():
 				if bool(eff.get("ignite", false)) and bool(Content.terrain(String(terrain[t]["kind"]), "flammable", false)) \
 						and _manhattan(t, player["pos"]) <= int(eff["radius"]):
-					_ignite(t, aid)
+					_ignite(t, aid, ittl)
 					_emit({"t": "ignite", "tile": t})
 					out["ignited"] += 1
 					_hook("ignite", {"tile": t, "by": aid})
@@ -2342,6 +2465,17 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 						out["hit"] += 1
 					_affect(out, e)
 		"convert_radius":
+			# kind / ttl (Block D6): what a convertible corruption tile
+			# becomes and, for a decaying kind, how long it lasts. Default
+			# "growth" is the pre-D6 conversion. A BLOCKING kind takes
+			# grow_wall's two guards - _open (never wall a body, or yourself,
+			# in) and the stairs tile (convert_radius had no stairs guard, and
+			# mapgen is not known to keep corruption off it). The write goes
+			# through _tile_dict like every other terrain write, so the
+			# replaced tile's "bloom" flag rides along.
+			var ckind := String(eff.get("kind", "growth"))
+			var cttl: int = int(eff.get("ttl", -1))
+			var cblocks: bool = bool(Content.terrain(ckind, "blocks", false))
 			for dy in range(-int(eff["radius"]), int(eff["radius"]) + 1):
 				for dx in range(-int(eff["radius"]), int(eff["radius"]) + 1):
 					if absi(dx) + absi(dy) > int(eff["radius"]):
@@ -2349,7 +2483,9 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 					var t: Vector2i = target + Vector2i(dx, dy)
 					var k := _terrain_kind(t)
 					if bool(Content.terrain(k, "convertible", false)):
-						terrain[t] = {"kind": "growth"}
+						if cblocks and (not _open(t) or t == map["stairs"]):
+							continue
+						terrain[t] = _tile_dict(ckind, "", terrain.get(t, {}), cttl)
 						out["converted"] += 1
 						out["tiles"].append(t)
 						_emit({"t": "convert", "tile": t})
@@ -2395,6 +2531,39 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: 
 			if _outcome_fired(sub_out):
 				_emit({"t": "rider", "id": aid, "kind": "then", "amt": 1})
 	return out
+
+
+## The `pull` body against one enemy: drag it up to eff.dist tiles toward the
+## tender (a massive enemy is never dragged, but the lash still lands - no
+## ability should be a dead button against bosses), then the damage. Shared by
+## `pull` (one target) and `pull_line` (every enemy on the line, nearest
+## first). Returns false when the enemy left the board mid-drag (entry damage
+## killed it): out.pushed and `affected` are already set, and `pull` stops
+## there exactly as it did before Block D6 while pull_line moves on.
+func _pull_one(out: Dictionary, e: Dictionary, eff: Dictionary, aid: String, ctx: Dictionary) -> bool:
+	if not Content.ENEMIES[e["kind"]]["traits"].has("massive"):
+		var delta: Vector2i = player["pos"] - e["pos"]
+		var dir := Vector2i(signi(delta.x), signi(delta.y))
+		var pulled := 0
+		for i in range(int(eff["dist"])):
+			var nxt: Vector2i = e["pos"] + dir
+			if _manhattan(e["pos"], player["pos"]) <= 1 or not _open(nxt):
+				break
+			e["pos"] = nxt
+			pulled += 1
+			_cross(out["crossed"], nxt)
+			_enemy_enter_tile(e)
+			if not enemies.has(e):
+				out["pushed"] += 1
+				_affect(out, e)
+				return false
+		if pulled > 0:
+			out["pushed"] += 1
+			_stagger(e)
+	if _damage_enemy(e, int(eff["dmg"]) + _bonus_dmg(eff, ctx, e), aid):
+		out["hit"] += 1
+	_affect(out, e)
+	return true
 
 
 func _zero_outcome() -> Dictionary:
@@ -2459,7 +2628,7 @@ func _rider_target_tile(ctx: Dictionary, enemy):
 	var target = ctx.get("target", null)
 	if target == null:
 		return null
-	if String(adef.get("target", "")) == "dir":
+	if _is_dir_shape(adef):
 		var p: Vector2i = ctx.get("origin", player["pos"])
 		for i in range(int(adef.get("range", 0))):
 			p += target
@@ -2576,8 +2745,10 @@ func _bonus_dmg(eff: Dictionary, ctx: Dictionary, e: Dictionary) -> int:
 
 ## Light tile p as fire signed by `by` (an ability id or an enemy kind). The
 ## burnt tile's "bloom" flag rides along (enemy-made oil -> bloom-0 fire).
-func _ignite(p: Vector2i, by: String) -> void:
-	terrain[p] = _tile_dict("fire", by, terrain.get(p, {}))
+## `ttl` >= 0 overrides the TERRAIN row's burn length (the Block D6
+## ignite_ttl effect key); -1 (the default, every other caller) takes the row.
+func _ignite(p: Vector2i, by: String, ttl: int = -1) -> void:
+	terrain[p] = _tile_dict("fire", by, terrain.get(p, {}), ttl)
 
 
 ## The dict for a `kind` tile written over `old` (the tile it replaces, {} for
@@ -2585,10 +2756,12 @@ func _ignite(p: Vector2i, by: String) -> void:
 ## the old tile's "bloom" flag when it carries one - the flag outlives every
 ## oil -> fire -> ash transition so the eventual cleanse pays what the oil
 ## would have.
-func _tile_dict(kind: String, by: String, old: Dictionary) -> Dictionary:
+## `ttl_override` >= 0 replaces the table ttl on a decaying kind (Block D6:
+## aoe_damage's ignite_ttl, convert_radius's ttl); -1 takes the table.
+func _tile_dict(kind: String, by: String, old: Dictionary, ttl_override: int = -1) -> Dictionary:
 	var made := {"kind": kind}
 	if bool(Content.terrain(kind, "decays", false)):
-		made["ttl"] = int(Content.terrain(kind, "ttl", 0))
+		made["ttl"] = ttl_override if ttl_override >= 0 else int(Content.terrain(kind, "ttl", 0))
 	if by != "":
 		made["by"] = by
 	if old.has("bloom"):

@@ -993,6 +993,182 @@ have moved, not only the nine that stopped replaying, because a draft pick is an
 index: `det_optimizer_s42` replayed byte-identical with a matching hash and
 still changed when re-recorded.
 
+**Status (2026-09-07h).** **Block D's "evolve forks" bullet (6.4) is
+implemented** and `Game.SIM_VERSION` is 13. Each of the **fifteen base-pool
+abilities' `+` rows is now two named variants** keyed `<base>+<word>`: variant A
+reproduces the pre-D6 row byte for byte (only the key and the display name
+change, pinned against a frozen copy of the old table in
+`tests/test_grammar.gd`), and variant B forks it on shape, target, status or
+count rather than on a number - which is why five B rows are *sidegrades* of
+their own base rather than supersets (`root_wall+cage` loses the `tile` shape,
+`sap_snare+blight` swaps root for spore, `grow_spike+throng` swaps the `per`
+count, `bramble_coat+bristle` trades duration for damage, `overgrowth+palisade`
+writes roots instead of growth), an explicit exemption from C4's "numeric bumps
+only" convention that is written into `sim/content.gd` rather than left to be
+discovered. `Content.variants_of(base)` is derived by **scanning** `ABILITIES`,
+never hand-maintained, and returns two entries for a forked base, one for a
+package ability (those keep their single plain `+` form and are deliberately not
+forked) and none for an id with no upgrade. The **forge sells either** -
+`legal_actions` lists one `upcycle_ability` per (keep, scrap, variant) triple, a
+missing `variant` index means 0 (the A row, so an old log forges the behaviour
+it recorded) and an out-of-range index is illegal and changes nothing - and the
+**draft parity-picks one**: the `upgrade_or_affinity` slot's list holds
+`Content.variant_for(base, _pending_floor)` per held build-defining base, A on
+even floors and B on odd across the floors 2..7 a run drafts on, chosen with
+**no rng draw**, so D4's one-main-rng-draw-per-slot contract is untouched and
+the sibling a floor cannot deal is always buyable at the forge. Six new
+vocabulary items of an eight-slot budget, each used by a shipped row: `pierce`
+(a `lance` bool - the beam no longer breaks on the first body, so oil *behind*
+an enemy can be lit), `pull_line` (a new op that rakes a whole `dir` line
+toward the tender), `center` (an `aoe_status` key that moves the blast off the
+tender's own head), `ignite_ttl` (an `aoe_damage` key: the ttl of the fires
+*this* effect lights, a spread fire still taking the table ttl), and `kind` +
+`ttl` on `convert_radius` (what a converted corruption tile becomes,
+lint-forbidden from naming a corruption row - a player-made corruption tile
+would be both a bloom faucet and a green-gate faucet).
+
+The measurement is the "2026-09-07h - bump 13 (D6)" entry in `docs/BALANCE.md`,
+and **the verdict is SHIP, after one more gate line was retired for asserting a
+property the tree never had**. Four lines passed as written: **no sibling is
+strictly dominated** (0 of 15 pairs in sample and 0 of 15 out of sample; the
+lowest sign-test p in 30 paired comparisons is 0.12 and no pair's Wilson
+intervals are disjoint), `tests/playtest.gd` at 30 seeds with the gate on reads
+"gate: all PASS" and exits 0 (optimizer 16/30 [36%, 70%], deeproot 26/30
+[70%, 95%], magpie 4/30 [5%, 30%], 0 illegal and 0 timeouts in 180 runs), every
+fanatic build stays above zero at 100 seeds (floor turtle 2/100 [1%, 7%], total
+**205/800** after the rake fix below, 0 timeouts in those 800 runs), and **both stall canaries fall** - magpie
+67/71 = 0.94x in sample and 138/144 = 0.96x pooled over 200 seeds, turtle
+40/48 = 0.83x, against a 1.25x limit that 07g left at its recorded high. The
+line that fails is **"zero timeouts anywhere"**, on exactly one run: the magpie
+canary crosses the 400-turn cap on **seed 49**, where the bump-12 tree died of
+smog on floor 3 at **turn 317** of the same cap. Its kit at the cap holds **no
+variant at all**, so no fork row is nameable as the lever, and a control over
+the fifteen *base* rows (configs identical on both trees) at seeds 101..130
+reads **pre-D6 1 timeout, post-D6 2**, both on seed 122 - a locked-kit timeout
+on that seed is a property of the tree before this block. The measurement pass reported the failing number rather than rewriting the
+verdict, and that was right. What settled it was measuring the LINE: magpie
+timeouts over 200 fresh seeds read **pre-D6 1, post-D6 2**, and pooled over
+every magpie seed taken for this block, **1 in 400 before against 3 in 400
+after** - not a measurable rate change, and not zero before. "Zero timeouts
+anywhere" therefore asserted a property the codebase did not have when the line
+was written, which makes it unmeetable rather than strict; it is replaced by
+zero timeouts for the **gated** personas (which `playtest.gd` enforces and which
+passes) plus no material rise in the canary rate. That is the third gate line
+retired across two blocks, all written by the same hand before the baseline was
+taken, and the rule now recorded in BALANCE.md is to measure a proposed line on
+the unchanged tree before quoting it.
+
+**Two defects the measurement found, one fixed and one recorded.** `vine_whip+rake`
+was cast **364 times over 20 locked-kit runs at about 1% effectiveness**,
+because `pull_line` is the first `dir` ability whose empty cast is a pure no-op
+and `_ability_targets` offers a `dir` ability all four directions
+unconditionally. Fixed with a ninth target shape, `dir_enemy` (offered only
+where the line holds an enemy, walking as `pull_line` walks), plus
+`Game._is_dir_shape` for the two sites that compared against the literal, plus
+`Content.TARGET_SHAPES` and a lint - the shape vocabulary had never been closed
+at all. The rake now casts 0.9 a run at 100% effectiveness and its pair reads
+12/30 against 12/30. The recorded one: **no persona ever forges** (0 uses in 68
+runs), and the forge is the only place a sibling is *chosen*, so this block
+measures forks as assignments and not as choices. That also explains its
+largest cell, the fanatic gardener falling 53/100 to 39/100 with two of its
+three core abilities forked and no way for it to forge for the sibling it
+wants.
+
+**The acceptance clause needed a new instrument, and the reason is the
+measurement blindness the block was warned about.** No heuristic persona forges
+(`upcycles 0/0` everywhere, as since 09-05b), the parity rule means one floor
+deals one sibling, and in the gated playtest nothing casts a `mycelium_dash` or
+`pollen_burst` variant at all - so read off a playtest, "no strictly dominated
+sibling" would pass *vacuously*. `tests/sweep_forks.gd` (new, permanent) instead
+runs each sibling as a **locked kit** (`{kit: K, pool: K}`) against the same
+seeds and the un-upgraded base, defines DOMINATED precisely in its header
+(the loser's Wilson interval entirely below the winner's **and** a paired sign
+test at p < 0.05 favouring the winner) and implements exactly that, prints its
+own **noise band** before any verdict (a Wilson half-width at 30 seeds is about
+17 points near 50%, so two siblings must differ by roughly 35 points before the
+rule can fire, and "not separated at this N" is therefore the expected and
+honest answer), and reports a pair whose siblings are both **never cast** as
+**UNREAD rather than as a pass**. Four pairs are unread by the optimizer in sample
+(`root_wall`, `pollen_burst`, `overgrowth`, `bramble_coat`) and the proof is in
+the table: their A and B rows are identical in *every* column, because a card
+that is never cast cannot change a run. Those four were then re-run under
+`FORKS_BOT=deeproot`, which casts all eight of their siblings - 0 UNREAD, 0
+dominated, 0 timeouts - so the clause is answered for **15 of 15 pairs** across
+the two personas, with the caveat that deeproot wins 24-28 of 30 in all twelve
+of those configs and the column is therefore saturated: it establishes coverage,
+not power. `tests/tally.gd` gained the counters that make the
+comparison possible at all - `casts_by_id` and `effective_casts_by_id`, keyed by
+the full variant id, since every other per-ability table folds through
+`Content.base_id` - and the entry flags the three pairs those counters cannot
+judge: `shield`, `anchor` and `undim` set no outcome counter, so
+`thorn_shield+plate`, `anchor_roots+bedrock` and `moss_filter+sieve` can never
+register an effective cast while their siblings always can.
+
+**Two content findings the entry hands forward.** The **gardener** fanatic build
+falls 53/100 [43%, 62%] -> 39/100 [30%, 49%] with never-complete 36% -> 48%: its
+core is `seed_bomb` + `grow_spike` + `overgrowth`, two of which now fork, so on
+odd floors the upgrade slot deals it `seed_bomb+reclaim` and `grow_spike+throng`
+where the pre-D6 slot dealt the row the build was tuned around. The intervals
+overlap and it is one sample, but it is the largest cell in the entry and the
+one most likely to be a real cost of the parity rule - and if it repeats out of
+sample the lever is the parity rule itself, not a fork's numbers. And
+`vine_whip+rake` is cast **18.7 times a run at 0.2 effective** (23.1 / 0.1 out
+of sample) against `lash`'s 1.07 / 1.07: the optimizer has no line-occupancy
+test for the new `pull_line` op and fires the rake at empty axes, so it is a
+**bot** defect that makes every rake win cell a measurement of a bot misusing
+the card. The two design-phase falsifiers split:
+`overgrowth+palisade`'s **fired on the optimizer** - 0 casts in 60 locked seeds
+- and is rescued only by the search bot at 0.07 casts per run, so its two
+`convert_radius` keys are correct, linted and demoed but barely exercised by
+play; `bramble_coat+bristle`'s **did not fire** - under deeproot it is cast more
+than `briar` (1.27 against 0.77 per run) and wins one seed more, and the turtle
+canary's stall floors fall 48 -> 40, so neither half of its "cast no more, win
+strictly less" condition holds, though the thorns-hit column the falsifier
+actually named does not exist per variant (`thorns` sets no outcome counter, so
+both siblings read eff 0.00) and one +1 win at 30 seeds validates nothing.
+
+The corpus went 83 -> **92 records** ("regressions: 92 ok, 0 failed" plain and
+with `REGRESS_STRICT=1`) with nine new `d6_*` demos, one per rule including the
+forge pair `d6_forge_variant_a`/`_b` (same seed, board and actions, `variant` 0
+against 1, different kits). 52 base-`+` occurrences across 20 records were
+renamed to their A variant, 11 draft/forge demos were re-pinned by replay
+because the universe now holds both siblings, and **all 20 bot logs were
+re-recorded, of which 16 changed and 4 came back byte-identical** - the bump-12
+index-pick hazard arriving a second time: `det_magpie_s42` had *both* its offer
+lists move and replayed unchanged only because its stored pick index names the
+affinity offer in both. Suite green throughout ("content: OK" with
+"variants: 24 bases carry an upgrade (15 forked into 2, 9 package singles)" and
+an effect-grammar self-test at 38 bad rows -> 38 failures, "grammar: OK (889
+checks)" with "d6 table: 39 upgrade rows, 15 bases forked in two, parity A/B by
+floor", "economy: OK (264 checks)" with "d6 forge: 8 (keep, scrap, variant)
+triples on a 3-ability kit, all legal, one price", "bots: OK (147 checks)",
+"determinism: OK (61 checks, 8 personas)", "meta: OK", "shell smoke: OK", and
+1400 + 1540 procgen generations with 0 violations).
+
+**What remains in the whole roadmap.** Nothing from 6.2 or 6.3 is outstanding.
+**Block D (6.4) is five bullets of six done**: per-ability stat surges (07d),
+repeatable economy sinks (07e), enemies that read terrain (07f), the
+affinity-slotted draft (07g) and evolve forks (this entry). The **one Block D
+bullet still unimplemented is "one resonance per element"** - one bonus per
+element over kit and graft tags through the hook and mod layer - and its stated
+precondition ("growth x2 is met from turn one under the fixed starter, so this
+waits for loadouts") has been discharged since Block A closed at 07, so it is
+unblocked rather than deferred. Carried forward from earlier blocks and
+unchanged: the **mutator picker** has no shell surface (6.1's last piece; the
+three C4 mutators and the two D-block mutators have data, descs and invariants
+but no menu), and the two unlock-layer consumers `unlocked_grafts` and the
+`MILESTONES` seam it would need still have nothing to consume. Open items this
+block did not touch: `solar_core` remains the largest graft effect on record and
+unpriced against its own measurement; `quota_reclamp` has still never fired in a
+bot run; `hook_capped` has still never fired in play; and **the press and the
+forge remain dead sinks** - `upcycles 0/0` for every persona in every run in
+this entry, which now also means the fork *choice*, the visible half of this
+block, has zero harness coverage outside `tests/test_economy.gd`'s legality
+check and the two forge demos. New to the open list: a single 3-card draft can
+spend two of its cards on the two siblings of one base (~10-12% of rolls by
+direct probe), which is legal, follows from `universe = bases + upgrades`, and
+is pinned by no demo.
+
 Method: four code audits (primitives, in-run progression, meta + runners, bot
 coverage), two instrumented headless measurements (event-stream telemetry over
 180 bot runs; a synergy-lift sweep of 7 hypothesised pairs at 24 seeds per
@@ -1996,6 +2172,22 @@ loadouts, one package, and unlocked keystones. New mutators `no_lance`
   `ABILITY_DESC`, `uses`, shell slot keys, and every bot. Acceptance: no
   strictly dominated sibling at 30 seeds; solo-check every shield, thorns, or
   growth-writing variant.
+  *(Shipped 2026-09-07h; see the Status paragraph in this section. Two
+  corrections to the spec. **The acceptance clause cannot be read off a
+  playtest**: no persona forges, the parity rule means one floor deals one
+  sibling, and five of the fifteen pairs are cast by no heuristic persona at
+  all, so "no strictly dominated sibling" would pass vacuously. It is measured
+  instead by a new permanent runner, `tests/sweep_forks.gd`, which locks each
+  sibling as a kit, defines DOMINATED as "the loser's Wilson interval entirely
+  below the winner's AND a paired sign test at p < 0.05", prints its own noise
+  band first (a 30-seed Wilson half-width is about 17 points, so "not separated"
+  is the expected answer) and reports a pair whose siblings are never cast as
+  **UNREAD rather than as a pass** - four pairs are. And **six of the eight
+  op-key slots were enough**: `leaves`, `status_area` as an op and per-tile
+  `flammable` were all rejected for having exactly one user apiece when a
+  zero-vocabulary fork of equal quality existed; `status_area` shipped as a
+  `center` key on the existing `aoe_status` op instead. `pull_line` shipped and
+  is the one new op.)*
 - **Enemies read terrain.** Per-kind `avoid` lists as data driving a
   Dijkstra with DIRS tie-break; a smoke-screen rule for ranged intents
   (adjacency-based, intent still shown, blocked on execution; not the

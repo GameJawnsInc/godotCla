@@ -183,7 +183,9 @@ func _candidates(legal: Array, snap: Dictionary) -> Array:
 ## enemy. "dir" targets land at player + dir; "self" targets count as 0;
 ## every other kind carries a tile position. No enemies: 0 (legal order).
 func _target_enemy_dist(snap: Dictionary, ppos: Vector2i, aid: String, target) -> int:
-	var adef: Dictionary = Content.ABILITIES.get(aid, Content.ABILITIES.get(aid.trim_suffix("+"), {}))
+	# base_id, never trim_suffix("+"): a Block D6 variant id ("water_jet+pin")
+	# comes back unchanged from trim_suffix, so the fallback would miss.
+	var adef: Dictionary = Content.ABILITIES.get(aid, Content.ABILITIES.get(Content.base_id(aid), {}))
 	var kind := String(adef.get("target", "tile"))
 	if kind == "self":
 		return 0

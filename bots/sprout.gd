@@ -36,6 +36,9 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 	if by.has("use_item"):
 		var pl0: Dictionary = snap["player"]
 		for a in by["use_item"]:
+			# ITEM ids, not ability ids: Content.ITEMS keeps the plain "+"
+			# convention (the shrine press is not forked by Block D6), so
+			# trim_suffix("+") is still exactly right here.
 			match String(pl0["items"][a["slot"]]).trim_suffix("+"):
 				"balm_fruit":
 					if int(pl0["hp"]) <= 4:
@@ -138,13 +141,19 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 
 
 ## Rank of an ability id in DRAFT_PREF; lower is better. Unlisted ids rank
-## after everything listed; the doubled scale leaves room for a "+" form to
+## after everything listed; the doubled scale leaves room for an upgrade to
 ## rank one step better than its plain base.
+## Block D6: read through Content.base_id / Content.is_upgrade, NEVER
+## trim_suffix("+") / ends_with("+") - a variant id ("solar_lance+pierce") is
+## returned unchanged by trim_suffix and would fall off DRAFT_PREF, collapsing
+## the noob's whole draft preference to "unlisted". The two siblings of a fork
+## share one rank and the earlier offer wins the tie: a noob has no fork
+## opinion, which is the persona.
 func _pref_rank(aid: String) -> int:
-	var r: int = DRAFT_PREF.find(String(aid).trim_suffix("+"))
+	var r: int = DRAFT_PREF.find(Content.base_id(String(aid)))
 	if r == -1:
 		r = DRAFT_PREF.size()
-	return r * 2 - (1 if String(aid).ends_with("+") else 0)
+	return r * 2 - (1 if Content.is_upgrade(String(aid)) else 0)
 
 
 ## Impulse purchase: heal, then an ability, then a graft - from the legal

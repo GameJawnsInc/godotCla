@@ -236,12 +236,14 @@ architecture below is designed to bend rather than block.
   keys go into the `tests/test_content.gd` vocabulary constants in the same
   change, or the lint rejects them. Riders emit `{t: "rider", id, kind, amt}`,
   which `tests/tally.gd` counts (`riders_by_kind` / `riders_by_aid`) and folds
-  into the combo rate. Live rider rows (C2, added at bump 4): `grow_spike`
-  and `grow_spike+` carry `per` (growth_adjacent_target over a base 3, cap 1 and
-  cap 2), `sun_flare` and `sun_flare+` a `bonus` (+1 on an enemy standing in
-  fire, which their own ignite pass can light under it), and `seed_bomb+`,
-  `vine_whip+` and `water_jet+` a `then` (root on freshly planted tiles, stun
-  when the drag crossed fire, root when the shove both pushed and collided) —
+  into the combo rate. Live rider rows (C2, added at bump 4; the `+`
+  rows were renamed to their D6 A variants at bump 13): `grow_spike`
+  and `grow_spike+impale` carry `per` (growth_adjacent_target over a base 3,
+  cap 1 and cap 2), `sun_flare` and `sun_flare+corona` a `bonus` (+1 on an
+  enemy standing in fire, which their own ignite pass can light under it), and
+  `seed_bomb+tangle`, `vine_whip+lash` and `water_jet+pin` a `then` (root on
+  freshly planted tiles, stun when the drag crossed fire, root when the shove
+  both pushed and collided) —
   `tests/regressions/c2_*.json` demos one row each.
 - Verdant surges are data (D1, `docs/PROGRESSION_REVIEW.md` §6.4; bump 9):
   an ability row's optional `surge` dict (default `Content.SURGE_DEFAULT`,
@@ -263,25 +265,37 @@ architecture below is designed to bend rather than block.
   after its `ability` event (event order: `verdant`, `ability`, `surge`, then
   the effects). The lint requires every surge stat key to be carried by some
   effect of the row — a surge that touches nothing is a data error — and
-  rejects `surge` on an effect dict. Seven rows carry one today: `grow_spike`
-  and `grow_spike+` `{dmg: 1}`, `water_jet` and `water_jet+`
-  `{push: 1, collision_dmg: 1}`, `sun_flare` and `sun_flare+`
-  `{cost: -1, radius: 1}` (the discount they always had, plus reach) and
-  `seed_bomb+` `{radius: 1}` (base `seed_bomb` keeps the default).
+  rejects `surge` on an effect dict. Seven rows carry one today (D6
+  A-variant keys since bump 13): `grow_spike` and `grow_spike+impale`
+  `{dmg: 1}`, `water_jet` and
+  `water_jet+pin` `{push: 1, collision_dmg: 1}`, `sun_flare` and
+  `sun_flare+corona` `{cost: -1, radius: 1}` (the discount they always had,
+  plus reach) and `seed_bomb+tangle` `{radius: 1}` (base `seed_bomb` keeps the
+  default). Three D6 B siblings carry a surge dict of their own —
+  `water_jet+sluice` `{push: 1, collision_dmg: 1}`, `sun_flare+smoulder`
+  `{cost: -1, radius: 1}` and `grow_spike+throng` `{dmg: 1}`, each the same
+  dict as its A sibling, so the surge is never part of a fork. Separately,
+  four cost-2 B rows (`seed_bomb+reclaim`, `root_wall+cage`,
+  `pollen_burst+drift`, `moss_filter+prism`) carry NO surge dict and so take
+  the `Content.SURGE_DEFAULT` `{cost: -1}`: cast from growth they cost 1 —
+  the same as their cost-1 A sibling — and eat the tile underfoot. Their
+  "costs twice as much" fork notes are the price OFF growth.
+  (`solar_lance+pierce` is default-surge-eligible too, but its A sibling is
+  cost 2 as well, so the discount is not part of that fork.)
   Two grammar changes ride along: `grow_radius` now READS its `radius` key
   (review defect 16) — radius 1 is the plus it always drew, radius 2 the
-  13-tile diamond a surged `seed_bomb+` reaches — and the new positional op
-  `plant_origin {kind}` (kind closed to `Content.TERRAIN`) writes that kind on
+  13-tile diamond a surged `seed_bomb+tangle` reaches — and the new
+  positional op `plant_origin {kind}` (kind closed to `Content.TERRAIN`) writes that kind on
   `ctx.origin` when the tile the cast left is floor, terrain-free and empty of
   enemies, counting as planted so `status_target who: on_planted`, the
-  `growth_planted` hook and `effective_uses` all see it. `mycelium_dash+` is
+  `growth_planted` hook and `effective_uses` all see it. `mycelium_dash+trail` is
   Spore Trail: `[{op: teleport}, {op: plant_origin, kind: growth}]`, cost and
   range unchanged. Terrain insertion order is hash-visible (`terrain.keys()`
   feeds the growth target list and `state_hash` hashes `str(snapshot())`), so
   `grow_radius` keeps its pre-D1 target-then-DIRS order for the plus and only
   the outer rings iterate dy-then-dx — a radius-1 cast is byte-identical to
   before. `tests/regressions/d1_*.json` demos six cases: the three stat
-  surges, the `seed_bomb+` diamond, Spore Trail, and a cost-1 default-surge
+  surges, the `seed_bomb+tangle` diamond, Spore Trail, and a cost-1 default-surge
   ability leaving the tile standing.
 - Grafts are data (`docs/PROGRESSION_REVIEW.md` §6.3 C3): every `Content.GRAFTS`
   row is `{name, desc, tags, price}` (tags a `Content.TAGS` subset, `price` an
@@ -434,7 +448,7 @@ architecture below is designed to bend rather than block.
   never move, numeric bumps only (range, dist, radius, dmg, ttl; a row may bump
   more than one) and at most one C1 rider, only where the vocabulary states the base identity
   (`grow_radius` ignores its `radius` key, so `fungal_ring+` takes the
-  `seed_bomb+` on-planted root instead of a wider ring).
+  `seed_bomb+tangle` on-planted root instead of a wider ring).
   `tests/regressions/c4_*_plus.json` demos one row each.
 - Mutators are data (C4): every `Content.MUTATORS` row carries a `config` dict
   and the sim reads it through the one helper `Game._mut(key, default)` — it
@@ -489,13 +503,15 @@ architecture below is designed to bend rather than block.
   scan builds two lists in one pass, `upgrades` (every `+` form of a held
   base) and `deepenings` (the same minus rows where `_build_defining` is
   false), `universe` is still `bases + upgrades` and only the
-  `upgrade_or_affinity` arm reads `deepenings` — so `mycelium_dash+` and
-  `burrow+` are off that slot while `updraft+` (`["wind", "mobility"]`) stays,
+  `upgrade_or_affinity` arm reads `deepenings` — so the `mycelium_dash`
+  variants and `burrow+` are off that slot while `updraft+`
+  (`["wind", "mobility"]`) stays,
   the UNIVERSE is untouched (a wild slot still offers the dash upgrade, and
   the shrine forge, which reads the kit, still upcycles it), and under
   `draft_upgrades_only` the `+` list IS the universe so that arm keeps using
   `upgrades` — filtering it could empty a draft that today has offers. It is
-  tags, never `role`. Unfiltered, `mycelium_dash+` was offered 158 times in
+  tags, never `role`. Unfiltered, `mycelium_dash+` (as the id then was) was
+  offered 158 times in
   511 optimizer drafts and taken 0; filtered it is 36 offers, all from wild
   slots, and 0 of 310 upgrade-slot offers over seeds 1..60 are a pure-mobility
   `+` form (BALANCE.md 2026-09-07g). An id already
@@ -541,8 +557,8 @@ architecture below is designed to bend rather than block.
   whole-table pass over all 48 abilities, all six loadouts x seeds 1..44 =
   264 drafts with 0 pure-mobility upgrade offers, `updraft+` still dealt on a
   skyrunner/aeolian config, the starved fallbacks, a wild slot still offering
-  `mycelium_dash+`, the forge still upcycling it, and the draw count held at
-  3 for kits whose filtered and unfiltered lists differ by 0, 1 and 2 entries)
+  a `mycelium_dash` variant, the forge still upcycling it, and the draw
+  count held at 3 for kits whose filtered and unfiltered lists differ by 0, 1 and 2 entries)
   and the draw-count assert (rng.state after a roll equal across
   kits with different candidate counts, and equal to a fresh generator
   advanced `count` times) and the starved cases (a 3-ability kit under
@@ -551,32 +567,172 @@ architecture below is designed to bend rather than block.
   `Game._draw_draft_offers` is the only site that implements one (a match on
   the role strings with `wild` as the catch-all), so adding an entry to
   `DRAFT_SLOT_ROLES` without an arm there silently rolls it as wild —
-  `sim/content.gd` says so beside the table. Demos:
+  `sim/content.gd` says so beside the table. Demos (re-pinned at bump 13, when
+  the D6 fork moved every offer list):
   `tests/regressions/d4_affinity_slot.json`,
   `d4_upgrade_slot.json` and `d4_wide_draft_slots.json` are one seed and one
   board through three configs (the flarekeeper's affinity slot deals a sun
-  base, the tidewarden's deals a displace base and its slot 1 a held `+` form,
+  base, the tidewarden's deals a displace base and its slot 1 a held variant,
   and the wide draft appends a fourth wild offer to the flarekeeper's three
-  unchanged ones), and `d4_focus_skip.json` skips a draft and descends again
-  for the four-offer roll whose last slot is `focus` (its slot 1 pins the
-  upgrade filter too — `seed_bomb+` where the unfiltered rule dealt
-  `mycelium_dash+`). `d4_starved_slot.json`
+  unchanged ones; since D6 the wild slot of the first two deals the OTHER
+  sibling of the base the upgrade slot just dealt, which is the universe rule
+  in one roll), and `d4_focus_skip.json` skips a draft and descends again
+  for the four-offer roll whose last slot is `focus` — its two rolls also pin
+  the D6 parity rule, `solar_lance+noon` entering floor 2 and
+  `seed_bomb+reclaim` entering floor 3, and its slot 1 pins the upgrade filter
+  (a seed-bomb variant where the unfiltered rule dealt a dash one).
+  `d4_starved_slot.json`
   pins the one-draw-per-slot contract in plain mode: a kit and pool that leave
   the affinity slot exactly one candidate, so a draw that skips or shortens
-  itself on a one-candidate list shifts the two offers after it.
-  `d4_upgrade_filter.json` pins both halves of the filter on one board — the
-  upgrade slot deals the build-defining `seed_bomb+` while the WILD slot deals
-  `mycelium_dash+` on the same roll; unfiltered, the same seed swaps those two
-  roles, so removing the filter fails it in plain mode. `c4_upgrades_only.json`
-  records the deliberate exemption: the mobility `+` form still appears there
-  and in no other slot pin.
+  itself on a one-candidate list shifts the two offers after it (the mutation
+  deals `seed_bomb+reclaim` where the wild slot deals `mycelium_dash+scatter`).
+  `d4_upgrade_filter.json` (seed 5 -> seed 2 at bump 13) pins both halves of
+  the filter on one board — the
+  upgrade slot deals the build-defining `seed_bomb+tangle` while the WILD slot
+  deals `mycelium_dash+trail` on the same roll; unfiltered, the same seed deals
+  `mycelium_dash+trail` from the UPGRADE slot,
+  so removing the filter fails it in plain mode. `c4_upgrades_only.json`
+  records the deliberate exemption: a mobility variant still appears there
+  and in no other slot pin, and since D6 that mutator's candidate list is
+  every variant of every held base (six ids for the starting kit, not three).
+- Evolve forks (Block D6, `docs/PROGRESSION_REVIEW.md` §6.4, the last Block D
+  item): every base-pool `+` ability is TWO named variants, so the forge is a
+  choice and the draft is a rotation. **Key scheme.** A variant id is
+  `<base>+<word>` (word `^[a-z]+$`, never a second `+`);
+  `Content.base_id` already cut at the first `+` and is unchanged. The fifteen
+  base abilities fork (`solar_lance+noon`/`+pierce`,
+  `seed_bomb+tangle`/`+reclaim`, `vine_whip+lash`/`+rake`,
+  `water_jet+pin`/`+sluice`, `mycelium_dash+trail`/`+scatter`,
+  `root_wall+bulwark`/`+cage`, `pollen_burst+torpor`/`+drift`,
+  `sun_flare+corona`/`+smoulder`, `thorn_shield+plate`/`+chaff`,
+  `overgrowth+sprawl`/`+palisade`, `sap_snare+tether`/`+blight`,
+  `grow_spike+impale`/`+throng`, `bramble_coat+briar`/`+bristle`,
+  `anchor_roots+bedrock`/`+heave`, `moss_filter+sieve`/`+prism`); variant A is
+  the pre-D6 row renamed, key and display name only, so the measured balance
+  point is preserved and every number this block moves is attributable to B
+  alone. The nine package `+` rows and every `Content.ITEMS` `+` row keep their
+  single plain `+` id — packages sit behind a one-per-run commitment and the
+  item press is a different system. **Helpers.** `Content.is_upgrade(aid)`
+  (`base_id(aid) != aid`), `Content.variants_of(base)` (every ABILITIES key
+  whose base_id is `base` and which is not `base`, derived by SCANNING the
+  table in key order — never a hand-maintained list) and
+  `Content.variant_for(base, parity)` (`variants_of` indexed by
+  `posmod(parity, size)`). Table order is load-bearing: A must be listed
+  before B. For a package ability `variants_of` returns a 1-list and
+  `variant_for` is the identity, so package drafting is unchanged.
+  **Forge.** The `upcycle_ability` action gained a `variant` index into
+  `Content.variants_of(base_id(kit[keep]))` and `legal_actions` lists one
+  action per (keep, scrap, variant) triple, so a player at the shrine chooses
+  which fork; a MISSING `variant` is index 0 — the A row — so an old stored
+  forge action forges what it forged then, and an out-of-range index is
+  `{t: "illegal", action: "upcycle_ability"}` and changes nothing.
+  **Draft parity.** `_draw_draft_offers`'s `universe` holds BOTH siblings of a
+  held base (a wild slot may deal either) while `deepenings` — the
+  `upgrade_or_affinity` slot's list — holds exactly ONE per held
+  build-defining base, `Content.variant_for(base, _pending_floor)`. That is a
+  table read, NOT a draw, so the block does not touch the D4 contract: a roll
+  still spends exactly one main-rng draw per slot, and WHICH sibling a slot
+  could deal is a function of the floor rather than of a roll. Drafts happen
+  on floors 2..7, so with A first a run is dealt A on even floors and B on
+  odd and both siblings are draftable inside one run; the sibling a floor
+  cannot deal is always buyable at the forge, so no fork is unobtainable.
+  Because the universe holds both siblings while `_minus` excludes by exact
+  id, one roll can present the fork itself: a wild slot may deal the sibling
+  the upgrade slot did not (measured at ~12% of optimizer drafts over seeds
+  1..40, e.g. `["moss_filter", "seed_bomb+tangle", "seed_bomb+reclaim"]`).
+  That is accepted, not a defect — a card pair IS the fork choice — but it
+  narrows such a roll to two effective picks, since taking either sibling
+  makes the base a variant and drops the other from `bases` and `upgrades`
+  for the rest of the run. Excluding by base_id would move every downstream
+  offer list and cost another corpus re-record.
+  `tests/regressions/d4_affinity_slot.json` is the pin: its one roll deals
+  `sun_flare+corona` from the upgrade slot and `sun_flare+smoulder` from the
+  wild one.
+  **New vocabulary** (six items, all lint-declared in
+  `tests/test_content.gd`): `pierce` (bool key on op `lance` — the beam does
+  not stop on the first body, so every enemy on the line is hit and every
+  flammable tile behind them lights; walls and `blocks_beam` smoke still end
+  the walk), `pull_line` (new op, keys `{dist, dmg}`, target shape `dir`, in
+  `BONUS_OPS` — the `pull` body against every enemy on the line, nearest
+  first, and unlike `pull` a death mid-line does not end the effect),
+  `center` (String key on `aoe_status`, closed to `CENTER_VALUES`
+  `["self", "target"]` — the tile the radius is measured from), `ignite_ttl`
+  (int key on `aoe_damage` — the ttl written on the fires THAT effect lights,
+  threaded through `_ignite(p, by, ttl := -1)` into `_tile_dict`; a fire that
+  SPREADS from an overridden tile takes the table ttl, and `SURGE_KEYS` carries
+  `ttl` and not `ignite_ttl`, so a surge can never lengthen a burn), and
+  `kind` + `ttl` on `convert_radius` (what a convertible corruption tile
+  becomes and, for a decaying kind, how long — default `growth` is
+  byte-identical to before except that the write now goes through
+  `_tile_dict`, so a replaced tile's `bloom` flag rides along; a BLOCKING kind additionally takes
+  `grow_wall`'s two guards, `_open(t)` and `t != map["stairs"]`, and a `kind`
+  naming a corruption row is a LINT ERROR — no variant may create corruption,
+  which would be both a bloom faucet and a green-gate faucet). Five B rows are
+  sidegrades of their own base rather than supersets (`root_wall+cage`,
+  `sap_snare+blight`, `grow_spike+throng`, `bramble_coat+bristle`,
+  `overgrowth+palisade`) — an explicit exemption from the C4 "numeric bumps
+  only" convention, written down in `sim/content.gd`.
+  **The suffix hazard**, which is the whole risk of this block:
+  `"solar_lance+pierce".ends_with("+")` is FALSE, so every
+  `ends_with("+")` on an ability id silently changed meaning and every
+  `trim_suffix("+")` silently returns the variant id UNCHANGED. Both became
+  `Content.is_upgrade(aid)` / `Content.base_id(aid)` across `sim/game.gd` (the
+  draft `is_upgrade` flag, the forge legality and its old `kid + "+"`
+  construction, `_shop_ability_candidates`' `aid + "+"` — now the helper
+  `_kit_holds_base`, which folds BOTH sides: a locked-kit sweep config
+  (`{kit: K, pool: K}`, the block's own acceptance measurement) puts VARIANT
+  ids in the pool, and folding only the kit side would offer a held variant as
+  a draft card `_act_draft` then rejects and let the shrine stock a duplicate
+  of it — the draft base filter and the upgrades/deepenings build,
+  and `_act_draft`'s upgrade path), `bots/optimizer.gd` and `bots/sprout.gd`
+  (`_pref_rank` — an unconverted `trim_suffix` would drop
+  every variant off `DRAFT_PREF` and collapse both personas' draft
+  preference), `bots/deeproot.gd`, `bots/bot_base.gd` (`_kit_id` folds with
+  `Content.base_id` in the BASE class, so a new persona inherits the right
+  fold; the two subclass overrides that used to work around it are gone),
+  `shell/main.gd` (the
+  sprite keys, the `+` badge, the draft card's "(upgrade)" suffix and the
+  `ABILITY_DESC` fallback), `meta/profile.gd`, `tests/tally.gd` (whose `_base`
+  every per-ability table routes through) and the test suite. The
+  `Content.ITEMS` press sites KEEP the plain `"+"` — items are not forked —
+  and each carries a one-line comment saying so
+  (`sim/game.gd` legal_actions press branch, `_base_item_ids`, `_act_upcycle`;
+  `bots/sprout.gd`; `shell/main.gd`; `tests/test_content.gd`;
+  `tests/test_economy.gd`). Other load-bearing sites: `run_summary`'s
+  `uses_by_base` folds base and ALL variants with `max` (both the draft and
+  the forge SEED the chosen variant's count from the base's, so a sum would
+  double-count), and `Content.MILESTONES`' `upgrades_only` row now requires
+  `won_with ["seed_bomb+tangle"]` — a profile recorded before the rename
+  stores `"seed_bomb+"`, which `Profile._migrate_ability_id` maps to that
+  base's FIRST variant (derived through `Content.variants_of`, never a rename
+  table), so old history keeps satisfying that milestone.
+  **Demos** (`tests/regressions/d6_*.json`, nine): `d6_lance_pierce`,
+  `d6_rake_pull_line`, `d6_drift_center`, `d6_smoulder_ignite_ttl`,
+  `d6_palisade_kind` and `d6_palisade_ttl` are one per new op or key;
+  `d6_forge_variant_a` and `d6_forge_variant_b` are the SAME seed, board and
+  three actions differing only in the `variant` index, and produce different
+  kits (Noon Lance kills the smokestack for 4 and lights nothing past it,
+  Piercing Lance deals 2 and lights the oil behind it); `d6_draft_parity`
+  descends twice and is dealt `solar_lance+noon` from the upgrade slot
+  entering floor 2 and `moss_filter+prism` entering floor 3. Each fails in
+  plain (non-strict) mode under a targeted mutation of the rule it pins —
+  eleven mutations run and checked: restore the lance `break`; break out of
+  the `pull_line` loop after the first enemy, or reverse its walk order;
+  force `center` to "self"; ignore `ignite_ttl`; force `convert_radius`
+  `kind` to "growth", or drop its stairs guard (which fails the record on an
+  illegal move); ignore the convert `ttl`; pin the forge index at 0 or at 1;
+  freeze `variant_for` at index 0. The two re-pinned D4 rng/filter demos were
+  re-checked the same way (`d4_upgrade_filter` under the dropped
+  `_build_defining` filter, `d4_starved_slot` under a `randi_range` draw).
+  `blockb_forge_once.json` pins the third forge case — an action with no
+  `variant` key at all, which is index 0.
 - Run summary and effective casts (C4): `Game.effective_uses` (base id -> int)
   counts a cast only when something happened — an effect outcome fired or a
   rider ran — while `player.uses` stays the raw count. It is copied by
   `clone()` and deliberately not in `snapshot()`, so it never churns the state
   hash. Teleport, dash, clear_smoke and self-only ops set no outcome counter
   and so never count as effective; `create_terrain` counts (planted), and
-  since D1 so does `plant_origin` — a `mycelium_dash+` hop that leaves growth
+  since D1 so does `plant_origin` — a `mycelium_dash+trail` hop that leaves growth
   behind it is an effective cast, so `effective_uses["mycelium_dash"]` is
   non-zero where the base dash's bare teleport never counted. `Game.run_summary()`
   is the compact end-of-run dict — `{won, floor, turns, kit, grafts,
@@ -646,9 +802,70 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (12
-  today: Block D4 — the affinity-slotted draft with focus on skip. Offer i of
-  a descent draft is rolled by the role `Content.DRAFT_SLOTS[i]` over the same
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (13
+  today: Block D6 — evolve forks. Every base-pool `+` row is gone: the fifteen
+  base abilities each fork into two `<base>+<word>` variants, so EVERY
+  `solar_lance+`-style id in a stored log names an ability that no longer
+  exists and its cast is an unknown ability. Beyond the rename the draft's
+  universe holds both siblings of every held base and its upgrade slot lists
+  one per base picked by `Content.variant_for(base, _pending_floor)` (a parity
+  read, no draw), so every offer list moved; the forge action gained a
+  `variant` index (missing = 0, the A row); `draft_offers` is a stored
+  snapshot key, so a record that ENDS mid-draft hashes differently on its
+  pending offer list alone, even when nothing it actually did moved
+  (`blockb_quota_reclamp` and `blockb_quota_reclamp_wash` are that case — both
+  end in the draft phase with an EMPTY shop, and `blockb_quota_reclamp`'s
+  pending offers went `["solar_lance+", "seed_bomb+", "mycelium_dash+"]` ->
+  `["seed_bomb+reclaim", "solar_lance+noon", "seed_bomb+tangle"]`). The shrine
+  itself never stocks a variant in a default run: `_shop_ability_candidates`
+  draws from `draft_pool`, which holds base ids unless a `pool` config names a
+  variant. And
+  a default `convert_radius` now writes through `_tile_dict`, so a converted
+  enemy-made oil tile carries its `bloom` flag into the growth (hash-visible,
+  no rule reads it). The nine package `+` rows and every `Content.ITEMS` `+`
+  row are untouched by construction. The corpus went 83 -> 92 with nine
+  `d6_*` demos (one per new op or key, the two forge halves and the parity
+  draft). Twenty hand-authored records carried 52 base-`+` id occurrences
+  (`seed_bomb+` 14, `grow_spike+` 8, `water_jet+` 7, `solar_lance+` 7,
+  `sun_flare+` 6, `mycelium_dash+` 6, `vine_whip+` 4; the other eight base
+  `+` ids appeared in no record at all), every one renamed to the A variant
+  that inherits the behaviour, and eleven of them — `c4_no_lance`,
+  `c4_upgrades_only`, `c4_wide_draft`, `c5_loadout_kit_ban`, `c5_open_pool`
+  and the six `d4_*` — were re-pinned BY REPLAY because their offer lists
+  moved as well (`d4_upgrade_filter` moved from seed 5 to seed 2, where the
+  filtered roll still puts the mobility variant in the wild slot so both
+  halves of the filter stay visible on one board). `blockb_forge_once` needed
+  only the rename and became the missing-`variant` pin: its stored action has
+  no `variant` key and still forges `solar_lance+noon`. The 13 re-stamp then
+  rewrote `sim_version` across the 63 non-bot records with no outcome diff
+  anywhere: 41 stamp-only (version alone), and 22 whose hash also moved — the
+  20 whose event patterns carry a renamed id (nine of them needed the rename
+  alone, eleven a replay re-pin) plus `blockb_quota_reclamp` and
+  `blockb_quota_reclamp_wash`, whose only change is the pending `draft_offers`
+  list they end on.
+  All 20 bot logs were re-recorded on their personas: 16 came back different
+  and four byte-identical — the three `det_wanderer_*` (a wanderer never
+  descends, so they are the check that non-drafting play is untouched) and
+  `det_magpie_s42`, which DOES draft, twice, and whose BOTH offer lists moved
+  (`["sun_flare", "solar_lance+", "overgrowth"]` ->
+  `["sun_flare", "solar_lance+noon", "grow_spike"]` entering floor 2 and
+  `["sap_snare", "seed_bomb+", "bramble_coat"]` ->
+  `["sap_snare", "seed_bomb+reclaim", "solar_lance+pierce"]` entering floor 3
+  — the parity rule visible in one log, A on the even floor and B on the odd);
+  it replayed and re-recorded unchanged only because its stored pick index 0
+  names the affinity offer in both lists, which is the index-pick hazard
+  arriving as a coincidence again. `det_fanatic_s3` is this bump's version
+  of the index-pick hazard: it replayed with the SAME actions and the SAME
+  outcome and only its HASH moved (its final kit names a variant id), which
+  is again why a re-record is never limited to the logs that stop replaying.
+  Where the fork arrives as difficulty rather than as a stale log:
+  `det_optimizer_s3` reaches floor 6 in 107 turns where it took 293,
+  `det_sprout_s11` reaches floor 5 in 261 turns where it died on floor 3 in
+  84, `det_magpie_s3` falls from floor 5 in 178 turns to floor 2 in 274, and
+  `det_deeproot_s42` and `det_optimizer_s42` still win floor 7 but in 107 and
+  123 turns (was 98 and 115).
+  Bump 12 was Block D4 — the affinity-slotted draft with focus on skip.
+  Offer i of a descent draft is rolled by the role `Content.DRAFT_SLOTS[i]` over the same
   candidate universe as before, and `_draw_draft_offers` spends exactly one
   main-rng draw per slot — a padded empty slot included — instead of the old
   `min(count, candidates)` draws from one uniform list, so every log that

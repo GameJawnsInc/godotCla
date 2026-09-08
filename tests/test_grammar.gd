@@ -40,6 +40,14 @@ extends SceneTree
 ## Content.SCREENED_INTENTS): gum / drain / drag from a non-adjacent,
 ## non-massive enemy fizzles ({t: "screened"}) while the tender stands on or
 ## beside smoke; adjacent, massive, or smoke two tiles away all execute.
+## Block D6 (evolve forks): the fork table itself (variants_of order,
+## is_upgrade, variant_for parity, and variant A byte-equal to the pre-D6 "+"
+## row it renames), the five new vocabulary items on hand-built boards
+## (pierce, pull_line, center, ignite_ttl, convert_radius kind/ttl - each with
+## the outcome counters it sets, the hooks it fires and its rider
+## interaction), the shrine forge listing one action per (keep, scrap,
+## variant), and the draft dealing the parity variant while a wild slot may
+## deal either - with the one-main-rng-draw-per-slot contract still pinned.
 ## Run: godot --headless --path . --script tests/test_grammar.gd
 
 const Content := preload("res://sim/content.gd")
@@ -117,6 +125,16 @@ func _init() -> void:
 	_check_d4_mutators()
 	_check_d4_upgrade_filter()
 	_check_d4_state()
+	_check_d6_table()
+	_check_d6_pierce()
+	_check_d6_pull_line()
+	_check_d6_center()
+	_check_d6_ignite_ttl()
+	_check_d6_convert_kind()
+	_check_d6_forge()
+	_check_d6_draft_parity()
+	_check_d6_dir_enemy()
+	_check_d6_locked_kit()
 	if failures.is_empty():
 		print("grammar: OK (%d checks)" % checks)
 		quit(0)
@@ -542,18 +560,24 @@ func _check_surge_identity() -> void:
 			bad_on += 1
 	_ok(bad_off == 0, "surge: %d abilities cost != base off growth" % bad_off)
 	_ok(bad_on == 0, "surge cost: %d abilities differ from the base-1 formula on growth (no shipped row changes the cost delta)" % bad_on)
-	# Block D1: exactly the seven surged rows carry the key; sun_flare(+) keeps the -1
+	# Block D1: the surged rows carry the key; sun_flare's variants keep the
+	# -1. Block D6 forked each of those bases in two, and a fork inherits its
+	# base's surge dict wherever the fork axis is not the surge itself:
+	# seed_bomb+reclaim drops it (no rider, no surge - that is its price),
+	# every other sibling keeps the row it inherited.
 	var keyed: Array = []
 	for aid in Content.ABILITIES:
 		if Content.ABILITIES[aid].has("surge"):
 			keyed.append(aid)
 	keyed.sort()
-	var want := ["grow_spike", "grow_spike+", "seed_bomb+", "sun_flare", "sun_flare+", "water_jet", "water_jet+"]
-	_ok(with_key == 7 and keyed == want, "the seven D1 rows carry a surge key: %s" % str(keyed))
-	_ok(Content.ABILITIES["grow_spike"]["surge"] == {"dmg": 1} and Content.ABILITIES["grow_spike+"]["surge"] == {"dmg": 1}
-		and Content.ABILITIES["water_jet"]["surge"] == {"push": 1, "collision_dmg": 1} and Content.ABILITIES["water_jet+"]["surge"] == {"push": 1, "collision_dmg": 1}
-		and Content.ABILITIES["sun_flare"]["surge"] == {"cost": -1, "radius": 1} and Content.ABILITIES["sun_flare+"]["surge"] == {"cost": -1, "radius": 1}
-		and Content.ABILITIES["seed_bomb+"]["surge"] == {"radius": 1}, "D1 surge dicts as specified")
+	var want := ["grow_spike", "grow_spike+impale", "grow_spike+throng", "seed_bomb+tangle",
+		"sun_flare", "sun_flare+corona", "sun_flare+smoulder",
+		"water_jet", "water_jet+pin", "water_jet+sluice"]
+	_ok(with_key == 10 and keyed == want, "the D1 surge rows after the D6 fork: %s" % str(keyed))
+	_ok(Content.ABILITIES["grow_spike"]["surge"] == {"dmg": 1} and Content.ABILITIES["grow_spike+impale"]["surge"] == {"dmg": 1}
+		and Content.ABILITIES["water_jet"]["surge"] == {"push": 1, "collision_dmg": 1} and Content.ABILITIES["water_jet+pin"]["surge"] == {"push": 1, "collision_dmg": 1}
+		and Content.ABILITIES["sun_flare"]["surge"] == {"cost": -1, "radius": 1} and Content.ABILITIES["sun_flare+corona"]["surge"] == {"cost": -1, "radius": 1}
+		and Content.ABILITIES["seed_bomb+tangle"]["surge"] == {"radius": 1}, "D1 surge dicts as specified")
 	_ok(Content.SURGE_DEFAULT == {"cost": -1}, "SURGE_DEFAULT is {cost: -1}: %s" % str(Content.SURGE_DEFAULT))
 	print("surge identity: %d abilities, all match base-1 on growth / base off growth" % Content.ABILITIES.size())
 
@@ -1058,19 +1082,19 @@ static func _dmg(events: Array, src: String) -> Array:
 func _check_c2_grow_spike() -> void:
 	var t := Vector2i(8, 3)
 	# 0 adjacent: growth under the enemy only makes it targetable, adds nothing
-	var g = _game(["grow_spike+", "seed_bomb", "mycelium_dash"])
+	var g = _game(["grow_spike+impale", "seed_bomb", "mycelium_dash"])
 	var e = g._spawn("drill_bot", t)
 	e["hp"] = 10
 	g.terrain[t] = {"kind": "growth"}
 	var evs: Array = _cast(g, 0, t)
 	_ok(_evs(evs, "illegal").is_empty() and e["hp"] == 7 and _riders(evs, "per").is_empty(),
 		"grow_spike+ 0 adjacent (growth under only): hp %d %s" % [e["hp"], str(evs)])
-	_ok(_dmg(evs, "grow_spike+").size() == 1 and int(_dmg(evs, "grow_spike+")[0]["amt"]) == 3, "grow_spike+ base hit is 3: %s" % str(evs))
+	_ok(_dmg(evs, "grow_spike+impale").size() == 1 and int(_dmg(evs, "grow_spike+impale")[0]["amt"]) == 3, "grow_spike+ base hit is 3: %s" % str(evs))
 	# 1 adjacent -> 4, rider per amt 1
 	g.terrain[Vector2i(8, 2)] = {"kind": "growth"}
 	evs = _cast(g, 0, t)
 	var per := _riders(evs, "per")
-	_ok(e["hp"] == 3 and per.size() == 1 and int(per[0]["amt"]) == 1 and String(per[0]["id"]) == "grow_spike+",
+	_ok(e["hp"] == 3 and per.size() == 1 and int(per[0]["amt"]) == 1 and String(per[0]["id"]) == "grow_spike+impale",
 		"grow_spike+ 1 adjacent -> 4 (rider per 1): hp %d %s" % [e["hp"], str(evs)])
 	# 2 adjacent -> 5, rider per amt 2
 	e["hp"] = 10
@@ -1085,11 +1109,11 @@ func _check_c2_grow_spike() -> void:
 	per = _riders(evs, "per")
 	_ok(e["hp"] == 5 and per.size() == 1 and int(per[0]["amt"]) == 2, "grow_spike+ 3 adjacent capped at 5: hp %d %s" % [e["hp"], str(evs)])
 	# the whole cast is one ability + one damage event, and the growth stays
-	_ok(_evs(evs, "ability").size() == 1 and _dmg(evs, "grow_spike+").size() == 1 and int(_dmg(evs, "grow_spike+")[0]["amt"]) == 5
+	_ok(_evs(evs, "ability").size() == 1 and _dmg(evs, "grow_spike+impale").size() == 1 and int(_dmg(evs, "grow_spike+impale")[0]["amt"]) == 5
 		and g.terrain.has(t) and g.terrain.has(Vector2i(8, 2)), "grow_spike+ single 5-damage hit, growth kept: %s" % str(evs))
 	# range: the + form reaches 4 tiles, the base only 3
 	var far := Vector2i(9, 3)
-	var g4 = _game(["grow_spike+", "grow_spike", "mycelium_dash"])
+	var g4 = _game(["grow_spike+impale", "grow_spike", "mycelium_dash"])
 	var e4 = g4._spawn("drill_bot", far)
 	e4["hp"] = 10
 	g4.terrain[far] = {"kind": "growth"}
@@ -1116,13 +1140,13 @@ func _check_c2_grow_spike() -> void:
 	per = _riders(evs, "per")
 	_ok(eb["hp"] == 6 and per.size() == 1 and int(per[0]["amt"]) == 1, "grow_spike 3 adjacent capped at 4: hp %d %s" % [eb["hp"], str(evs)])
 	# cost unchanged: 1 charge each
-	_ok(int(Content.ABILITIES["grow_spike"]["cost"]) == 1 and int(Content.ABILITIES["grow_spike+"]["cost"]) == 1, "grow_spike costs stay 1")
+	_ok(int(Content.ABILITIES["grow_spike"]["cost"]) == 1 and int(Content.ABILITIES["grow_spike+impale"]["cost"]) == 1, "grow_spike costs stay 1")
 
 
 ## sun_flare(+) {aoe_damage, ignite, bonus dmg 1 if target_on fire}: an enemy on
 ## oil is ignited by the same cast and then takes the bonus; bare enemies do not.
 func _check_c2_sun_flare() -> void:
-	for pair in [["sun_flare+", 2], ["sun_flare", 1]]:
+	for pair in [["sun_flare+corona", 2], ["sun_flare", 1]]:
 		var aid: String = pair[0]
 		var base: int = pair[1]
 		var g = _game([aid, "seed_bomb", "mycelium_dash"])
@@ -1156,7 +1180,7 @@ func _check_c2_sun_flare() -> void:
 ## lands only when the enemy moved at least a tile and then hit something;
 ## the root cooldown refuses the second pin.
 func _check_c2_water_jet() -> void:
-	var kit := ["water_jet+", "seed_bomb", "mycelium_dash"]
+	var kit := ["water_jet+pin", "seed_bomb", "mycelium_dash"]
 	# pin: enemy at (8,3) shoved to (9,3), wall at (10,3) -> pushed 1, collided 1
 	var g = _game(kit)
 	var e = g._spawn("drill_bot", Vector2i(8, 3))
@@ -1167,11 +1191,11 @@ func _check_c2_water_jet() -> void:
 	_ok(int(e["status"].get("root", 0)) == 1 and int(e["status"].get("root_cd", 0)) == 3,
 		"water_jet+ pin roots 1 (cd 3): %s" % str(e["status"]))
 	var then := _riders(evs, "then")
-	_ok(then.size() == 1 and int(then[0]["amt"]) == 1 and String(then[0]["id"]) == "water_jet+",
+	_ok(then.size() == 1 and int(then[0]["amt"]) == 1 and String(then[0]["id"]) == "water_jet+pin",
 		"water_jet+ pin emits rider then 1: %s" % str(_evs(evs, "rider")))
 	var st := _evs(evs, "status")
 	_ok(st.size() == 1 and String(st[0]["status"]) == "root" and int(st[0]["id"]) == int(e["id"]), "water_jet+ pin status event: %s" % str(st))
-	_ok(_dmg(evs, "collision:water_jet+").size() == 1 and int(_dmg(evs, "collision:water_jet+")[0]["amt"]) == 3, "collision signed by water_jet+: %s" % str(evs))
+	_ok(_dmg(evs, "collision:water_jet+pin").size() == 1 and int(_dmg(evs, "collision:water_jet+pin")[0]["amt"]) == 3, "collision signed by water_jet+pin: %s" % str(evs))
 	# the root cooldown refuses the second pin: root expired, cd still running
 	e["status"]["root"] = 0
 	e["pos"] = Vector2i(8, 3)
@@ -1208,14 +1232,14 @@ func _check_c2_water_jet() -> void:
 		"open lane: shoved 3, no collision: %s hp %d" % [str(e4["pos"]), e4["hp"]])
 	_ok(not e4["status"].has("root") and _riders(evs, "then").is_empty() and _evs(evs, "status").is_empty() and _evs(evs, "staggered").size() == 1,
 		"open lane (pushed, not collided) -> no root, still staggered: %s %s" % [str(e4["status"]), str(evs)])
-	_ok(int(Content.ABILITIES["water_jet+"]["cost"]) == 1, "water_jet+ cost stays 1")
+	_ok(int(Content.ABILITIES["water_jet+pin"]["cost"]) == 1, "water_jet+ cost stays 1")
 
 
 ## vine_whip+ {pull 3 / 3, then stun 1 if outcome_crossed fire}: the stun lands
 ## only when the drag crossed a burning tile (the enemy's own start tile is
 ## not crossed).
 func _check_c2_vine_whip() -> void:
-	var kit := ["vine_whip+", "seed_bomb", "mycelium_dash"]
+	var kit := ["vine_whip+lash", "seed_bomb", "mycelium_dash"]
 	# drag through embers: enemy at (9,3), fire at (7,3), pulled to (6,3)
 	var g = _game(kit)
 	var e = g._spawn("drill_bot", Vector2i(9, 3))
@@ -1223,11 +1247,11 @@ func _check_c2_vine_whip() -> void:
 	g.terrain[Vector2i(7, 3)] = {"kind": "fire", "ttl": 2}
 	var evs: Array = _cast(g, 0, Vector2i(9, 3))
 	_ok(_evs(evs, "illegal").is_empty() and e["pos"] == Vector2i(6, 3), "vine_whip+ pulls 3 to (6,3): %s %s" % [str(e["pos"]), str(evs)])
-	_ok(e["hp"] == 6 and _dmg(evs, "vine_whip+").size() == 1 and int(_dmg(evs, "vine_whip+")[0]["amt"]) == 3 and _dmg(evs, "fire:env").size() == 1,
+	_ok(e["hp"] == 6 and _dmg(evs, "vine_whip+lash").size() == 1 and int(_dmg(evs, "vine_whip+lash")[0]["amt"]) == 3 and _dmg(evs, "fire:env").size() == 1,
 		"drag through embers: 3 lash + 1 fire: hp %d %s" % [e["hp"], str(evs)])
 	_ok(int(e["status"].get("stun", 0)) == 1, "crossed fire -> stun 1: %s" % str(e["status"]))
 	var then := _riders(evs, "then")
-	_ok(then.size() == 1 and int(then[0]["amt"]) == 1 and String(then[0]["id"]) == "vine_whip+", "vine_whip+ rider then 1: %s" % str(_evs(evs, "rider")))
+	_ok(then.size() == 1 and int(then[0]["amt"]) == 1 and String(then[0]["id"]) == "vine_whip+lash", "vine_whip+ rider then 1: %s" % str(_evs(evs, "rider")))
 	var st := _evs(evs, "status")
 	_ok(st.size() == 1 and String(st[0]["status"]) == "stun", "stun status event: %s" % str(st))
 	_ok(g._terrain_kind(Vector2i(7, 3)) == "fire", "the fire tile survives the drag")
@@ -1254,7 +1278,7 @@ func _check_c2_vine_whip() -> void:
 	g4.terrain[Vector2i(7, 2)] = {"kind": "fire", "ttl": 2}
 	evs = _cast(g4, 0, Vector2i(9, 3))
 	_ok(e4["hp"] == 7 and not e4["status"].has("stun") and _evs(evs, "rider").is_empty(), "fire beside the path -> no rider: %s" % str(evs))
-	_ok(int(Content.ABILITIES["vine_whip+"]["cost"]) == 1, "vine_whip+ cost stays 1")
+	_ok(int(Content.ABILITIES["vine_whip+lash"]["cost"]) == 1, "vine_whip+ cost stays 1")
 
 
 ## seed_bomb+ {grow_radius 1, then root 1 who on_planted}: enemies standing on
@@ -1262,7 +1286,7 @@ func _check_c2_vine_whip() -> void:
 ## enemy is not a planted tile. Seed-on-head: the same turn's grow_spike+ on
 ## the seeded enemy hits for 5.
 func _check_c2_seed_bomb() -> void:
-	var g = _game(["seed_bomb+", "grow_spike+", "mycelium_dash"])
+	var g = _game(["seed_bomb+tangle", "grow_spike+impale", "mycelium_dash"])
 	var head = g._spawn("drill_bot", Vector2i(7, 3))      # the target tile itself
 	var old = g._spawn("drill_bot", Vector2i(8, 3))       # on pre-existing growth
 	var beside = g._spawn("drill_bot", Vector2i(7, 4))    # on a tile the plus plants
@@ -1280,7 +1304,7 @@ func _check_c2_seed_bomb() -> void:
 	_ok(not old["status"].has("root") and not off["status"].has("root"),
 		"pre-existing growth / outside the plus -> no root: %s %s" % [str(old["status"]), str(off["status"])])
 	var then := _riders(evs, "then")
-	_ok(then.size() == 1 and int(then[0]["amt"]) == 1 and String(then[0]["id"]) == "seed_bomb+", "seed_bomb+ rider then fires once per cast: %s" % str(_evs(evs, "rider")))
+	_ok(then.size() == 1 and int(then[0]["amt"]) == 1 and String(then[0]["id"]) == "seed_bomb+tangle", "seed_bomb+ rider then fires once per cast: %s" % str(_evs(evs, "rider")))
 	var st := _evs(evs, "status")
 	_ok(st.size() == 2 and String(st[0]["status"]) == "root" and String(st[1]["status"]) == "root", "two root status events: %s" % str(st))
 	_ok(g.player["charge"] == 9, "seed_bomb+ still costs 1: charge %d" % g.player["charge"])
@@ -1291,13 +1315,13 @@ func _check_c2_seed_bomb() -> void:
 	_ok(_evs(evs, "illegal").is_empty() and head["hp"] == 5 and per.size() == 1 and int(per[0]["amt"]) == 2 and g.casts_this_turn == 2,
 		"seed-on-head: grow_spike+ for 5 the same turn: hp %d %s" % [head["hp"], str(evs)])
 	# a seed that plants nothing under anyone: no root, no rider
-	var g2 = _game(["seed_bomb+", "grow_spike+", "mycelium_dash"])
+	var g2 = _game(["seed_bomb+tangle", "grow_spike+impale", "mycelium_dash"])
 	var e2 = g2._spawn("drill_bot", Vector2i(8, 3))
 	evs = _cast(g2, 0, Vector2i(5, 1))
 	_ok(_evs(evs, "illegal").is_empty() and not e2["status"].has("root") and _evs(evs, "rider").is_empty() and _evs(evs, "status").is_empty(),
 		"seed_bomb+ away from enemies: no root, no rider: %s" % str(evs))
 	# a seed on a fully grown tile set plants nothing: no then at all
-	var g3 = _game(["seed_bomb+", "grow_spike+", "mycelium_dash"])
+	var g3 = _game(["seed_bomb+tangle", "grow_spike+impale", "mycelium_dash"])
 	var e3 = g3._spawn("drill_bot", Vector2i(7, 3))
 	for t in [Vector2i(7, 2), Vector2i(7, 4), Vector2i(6, 3), Vector2i(8, 3)]:
 		g3.terrain[t] = {"kind": "growth"}
@@ -1305,7 +1329,7 @@ func _check_c2_seed_bomb() -> void:
 	evs = _cast(g3, 0, Vector2i(7, 3))
 	_ok(int(e3["status"].get("root", 0)) == 1 and _evs(evs, "status").size() == 1, "only the head tile was fresh: one root: %s" % str(evs))
 	# the base row plants and does nothing else
-	var g4 = _game(["seed_bomb", "grow_spike+", "mycelium_dash"])
+	var g4 = _game(["seed_bomb", "grow_spike+impale", "mycelium_dash"])
 	var e4 = g4._spawn("drill_bot", Vector2i(7, 3))
 	evs = _cast(g4, 0, Vector2i(7, 3))
 	_ok(_evs(evs, "illegal").is_empty() and not e4["status"].has("root") and _evs(evs, "rider").is_empty(), "base seed_bomb carries no rider: %s" % str(evs))
@@ -2004,13 +2028,13 @@ func _check_c4_effective_uses() -> void:
 	# a grow_spike whose only legal target is gone by cast time cannot be cast
 	# (illegal, no use); the empty-lane lance above is the raw-not-effective case
 	# a + form folds onto the base id; the lance now hits the enemy
-	g.player["kit"][0] = "solar_lance+"
+	g.player["kit"][0] = "solar_lance+noon"
 	e["pos"] = Vector2i(7, 3)
 	evs = _cast(g, 0, Vector2i(1, 0))
-	_ok(_evs(evs, "illegal").is_empty() and _dmg(evs, "solar_lance+").size() == 1, "solar_lance+ hits: %s" % str(evs))
-	_ok(int(g.effective_uses.get("solar_lance", 0)) == 1 and not g.effective_uses.has("solar_lance+"),
+	_ok(_evs(evs, "illegal").is_empty() and _dmg(evs, "solar_lance+noon").size() == 1, "solar_lance+ hits: %s" % str(evs))
+	_ok(int(g.effective_uses.get("solar_lance", 0)) == 1 and not g.effective_uses.has("solar_lance+noon"),
 		"solar_lance+ effective cast folds onto solar_lance: %s" % str(g.effective_uses))
-	_ok(int(g.player["uses"].get("solar_lance+", 0)) == 1 and int(g.player["uses"].get("solar_lance", 0)) == 1,
+	_ok(int(g.player["uses"].get("solar_lance+noon", 0)) == 1 and int(g.player["uses"].get("solar_lance", 0)) == 1,
 		"raw uses keep both keys: %s" % str(g.player["uses"]))
 	# clone copies, and a cast on the clone never leaks back
 	var c = g.clone()
@@ -2031,13 +2055,16 @@ func _check_c4_effective_uses() -> void:
 
 
 ## run_summary(): the compact end-of-run record. Exact key set; uses_by_base
-## folds + keys onto the base with the larger count (the + key was seeded
-## with the base's count at upgrade time, so a sum would double count).
+## folds every upgrade key onto its base with the LARGER count (the variant
+## key was seeded with the base's count at upgrade time, so a sum would double
+## count). Block D6: a base can now leave TWO variant keys in player.uses
+## across one run (draft one sibling, forge the other), and the fold must be a
+## max over the base and all of them.
 func _check_c4_run_summary() -> void:
 	var g = Game.new(7, {"mutators": ["brittle"], "packages": ["mycology"], "tier": 2, "grafts": ["carapace"]})
-	g.player["uses"] = {"solar_lance": 2, "solar_lance+": 5, "seed_bomb": 3}
+	g.player["uses"] = {"solar_lance": 2, "solar_lance+noon": 5, "seed_bomb": 3}
 	g.effective_uses = {"solar_lance": 4, "seed_bomb": 1}
-	g.player["kit"] = ["solar_lance+", "seed_bomb", "mycelium_dash"]
+	g.player["kit"] = ["solar_lance+noon", "seed_bomb", "mycelium_dash"]
 	g.bloom = 11
 	g.total_turns = 40
 	g.death_cause = "drill_bot"
@@ -2051,10 +2078,16 @@ func _check_c4_run_summary() -> void:
 	_ok(sm["won"] == false and int(sm["floor"]) == 1 and int(sm["turns"]) == 40 and int(sm["bloom"]) == 11
 		and String(sm["death_cause"]) == "drill_bot" and int(sm["seed"]) == 7 and int(sm["tier"]) == 2,
 		"run_summary scalars: %s" % str(sm))
-	_ok(sm["kit"] == ["solar_lance+", "seed_bomb", "mycelium_dash"] and sm["grafts"] == ["carapace"]
+	_ok(sm["kit"] == ["solar_lance+noon", "seed_bomb", "mycelium_dash"] and sm["grafts"] == ["carapace"]
 		and sm["mutators"] == ["brittle"] and sm["packages"] == ["mycology"] and String(sm["loadout"]) == "tender",
 		"run_summary lists: %s" % str(sm))
 	_ok(sm["uses_by_base"] == {"solar_lance": 5, "seed_bomb": 3}, "uses_by_base folds + onto base: %s" % str(sm["uses_by_base"]))
+	# D6: two variants of one base, plus the base key, fold to the max
+	var g2 = Game.new(7)
+	g2.player["uses"] = {"solar_lance": 2, "solar_lance+noon": 5, "solar_lance+pierce": 9, "seed_bomb+reclaim": 4}
+	var sm2: Dictionary = g2.run_summary()
+	_ok(sm2["uses_by_base"] == {"solar_lance": 9, "seed_bomb": 4},
+		"D6: uses_by_base is the max over the base and EVERY variant: %s" % str(sm2["uses_by_base"]))
 	_ok(sm["effective_uses_by_base"] == {"solar_lance": 4, "seed_bomb": 1}, "effective_uses_by_base: %s" % str(sm["effective_uses_by_base"]))
 	sm["kit"].append("x")
 	sm["effective_uses_by_base"]["x"] = 1
@@ -2111,7 +2144,7 @@ func _check_c4_mutator_config() -> void:
 	_ok(nl.player["kit"] == ["seed_bomb", "mycelium_dash"], "no_lance kit: %s" % str(nl.player["kit"]))
 	_ok(not nl.draft_pool.has("solar_lance") and nl.draft_pool.size() == Content.DRAFT_POOL.size() - 1, "no_lance pool: %s" % str(nl.draft_pool))
 	_ok(nl.snapshot()["pool"] == nl.draft_pool, "no_lance pool in the snapshot")
-	var nl2 = Game.new(1, {"mutators": ["no_lance"], "kit": ["solar_lance+", "seed_bomb"], "pool": ["solar_lance", "vine_whip"]})
+	var nl2 = Game.new(1, {"mutators": ["no_lance"], "kit": ["solar_lance+noon", "seed_bomb"], "pool": ["solar_lance", "vine_whip"]})
 	_ok(nl2.player["kit"] == ["seed_bomb"] and nl2.draft_pool == ["vine_whip"], "no_lance strips the + form and a custom pool: %s %s" % [str(nl2.player["kit"]), str(nl2.draft_pool)])
 	var lance_stocked := 0
 	for s in range(1, 21):
@@ -2140,10 +2173,13 @@ func _check_c4_mutator_config() -> void:
 	uo.step({"type": "descend"})
 	var all_plus: bool = uo.phase == "draft" and not uo.draft_offers.is_empty()
 	for aid in uo.draft_offers:
-		if not String(aid).ends_with("+") or not uo.player["kit"].has(String(aid).trim_suffix("+")):
+		# Block D6: an upgrade id is "<base>+<word>", so the test is
+		# Content.is_upgrade plus a base_id lookup in the kit - ends_with("+")
+		# and trim_suffix("+") both fail silently on a variant id
+		if not Content.is_upgrade(String(aid)) or not uo.player["kit"].has(Content.base_id(String(aid))):
 			all_plus = false
 	_ok(all_plus, "upgrades_only: first draft offers only + forms of the kit: %s" % str(uo.draft_offers))
-	var uo2 = Game.new(2, {"mutators": ["upgrades_only"], "kit": ["solar_lance+", "seed_bomb+", "mycelium_dash+"]})
+	var uo2 = Game.new(2, {"mutators": ["upgrades_only"], "kit": ["solar_lance+noon", "seed_bomb+tangle", "mycelium_dash+trail"]})
 	uo2.player["pos"] = uo2.map["stairs"]
 	uo2.greened = uo2.green_need
 	var evs: Array = uo2.step({"type": "descend"})
@@ -2262,7 +2298,7 @@ func _check_d1_grow_spike() -> void:
 	_ok(e["hp"] == 5 and per.size() == 1 and int(per[0]["amt"]) == 1 and _evs(evs, "surge").size() == 1,
 		"grow_spike on growth with 2 adjacent: 5 (cap 1): hp %d %s" % [e["hp"], str(evs)])
 	# + form: 3 + 1 surge + 2 per = 6
-	var g2 = _game_on_growth(["grow_spike+", "seed_bomb", "mycelium_dash"], true)
+	var g2 = _game_on_growth(["grow_spike+impale", "seed_bomb", "mycelium_dash"], true)
 	var e2 = g2._spawn("drill_bot", t)
 	e2["hp"] = 10
 	g2.terrain[t] = {"kind": "growth"}
@@ -2272,7 +2308,7 @@ func _check_d1_grow_spike() -> void:
 	per = _riders(evs, "per")
 	_ok(_evs(evs, "illegal").is_empty() and e2["hp"] == 4 and per.size() == 1 and int(per[0]["amt"]) == 2,
 		"grow_spike+ on growth with 2 adjacent: 6: hp %d %s" % [e2["hp"], str(evs)])
-	_ok(_evs(evs, "surge").size() == 1 and String(_evs(evs, "surge")[0]["id"]) == "grow_spike+" and _evs(evs, "verdant").size() == 1
+	_ok(_evs(evs, "surge").size() == 1 and String(_evs(evs, "surge")[0]["id"]) == "grow_spike+impale" and _evs(evs, "verdant").size() == 1
 		and g2._terrain_kind(p) == "" and g2.player["charge"] == 9, "grow_spike+ surge event, verdant, cost 1: %s" % str(evs))
 	# off growth the + form is the C2 5
 	e2["hp"] = 10
@@ -2305,7 +2341,7 @@ func _check_d1_water_jet() -> void:
 		"water_jet on growth: verdant, tile consumed, cost 1: %s" % str(evs))
 	_ok(_dmg(evs, "collision:water_jet").size() == 1 and int(_dmg(evs, "collision:water_jet")[0]["amt"]) == 3, "collision signed by water_jet for 3: %s" % str(evs))
 	# + form: 4 / 4 from (6,3): (7,3) (8,3) (9,3) then the wall -> collided 4, then-root
-	var g2 = _game_on_growth(["water_jet+", "seed_bomb", "mycelium_dash"], true)
+	var g2 = _game_on_growth(["water_jet+pin", "seed_bomb", "mycelium_dash"], true)
 	var e2 = g2._spawn("drill_bot", Vector2i(6, 3))
 	e2["hp"] = 10
 	evs = _cast(g2, 0, Vector2i(1, 0))
@@ -2314,7 +2350,7 @@ func _check_d1_water_jet() -> void:
 	_ok(_evs(evs, "surge").size() == 1 and _riders(evs, "then").size() == 1 and _evs(evs, "verdant").size() == 1 and g2.player["charge"] == 9,
 		"water_jet+ surge + then rider + verdant, cost 1: %s" % str(evs))
 	# off growth the + form from (6,3) stops at (9,3) without a hit (push 3)
-	var g3 = _game_on_growth(["water_jet+", "seed_bomb", "mycelium_dash"], false)
+	var g3 = _game_on_growth(["water_jet+pin", "seed_bomb", "mycelium_dash"], false)
 	var e3 = g3._spawn("drill_bot", Vector2i(6, 3))
 	e3["hp"] = 10
 	evs = _cast(g3, 0, Vector2i(1, 0))
@@ -2327,7 +2363,7 @@ func _check_d1_water_jet() -> void:
 ## untouched. The surge event names only the stat key (radius), the cost half
 ## is the verdant discount. Same for the + form (dmg 2).
 func _check_d1_sun_flare() -> void:
-	for pair in [["sun_flare", 1], ["sun_flare+", 2]]:
+	for pair in [["sun_flare", 1], ["sun_flare+corona", 2]]:
 		var aid: String = pair[0]
 		var base: int = pair[1]
 		var g = _game_on_growth([aid, "seed_bomb", "mycelium_dash"], false)
@@ -2361,7 +2397,7 @@ func _check_d1_sun_flare() -> void:
 func _check_d1_seed_bomb() -> void:
 	var p := Vector2i(5, 3)
 	var target := Vector2i(7, 3)
-	var g = _game_on_growth(["seed_bomb+", "grow_spike+", "mycelium_dash"], true)
+	var g = _game_on_growth(["seed_bomb+tangle", "grow_spike+impale", "mycelium_dash"], true)
 	var ring = g._spawn("drill_bot", Vector2i(9, 3))     # distance 2: diamond only
 	var beside = g._spawn("drill_bot", Vector2i(7, 4))   # distance 1: plus
 	var evs: Array = _cast(g, 0, target)
@@ -2377,25 +2413,25 @@ func _check_d1_seed_bomb() -> void:
 	_ok(int(ring["status"].get("root", 0)) == 1 and int(beside["status"].get("root", 0)) == 1,
 		"enemies on fresh diamond tiles are rooted: %s %s" % [str(ring["status"]), str(beside["status"])])
 	var sg := _evs(evs, "surge")
-	_ok(sg.size() == 1 and String(sg[0]["id"]) == "seed_bomb+" and sg[0]["keys"] == ["radius"], "seed_bomb+ surge event keys [radius]: %s" % str(sg))
+	_ok(sg.size() == 1 and String(sg[0]["id"]) == "seed_bomb+tangle" and sg[0]["keys"] == ["radius"], "seed_bomb+ surge event keys [radius]: %s" % str(sg))
 	_ok(_evs(evs, "verdant").size() == 1 and g.player["charge"] == 9, "seed_bomb+ on growth: verdant, cost 1: charge %d" % g.player["charge"])
 	_ok(_riders(evs, "then").size() == 1 and _evs(evs, "status").size() == 2, "then rider once, two roots: %s" % str(_evs(evs, "status")))
 	# off growth: the plus, distance 2 untouched, no verdant / surge
-	var g2 = _game_on_growth(["seed_bomb+", "grow_spike+", "mycelium_dash"], false)
+	var g2 = _game_on_growth(["seed_bomb+tangle", "grow_spike+impale", "mycelium_dash"], false)
 	var ring2 = g2._spawn("drill_bot", Vector2i(9, 3))
 	evs = _cast(g2, 0, target)
 	_ok(_evs(evs, "illegal").is_empty() and g2.terrain.size() == 5 and g2._terrain_kind(Vector2i(9, 3)) == "" and not ring2["status"].has("root")
 		and _evs(evs, "surge").is_empty() and _evs(evs, "verdant").is_empty() and g2.player["charge"] == 9,
 		"seed_bomb+ off growth: plus of 5, no surge: %d tiles %s" % [g2.terrain.size(), str(evs)])
 	# base seed_bomb on growth: plus (5 new tiles), verdant discount to 1, no surge event
-	var g3 = _game_on_growth(["seed_bomb", "grow_spike+", "mycelium_dash"], true)
+	var g3 = _game_on_growth(["seed_bomb", "grow_spike+impale", "mycelium_dash"], true)
 	evs = _cast(g3, 0, target)
 	_ok(_evs(evs, "illegal").is_empty() and g3.terrain.size() == 5 and g3._terrain_kind(p) == "" and g3._terrain_kind(Vector2i(9, 3)) == "",
 		"base seed_bomb on growth: plus only, tile underfoot consumed: %d tiles" % g3.terrain.size())
 	_ok(_evs(evs, "verdant").size() == 1 and _evs(evs, "surge").is_empty() and g3.player["charge"] == 9,
 		"base seed_bomb on growth: verdant, cost 1, no surge event: %s" % str(evs))
 	# base seed_bomb off growth: plus, cost 2
-	var g4 = _game_on_growth(["seed_bomb", "grow_spike+", "mycelium_dash"], false)
+	var g4 = _game_on_growth(["seed_bomb", "grow_spike+impale", "mycelium_dash"], false)
 	evs = _cast(g4, 0, target)
 	_ok(g4.terrain.size() == 5 and g4.player["charge"] == 8 and _evs(evs, "verdant").is_empty(), "base seed_bomb off growth: plus, cost 2")
 
@@ -2437,7 +2473,7 @@ func _check_d1_grow_radius() -> void:
 	_ok(int(r3[0]["planted"]) == 8 and not r3[0]["tiles"].has(Vector2i(8, 3)) and g3._terrain_kind(Vector2i(8, 3)) == "oil",
 		"grow_radius 2 at (9,3): 9 in-room tiles minus the held one = 8: %s" % str(r3[0]["tiles"]))
 	# the shipped rows all carry radius 1 except none: seed_bomb, seed_bomb+, fungal_ring(+)
-	for aid in ["seed_bomb", "seed_bomb+", "fungal_ring", "fungal_ring+"]:
+	for aid in ["seed_bomb", "seed_bomb+tangle", "fungal_ring", "fungal_ring+"]:
 		_ok(int(Content.ABILITIES[aid]["effects"][0]["radius"]) == 1, "%s grow_radius radius stays 1" % aid)
 
 
@@ -2448,14 +2484,14 @@ func _check_d1_grow_radius() -> void:
 ## effective and counts as planted; the base dash plants nothing.
 func _check_d1_spore_trail() -> void:
 	var p := Vector2i(5, 3)
-	var g = _game(["mycelium_dash+", "seed_bomb", "mycelium_dash"])
+	var g = _game(["mycelium_dash+trail", "seed_bomb", "mycelium_dash"])
 	g.terrain[Vector2i(8, 3)] = {"kind": "growth"}
 	var evs: Array = _cast(g, 0, Vector2i(8, 3))
 	_ok(_evs(evs, "illegal").is_empty() and g.player["pos"] == Vector2i(8, 3) and _evs(evs, "teleport").size() == 1, "mycelium_dash+ teleports: %s" % str(evs))
 	_ok(g._terrain_kind(p) == "growth" and g.terrain[p] == {"kind": "growth"}, "the departure tile is growth: %s" % str(g.terrain.get(p)))
 	var ter := _evs(evs, "terrain")
 	_ok(ter.size() == 1 and String(ter[0]["kind"]) == "growth" and ter[0]["tile"] == p, "terrain event for the planted origin: %s" % str(ter))
-	_ok(int(g.effective_uses.get("mycelium_dash", 0)) == 1 and int(g.player["uses"].get("mycelium_dash+", 0)) == 1,
+	_ok(int(g.effective_uses.get("mycelium_dash", 0)) == 1 and int(g.player["uses"].get("mycelium_dash+trail", 0)) == 1,
 		"a dash that plants is an effective cast: %s" % str(g.effective_uses))
 	_ok(g.player["charge"] == 9 and _evs(evs, "verdant").is_empty() and _evs(evs, "surge").is_empty(), "cost 1, no surge (default surge on cost 1)")
 	# dashing from growth: the origin holds terrain -> nothing planted, the growth stays (no consumption either)
@@ -2470,15 +2506,15 @@ func _check_d1_spore_trail() -> void:
 	_ok(_evs(evs, "illegal").is_empty() and g.player["pos"] == Vector2i(5, 3) and g._terrain_kind(Vector2i(2, 3)) == "oil" and _evs(evs, "terrain").is_empty(),
 		"origin holding oil is not overwritten: %s" % g._terrain_kind(Vector2i(2, 3)))
 	# direct op: an enemy on the origin tile, or a wall, or the player's own tile -> nothing
-	var g2 = _game(["mycelium_dash+", "seed_bomb", "mycelium_dash"])
+	var g2 = _game(["mycelium_dash+trail", "seed_bomb", "mycelium_dash"])
 	var e = g2._spawn("drill_bot", Vector2i(7, 3))
 	var eff := {"op": "plant_origin", "kind": "growth"}
-	var d: Dictionary = Content.ABILITIES["mycelium_dash+"]
+	var d: Dictionary = Content.ABILITIES["mycelium_dash+trail"]
 	for origin in [Vector2i(7, 3), Vector2i(0, 3), g2.player["pos"]]:
 		var ctx := _ctx(g2, d, Vector2i(8, 3))
 		ctx["origin"] = origin
 		g2._step_events = []
-		var out: Dictionary = g2._apply_effect(eff, d, Vector2i(8, 3), "mycelium_dash+", ctx)
+		var out: Dictionary = g2._apply_effect(eff, d, Vector2i(8, 3), "mycelium_dash+trail", ctx)
 		_ok(int(out["planted"]) == 0 and out["tiles"].is_empty() and not g2.terrain.has(origin) and g2._step_events.is_empty(),
 			"plant_origin skips origin %s (enemy / wall / tender still there)" % str(origin))
 	_ok(g2._enemy_at(Vector2i(7, 3)) == e, "the enemy is untouched")
@@ -2486,12 +2522,12 @@ func _check_d1_spore_trail() -> void:
 	var ctx2 := _ctx(g2, d, Vector2i(8, 3))
 	ctx2["origin"] = Vector2i(3, 3)
 	g2._step_events = []
-	var out2: Dictionary = g2._apply_effect(eff, d, Vector2i(8, 3), "mycelium_dash+", ctx2)
+	var out2: Dictionary = g2._apply_effect(eff, d, Vector2i(8, 3), "mycelium_dash+trail", ctx2)
 	_ok(int(out2["planted"]) == 1 and out2["tiles"] == [Vector2i(3, 3)] and g2._terrain_kind(Vector2i(3, 3)) == "growth",
 		"plant_origin on a bare origin: planted 1, tiles [origin]: %s" % str(out2))
 	# on_planted riders see the origin: a then status_target roots an enemy standing there
 	# (only constructible through the op, since the tender's own tile never holds an enemy)
-	var g3 = _game(["mycelium_dash+", "seed_bomb", "mycelium_dash"])
+	var g3 = _game(["mycelium_dash+trail", "seed_bomb", "mycelium_dash"])
 	var e3 = g3._spawn("drill_bot", Vector2i(3, 3))
 	var eff3 := {"op": "plant_origin", "kind": "growth", "then": [{"op": "status_target", "status": "root", "turns": 1, "who": "on_planted"}]}
 	var ctx3 := _ctx(g3, d, Vector2i(8, 3))
@@ -2499,14 +2535,14 @@ func _check_d1_spore_trail() -> void:
 	var out3: Dictionary = g3._apply_effect(eff3, d, Vector2i(8, 3), "probe", ctx3)
 	_ok(int(out3["planted"]) == 0 and not e3["status"].has("root"), "an occupied origin is never planted, so on_planted finds nothing")
 	# the base dash never plants and is never effective
-	var g4 = _game(["mycelium_dash", "seed_bomb", "mycelium_dash+"])
+	var g4 = _game(["mycelium_dash", "seed_bomb", "mycelium_dash+trail"])
 	g4.terrain[Vector2i(8, 3)] = {"kind": "growth"}
 	evs = _cast(g4, 0, Vector2i(8, 3))
 	_ok(_evs(evs, "illegal").is_empty() and g4.player["pos"] == Vector2i(8, 3) and not g4.terrain.has(p) and g4.effective_uses.is_empty(),
 		"base mycelium_dash: no planting, not effective: %s" % str(evs))
 	# the row as shipped
-	_ok(Content.ABILITIES["mycelium_dash+"]["effects"] == [{"op": "teleport"}, {"op": "plant_origin", "kind": "growth"}]
-		and int(Content.ABILITIES["mycelium_dash+"]["cost"]) == 1 and int(Content.ABILITIES["mycelium_dash+"]["range"]) == 7,
+	_ok(Content.ABILITIES["mycelium_dash+trail"]["effects"] == [{"op": "teleport"}, {"op": "plant_origin", "kind": "growth"}]
+		and int(Content.ABILITIES["mycelium_dash+trail"]["cost"]) == 1 and int(Content.ABILITIES["mycelium_dash+trail"]["range"]) == 7,
 		"mycelium_dash+ row: teleport + plant_origin growth, cost 1, range 7")
 
 
@@ -2926,7 +2962,7 @@ func _check_d4_slot_roles() -> void:
 	_ok(Game.new(1, {"kit": ["mycelium_dash"]})._affinity_tags().is_empty(), "mobility alone defines no affinity")
 	_ok(Game.new(1, {"kit": ["mycelium_dash"], "grafts": ["undertow"]})._affinity_tags() == ["water", "displace", "control"],
 		"grafts feed the affinity set")
-	_ok(Game.new(1, {"kit": ["solar_lance+", "mycelium_dash+"]})._affinity_tags() == ["sun", "fire"], "+ forms carry their base tags")
+	_ok(Game.new(1, {"kit": ["solar_lance+noon", "mycelium_dash+trail"]})._affinity_tags() == ["sun", "fire"], "+ forms carry their base tags")
 	var first_affine := 0
 	var third_affine := 0
 	var roles_ok := 0
@@ -2944,7 +2980,7 @@ func _check_d4_slot_roles() -> void:
 			third_affine += 1
 		if g.draft_slots == ["affinity", "upgrade", "wild"]:
 			roles_ok += 1
-		if String(g.draft_offers[1]).ends_with("+") and g.player["kit"].has(String(g.draft_offers[1]).trim_suffix("+")):
+		if Content.is_upgrade(String(g.draft_offers[1])) and g.player["kit"].has(Content.base_id(String(g.draft_offers[1]))):
 			second_up += 1
 	_ok(drafts == D4_SEEDS and first_affine == drafts, "(a) first offer shares a kit tag on %d / %d seeds" % [first_affine, drafts])
 	_ok(third_affine > 0 and third_affine < drafts, "(a) third offer shares a kit tag at the base rate: %d / %d" % [third_affine, drafts])
@@ -2952,12 +2988,12 @@ func _check_d4_slot_roles() -> void:
 	_ok(second_up == drafts, "(b) slot 2 is a held base's + form on %d / %d seeds" % [second_up, drafts])
 	print("d4 slots: tender first offer affine %d/%d, third affine %d/%d (base rate)" % [first_affine, drafts, third_affine, drafts])
 	# (b) no upgradable base held: slot 2 falls to the affinity list
-	var no_up := ["solar_lance+", "seed_bomb+", "mycelium_dash+"]
+	var no_up := ["solar_lance+noon", "seed_bomb+tangle", "mycelium_dash+trail"]
 	var fell := 0
 	for s in range(1, 11):
 		var g = _drafted(s, {"kit": no_up})
 		if g.draft_slots.size() == 3 and g.draft_slots[1] == "affinity" and _shares_tag(String(g.draft_offers[1]), ["sun", "fire", "growth"]) \
-				and not String(g.draft_offers[1]).ends_with("+"):
+				and not Content.is_upgrade(String(g.draft_offers[1])):
 			fell += 1
 	_ok(fell == 10, "(b) an all-+ kit sends slot 2 to the affinity list on %d / 10 seeds" % fell)
 	# the affinity slot with nothing affine falls back to wild (reported wild).
@@ -2968,10 +3004,18 @@ func _check_d4_slot_roles() -> void:
 		"an empty affinity list pads slot 1 from the wild list: %s %s" % [str(g_w.draft_offers), str(g_w.draft_slots)])
 
 
-## (c) no duplicates across slots; a base offer is never held (nor its + twin)
+## Does `kit` hold `base` or any variant of it (Block D6: a base has two)?
+static func _kit_holds_base(kit: Array, base: String) -> bool:
+	for aid in kit:
+		if Content.base_id(String(aid)) == base:
+			return true
+	return false
+
+
+## (c) no duplicates across slots; a base offer is never held (nor a variant)
 ## and a + offer always upgrades a held base - over several kits and seeds.
 func _check_d4_slot_exclusions() -> void:
-	var kits: Array = [D4_TENDER, ["solar_lance+", "seed_bomb", "mycelium_dash", "water_jet"], ["vine_whip", "root_wall+"],
+	var kits: Array = [D4_TENDER, ["solar_lance+noon", "seed_bomb", "mycelium_dash", "water_jet"], ["vine_whip", "root_wall+bulwark"],
 		["gust", "seed_bomb", "updraft"]]
 	var bad := 0
 	var drafts := 0
@@ -2986,11 +3030,15 @@ func _check_d4_slot_exclusions() -> void:
 				var aid := String(g.draft_offers[i])
 				var ok := not seen.has(aid) and Content.DRAFT_SLOT_REPORTS.has(g.draft_slots[i])
 				seen[aid] = true
-				if aid.ends_with("+"):
-					# a + form comes from the upgrade list or, as part of the universe, the wild one
-					ok = ok and kit.has(aid.trim_suffix("+")) and ["upgrade", "wild"].has(g.draft_slots[i])
+				if Content.is_upgrade(aid):
+					# an upgrade variant comes from the upgrade list or, as
+					# part of the universe, the wild one; Block D6 makes it
+					# "<base>+<word>", so the held base is base_id, never
+					# trim_suffix("+")
+					ok = ok and kit.has(Content.base_id(aid)) and ["upgrade", "wild"].has(g.draft_slots[i])
 				else:
-					ok = ok and not kit.has(aid) and not kit.has(aid + "+") and g.draft_pool.has(aid)
+					# never a base the kit holds in ANY form
+					ok = ok and not _kit_holds_base(kit, aid) and g.draft_pool.has(aid)
 				if not ok:
 					bad += 1
 					if bad <= 3:
@@ -3002,15 +3050,19 @@ func _check_d4_slot_exclusions() -> void:
 
 
 ## (d) rng contract: rng.state after the roll depends on the slot count alone.
-## Four kits with 15 / 13 / 2 / 3-candidate universes (the last one a
+## Four kits with 17 / 13 / 2 / 5-candidate universes (the last one a
 ## one-candidate affinity slot, the 2-universe one a padded empty slot) on the
 ## same seed land on the same state, which is the pre-roll state advanced by
 ## exactly `count` generator steps; wide_draft is 4 steps, an armed focus +1.
+## Block D6 grew two of those universes (a held forked base contributes TWO
+## variants, a held package base one), which is exactly why the pin matters:
+## the draw count must not follow the candidate count. The 2-universe kit is
+## therefore two PACKAGE bases, the only kind with one variant each.
 func _check_d4_draw_count() -> void:
 	var cfgs: Array = [
 		{"kit": D4_TENDER},
-		{"kit": ["solar_lance+"]},
-		{"kit": ["burrow", "moss_filter"], "pool": ["moss_filter"]},
+		{"kit": ["solar_lance+noon"]},
+		{"kit": ["burrow", "gust"], "pool": []},
 		{"kit": ["solar_lance", "seed_bomb"], "pool": ["sun_flare"]},
 	]
 	for s in [1, 7]:
@@ -3051,7 +3103,7 @@ func _check_d4_draw_count() -> void:
 		_ok(g5.rng.state == ref.state and d5["offers"].size() == 4 and d5["slots"][3] == "focus",
 			"(d) seed %d: an armed focus adds exactly one step and one focus offer: %s" % [s, str(d5)])
 		# the all-empty universe: the draws still happen, the draft yields nothing
-		var g0 = Game.new(s, {"kit": ["mycelium_dash+"], "pool": []})
+		var g0 = Game.new(s, {"kit": ["mycelium_dash+trail"], "pool": []})
 		var d0: Dictionary = g0._draw_draft_offers(3)
 		ref.state = before
 		for i in 3:
@@ -3129,7 +3181,7 @@ func _check_d4_mutators() -> void:
 		var g = _drafted(s, {"kit": D4_TENDER, "mutators": ["upgrades_only"]})
 		var all_plus: bool = g.draft_offers.size() == 3 and g.draft_slots == ["upgrade", "upgrade", "upgrade"]
 		for aid in g.draft_offers:
-			if not String(aid).ends_with("+") or not D4_TENDER.has(String(aid).trim_suffix("+")):
+			if not Content.is_upgrade(String(aid)) or not D4_TENDER.has(Content.base_id(String(aid))):
 				all_plus = false
 		if all_plus:
 			uo_ok += 1
@@ -3137,20 +3189,37 @@ func _check_d4_mutators() -> void:
 	var gu = _drafted(4, {"kit": D4_TENDER + ["vine_whip"], "mutators": ["upgrades_only"]})
 	_next_draft(gu, {"type": "draft", "pick": -1})
 	var focus_plus: bool = gu.draft_offers.size() == 4 and gu.draft_slots == ["upgrade", "upgrade", "upgrade", "focus"] \
-		and String(gu.draft_offers[3]).ends_with("+")
+		and Content.is_upgrade(String(gu.draft_offers[3]))
 	_ok(focus_plus, "(g) upgrades_only + focus: the focus slot draws a + form too: %s %s" % [str(gu.draft_offers), str(gu.draft_slots)])
-	# the SHIPPED kit is the starved case: three bases give exactly three
-	# upgrade candidates, the three ordinary slots take them all and the focus
-	# slot has nothing left to draw - the skip is spent (the event says focus,
-	# the flag clears) and buys no card. gu above is a 4-ability kit, the only
-	# size where that slot can fire, so pin the 3-ability behaviour here too.
+	# The starved case: a kit whose upgrade candidates number exactly the
+	# ordinary slots, so the three of them take the list and the focus slot
+	# has nothing left - the skip is spent (the event says focus, the flag
+	# clears) and buys no card. Block D6 moved which kit that is: a forked
+	# base contributes TWO variants, so the shipped 3-ability tender kit now
+	# has SIX candidates and DOES fill the focus slot; three PACKAGE bases
+	# (one variant each) are the starved shape now.
 	var starved := 0
+	var pkg_kit: Array = ["gust", "updraft", "clear_air"]
 	for s in range(1, 11):
-		var g = _drafted(s, {"kit": D4_TENDER, "mutators": ["upgrades_only"]})
+		var g = _drafted(s, {"kit": pkg_kit, "packages": ["aeolian"], "mutators": ["upgrades_only"]})
 		_next_draft(g, {"type": "draft", "pick": -1})
 		if g.draft_offers.size() == 3 and g.draft_slots == ["upgrade", "upgrade", "upgrade"] and g.focus == 0:
 			starved += 1
-	_ok(starved == 10, "(g) upgrades_only + a 3-ability kit: the focus slot buys nothing on %d / 10 seeds" % starved)
+	_ok(starved == 10, "(g) upgrades_only + a 3-package-base kit: the focus slot buys nothing on %d / 10 seeds" % starved)
+	# and the D6 counterpart: three FORKED bases give six candidates, so the
+	# same skip now buys a fourth card
+	var fed := 0
+	for s in range(1, 11):
+		var g = _drafted(s, {"kit": D4_TENDER, "mutators": ["upgrades_only"]})
+		_next_draft(g, {"type": "draft", "pick": -1})
+		var four: bool = g.draft_offers.size() == 4 and g.draft_slots == ["upgrade", "upgrade", "upgrade", "focus"] \
+			and g.focus == 0
+		for aid in g.draft_offers:
+			if not Content.is_upgrade(String(aid)) or not D4_TENDER.has(Content.base_id(String(aid))):
+				four = false
+		if four:
+			fed += 1
+	_ok(fed == 10, "(g) D6: upgrades_only + a 3-forked-base kit fills the focus slot on %d / 10 seeds" % fed)
 	# the wild fallback never renames a focus slot: a mobility-only kit has an
 	# empty affinity set, so that slot always draws from the wild list
 	var fb := 0
@@ -3160,7 +3229,7 @@ func _check_d4_mutators() -> void:
 		if g.draft_offers.size() == 4 and g.draft_slots.size() == 4 and String(g.draft_slots[3]) == "focus":
 			fb += 1
 	_ok(fb == 10, "(g) a focus slot that falls back to wild is still reported focus on %d / 10 seeds" % fb)
-	var gn = _drafted(4, {"kit": ["solar_lance+", "seed_bomb+", "mycelium_dash+"], "mutators": ["upgrades_only"]})
+	var gn = _drafted(4, {"kit": ["solar_lance+noon", "seed_bomb+tangle", "mycelium_dash+trail"], "mutators": ["upgrades_only"]})
 	_ok(gn.phase == "play" and gn.floor_num == 2 and gn.draft_offers.is_empty() and gn.draft_slots.is_empty() and gn.focus == 0,
 		"(g) upgrades_only with no + form left skips the draft")
 	gn.focus = 1
@@ -3179,9 +3248,9 @@ func _check_d4_mutators() -> void:
 func _check_d4_upgrade_filter() -> void:
 	# the helper itself: + forms fold onto their base, unknown ids define nothing
 	var defining_ok: bool = true
-	for aid in ["mycelium_dash", "mycelium_dash+", "burrow", "burrow+", "no_such_ability"]:
+	for aid in ["mycelium_dash", "mycelium_dash+trail", "burrow", "burrow+", "no_such_ability"]:
 		defining_ok = defining_ok and not Game._build_defining(aid)
-	for aid in ["updraft", "updraft+", "solar_lance", "seed_bomb+", "gust"]:
+	for aid in ["updraft", "updraft+", "solar_lance", "seed_bomb+tangle", "gust"]:
 		defining_ok = defining_ok and Game._build_defining(aid)
 	_ok(defining_ok, "(i) _build_defining: pure-mobility rows define no build, updraft does")
 	_ok(Game._tag_defines_build("sun") and not Game._tag_defines_build("mobility"),
@@ -3196,10 +3265,10 @@ func _check_d4_upgrade_filter() -> void:
 			if not Content.AFFINITY_IGNORED_TAGS.has(t):
 				want = true
 		table_ok = table_ok and Game._build_defining(String(aid)) == want
-		if String(aid).ends_with("+"):
+		if Content.is_upgrade(String(aid)):
 			folded += 1
 			table_ok = table_ok and Game._build_defining(String(aid)) == Game._build_defining(Content.base_id(String(aid)))
-	_ok(table_ok and folded > 0, "(i) %d abilities (%d + forms) agree with the ignored-tag reading" % [Content.ABILITIES.size(), folded])
+	_ok(table_ok and folded > 0, "(i) %d abilities (%d upgrade forms) agree with the ignored-tag reading" % [Content.ABILITIES.size(), folded])
 	# every loadout, 44 seeds: no "upgrade" slot is ever a pure-mobility + form
 	var mob_up := 0
 	var up_offers := 0
@@ -3240,10 +3309,10 @@ func _check_d4_upgrade_filter() -> void:
 	var to_affinity := 0
 	var to_wild := 0
 	for s in range(1, 45):
-		var ga = _drafted(s, {"kit": ["solar_lance+", "seed_bomb+", "mycelium_dash"]})
+		var ga = _drafted(s, {"kit": ["solar_lance+noon", "seed_bomb+tangle", "mycelium_dash"]})
 		if ga.draft_slots.size() == 3 and ga.draft_slots[1] == "affinity" \
 				and _shares_tag(String(ga.draft_offers[1]), ["sun", "fire", "growth"]) \
-				and not String(ga.draft_offers[1]).ends_with("+"):
+				and not Content.is_upgrade(String(ga.draft_offers[1])):
 			to_affinity += 1
 		var gw2 = _drafted(s, {"kit": ["mycelium_dash"]})
 		if gw2.draft_slots.size() == 3 and gw2.draft_slots[1] == "wild":
@@ -3257,7 +3326,7 @@ func _check_d4_upgrade_filter() -> void:
 		var g = Game.new(s, {"kit": ["mycelium_dash"]})
 		var d: Dictionary = g._draw_draft_offers(3)
 		for i in d["offers"].size():
-			if String(d["offers"][i]) == "mycelium_dash+":
+			if String(d["offers"][i]) == "mycelium_dash+trail":
 				wild_mob += 1
 				if seen_seed == -1:
 					seen_seed = s
@@ -3268,7 +3337,7 @@ func _check_d4_upgrade_filter() -> void:
 	gf.player["pos"] = gf.map["shrine"]
 	gf.shop["forge"] = true
 	gf.step({"type": "upcycle_ability", "keep": 2, "scrap": 0})
-	_ok(gf.player["kit"].has("mycelium_dash+") and _evs(gf.recent_events, "illegal").is_empty(),
+	_ok(gf.player["kit"].has("mycelium_dash+trail") and _evs(gf.recent_events, "illegal").is_empty(),
 		"(i) the shrine forge still upcycles the mobility ability: %s" % str(gf.player["kit"]))
 	# the filter costs no draw: kits whose filtered / unfiltered upgrade lists
 	# differ by 1, by 2 and not at all all land on count generator steps
@@ -3311,3 +3380,547 @@ func _check_d4_state() -> void:
 	c2.draft_slots[0] = "wild"
 	_ok(c2.state_hash() != g2.state_hash(), "(h) state_hash moves with draft_slots")
 	_ok(Game.new(5).focus == 0 and Game.new(5).draft_slots.is_empty(), "(h) a fresh game starts unfocused with no slots")
+
+
+# --- Block D6: evolve forks ---------------------------------------------------
+## The pre-D6 "<base>+" rows, verbatim. Variant A of every pair must still be
+## exactly this row in every key but "name" - that is what preserves the
+## measured balance point and makes each number D6 moves attributable to the
+## NEW sibling alone. Kept here, in the test, so the claim cannot be made true
+## by editing the table it is checked against.
+const D6_PRE_ROWS := {
+	"solar_lance+noon": {"cost": 2, "target": "dir", "range": 4,
+		"effects": [{"op": "lance", "dmg": 3, "clear_smog_bonus": 1, "ignite": true}],
+		"tags": ["sun", "fire"], "role": "damage"},
+	"seed_bomb+tangle": {"cost": 1, "target": "tile", "range": 3,
+		"effects": [{"op": "grow_radius", "radius": 1, "then": [{"op": "status_target", "status": "root", "turns": 1, "who": "on_planted"}]}],
+		"surge": {"radius": 1}, "tags": ["growth"], "role": "setup"},
+	"vine_whip+lash": {"cost": 1, "target": "enemy_line", "range": 4,
+		"effects": [{"op": "pull", "dist": 3, "dmg": 3, "then": [{"op": "status_target", "status": "stun", "turns": 1, "if": [{"outcome_crossed": "fire"}]}]}],
+		"tags": ["displace"], "role": "damage"},
+	"water_jet+pin": {"cost": 1, "target": "dir", "range": 3,
+		"effects": [{"op": "wash_push", "push": 3, "collision_dmg": 3, "then": [{"op": "status_target", "status": "root", "turns": 1, "if": [{"outcome": "collided"}, {"outcome": "pushed"}]}]}],
+		"surge": {"push": 1, "collision_dmg": 1}, "tags": ["water", "displace"], "role": "damage"},
+	"mycelium_dash+trail": {"cost": 1, "target": "growth", "range": 7,
+		"effects": [{"op": "teleport"}, {"op": "plant_origin", "kind": "growth"}],
+		"tags": ["mobility"], "role": "mobility"},
+	"root_wall+bulwark": {"cost": 1, "target": "tile", "range": 2,
+		"effects": [{"op": "grow_wall", "ttl": 6}], "tags": ["growth", "bark"], "role": "setup"},
+	"pollen_burst+torpor": {"cost": 2, "target": "self", "range": 2,
+		"effects": [{"op": "aoe_status", "status": "stun", "turns": 2, "radius": 2}],
+		"tags": ["control"], "role": "control"},
+	"sun_flare+corona": {"cost": 2, "target": "self", "range": 2,
+		"effects": [{"op": "aoe_damage", "dmg": 2, "radius": 2, "ignite": true, "bonus": {"dmg": 1, "if": [{"target_on": ["fire"]}]}}],
+		"surge": {"cost": -1, "radius": 1}, "tags": ["sun", "fire"], "role": "damage"},
+	"thorn_shield+plate": {"cost": 1, "target": "self", "range": 0,
+		"effects": [{"op": "shield", "amount": 3}], "tags": ["bark"], "role": "defense"},
+	"overgrowth+sprawl": {"cost": 1, "target": "tile_any", "range": 3,
+		"effects": [{"op": "convert_radius", "radius": 2}], "tags": ["growth"], "role": "setup"},
+	"sap_snare+tether": {"cost": 1, "target": "enemy", "range": 4,
+		"effects": [{"op": "apply_status", "status": "root", "turns": 3}],
+		"tags": ["control"], "role": "control"},
+	"grow_spike+impale": {"cost": 1, "target": "enemy_near_growth", "range": 4,
+		"effects": [{"op": "damage", "dmg": 3, "per": {"count": "growth_adjacent_target", "cap": 2, "add": {"dmg": 1}}}],
+		"surge": {"dmg": 1}, "tags": ["growth"], "role": "payoff"},
+	"bramble_coat+briar": {"cost": 1, "target": "self", "range": 0,
+		"effects": [{"op": "thorns", "dmg": 3, "turns": 5}], "tags": ["bark"], "role": "defense"},
+	"anchor_roots+bedrock": {"cost": 1, "target": "self", "range": 0,
+		"effects": [{"op": "anchor", "turns": 7}], "tags": ["bark"], "role": "defense"},
+	"moss_filter+sieve": {"cost": 1, "target": "self", "range": 0,
+		"effects": [{"op": "undim", "amount": 1}], "tags": ["sun"], "role": "utility"},
+}
+
+
+## The fork table itself: variants_of order, is_upgrade, variant_for parity,
+## and variant A byte-equal to the pre-D6 row it renames.
+func _check_d6_table() -> void:
+	for vid in D6_PRE_ROWS:
+		var row: Dictionary = Content.ABILITIES.get(vid, {})
+		var want: Dictionary = D6_PRE_ROWS[vid]
+		var same: bool = not row.is_empty()
+		for k in want:
+			if row.get(k, null) != want[k]:
+				same = false
+		# and no key beyond the pre-D6 shape plus "name"
+		for k in row:
+			if String(k) != "name" and not want.has(k):
+				same = false
+		_ok(same, "D6: %s is the pre-D6 '+' row verbatim: %s" % [vid, str(row)])
+		# variant A is FIRST in table order, which is what the parity index
+		# indexes; nothing else pins that
+		var base: String = Content.base_id(vid)
+		_ok(Content.variants_of(base)[0] == vid, "D6: %s is variant 0 of %s: %s" % [vid, base, str(Content.variants_of(base))])
+	# is_upgrade over the whole table, and the suffix hazard it exists for
+	var upgrades := 0
+	for aid in Content.ABILITIES:
+		if Content.is_upgrade(String(aid)):
+			upgrades += 1
+			_ok(Content.base_id(String(aid)) != String(aid), "D6: is_upgrade(%s) but base_id says base" % aid)
+		else:
+			_ok(Content.base_id(String(aid)) == String(aid), "D6: base %s reads as an upgrade" % aid)
+	_ok(upgrades == 39, "D6: 39 upgrade rows (30 fork variants + 9 package '+'), got %d" % upgrades)
+	_ok(not "solar_lance+pierce".ends_with("+") and Content.is_upgrade("solar_lance+pierce"),
+		"D6: the suffix hazard - a variant id does not end with '+' and is_upgrade catches it")
+	# variant_for is parity over variants_of and spends no rng
+	var g = _game()
+	var st: int = g.rng.state
+	for f in range(2, 8):
+		var want_v: String = Content.variants_of("solar_lance")[f % 2]
+		_ok(Content.variant_for("solar_lance", f) == want_v, "D6: variant_for(solar_lance, %d) = %s" % [f, want_v])
+	_ok(Content.variant_for("solar_lance", 2) == "solar_lance+noon" and Content.variant_for("solar_lance", 3) == "solar_lance+pierce",
+		"D6: A on even floors, B on odd - both siblings draftable in one run (floors 2..7)")
+	_ok(Content.variant_for("gust", 2) == "gust+" and Content.variant_for("gust", 3) == "gust+",
+		"D6: a package base has one variant, so parity is the identity")
+	_ok(g.rng.state == st, "D6: the parity pick never touches the main rng")
+	print("d6 table: %d upgrade rows, 15 bases forked in two, parity A/B by floor" % upgrades)
+
+
+## pierce (solar_lance+pierce): the beam walks the whole range through bodies,
+## hits every enemy on it and lights every flammable tile behind them; walls
+## and blocks_beam smoke still stop it; absent/false is the pre-D6 beam.
+func _check_d6_pierce() -> void:
+	var base_eff := {"op": "lance", "dmg": 2, "clear_smog_bonus": 0, "ignite": true}
+	var pierce_eff := {"op": "lance", "dmg": 2, "clear_smog_bonus": 0, "ignite": true, "pierce": true}
+	var adef := {"target": "dir", "range": 4, "cost": 2}
+	# board: enemy, oil, enemy, oil along +x from (5, 3)
+	var g = _game()
+	var e1 = g._spawn("drill_bot", Vector2i(6, 3))
+	var e2 = g._spawn("drill_bot", Vector2i(8, 3))
+	g.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	g.terrain[Vector2i(9, 3)] = {"kind": "oil"}
+	var r := _run(g, base_eff, adef, Vector2i(1, 0))
+	_ok(r[0]["hit"] == 1 and r[0]["ignited"] == 0 and r[0]["affected"] == [e1["id"]] and e2["hp"] == 3
+		and g._terrain_kind(Vector2i(7, 3)) == "oil",
+		"D6 pierce: the plain beam stops on the first body: %s" % str(r[0]))
+	var g2 = _game()
+	var f1 = g2._spawn("drill_bot", Vector2i(6, 3))
+	var f2 = g2._spawn("drill_bot", Vector2i(8, 3))
+	g2.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	g2.terrain[Vector2i(9, 3)] = {"kind": "oil"}
+	var r2 := _run(g2, pierce_eff, adef, Vector2i(1, 0))
+	_ok(r2[0]["hit"] == 2 and r2[0]["ignited"] == 2 and r2[0]["affected"] == [f1["id"], f2["id"]]
+		and f1["hp"] == 1 and f2["hp"] == 1,
+		"D6 pierce: hit 2, ignited 2, affected both: %s" % str(r2[0]))
+	_ok(g2._terrain_kind(Vector2i(7, 3)) == "fire" and g2._terrain_kind(Vector2i(9, 3)) == "fire",
+		"D6 pierce: the oil BEHIND a body lights - the capability the base lance has at no price")
+	_ok(_evs(r2[1], "ignite").size() == 2, "D6 pierce: one ignite event per lit tile: %s" % str(_evs(r2[1], "ignite")))
+	# smoke still blanks it (blocks_beam), and a wall still ends the walk
+	var g3 = _game()
+	var h1 = g3._spawn("drill_bot", Vector2i(8, 3))
+	g3.terrain[Vector2i(7, 3)] = {"kind": "smoke", "ttl": 3}
+	g3.terrain[Vector2i(9, 3)] = {"kind": "oil"}
+	var r3 := _run(g3, pierce_eff, adef, Vector2i(1, 0))
+	_ok(r3[0]["hit"] == 0 and r3[0]["ignited"] == 0 and h1["hp"] == 3,
+		"D6 pierce: blocks_beam smoke still stops a piercing lance: %s" % str(r3[0]))
+	var g4 = _game()
+	var w1 = g4._spawn("drill_bot", Vector2i(4, 3))
+	var r4 := _run(g4, pierce_eff, {"target": "dir", "range": 6, "cost": 2}, Vector2i(-1, 0))
+	_ok(r4[0]["hit"] == 1 and w1["hp"] == 1, "D6 pierce: the wall still ends the walk: %s" % str(r4[0]))
+	# the per-enemy bonus rides every hit, not just the first
+	var g5 = _game()
+	var b1 = g5._spawn("welded_hulk", Vector2i(6, 3))
+	var b2 = g5._spawn("welded_hulk", Vector2i(7, 3))
+	g5.terrain[Vector2i(7, 3)] = {"kind": "fire", "ttl": 3}
+	var bonus_eff := {"op": "lance", "dmg": 2, "clear_smog_bonus": 0, "ignite": true, "pierce": true,
+		"bonus": {"dmg": 1, "if": [{"target_on": ["fire"]}]}}
+	var r5 := _run(g5, bonus_eff, adef, Vector2i(1, 0))
+	_ok(b1["hp"] == 5 and b2["hp"] == 4 and r5[0]["hit"] == 2,
+		"D6 pierce: the bonus is judged per enemy on the line (%d, %d)" % [b1["hp"], b2["hp"]])
+	# hooks: one ignite hook per lit tile (ember_sap fires on each)
+	var g6 = Game.new(1, {"fixed_floor": {"gen": _gen(ROOM), "fdef": {}}, "kit": ["solar_lance", "seed_bomb", "mycelium_dash"], "grafts": ["ember_sap"]})
+	g6.terrain[Vector2i(6, 3)] = {"kind": "oil"}
+	g6.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	var r6 := _run(g6, pierce_eff, adef, Vector2i(1, 0))
+	_ok(r6[0]["ignited"] == 2 and _evs(r6[1], "hook").size() == 2,
+		"D6 pierce: the ignite hook fires per lit tile: %s" % str(_evs(r6[1], "hook")))
+
+
+## pull_line (vine_whip+rake): the pull body against every enemy on a dir
+## line, nearest first, on the live board.
+func _check_d6_pull_line() -> void:
+	var eff := {"op": "pull_line", "dist": 2, "dmg": 2}
+	var adef := {"target": "dir", "range": 3, "cost": 1}
+	var g = _game()
+	var a = g._spawn("welded_hulk", Vector2i(7, 3))
+	var b = g._spawn("welded_hulk", Vector2i(8, 3))
+	var r := _run(g, eff, adef, Vector2i(1, 0))
+	_ok(a["pos"] == Vector2i(6, 3) and b["pos"] == Vector2i(7, 3),
+		"D6 pull_line: nearest first, and one dragged adjacent blocks the one behind it: %s %s" % [str(a["pos"]), str(b["pos"])])
+	_ok(r[0]["hit"] == 2 and r[0]["pushed"] == 2 and r[0]["affected"] == [a["id"], b["id"]] and a["hp"] == 5 and b["hp"] == 5,
+		"D6 pull_line: hit / pushed / affected counters: %s" % str(r[0]))
+	_ok(_evs(r[1], "staggered").size() == 2, "D6 pull_line: a stagger per moved enemy: %s" % str(_evs(r[1], "staggered")))
+	# a massive enemy is never dragged but still takes the hit
+	var g2 = _game()
+	var boss = g2._spawn("furnace_core", Vector2i(7, 3))
+	var r2 := _run(g2, eff, adef, Vector2i(1, 0))
+	_ok(boss["pos"] == Vector2i(7, 3) and r2[0]["hit"] == 1 and r2[0]["pushed"] == 0,
+		"D6 pull_line: massive takes the hit and does not move: %s" % str(r2[0]))
+	# a blocks_beam tile does NOT stop the rake (it is not a beam); a wall does
+	var g3 = _game()
+	g3.terrain[Vector2i(6, 3)] = {"kind": "smoke", "ttl": 3}
+	var c = g3._spawn("welded_hulk", Vector2i(7, 3))
+	var r3 := _run(g3, eff, adef, Vector2i(1, 0))
+	_ok(r3[0]["hit"] == 1 and c["pos"] == Vector2i(6, 3), "D6 pull_line: smoke does not stop a rake: %s" % str(r3[0]))
+	var g4 = _game()
+	var d = g4._spawn("welded_hulk", Vector2i(2, 3))
+	var r4 := _run(g4, eff, {"target": "dir", "range": 6, "cost": 1}, Vector2i(-1, 0))
+	_ok(r4[0]["hit"] == 1 and d["pos"] == Vector2i(4, 3), "D6 pull_line: the walk stops at the wall, the reachable enemy is raked")
+	# crossed terrain feeds the then riders exactly as `pull` does
+	var g5 = _game()
+	g5.terrain[Vector2i(6, 3)] = {"kind": "fire", "ttl": 3}
+	var e5 = g5._spawn("welded_hulk", Vector2i(7, 3))
+	var then_eff := {"op": "pull_line", "dist": 2, "dmg": 2,
+		"then": [{"op": "status_target", "status": "stun", "turns": 1, "if": [{"outcome_crossed": "fire"}]}]}
+	var r5 := _run(g5, then_eff, adef, Vector2i(1, 0))
+	_ok(r5[0]["crossed"].has("fire") and _riders(r5[1], "then").size() == 1 and int(e5["status"].get("stun", 0)) > 0,
+		"D6 pull_line: a drag through fire feeds outcome_crossed: %s %s" % [str(r5[0]), str(r5[1])])
+	# an enemy that dies to entry damage does NOT end the rake
+	var g6 = _game()
+	g6.terrain[Vector2i(6, 3)] = {"kind": "fire", "ttl": 3}
+	var frail = g6._spawn("sludgeling", Vector2i(7, 3))
+	var behind = g6._spawn("welded_hulk", Vector2i(8, 3))
+	var r6 := _run(g6, eff, adef, Vector2i(1, 0))
+	# behind is dragged two tiles, the second of them into the same fire (1),
+	# then takes the rake damage (2): 7 - 3 = 4
+	_ok(not g6.enemies.has(frail) and r6[0]["pushed"] == 2 and r6[0]["hit"] == 1 and behind["hp"] == 4,
+		"D6 pull_line: a death mid-line does not end the rake (unlike pull): %s" % str(r6[0]))
+	# the bonus rides pull_line's damage like pull's
+	var g7 = _game()
+	g7.terrain[Vector2i(7, 3)] = {"kind": "fire", "ttl": 3}
+	var f7 = g7._spawn("furnace_core", Vector2i(7, 3))
+	var bonus_eff := {"op": "pull_line", "dist": 2, "dmg": 2, "bonus": {"dmg": 1, "if": [{"target_on": ["fire"]}]}}
+	var r7 := _run(g7, bonus_eff, adef, Vector2i(1, 0))
+	_ok(f7["hp"] == 15 and r7[0]["hit"] == 1, "D6 pull_line: bonus applies (hp %d)" % f7["hp"])
+
+
+## center (pollen_burst+drift): "target" measures the radius from the cast
+## tile, "self" (the default) from the tender.
+func _check_d6_center() -> void:
+	var adef := {"target": "tile_any", "range": 3, "cost": 2}
+	var self_eff := {"op": "aoe_status", "status": "stun", "turns": 1, "radius": 2}
+	var tgt_eff := {"op": "aoe_status", "status": "stun", "turns": 1, "radius": 2, "center": "target"}
+	var g = _game()
+	var far = g._spawn("welded_hulk", Vector2i(8, 3))  # manhattan 3 from the tender
+	var r := _run(g, self_eff, adef, Vector2i(8, 3))
+	_ok(r[0]["statused"] == 0 and int(far.get("stun", 0)) == 0, "D6 center: the default measures from the tender: %s" % str(r[0]))
+	var g2 = _game()
+	var far2 = g2._spawn("welded_hulk", Vector2i(8, 3))
+	var near2 = g2._spawn("welded_hulk", Vector2i(5, 4))  # beside the tender, 4 from the target
+	var r2 := _run(g2, tgt_eff, adef, Vector2i(8, 3))
+	_ok(r2[0]["statused"] == 1 and r2[0]["affected"] == [far2["id"]] and int(far2["status"].get("stun", 0)) > 0
+		and int(near2["status"].get("stun", 0)) == 0,
+		"D6 center=target: the cloud lands on the target, not on your head: %s" % str(r2[0]))
+	# tile_any includes the tender's own tile, so the base cast is still available
+	var g3 = _game()
+	var beside = g3._spawn("welded_hulk", Vector2i(5, 4))
+	var r3 := _run(g3, tgt_eff, adef, Vector2i(5, 3))
+	_ok(r3[0]["statused"] == 1 and int(beside["status"].get("stun", 0)) > 0, "D6 center=target aimed at yourself reproduces the base cast")
+	# riders read the cast target either way (_rider_target_tile)
+	var g4 = _game()
+	var e4 = g4._spawn("welded_hulk", Vector2i(8, 3))
+	var if_eff := {"op": "aoe_status", "status": "stun", "turns": 1, "radius": 2, "center": "target",
+		"if": [{"target_on": ["oil"]}]}
+	var r4 := _run(g4, if_eff, adef, Vector2i(8, 3))
+	_ok(r4[0]["statused"] == 0 and int(e4["status"].get("stun", 0)) == 0, "D6 center: a failing if still skips the effect")
+	g4.terrain[Vector2i(8, 3)] = {"kind": "oil"}
+	var r4b := _run(g4, if_eff, adef, Vector2i(8, 3))
+	_ok(r4b[0]["statused"] == 1, "D6 center: the if predicate reads the same tile the radius is centred on")
+	# a shipped row uses it
+	_ok(Content.ABILITIES["pollen_burst+drift"]["effects"][0]["center"] == "target"
+		and String(Content.ABILITIES["pollen_burst+torpor"]["effects"][0].get("center", "self")) == "self",
+		"D6 center: pollen_burst+drift carries it, +torpor does not")
+
+
+## ignite_ttl (sun_flare+smoulder): the fires THIS effect lights burn longer;
+## a fire that SPREADS from one takes the table ttl.
+func _check_d6_ignite_ttl() -> void:
+	var adef := {"target": "self", "range": 2, "cost": 2}
+	var plain := {"op": "aoe_damage", "dmg": 1, "radius": 2, "ignite": true}
+	var long_ := {"op": "aoe_damage", "dmg": 1, "radius": 2, "ignite": true, "ignite_ttl": 4}
+	var g = _game()
+	g.terrain[Vector2i(6, 3)] = {"kind": "oil"}
+	var r := _run(g, plain, adef, g.player["pos"])
+	_ok(r[0]["ignited"] == 1 and int(g.terrain[Vector2i(6, 3)]["ttl"]) == int(Content.terrain("fire", "ttl", 0)),
+		"D6 ignite_ttl: absent takes the TERRAIN row's ttl (%s)" % str(g.terrain[Vector2i(6, 3)]))
+	var g2 = _game()
+	g2.terrain[Vector2i(6, 3)] = {"kind": "oil", "bloom": 0}
+	var r2 := _run(g2, long_, adef, g2.player["pos"])
+	_ok(r2[0]["ignited"] == 1 and int(g2.terrain[Vector2i(6, 3)]["ttl"]) == 4
+		and int(g2.terrain[Vector2i(6, 3)]["bloom"]) == 0,
+		"D6 ignite_ttl: 4 turns, and the burnt tile's bloom flag still rides along: %s" % str(g2.terrain[Vector2i(6, 3)]))
+	_ok(_evs(r2[1], "ignite").size() == 1, "D6 ignite_ttl: the ignite event is unchanged")
+	# a fire that spreads takes the table ttl, not the override
+	g2.terrain[Vector2i(7, 3)] = {"kind": "oil"}
+	g2._step_events = []
+	g2._terrain_react()
+	_ok(g2._terrain_kind(Vector2i(7, 3)) == "fire" and int(g2.terrain[Vector2i(7, 3)]["ttl"]) == int(Content.terrain("fire", "ttl", 0)),
+		"D6 ignite_ttl: a spread fire takes the table ttl - a long burn does not propagate its length: %s" % str(g2.terrain[Vector2i(7, 3)]))
+	# a surge cannot lengthen a burn: SURGE_KEYS carries "ttl", not "ignite_ttl"
+	_ok(not Content.SURGE_DEFAULT.has("ignite_ttl"), "D6 ignite_ttl: no surge key touches it")
+	_ok(int(Content.ABILITIES["sun_flare+smoulder"]["effects"][0]["ignite_ttl"]) == 4
+		and not Content.ABILITIES["sun_flare+corona"]["effects"][0].has("ignite_ttl"),
+		"D6 ignite_ttl: smoulder carries it, corona does not")
+
+
+## convert_radius kind / ttl (overgrowth+palisade): what the muck becomes.
+func _check_d6_convert_kind() -> void:
+	var adef := {"target": "tile_any", "range": 2, "cost": 1}
+	var growth_eff := {"op": "convert_radius", "radius": 1}
+	var roots_eff := {"op": "convert_radius", "radius": 1, "kind": "roots", "ttl": 3}
+	var g = _game()
+	for t in [Vector2i(7, 3), Vector2i(7, 2), Vector2i(7, 4), Vector2i(6, 3), Vector2i(8, 3)]:
+		g.terrain[t] = {"kind": "oil"}
+	var r := _run(g, roots_eff, adef, Vector2i(7, 3))
+	_ok(r[0]["converted"] == 5 and r[0]["tiles"].size() == 5 and _evs(r[1], "convert").size() == 5,
+		"D6 convert kind: the whole diamond converts: %s" % str(r[0]))
+	var all_roots := true
+	for t in r[0]["tiles"]:
+		if g._terrain_kind(t) != "roots" or int(g.terrain[t]["ttl"]) != 3:
+			all_roots = false
+	_ok(all_roots, "D6 convert kind: roots with the effect's own ttl 3: %s" % str(g.terrain.get(Vector2i(7, 3), {})))
+	# the default is still growth, and the bloom flag now rides along
+	var g2 = _game()
+	g2.terrain[Vector2i(7, 3)] = {"kind": "oil", "bloom": 0}
+	g2.terrain[Vector2i(6, 3)] = {"kind": "goo"}
+	var r2 := _run(g2, growth_eff, adef, Vector2i(7, 3))
+	_ok(r2[0]["converted"] == 2 and g2._terrain_kind(Vector2i(7, 3)) == "growth" and g2._terrain_kind(Vector2i(6, 3)) == "growth",
+		"D6 convert kind: the default is growth: %s" % str(r2[0]))
+	_ok(int(g2.terrain[Vector2i(7, 3)].get("bloom", -1)) == 0 and not g2.terrain[Vector2i(6, 3)].has("bloom"),
+		"D6 convert kind: the replaced tile's bloom flag rides along like every other terrain write")
+	# a BLOCKING kind takes grow_wall's two guards: never over a body, never
+	# over the tender, never over the stairs
+	var g3 = _game()
+	g3.map["stairs"] = Vector2i(8, 3)
+	g3.player["pos"] = Vector2i(6, 3)
+	var sitter = g3._spawn("welded_hulk", Vector2i(7, 2))
+	for t in [Vector2i(7, 3), Vector2i(7, 2), Vector2i(7, 4), Vector2i(6, 3), Vector2i(8, 3)]:
+		g3.terrain[t] = {"kind": "oil"}
+	var r3 := _run(g3, roots_eff, adef, Vector2i(7, 3))
+	_ok(r3[0]["converted"] == 2 and g3._terrain_kind(Vector2i(7, 2)) == "oil" and g3._terrain_kind(Vector2i(6, 3)) == "oil"
+		and g3._terrain_kind(Vector2i(8, 3)) == "oil",
+		"D6 convert kind: a blocking kind spares the body, the tender and the stairs: %s" % str(r3[0]))
+	_ok(sitter["pos"] == Vector2i(7, 2), "D6 convert kind: no enemy is ever walled in")
+	# growth has no guards (it blocks nothing), so the same board converts all 5
+	var g4 = _game()
+	g4.map["stairs"] = Vector2i(8, 3)
+	g4.player["pos"] = Vector2i(6, 3)
+	g4._spawn("welded_hulk", Vector2i(7, 2))
+	for t in [Vector2i(7, 3), Vector2i(7, 2), Vector2i(7, 4), Vector2i(6, 3), Vector2i(8, 3)]:
+		g4.terrain[t] = {"kind": "oil"}
+	var r4 := _run(g4, growth_eff, adef, Vector2i(7, 3))
+	_ok(r4[0]["converted"] == 5, "D6 convert kind: a non-blocking kind keeps the pre-D6 rule: %s" % str(r4[0]))
+	# rich_goo stays unconvertible, so the bloom prize is untouched either way
+	var g5 = _game()
+	g5.terrain[Vector2i(7, 3)] = {"kind": "rich_goo"}
+	var r5 := _run(g5, roots_eff, adef, Vector2i(7, 3))
+	_ok(r5[0]["converted"] == 0 and g5._terrain_kind(Vector2i(7, 3)) == "rich_goo", "D6 convert kind: rich_goo is not convertible")
+	_ok(Content.ABILITIES["overgrowth+palisade"]["effects"][0]["kind"] == "roots"
+		and not Content.ABILITIES["overgrowth+sprawl"]["effects"][0].has("kind"),
+		"D6 convert kind: palisade carries it, sprawl does not")
+
+
+## The shrine forge offers BOTH variants: one action per (keep, scrap,
+## variant), each producing that variant's kit id and uses seed.
+func _check_d6_forge() -> void:
+	var kit := ["solar_lance", "seed_bomb", "mycelium_dash"]
+	var g = Game.new(1, {"bloom": 20, "kit": kit})
+	g.player["pos"] = g.map["shrine"]
+	var triples := {}
+	var forges := 0
+	for a in g.legal_actions():
+		if String(a.get("type", "")) == "upcycle_ability":
+			forges += 1
+			triples["%d/%d/%d" % [int(a["keep"]), int(a["scrap"]), int(a.get("variant", -1))]] = true
+	# keeps 0, 1, 2 (mobility may be KEPT), scraps 0 and 1 only, 2 variants each
+	_ok(forges == 8 and triples.size() == 8,
+		"D6 forge: one action per (keep, scrap, variant) triple: %d actions, %d distinct" % [forges, triples.size()])
+	_ok(triples.has("0/1/0") and triples.has("0/1/1"), "D6 forge: both variants of the kept ability are listed")
+	# each index produces its own variant, with the base's uses seeded onto it
+	for v in 2:
+		var gv = Game.new(1, {"bloom": 20, "kit": kit})
+		gv.player["pos"] = gv.map["shrine"]
+		gv.player["uses"]["solar_lance"] = 4
+		var evs: Array = gv.step({"type": "upcycle_ability", "keep": 0, "scrap": 1, "variant": v})
+		var want: String = String(Content.variants_of("solar_lance")[v])
+		_ok(gv.player["kit"] == [want, "mycelium_dash"] and int(gv.player["uses"].get(want, 0)) == 4
+			and String(_evs(evs, "upcycle_ability")[0]["id"]) == want,
+			"D6 forge: variant %d forges %s with the base's uses: %s" % [v, want, str(gv.player["kit"])])
+	# a MISSING variant is index 0 - the variant that reproduces the pre-D6 row
+	var g0 = Game.new(1, {"bloom": 20, "kit": kit})
+	g0.player["pos"] = g0.map["shrine"]
+	g0.step({"type": "upcycle_ability", "keep": 0, "scrap": 1})
+	_ok(g0.player["kit"] == ["solar_lance+noon", "mycelium_dash"], "D6 forge: a missing variant key is index 0: %s" % str(g0.player["kit"]))
+	# out of range is illegal and changes nothing
+	for bad in [2, -1, 99]:
+		var gb = Game.new(1, {"bloom": 20, "kit": kit})
+		gb.player["pos"] = gb.map["shrine"]
+		var bloom_before: int = gb.bloom
+		var evs: Array = gb.step({"type": "upcycle_ability", "keep": 0, "scrap": 1, "variant": bad})
+		_ok(_evs(evs, "illegal").size() == 1 and gb.player["kit"] == kit and gb.bloom == bloom_before
+			and gb.shop.get("forge", false),
+			"D6 forge: variant %d is illegal and changes nothing: %s" % [bad, str(evs)])
+	# the forge is the path to the sibling this floor's draft parity cannot deal
+	var gp = Game.new(1, {"bloom": 20, "kit": kit})
+	gp.player["pos"] = gp.map["shrine"]
+	gp.step({"type": "upcycle_ability", "keep": 0, "scrap": 1, "variant": 1})
+	_ok(gp.player["kit"][0] == "solar_lance+pierce" and Content.variant_for("solar_lance", 2) == "solar_lance+noon",
+		"D6 forge: buyable even where the even-floor draft would deal the other sibling")
+	# a package base still has exactly one forge action per (keep, scrap)
+	var gk = Game.new(1, {"bloom": 20, "kit": ["gust", "seed_bomb", "updraft"], "packages": ["aeolian"]})
+	gk.player["pos"] = gk.map["shrine"]
+	var gust_acts := 0
+	for a in gk.legal_actions():
+		if String(a.get("type", "")) == "upcycle_ability" and int(a["keep"]) == 0:
+			gust_acts += 1
+	_ok(gust_acts == 1, "D6 forge: a package base offers one variant (scrap 1 only): %d" % gust_acts)
+
+
+## The descent draft: the upgrade slot deals the PARITY variant, a wild slot
+## may deal either, and the draw count is still one per slot.
+func _check_d6_draft_parity() -> void:
+	var kit := ["solar_lance", "seed_bomb", "mycelium_dash"]
+	var up_even := 0
+	var up_even_a := 0
+	var up_odd := 0
+	var up_odd_b := 0
+	for s in range(1, 21):
+		var g = _drafted(s, {"kit": kit})
+		if g.phase != "draft" or g.draft_slots.size() != 3:
+			continue
+		# floor 2 is being entered: parity 2 -> variant A (index 0)
+		if String(g.draft_slots[1]) == "upgrade":
+			up_even += 1
+			var aid := String(g.draft_offers[1])
+			if Content.variants_of(Content.base_id(aid))[0] == aid:
+				up_even_a += 1
+		# a SKIP leaves the kit alone, so the same deepenings list is rolled
+		# again on floor 3 - parity 3 -> variant B (index 1)
+		_next_draft(g, {"type": "draft", "pick": -1})
+		if g.phase != "draft" or g.draft_slots.size() < 2:
+			continue
+		if String(g.draft_slots[1]) == "upgrade":
+			up_odd += 1
+			var aid2 := String(g.draft_offers[1])
+			if Content.variants_of(Content.base_id(aid2))[1] == aid2:
+				up_odd_b += 1
+	_ok(up_even > 10 and up_even_a == up_even, "D6 draft: floor 2 (even parity) deals variant A on %d / %d upgrade slots" % [up_even_a, up_even])
+	_ok(up_odd > 10 and up_odd_b == up_odd, "D6 draft: floor 3 (odd parity) deals variant B on %d / %d upgrade slots" % [up_odd_b, up_odd])
+	# the universe holds BOTH siblings, so a wild slot can deal either
+	var seen := {}
+	for s in range(1, 61):
+		var g = _drafted(s, {"kit": kit})
+		if g.phase != "draft":
+			continue
+		for i in g.draft_offers.size():
+			if String(g.draft_slots[i]) == "wild" and Content.is_upgrade(String(g.draft_offers[i])):
+				seen[String(g.draft_offers[i])] = true
+	var both := false
+	for k in seen:
+		if String(k).ends_with("pierce") or String(k).ends_with("reclaim") or String(k).ends_with("scatter"):
+			both = true
+	_ok(both, "D6 draft: a wild slot deals B variants too: %s" % str(seen.keys()))
+	# THE contract: one main-rng draw per slot, whatever the variant lists hold
+	var before: int = -1
+	var states: Array = []
+	for cfg in [{"kit": kit}, {"kit": ["gust", "updraft", "clear_air"], "packages": ["aeolian"]}, {"kit": ["solar_lance+noon"]}]:
+		var g = Game.new(9, cfg)
+		if before == -1:
+			before = g.rng.state
+		g._draw_draft_offers(3)
+		states.append(g.rng.state)
+	var ref := RandomNumberGenerator.new()
+	ref.state = before
+	for i in 3:
+		ref.randi()
+	var same := true
+	for st in states:
+		if st != ref.state:
+			same = false
+	_ok(same, "D6 draft: a 3-slot roll is exactly 3 generator steps whatever the variant lists hold: %s" % str(states))
+	print("d6 draft: parity A on even floors, B on odd; %d wild B offers over 60 seeds" % seen.size())
+
+
+## The locked-kit sweep config, {kit: K, pool: K}, is what the block's own
+## acceptance measurement runs, and it is the one config where the draft pool
+## holds VARIANT ids. _kit_holds_base must fold BOTH sides: a pool entry equal
+## to a held variant is not a base offer (legal_actions would list a draft the
+## _act_draft kit lookup then rejects) and the shrine must not stock a second
+## copy of a held variant.
+## The D6 `dir_enemy` target shape: a direction is legal only when its line
+## holds an enemy within range. `pull_line` with nobody on the line is a pure
+## no-op, unlike every other "dir" ability (a lance clears smog, a jet washes),
+## so offering it in all four directions let a persona spend its charge on
+## nothing - the rake was cast 18 times a run at about 1% effectiveness before
+## this shape existed.
+func _check_d6_dir_enemy() -> void:
+	var g = _game()
+	var here: Vector2i = g.player["pos"]
+	g._spawn("welded_hulk", here + Vector2i(2, 0))
+	var tg: Array = g._ability_targets("vine_whip+rake")
+	_ok(tg == [Vector2i(1, 0)],
+		"D6 dir_enemy: only the direction holding an enemy is legal: %s" % str(tg))
+	# the same board with a plain "dir" ability still offers all four
+	var tg_dir: Array = g._ability_targets("water_jet")
+	_ok(tg_dir.size() == 4, "D6 dir_enemy: a plain dir ability is unchanged: %s" % str(tg_dir))
+	# out of range is not legal (rake range is 3)
+	var g2 = _game()
+	g2._spawn("welded_hulk", g2.player["pos"] + Vector2i(5, 0))
+	_ok(g2._ability_targets("vine_whip+rake").is_empty(),
+		"D6 dir_enemy: an enemy past range does not make the line legal")
+	# a wall between the tender and the enemy stops the walk
+	var g3 = _game()
+	var p3: Vector2i = g3.player["pos"]
+	g3.map["tiles"][p3.y * int(g3.map["w"]) + p3.x + 1] = MapGen.T_WALL
+	g3._spawn("welded_hulk", p3 + Vector2i(2, 0))
+	_ok(not g3._ability_targets("vine_whip+rake").has(Vector2i(1, 0)),
+		"D6 dir_enemy: a wall on the line blocks the direction")
+	# smoke does NOT block it - the rake is not a beam, and its own walk ignores
+	# blocks_beam, so legality must agree with the op
+	var g4 = _game()
+	g4.terrain[g4.player["pos"] + Vector2i(1, 0)] = {"kind": "smoke", "ttl": 3}
+	g4._spawn("welded_hulk", g4.player["pos"] + Vector2i(2, 0))
+	_ok(g4._ability_targets("vine_whip+rake").has(Vector2i(1, 0)),
+		"D6 dir_enemy: smoke does not block the line, matching the op's own walk")
+	# and the shape is in the closed vocabulary
+	_ok(Content.TARGET_SHAPES.has("dir_enemy") and Content.TARGET_SHAPES.has("dir"),
+		"D6 dir_enemy: the shape vocabulary is closed and holds both")
+	print("d6 dir_enemy: legal only on a line holding an enemy; wall blocks, smoke does not")
+
+
+func _check_d6_locked_kit() -> void:
+	var kits: Array = [
+		["moss_filter+sieve", "seed_bomb", "mycelium_dash"],
+		["solar_lance+pierce", "seed_bomb+reclaim", "mycelium_dash+scatter"],
+		["solar_lance", "seed_bomb+tangle", "mycelium_dash"],
+	]
+	var bad := 0
+	var drafts := 0
+	var illegal := 0
+	for kit in kits:
+		var g0 = Game.new(1, {"kit": kit, "pool": kit})
+		if not g0._shop_ability_candidates().is_empty():
+			bad += 1
+			failures.append("d6 locked kit: the shrine would stock a held id: %s" % str(g0._shop_ability_candidates()))
+		for s in range(1, 16):
+			var g = _drafted(s, {"kit": kit, "pool": kit})
+			if g.phase != "draft":
+				continue
+			drafts += 1
+			for aid in g.draft_offers:
+				# an UPGRADE offer of a held base is the upgrade slot doing its
+				# job; a BASE offer the kit already holds in any form is the bug
+				if Content.is_upgrade(String(aid)):
+					continue
+				if _kit_holds_base(kit, String(aid)):
+					bad += 1
+					failures.append("d6 locked kit %s seed %d: base offer %s duplicates a held id" % [str(kit), s, aid])
+			# every listed draft action must resolve, not come back illegal
+			for act in g.legal_actions():
+				if String(act.get("type", "")) != "draft":
+					continue
+				var c = g.clone()
+				for ev in c.step(act):
+					if String(ev.get("t", "")) == "illegal":
+						illegal += 1
+	_ok(bad == 0 and illegal == 0 and drafts >= 30,
+		"D6 locked kit {kit: K, pool: K}: %d drafts, %d duplicate offers, %d illegal draft actions" % [drafts, bad, illegal])

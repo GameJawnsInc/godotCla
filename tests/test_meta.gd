@@ -27,7 +27,7 @@ const Sweep := preload("res://tests/sweep_lib.gd")
 const Roster := preload("res://bots/roster.gd")
 
 const CAREER_RUNS := 40
-const TIER0_CAREER_RUNS := 24
+const TIER0_CAREER_RUNS := 36
 const MUTATOR_SEEDS := 8
 ## Winnability floor per starting loadout (review §6.1 item 7): the optimizer
 ## over seeds 1..LOADOUT_SEEDS must clear LOADOUT_MIN_WINS with each
@@ -40,20 +40,22 @@ const LOADOUT_MIN_WINS := 3
 const SKYRUNNER_MIN_WINS := 1
 ## Milestones a career that never leaves tier 0 cannot reach: exactly the ones
 ## gated on tier_wins (Content.MILESTONES). Everything else is a reachability
-## witness - 22 tier-0 optimizer runs land `upgrades_only` (a win holding Seed
-## Bomb+), `wide_draft` (60 effective Grow Spikes; the career casts ~245),
+## witness - a tier-0 optimizer career lands `upgrades_only` (a win holding a
+## Tangle Bomb), `wide_draft` (60 effective Grow Spikes; the career casts ~440),
 ## `no_lance` and `lasher` (wins whose final kit dropped Solar Lance / kept
 ## Vine Whip - a draft pick over a full kit can do both, sim/game.gd
 ## _act_draft), and every Block A loadout row. An exact set, so a milestone
 ## that quietly becomes unreachable fails here.
-## The run count is a reachability budget, not a target. Block D4 moved the
-## last witness: under the affinity draft `lasher` (won_with vine_whip) is the
-## one that lands last, at seed 23, because vine_whip shares no tag with the
-## tender starter and so reaches the offer sheet only through a wild slot -
-## `no_lance` used to be last, at seed 21. So 23 is the minimum and 24 leaves
-## one run of margin. A bot-routing or draft change moves which seed witnesses
-## what - raise the count, do not move a reachable milestone into the
-## unreachable set.
+## The run count is a reachability budget, not a target. Block D6 moved the
+## last witness again: with every base "+" forked in two, the draft deals a
+## parity-picked variant where it used to deal the single "+" form, which
+## reshuffles which wins drop the lance - `no_lance` (a win whose final kit
+## dropped Solar Lance) now lands at seed 31, where under D4 `lasher` was last
+## at seed 23. So 31 is the minimum and 36 leaves five runs of margin. A
+## bot-routing or draft change moves which seed witnesses what - raise the
+## count, do not move a reachable milestone into the unreachable set (measured
+## over 60 runs: every milestone but the three tier-gated ones lands, the last
+## four at seeds 9 / 13 / 31 and nothing after 31).
 const TIER0_UNREACHABLE := ["aeolian", "brittle", "parched"]
 
 ## Fixture milestone table for the dispatch check (Content.MILESTONES is
@@ -271,12 +273,17 @@ func _check_load_filters() -> void:
 	_expect(p.unlocked_loadouts, ["tidewarden"], "load_from keeps a known loadout and drops an unknown one")
 	_expect(str(p.casts_by_base), str({"grow_spike": 12}), "load_from drops casts for an unknown ability")
 	_expect(p.history.size(), 1, "load_from keeps a history entry with unknown ids")
-	_expect(p.history[0]["kit"], ["solar_lance", "seed_bomb+"], "load_from filters the ids inside a history entry")
+	# Block D6 renamed every "<base>+" row: a career saved before it stores the
+	# dead id "seed_bomb+", which Profile._migrate_ability_id maps to that
+	# base's FIRST variant (the one that reproduces the pre-D6 row), so the win
+	# a player really earned still satisfies won_with
+	_expect(p.history[0]["kit"], ["solar_lance", "seed_bomb+tangle"],
+		"load_from filters the ids inside a history entry and migrates a pre-D6 + id")
 	_expect(p.history[0]["grafts"], ["deep_cells"], "load_from filters a history entry's grafts")
 	_expect(int(p.history[0]["floor"]), 9, "load_from keeps the entry's scalars")
 	_expect(str(p.daily_best), str({"42": {"won": true, "floor": 9, "turns": 100}}), "load_from carries daily_best")
 	# the filtered profile still evaluates predicates over what survived
-	_expect(p._meets({"won_with": ["seed_bomb+"]}), true, "filtered history still satisfies won_with")
+	_expect(p._meets({"won_with": ["seed_bomb+tangle"]}), true, "migrated history still satisfies won_with")
 	print("load_from filters unknown ids: OK")
 
 
@@ -298,13 +305,14 @@ func _check_predicates() -> void:
 	# won_with / wins_without / grafts_owned_at_win over one recorded win
 	var p = Profile.new()
 	p.record_run({"won": true, "floor": 9, "tier": 0, "turns": 120, "seed": 1,
-		"kit": ["solar_lance+", "seed_bomb", "grow_spike"], "grafts": ["deep_cells"]})
-	_expect(p._meets({"won_with": ["solar_lance"]}), true, "won_with: a + form satisfies its base")
-	_expect(p._meets({"won_with": ["solar_lance+"]}), true, "won_with: the exact + id")
-	_expect(p._meets({"won_with": ["seed_bomb+"]}), false, "won_with: a base does not satisfy a + id")
+		"kit": ["solar_lance+noon", "seed_bomb", "grow_spike"], "grafts": ["deep_cells"]})
+	_expect(p._meets({"won_with": ["solar_lance"]}), true, "won_with: a variant satisfies its base")
+	_expect(p._meets({"won_with": ["solar_lance+noon"]}), true, "won_with: the exact variant id")
+	_expect(p._meets({"won_with": ["solar_lance+pierce"]}), false, "won_with: the SIBLING variant does not satisfy it")
+	_expect(p._meets({"won_with": ["seed_bomb+tangle"]}), false, "won_with: a base does not satisfy a variant id")
 	_expect(p._meets({"won_with": ["solar_lance", "grow_spike"]}), true, "won_with: every id, one run")
 	_expect(p._meets({"won_with": ["solar_lance", "vine_whip"]}), false, "won_with: one id missing")
-	_expect(p._meets({"wins_without": ["solar_lance"]}), false, "wins_without: the win held it as a + form")
+	_expect(p._meets({"wins_without": ["solar_lance"]}), false, "wins_without: the win held it as a variant")
 	_expect(p._meets({"wins_without": ["vine_whip", "water_jet"]}), true, "wins_without: held none of them")
 	_expect(p._meets({"grafts_owned_at_win": 1}), true, "grafts_owned_at_win: 1 held")
 	_expect(p._meets({"grafts_owned_at_win": 2}), false, "grafts_owned_at_win: only 1 held")
@@ -685,12 +693,15 @@ func _mutator_invariant_problem(mut: String) -> String:
 				return "first draft offered nothing"
 			for aid in offers:
 				var s := String(aid)
-				if not s.ends_with("+"):
-					return "offer %s is not a + form (offers %s)" % [s, str(offers)]
-				if not g.player["kit"].has(s.trim_suffix("+")):
+				# Block D6: an upgrade id is "<base>+<variant>", so ends_with("+")
+				# and trim_suffix("+") both fail silently on one
+				if not Content.is_upgrade(s):
+					return "offer %s is not an upgrade form (offers %s)" % [s, str(offers)]
+				if not g.player["kit"].has(Content.base_id(s)):
 					return "offer %s upgrades an ability the kit does not hold" % s
 			# a kit of nothing but + forms leaves no candidate: the draft is skipped
-			var full := Game.new(2, {"mutators": [mut], "kit": ["solar_lance+", "seed_bomb+", "mycelium_dash+"]})
+			var full := Game.new(2, {"mutators": [mut],
+				"kit": ["solar_lance+noon", "seed_bomb+tangle", "mycelium_dash+trail"]})
 			full.player["pos"] = full.map["stairs"]
 			full.greened = full.green_need
 			full.step({"type": "descend"})

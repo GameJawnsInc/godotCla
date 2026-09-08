@@ -4,6 +4,6 @@
 "actions": [{"dir":[1,0],"type":"move"},{"item":"graft","pick":0,"type":"buy"}],
 "expect": {"events":[{"discarded":"verdant_pulse","id":"bloom_surge","item":"graft","t":"buy"}],"floor":1,"timeout":true,"turns":0,"won":false},
 "note": "shrine grafts are a choice sink: two offers, buying one discards the other (the stock draws from all ten Content.GRAFTS since C3)",
-"sim_version": 12,
+"sim_version": 13,
 "hash": "d7d004a1f7be9453291434c0c6c4561ac1e6ce6da2f5fcc4f5645a4f16f87d58"
 }

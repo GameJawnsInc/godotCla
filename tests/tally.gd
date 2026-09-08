@@ -3,9 +3,9 @@ const Content := preload("res://sim/content.gd")
 ## Event tally for bot runs (review §7.1): fed every event game.step()
 ## returns inside Sweep.run_loop, plus begin_step/end_step hooks for
 ## before/after state (bloom deltas, shrine turns, unspent charge, clock
-## stalls). Ability ids are normalised to their base id (trim "+"); plus-form
-## casts are counted separately in plus_casts. Pure bookkeeping: it never
-## touches the game, so feeding it cannot change a run.
+## stalls). Ability ids are normalised to their base id (Content.base_id);
+## plus-form casts are counted separately in plus_casts. Pure bookkeeping: it
+## never touches the game, so feeding it cannot change a run.
 ## Since Block C1a it also counts effect-grammar rider events (per / bonus /
 ## then), which feed the combo rate alongside ignite / verdant / stagger, and
 ## since Block D1 the stat surges ({"t": "surge"}) and the tiles a plant_origin
@@ -17,6 +17,10 @@ const Content := preload("res://sim/content.gd")
 ## Block D3 adds the two terrain-denial columns: the enemy intents a smoke
 ## screen swallowed ({"t": "screened"}) by intent type, and the fire damage
 ## enemies walked into, which is what the rows' avoid lists are meant to shrink.
+## Block D6 adds the two per-VARIANT columns - casts_by_id and
+## effective_casts_by_id, keyed by the full "<base>+<variant>" id - because
+## every other per-ability table here folds a fork's two siblings onto one base
+## key, and "no strictly dominated sibling" cannot be read off a folded column.
 ## Block D4 adds the draft-slot columns: every offer and every pick counted by
 ## the slot role that produced it (the draft_offer event's "slots" array), plus
 ## the drafts a skipped draft focused. That is the affinity draft's own metric -
@@ -24,6 +28,16 @@ const Content := preload("res://sim/content.gd")
 
 # --- actions ------------------------------------------------------------------
 var casts_by_base := {}
+## Block D6 per-VARIANT counters, keyed by the FULL cast id
+## ("grow_spike+impale", not "grow_spike"). casts_by_base folds the two
+## siblings of a fork onto one key, which would make them indistinguishable in
+## the very instrument the "no strictly dominated sibling" gate reads; these
+## two are the split. effective_casts_by_id is the sim's OWN effectiveness
+## rule, not a re-derivation: end_step diffs game.effective_uses (base-keyed)
+## across the step and attributes the increment to the id the "ability" event
+## named, so a cast counts here exactly when the sim counted it.
+var casts_by_id := {}
+var effective_casts_by_id := {}
 var plus_casts := 0
 var strikes := 0
 var cleanses := 0
@@ -185,14 +199,24 @@ var _choke := 0
 ## plants its origin at most once) and on the next cast / step.
 var _origin_aid := ""
 var _origin_kinds: Array = []
+## The full id of the ability cast in the step being tallied ("" for a step
+## that cast none), and game.effective_uses as it stood before the step: the
+## pair that attributes an effective cast to a variant.
+var _cast_aid := ""
+var _eff0 := {}
 ## The open draft's offer id -> slot role, rebuilt at every draft_offer: the
 ## pick events name an ability, not an index, and a draft never offers the same
 ## id twice (Block D4), so the id is enough to attribute the pick to its slot.
 var _slot_by_offer := {}
 
 
+## Ability/source id folded onto its base. Content.base_id, NEVER
+## trim_suffix("+"): since Block D6 an upgrade id is "<base>+<variant>"
+## ("grow_spike+impale"), which trim_suffix returns UNCHANGED - every
+## per-ability table here routes through this call, so the old form would have
+## split each base into three silent columns.
 static func base_id(aid: String) -> String:
-	return aid.trim_suffix("+")
+	return Content.base_id(aid)
 
 
 ## Damage-source family: the part before ":". Since bump 2 the enemy-side
@@ -233,6 +257,8 @@ static func _inc(d: Dictionary, k, amt: int = 1) -> void:
 func begin_step(game) -> void:
 	_origin_aid = ""
 	_origin_kinds = []
+	_cast_aid = ""
+	_eff0 = game.effective_uses.duplicate()
 	_bloom0 = game.bloom
 	_pos0 = game.player["pos"]
 	_charge0 = game.player["charge"]
@@ -246,7 +272,9 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 		"ability":
 			var aid := String(ev.get("id", ""))
 			_inc(casts_by_base, base_id(aid))
-			if aid.ends_with("+"):
+			_inc(casts_by_id, aid)
+			_cast_aid = aid
+			if Content.is_upgrade(aid):
 				plus_casts += 1
 			_origin_aid = aid
 			_origin_kinds = _origin_plant_kinds(aid)
@@ -272,7 +300,7 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 				var role := String(slots[i]) if i < slots.size() else "unknown"
 				_inc(offers_by_slot, role)
 				_slot_by_offer[oid] = role
-				if oid.ends_with("+"):
+				if Content.is_upgrade(oid):
 					any_plus = true
 			if any_plus:
 				drafts_with_plus += 1
@@ -408,6 +436,14 @@ func _add_damage(ev: Dictionary) -> void:
 
 
 func end_step(game, action: Dictionary) -> void:
+	# effective casts, per variant: the sim increments effective_uses[base] when
+	# a cast actually did something (an outcome fired or a rider ran). One step
+	# is at most one cast, so the base's delta belongs to the id just cast.
+	if _cast_aid != "":
+		var b := base_id(_cast_aid)
+		var d: int = int(game.effective_uses.get(b, 0)) - int(_eff0.get(b, 0))
+		if d > 0:
+			_inc(effective_casts_by_id, _cast_aid, d)
 	var delta: int = game.bloom - _bloom0
 	if delta > 0:
 		bloom_earned += delta
@@ -444,6 +480,8 @@ func finish(game) -> void:
 
 func merge(other) -> void:
 	_merge_dict(casts_by_base, other.casts_by_base)
+	_merge_dict(casts_by_id, other.casts_by_id)
+	_merge_dict(effective_casts_by_id, other.effective_casts_by_id)
 	plus_casts += other.plus_casts
 	strikes += other.strikes
 	cleanses += other.cleanses
@@ -572,7 +610,10 @@ static func slot_order(d: Dictionary) -> Array:
 	return out
 
 
-## Canonical kit string: sorted base ids joined by "+".
+## Canonical kit string: sorted BASE ids joined by "+". The join separator is
+## not an id suffix - every entry is folded through base_id first, so a Block
+## D6 variant ("solar_lance+noon") contributes "solar_lance" and the key stays
+## unambiguous and comparable with every pre-D6 entropy number.
 static func kit_key(kit: Array) -> String:
 	var ids: Array = []
 	for aid in kit:
@@ -645,6 +686,10 @@ static func kpis(t, n_runs: int, kits: Array) -> Dictionary:
 		"bloom_conversion": _safe_div(float(t.bloom_spent), float(t.bloom_earned)),
 		"kit_entropy_bits": kit_entropy_bits(kits),
 		"pick_rate_by_id": pick_rate,
+		# Block D6 fork instrument: casts and effective casts by FULL variant
+		# id, the only columns that tell two siblings of a fork apart
+		"casts_by_id": t.casts_by_id.duplicate(),
+		"effective_casts_by_id": t.effective_casts_by_id.duplicate(),
 		# draft slots (Block D4)
 		"offers_by_slot": t.offers_by_slot.duplicate(),
 		"picks_by_slot": t.picks_by_slot.duplicate(),
@@ -702,6 +747,16 @@ func print_block(n_runs: int, kits: Array) -> void:
 	for aid in sorted_desc(casts_by_base):
 		parts.append("%s %.1f" % [aid, float(casts_by_base[aid]) / n])
 	print("           casts/run: %s  (plus-form casts %d)" % [", ".join(parts) if not parts.is_empty() else "none", plus_casts])
+	# the fork line (Block D6): only variant ids, and only when one was cast -
+	# a run holding no upgrade prints nothing extra
+	var vparts: Array = []
+	for aid in sorted_desc(casts_by_id):
+		if not Content.is_upgrade(String(aid)):
+			continue
+		vparts.append("%s %.1f (eff %.1f)" % [aid, float(casts_by_id[aid]) / n,
+			float(effective_casts_by_id.get(aid, 0)) / n])
+	if not vparts.is_empty():
+		print("           variant casts/run: %s" % ", ".join(vparts))
 	print("           actions/run: strike %.1f  cleanse %.1f  move %.1f  end_turn %.1f  item_use %.1f" % [
 		strikes / n, cleanses / n, moves / n, end_turns / n, float(_sum(item_uses_by_id)) / n])
 	var pr: Dictionary = k["pick_rate_by_id"]

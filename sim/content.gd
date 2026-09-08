@@ -138,86 +138,250 @@ const ABILITIES := {
 		"effects": [{"op": "undim", "amount": 1}],
 		"tags": ["sun"], "role": "utility",
 	},
-	# Upgraded variants: offered in drafts when the base is owned; replace in place.
-	"solar_lance+": {
-		"name": "Solar Lance+", "cost": 2, "target": "dir", "range": 4,
+	# --- Evolve forks (Block D6, docs/PROGRESSION_REVIEW.md 6.4) --------------
+	# Each of the fifteen base abilities has TWO named variants keyed
+	# "<base>+<word>" (never a grade: no "+2", no "Greater"). Variant A of each
+	# pair is the pre-D6 "<base>+" row verbatim - same cost, target, range,
+	# effects, riders, surge, tags and role - renamed, so the measured balance
+	# point is preserved and every number D6 moves is attributable to B alone.
+	# Variant B forks: a different shape, target class, status, count or
+	# terrain, never a bigger number on the same line.
+	# TABLE ORDER IS LOAD-BEARING: Content.variants_of scans these keys, and
+	# the draft's parity pick indexes that list, so A must be listed FIRST for
+	# every base (parity = the floor being entered, so A is dealt on even
+	# floors and B on odd; drafts happen on floors 2..7, so both siblings are
+	# draftable inside one run and neither is ever unobtainable - and the
+	# shrine forge lists one action per variant, so a run can always buy the
+	# sibling this floor's parity cannot deal).
+	# EXEMPTION from the C4 package convention ("numeric bumps only"): five B
+	# rows are SIDEGRADES of their own base rather than supersets -
+	# root_wall+cage (loses the `tile` shape for a body), sap_snare+blight (a
+	# different status, not a longer one), grow_spike+throng (a different `per`
+	# count), bramble_coat+bristle (5 dmg over 2 turns against the base's
+	# 2 over 4) and overgrowth+palisade (roots instead of growth). The fork
+	# axis for those five IS shape/status/count, and there is no way to fork
+	# those without giving something up. The other ten Bs are strictly better
+	# than their base.
+	# DEFAULT SURGE, worth stating because it qualifies four fork prices: the
+	# D1 rule (Game._surges with Content.SURGE_DEFAULT {cost: -1}) surges ANY
+	# cast of cost >= 2 made while standing on growth, whatever the row. Four B
+	# rows crossed to cost 2 and are therefore cost-1 casts FROM GROWTH, at the
+	# price of the tile underfoot: seed_bomb+reclaim, root_wall+cage,
+	# pollen_burst+drift and moss_filter+prism. (solar_lance+pierce is cost 2
+	# too and surges the same way, but so does its cost-2 A sibling, so the
+	# discount is not part of that fork; solar_lance+noon and
+	# pollen_burst+torpor always surged.) So
+	# "costs twice as much as its sibling" in the notes below is the price OFF
+	# growth; reclaim in particular is a growth-WRITING card that eats the
+	# growth it is cast from.
+	"solar_lance+noon": {
+		"name": "Noon Lance", "cost": 2, "target": "dir", "range": 4,
 		"effects": [{"op": "lance", "dmg": 3, "clear_smog_bonus": 1, "ignite": true}],
 		"tags": ["sun", "fire"], "role": "damage",
 	},
-	"seed_bomb+": {
-		"name": "Seed Bomb+", "cost": 1, "target": "tile", "range": 3,
+	# pierce: the beam does not break on the first body, so oil BEHIND an
+	# enemy becomes lightable at all (the base lance cannot reach it at any
+	# price). Walls and blocks_beam smoke still stop the walk.
+	"solar_lance+pierce": {
+		"name": "Piercing Lance", "cost": 2, "target": "dir", "range": 4,
+		"effects": [{"op": "lance", "dmg": 2, "clear_smog_bonus": 0, "ignite": true, "pierce": true}],
+		"tags": ["sun", "fire"], "role": "damage",
+	},
+	"seed_bomb+tangle": {
+		"name": "Tangle Bomb", "cost": 1, "target": "tile", "range": 3,
 		"effects": [{"op": "grow_radius", "radius": 1, "then": [{"op": "status_target", "status": "root", "turns": 1, "who": "on_planted"}]}],
 		"surge": {"radius": 1},
 		"tags": ["growth"], "role": "setup",
 	},
-	"vine_whip+": {
-		"name": "Vine Whip+", "cost": 1, "target": "enemy_line", "range": 4,
+	# tile_any is load-bearing: the "tile" shape excludes tiles that already
+	# hold terrain, so the plain bomb cannot even be AIMED at a slick.
+	"seed_bomb+reclaim": {
+		"name": "Reclaimer Bomb", "cost": 2, "target": "tile_any", "range": 3,
+		"effects": [{"op": "grow_radius", "radius": 1}, {"op": "convert_radius", "radius": 1}],
+		"tags": ["growth"], "role": "setup",
+	},
+	"vine_whip+lash": {
+		"name": "Vine Lash", "cost": 1, "target": "enemy_line", "range": 4,
 		"effects": [{"op": "pull", "dist": 3, "dmg": 3, "then": [{"op": "status_target", "status": "stun", "turns": 1, "if": [{"outcome_crossed": "fire"}]}]}],
 		"tags": ["displace"], "role": "damage",
 	},
-	"water_jet+": {
-		"name": "Water Jet+", "cost": 1, "target": "dir", "range": 3,
+	# the base whip's numbers over a whole line: the pool's cheapest mass
+	# interrupt, and the gatherer its area payoffs have no setup for
+	"vine_whip+rake": {
+		"name": "Vine Rake", "cost": 1, "target": "dir_enemy", "range": 3,
+		"effects": [{"op": "pull_line", "dist": 2, "dmg": 2}],
+		"tags": ["displace"], "role": "damage",
+	},
+	"water_jet+pin": {
+		"name": "Pinning Jet", "cost": 1, "target": "dir", "range": 3,
 		"effects": [{"op": "wash_push", "push": 3, "collision_dmg": 3, "then": [{"op": "status_target", "status": "root", "turns": 1, "if": [{"outcome": "collided"}, {"outcome": "pushed"}]}]}],
+		"surge": {"push": 1, "collision_dmg": 1},
+		"tags": ["water", "displace"], "role": "damage",
+	},
+	# the hose half: _wash_dir erases every washable tile on the whole line
+	# regardless of enemies, so range 5 really does wash five tiles
+	"water_jet+sluice": {
+		"name": "Sluice Jet", "cost": 1, "target": "dir", "range": 5,
+		"effects": [{"op": "wash_push", "push": 2, "collision_dmg": 2}],
 		"surge": {"push": 1, "collision_dmg": 1},
 		"tags": ["water", "displace"], "role": "damage",
 	},
 	# Spore Trail (Block D1): the departure tile becomes growth once the tender
 	# has left it (plant_origin - floor, no terrain, no enemy standing there).
-	"mycelium_dash+": {
-		"name": "Mycelium Dash+", "cost": 1, "target": "growth", "range": 7,
+	"mycelium_dash+trail": {
+		"name": "Spore Trail", "cost": 1, "target": "growth", "range": 7,
 		"effects": [{"op": "teleport"}, {"op": "plant_origin", "kind": "growth"}],
 		"tags": ["mobility"], "role": "mobility",
 	},
-	"root_wall+": {
-		"name": "Root Wall+", "cost": 1, "target": "tile", "range": 2,
+	# effects run in order and aoe_damage reads player["pos"], which teleport
+	# has already moved: the burst lands where you ARRIVE, no `center` needed
+	"mycelium_dash+scatter": {
+		"name": "Scattering Dash", "cost": 1, "target": "growth", "range": 4,
+		"effects": [{"op": "teleport"}, {"op": "aoe_damage", "dmg": 1, "radius": 1}],
+		"tags": ["mobility"], "role": "mobility",
+	},
+	"root_wall+bulwark": {
+		"name": "Bulwark Roots", "cost": 1, "target": "tile", "range": 2,
 		"effects": [{"op": "grow_wall", "ttl": 6}],
 		"tags": ["growth", "bark"], "role": "setup",
 	},
-	"pollen_burst+": {
-		"name": "Pollen Burst+", "cost": 2, "target": "self", "range": 2,
+	# aimed at a BODY: grow_wall needs _open(t), which is false where an enemy
+	# stands and where the tender stands, so a cage fills exactly the target's
+	# free neighbours - the one card in the base pool that stops a massive
+	# enemy, since passability does not care what statuses bounce off it
+	"root_wall+cage": {
+		"name": "Root Cage", "cost": 2, "target": "enemy", "range": 3,
+		"effects": [{"op": "grow_wall", "ttl": 4}],
+		"tags": ["growth", "bark"], "role": "setup",
+	},
+	"pollen_burst+torpor": {
+		"name": "Torpor Burst", "cost": 2, "target": "self", "range": 2,
 		"effects": [{"op": "aoe_status", "status": "stun", "turns": 2, "radius": 2}],
 		"tags": ["control"], "role": "control",
 	},
-	"sun_flare+": {
-		"name": "Sun Flare+", "cost": 2, "target": "self", "range": 2,
+	# center: "target" measures the radius from the cast tile, so the cloud
+	# stuns the clump where it FORMS instead of only where you are standing
+	"pollen_burst+drift": {
+		"name": "Pollen Drift", "cost": 2, "target": "tile_any", "range": 3,
+		"effects": [{"op": "aoe_status", "status": "stun", "turns": 1, "radius": 2, "center": "target"}],
+		"tags": ["control"], "role": "control",
+	},
+	"sun_flare+corona": {
+		"name": "Corona Flare", "cost": 2, "target": "self", "range": 2,
 		"effects": [{"op": "aoe_damage", "dmg": 2, "radius": 2, "ignite": true, "bonus": {"dmg": 1, "if": [{"target_on": ["fire"]}]}}],
 		"surge": {"cost": -1, "radius": 1},
 		"tags": ["sun", "fire"], "role": "damage",
 	},
-	"thorn_shield+": {
-		"name": "Thorn Shield+", "cost": 1, "target": "self", "range": 0,
+	# ignite_ttl: the flash is the base's 1, the FIRE is twice as long. Since
+	# D3 that is a positional statement - seven enemy rows avoid fire and pay
+	# ENEMY_AVOID_COST per burning tile - and the burn stands in the tender's
+	# way just as long. A fire that spreads from an overridden tile takes the
+	# table ttl, so a long burn does not propagate its length.
+	"sun_flare+smoulder": {
+		"name": "Smouldering Flare", "cost": 2, "target": "self", "range": 2,
+		"effects": [{"op": "aoe_damage", "dmg": 1, "radius": 2, "ignite": true, "ignite_ttl": 4,
+			"bonus": {"dmg": 1, "if": [{"target_on": ["fire"]}]}}],
+		"surge": {"cost": -1, "radius": 1},
+		"tags": ["sun", "fire"], "role": "damage",
+	},
+	"thorn_shield+plate": {
+		"name": "Plate Bark", "cost": 1, "target": "self", "range": 0,
 		"effects": [{"op": "shield", "amount": 3}],
 		"tags": ["bark"], "role": "defense",
 	},
-	"overgrowth+": {
-		"name": "Overgrowth+", "cost": 1, "target": "tile_any", "range": 3,
+	# SHIELD_CAP is 3, so the absorption axis is finished and B forks sideways:
+	# the smoke is a D3 screen (Game._screened reads the tender's tile and its
+	# four neighbours), so drain/gum/drag from a non-adjacent, non-massive
+	# enemy fizzles for two turns. Two self-limits ship with it: create_terrain
+	# needs a bare floor tile (no cloud while standing on your own growth), and
+	# smoke blocks_beam, so camping in it gives up lance and enemy_line lines.
+	"thorn_shield+chaff": {
+		"name": "Chaff Bark", "cost": 1, "target": "self", "range": 0,
+		"effects": [{"op": "shield", "amount": 2}, {"op": "create_terrain", "kind": "smoke", "ttl": 2}],
+		"tags": ["bark"], "role": "defense",
+	},
+	"overgrowth+sprawl": {
+		"name": "Sprawling Growth", "cost": 1, "target": "tile_any", "range": 3,
 		"effects": [{"op": "convert_radius", "radius": 2}],
 		"tags": ["growth"], "role": "setup",
 	},
-	"sap_snare+": {
-		"name": "Sap Snare+", "cost": 1, "target": "enemy", "range": 4,
+	# kind + ttl: the same input, a different product - the only card that
+	# manufactures cover out of the enemy's own terrain, and the only thing
+	# that makes anything of goo. Quota relief is identical either way.
+	"overgrowth+palisade": {
+		"name": "Palisade", "cost": 1, "target": "tile_any", "range": 2,
+		"effects": [{"op": "convert_radius", "radius": 1, "kind": "roots", "ttl": 3}],
+		"tags": ["growth"], "role": "setup",
+	},
+	"sap_snare+tether": {
+		"name": "Tether Snare", "cost": 1, "target": "enemy", "range": 4,
 		"effects": [{"op": "apply_status", "status": "root", "turns": 3}],
 		"tags": ["control"], "role": "control",
 	},
-	"grow_spike+": {
-		"name": "Grow Spike+", "cost": 1, "target": "enemy_near_growth", "range": 4,
+	# which status the sap carries: spore blocks nothing but ticks, has no
+	# cooldown and is the one STATUSES row that stacks by addition - so a
+	# second dose really does stack, which root's cooldown forbids
+	"sap_snare+blight": {
+		"name": "Blight Snare", "cost": 1, "target": "enemy", "range": 3,
+		"effects": [{"op": "apply_status", "status": "spore", "turns": 3}],
+		"tags": ["control"], "role": "control",
+	},
+	"grow_spike+impale": {
+		"name": "Impaling Spike", "cost": 1, "target": "enemy_near_growth", "range": 4,
 		"effects": [{"op": "damage", "dmg": 3, "per": {"count": "growth_adjacent_target", "cap": 2, "add": {"dmg": 1}}}],
 		"surge": {"dmg": 1},
 		"tags": ["growth"], "role": "payoff",
 	},
-	"bramble_coat+": {
-		"name": "Bramble Coat+", "cost": 1, "target": "self", "range": 0,
+	# activates enemies_adjacent_target, the one PER_COUNTS entry no shipped
+	# row used: the payoff card for the displace half of the pool
+	"grow_spike+throng": {
+		"name": "Throng Spike", "cost": 1, "target": "enemy_near_growth", "range": 3,
+		"effects": [{"op": "damage", "dmg": 3, "per": {"count": "enemies_adjacent_target", "cap": 2, "add": {"dmg": 1}}}],
+		"surge": {"dmg": 1},
+		"tags": ["growth"], "role": "payoff",
+	},
+	"bramble_coat+briar": {
+		"name": "Briar Coat", "cost": 1, "target": "self", "range": 0,
 		"effects": [{"op": "thorns", "dmg": 3, "turns": 5}],
 		"tags": ["bark"], "role": "defense",
 	},
-	"anchor_roots+": {
-		"name": "Anchor Roots+", "cost": 1, "target": "self", "range": 0,
+	# a parry, not a posture: 5 crosses the HP line of the only two 4-HP melee
+	# kinds (coal_golem, oil_sludge) and the window has to be AIMED at a
+	# telegraph. Deliberately not a growth-scaling coat: thorns is the
+	# documented stall vector, so the bark fork that cannot be kept up wins.
+	"bramble_coat+bristle": {
+		"name": "Bristle Coat", "cost": 1, "target": "self", "range": 0,
+		"effects": [{"op": "thorns", "dmg": 5, "turns": 2}],
+		"tags": ["bark"], "role": "defense",
+	},
+	"anchor_roots+bedrock": {
+		"name": "Bedrock Anchor", "cost": 1, "target": "self", "range": 0,
 		"effects": [{"op": "anchor", "turns": 7}],
 		"tags": ["bark"], "role": "defense",
 	},
-	"moss_filter+": {
-		"name": "Moss Filter+", "cost": 1, "target": "self", "range": 0,
+	# the base's four turns plus something that happens NOW. Grants no shield,
+	# heal, thorns or cleanse credit, so it stays off the stall surface.
+	"anchor_roots+heave": {
+		"name": "Heaving Roots", "cost": 1, "target": "self", "range": 1,
+		"effects": [{"op": "anchor", "turns": 4}, {"op": "push_all", "dist": 1}],
+		"tags": ["bark"], "role": "defense",
+	},
+	"moss_filter+sieve": {
+		"name": "Fine Sieve", "cost": 1, "target": "self", "range": 0,
 		"effects": [{"op": "undim", "amount": 1}],
+		"tags": ["sun"], "role": "utility",
+	},
+	# a castability fork, not a value one: regen is maxi(1, BASE_REGEN - dim),
+	# so at dim 2 the cost-1 sieve is castable on income and this is not - OFF
+	# growth. See the default-surge note below: standing on growth this costs 1
+	# too, at the price of the tile.
+	# Effects run in order, so undim resolves first and the flare's if reads
+	# the stage the cast just produced - the reward exists only on the floors
+	# where the smog is already being beaten. First shipped user of `dim`.
+	"moss_filter+prism": {
+		"name": "Prism Moss", "cost": 2, "target": "self", "range": 2,
+		"effects": [{"op": "undim", "amount": 1},
+			{"op": "aoe_damage", "dmg": 1, "radius": 2, "if": [{"dim": 0}]}],
 		"tags": ["sun"], "role": "utility",
 	},
 	# Package "+" rows (Block C4): offered only once the base is held, so the
@@ -303,6 +467,27 @@ const DRAFT_POOL := [
 ## implements them (a match on these strings, wild as the catch-all), so
 ## adding a role here without an arm there silently rolls it as wild - adding
 ## a role means changing that function in the same commit.
+## Block D6 (evolve forks): the "+ forms of held bases" the upgrade slot and
+## the universe draw from are now VARIANTS - each of the fifteen base-pool
+## abilities has two, keyed "<base>+<word>". The upgrade slot lists ONE per
+## held build-defining base, picked by Content.variant_for(base, floor) - a
+## parity read of the floor being entered, never a draw, so this file's
+## one-main-rng-draw-per-slot contract is untouched. The wild slot's universe
+## holds BOTH siblings of every held base, and the shrine forge lists one
+## action per variant, so no fork is unobtainable: the sibling a floor's
+## parity cannot deal is reachable on the next floor and at every shrine.
+## Every target shape Game._ability_targets can generate, and therefore every
+## value an ABILITIES row's "target" may take (tests/test_content.gd lints it).
+## "dir" and "dir_enemy" both hand the effect a unit vector - Game._is_dir_shape
+## is the one reader of that fact - and differ only in legality: "dir" offers
+## all four directions always, "dir_enemy" only a direction whose line holds an
+## enemy within range, which is what a cast doing nothing to an empty line
+## needs (Block D6, vine_whip+rake).
+const TARGET_SHAPES := [
+	"dir", "dir_enemy", "tile", "tile_any", "enemy", "enemy_line",
+	"enemy_near_growth", "growth", "self",
+]
+
 const DRAFT_SLOT_ROLES := ["affinity", "upgrade_or_affinity", "wild"]
 const DRAFT_SLOTS := ["affinity", "upgrade_or_affinity", "wild"]
 ## What snapshot().draft_slots / the draft_offer event report per offer.
@@ -356,13 +541,57 @@ const ARCHETYPES := {
 }
 
 
-## Strip the upgrade suffix: "solar_lance+" -> "solar_lance". Ids without a
-## "+" come back unchanged.
+## Strip the upgrade suffix: "solar_lance+noon" -> "solar_lance". Ids without
+## a "+" come back unchanged. Unchanged by Block D6: it already cuts at the
+## first "+", so a "<base>+<variant>" key folds onto its base like the old
+## "<base>+" did.
 static func base_id(aid: String) -> String:
 	var cut: int = aid.find("+")
 	if cut < 0:
 		return aid
 	return aid.substr(0, cut)
+
+
+## Is `aid` an upgrade (a "+" form of some base) rather than a base itself?
+## THE ONE TEST TO USE. Block D6 renamed every base "+" row to
+## "<base>+<variant>", so "solar_lance+pierce".ends_with("+") is FALSE:
+## an ends_with("+") on an ABILITY id silently changed meaning and must be
+## this call (or an explicit base_id comparison) everywhere. The ITEMS press
+## keeps the plain "+" convention - items are not forked - so its sites keep
+## ends_with("+") on purpose.
+static func is_upgrade(aid: String) -> bool:
+	return base_id(aid) != aid
+
+
+## Every upgrade variant of `base`, in ABILITIES table order (the order is
+## load-bearing: variant_for indexes this list, so a base's variant A must be
+## listed before its B). Derived by scanning, never a hand-maintained list, so
+## a new row is a new variant with no second place to update. Two entries for
+## each of the fifteen base-pool abilities (Block D6), one for each package
+## ability (those keep their single plain "+" form), zero for an id that has
+## no upgrade at all.
+static func variants_of(base: String) -> Array:
+	var out: Array = []
+	for aid in ABILITIES.keys():
+		var key := String(aid)
+		if key != base and base_id(key) == base:
+			out.append(key)
+	return out
+
+
+## The variant of `base` this draft may deal, chosen by PARITY - no rng draw,
+## so the draft's one-main-rng-draw-per-slot contract is untouched and WHICH
+## sibling a slot could offer is a function of the floor, not of a roll.
+## `parity` is the floor being entered (Game._pending_floor), and drafts
+## happen on floors 2..7, so a run sees variant A on even floors and B on odd
+## and both siblings are draftable inside one run. The sibling a given floor
+## cannot deal is always buyable at the shrine forge, which lists one action
+## per variant - no fork is ever unobtainable. "" when `base` has no variant.
+static func variant_for(base: String, parity: int) -> String:
+	var vs: Array = variants_of(base)
+	if vs.is_empty():
+		return ""
+	return String(vs[posmod(parity, vs.size())])
 
 
 ## Archetype ids whose whole core can be assembled from `pool` plus the
@@ -538,24 +767,42 @@ const HOOK_STEP_CAP := 12
 ## to the base). Rider rows (docs/PROGRESSION_REVIEW.md 6.3 C2) name the rider
 ## in one clause. UI-facing data; the sim ignores it.
 const ABILITY_DESC := {
-	"solar_lance": "Beam up to 3 tiles: 2 dmg, ignites oil (+: 3 dmg, 4 under clear skies)",
+	"solar_lance": "Beam up to 3 tiles: 2 dmg, ignites oil",
+	"solar_lance+noon": "Beam 4 tiles: 3 dmg, 4 under clear skies, ignites oil",
+	"solar_lance+pierce": "Beam 4 tiles that nothing but a wall or smoke stops: 2 dmg to every enemy on the line, and every oil tile behind them lights",
 	"seed_bomb": "Plant a patch of healing growth within 3 tiles",
-	"seed_bomb+": "Plant a patch of healing growth within 3 tiles; enemies on the fresh growth are rooted a turn; on growth: plants a 13-tile diamond",
+	"seed_bomb+tangle": "Plant a patch of healing growth within 3 tiles; enemies on the fresh growth are rooted a turn; on growth: plants a 13-tile diamond",
+	"seed_bomb+reclaim": "Plant a patch of healing growth within 3 - and the oil, goo or ash lying in the patch turns to growth with it",
 	"vine_whip": "Yank an enemy 2 tiles toward you, 2 dmg; moving it interrupts its attack",
-	"vine_whip+": "Yank an enemy 3 tiles toward you, 3 dmg; dragged through fire it is stunned a turn",
+	"vine_whip+lash": "Yank an enemy 3 tiles toward you, 3 dmg; dragged through fire it is stunned a turn",
+	"vine_whip+rake": "Rake a line 3 tiles long: every enemy on it is hauled 2 tiles toward you for 2, and being hauled interrupts each of them",
 	"water_jet": "Shove enemies 2 tiles, 2 dmg on impact; moving them interrupts; on growth: pushes 1 further, hits 1 harder",
-	"water_jet+": "Shove enemies 3 tiles, 3 dmg on impact; an enemy shoved into something is rooted a turn; on growth: pushes 1 further, hits 1 harder",
+	"water_jet+pin": "Shove enemies 3 tiles, 3 dmg on impact; an enemy shoved into something is rooted a turn; on growth: pushes 1 further, hits 1 harder",
+	"water_jet+sluice": "A long jet: washes oil, fire and ash off 5 tiles, shoves 2, 2 dmg on impact; on growth: pushes 1 further, hits 1 harder",
 	"mycelium_dash": "Teleport to any growth tile within 4",
-	"mycelium_dash+": "Teleport to any growth tile within 7; leaves growth where you stood",
+	"mycelium_dash+trail": "Teleport to any growth tile within 7; leaves growth where you stood",
+	"mycelium_dash+scatter": "Teleport to any growth tile within 4 and land in a burst of spores: 1 dmg to everything beside you",
 	"root_wall": "Raise a wall of roots that blocks enemies",
+	"root_wall+bulwark": "Raise a wall of roots that blocks enemies for 6 turns",
+	"root_wall+cage": "Cage an enemy within 3: roots fill every open tile beside it for 4 turns",
 	"pollen_burst": "Stun everything within 2 tiles for a turn",
+	"pollen_burst+torpor": "Stun everything within 2 tiles for 2 turns",
+	"pollen_burst+drift": "Throw the cloud: stun everything within 2 of a tile up to 3 away for a turn",
 	"sun_flare": "Flash burn: 1 dmg to all within 2, ignites oil; +1 dmg to enemies standing in fire; on growth: costs 1 less and reaches 3",
-	"sun_flare+": "Flash burn: 2 dmg to all within 2, ignites oil; +1 dmg to enemies standing in fire; on growth: costs 1 less and reaches 3",
+	"sun_flare+corona": "Flash burn: 2 dmg to all within 2, ignites oil; +1 dmg to enemies standing in fire; on growth: costs 1 less and reaches 3",
+	"sun_flare+smoulder": "Flash burn: 1 dmg to all within 2 and the oil it lights burns 4 turns; +1 dmg to enemies standing in fire; on growth: costs 1 less and reaches 3",
 	"thorn_shield": "Raise 2 shield - blocks damage before HP",
+	"thorn_shield+plate": "Raise 3 shield - blocks damage before HP",
+	"thorn_shield+chaff": "Raise 2 shield and shed a cloud of chaff: for 2 turns ranged machinery loses your position",
 	"overgrowth": "Convert corruption around a tile into growth",
+	"overgrowth+sprawl": "Convert corruption within 2 of a tile up to 3 away into growth",
+	"overgrowth+palisade": "The muck snarls up: corruption around the target becomes a hedge of roots for 3 turns",
 	"sap_snare": "Root an enemy in place for 2 turns",
+	"sap_snare+tether": "Root an enemy in place for 3 turns",
+	"sap_snare+blight": "Blight an enemy within 3: 1 dmg a turn for 3 turns, and a second dose stacks",
 	"grow_spike": "3 dmg to an enemy standing near growth, +1 with growth beside it (4 max); on growth: +1 dmg",
-	"grow_spike+": "3 dmg to an enemy near growth within 4, +1 per adjacent growth tile (5 max); on growth: +1 dmg",
+	"grow_spike+impale": "3 dmg to an enemy near growth within 4, +1 per adjacent growth tile (5 max); on growth: +1 dmg",
+	"grow_spike+throng": "3 dmg to an enemy near growth, +1 per enemy standing beside it (5 max); on growth: +1 dmg",
 	"spore_cloud": "Spore all within 2: 1 dmg a turn for 3 turns",
 	"fungal_ring": "Sprout growth on every tile around you",
 	"burrow": "Tunnel to any open tile within 3",
@@ -575,8 +822,14 @@ const ABILITY_DESC := {
 	"updraft+": "Ride the wind: dash up to 4 in a straight line",
 	"clear_air+": "Clear smoke within 4 and shove enemies 2 tiles back",
 	"bramble_coat": "Grow spikes: attackers take 2 dmg, 4 turns",
+	"bramble_coat+briar": "Grow spikes: attackers take 3 dmg, 5 turns",
+	"bramble_coat+bristle": "Grow long spines: attackers take 5 dmg, 2 turns",
 	"anchor_roots": "Root yourself: immune to drags for 4 turns",
+	"anchor_roots+bedrock": "Root yourself: immune to drags for 7 turns",
+	"anchor_roots+heave": "Set your roots for 4 turns and heave everything adjacent back a tile",
 	"moss_filter": "Filter the air: restore a stage of dimmed regen",
+	"moss_filter+sieve": "Filter the air: restore a stage of dimmed regen",
+	"moss_filter+prism": "Filter the air; if that leaves the sky clear, 1 dmg to everything within 2",
 }
 
 ## Shrine price list. "press" (two items -> one + item) and "forge" (one
@@ -688,8 +941,9 @@ const PACKAGES := {
 ##   wins                  total wins
 ##   tier_wins             wins at tier >= 1
 ##   casts {id: n}         effective casts of a base ability, summed over runs
-##   won_with [ids]        one win whose kit held every id ("+" forms satisfy
-##                         a base id; a "+" id must be held exactly)
+##   won_with [ids]        one win whose kit held every id (an upgrade variant
+##                         satisfies its base id; a variant id must be held
+##                         exactly)
 ##   wins_without [ids]    one win whose kit held none of them
 ##   grafts_owned_at_win n one win holding at least n grafts
 const MILESTONES := [
@@ -704,7 +958,14 @@ const MILESTONES := [
 	{"id": "boarded", "kind": "mutator", "requires": {"wins": 2}, "desc": "Shut down the Furnace twice"},
 	{"id": "no_lance", "kind": "mutator", "requires": {"wins_without": ["solar_lance"]}, "desc": "Win with no Solar Lance in your kit"},
 	{"id": "wide_draft", "kind": "mutator", "requires": {"casts": {"grow_spike": 60}}, "desc": "Land 60 Grow Spikes"},
-	{"id": "upgrades_only", "kind": "mutator", "requires": {"won_with": ["seed_bomb+"]}, "desc": "Win holding Seed Bomb+"},
+	# Block D6 renamed seed_bomb+ to seed_bomb+tangle (the variant that
+	# reproduces the pre-D6 row). The requirement is now for that SPECIFIC
+	# sibling - dealt by the draft on even floors, always buyable at the forge.
+	# A profile recorded before the rename stores the dead id "seed_bomb+";
+	# Profile._migrate_ability_id maps such a "<base>+" to that base's FIRST
+	# variant (derived through Content.variants_of, no rename table), so old
+	# history keeps satisfying this milestone.
+	{"id": "upgrades_only", "kind": "mutator", "requires": {"won_with": ["seed_bomb+tangle"]}, "desc": "Win holding a Tangle Bomb"},
 	# Block A: the run-start choices. `open_pool` hands back the old
 	# everything-at-once draft pool (a run now commits to one package), and the
 	# loadout rows open the starting kits in LOADOUTS - each earned by playing
@@ -771,8 +1032,10 @@ const SURGE_DEFAULT := {"cost": -1}
 ##   heal            hp the player regains per environment phase standing on it
 ##   burns_to        what an expiring fire leaves behind ("" = nothing; fire
 ##                   burns to ash: the REACTIONS fire_burns_out row mirrors it)
-##   convertible     a convert_radius (overgrowth) turns it into growth; every
-##                   corruption kind except rich_goo, whose bonus must be cleansed
+##   convertible     a convert_radius turns it into the effect's `kind` - growth
+##                   by default, roots for an overgrowth+palisade; the kind may
+##                   never name a corruption row (see OP_KEYS). Every corruption
+##                   kind except rich_goo, whose bonus must be cleansed
 ##   screens         a smoke screen (Block D3): while the tender stands on such a
 ##                   tile or one lies on any of the four DIRS neighbours, every
 ##                   SCREENED_INTENTS intent from a non-adjacent, non-massive
