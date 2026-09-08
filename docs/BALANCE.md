@@ -7638,6 +7638,30 @@ All on the final tree:
 
 ### Watch list
 
+- **The regression corpus cannot pin a NARROWING of legality, structurally.**
+  Proved while adding the `dir_enemy` demo. `tests/test_regressions.gd` fails a
+  record on any `{t: "illegal"}` event, so a refused action can never sit
+  inside a passing record; and `_ability_targets` has exactly two readers
+  (`legal_actions` and the `_act_ability` validation) with `step()` never
+  consulting it. So when a change makes a target list SMALLER - `dir_enemy` is
+  a strict subset of `dir` - every stored action that replayed legally before
+  still replays legally, with an identical event stream and an identical state
+  hash. Reverting `vine_whip+rake` to `"target": "dir"` in a scratch tree left
+  the corpus at **93 ok, 0 failed** in plain AND strict mode. The guard for that
+  half lives in `tests/test_grammar.gd` `_check_d6_dir_enemy` instead, which
+  fails the revert with two named assertions. Read forward: a corpus demo can
+  pin that something IS legal and what it then does, never that something is
+  NOT legal - that belongs in a suite, and a block that narrows legality should
+  say where its guard lives rather than assume the corpus caught it.
+- **The `dir_enemy` change reached exactly as far as intended, and that was
+  verified rather than assumed.** All 92 pre-existing records replayed
+  unchanged, `REGEN=1` produced no diff line and no file byte-changed, and all
+  20 `det_*`/`canary_*` bot logs re-recorded byte-identical. A replay of all 92
+  records checking the kit after every step found `d6_rake_pull_line` to be the
+  only record that ever holds or casts the rake; one other (`det_deeproot_s3`)
+  is offered it as a draft card and declines it, with deeproot's clone-based
+  evaluation reaching the same choice as before.
+
 - **A runtime error inside a check does not fail its suite.** Found while
   adding the `dir_enemy` test: a bad index threw `SCRIPT ERROR: Invalid
   assignment ... at: _check_d6_dir_enemy`, that check aborted halfway, and
