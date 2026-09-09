@@ -1,41 +1,38 @@
 extends SceneTree
-## Daily run: seed and mutator derived from today's date (UTC), full pool.
-## Deterministic sim means everyone playing today's date plays the same run;
-## the optimizer replay hash doubles as a verification fingerprint.
+## Daily run: the seed comes from today's date (UTC) and the run's config comes
+## from that seed alone - `Profile.daily_config` picks the loadout, the one
+## package and the mutator off the profile's frozen DAILY_* lists, so a content
+## table that grows later never moves an earlier date's challenge. Deterministic
+## sim means everyone playing today's date plays the same run; the optimizer
+## replay hash doubles as a verification fingerprint.
 ## Run: godot --headless --path . --script tests/daily_run.gd
 
 const Content := preload("res://sim/content.gd")
 const Game := preload("res://sim/game.gd")
-const BOTS := {
-	"wanderer": preload("res://bots/wanderer.gd"),
-	"sprout": preload("res://bots/sprout.gd"),
-	"magpie": preload("res://bots/magpie.gd"),
-	"fanatic": preload("res://bots/fanatic.gd"),
-	"optimizer": preload("res://bots/optimizer.gd"),
-	"deeproot": preload("res://bots/deeproot.gd"),
-}
+const Sweep := preload("res://tests/sweep_lib.gd")
+const Roster := preload("res://bots/roster.gd")
+const Profile := preload("res://meta/profile.gd")
 
 
 func _init() -> void:
 	var date := Time.get_date_string_from_system(true)
 	var seed_v: int = hash(date) & 0x7FFFFFFF
-	var muts: Array = Content.MUTATORS.keys()
-	var mut: String = muts[seed_v % muts.size()]
-	var config := {"mutators": [mut], "packages": Content.PACKAGES.keys()}
-	print("TENDER daily %s — seed %d, mutator: %s (%s)" % [
-		date, seed_v, mut, Content.MUTATORS[mut]["desc"]])
-	for bot_name in BOTS:
+	# career-agnostic: the daily needs nothing unlocked and unlocks nothing
+	var daily: Dictionary = Profile.daily_config(seed_v)
+	var config: Dictionary = Profile.daily_game_config(seed_v)
+	var mut := String(daily["mutator"])
+	var pkg := String(daily["package"])
+	print("TENDER daily %s — seed %d" % [date, seed_v])
+	print("  loadout: %s (%s)" % [
+		Content.LOADOUTS[daily["loadout"]]["name"], str(Content.LOADOUTS[daily["loadout"]]["kit"])])
+	print("  package: %s" % ("none" if pkg == "" else "%s %s" % [pkg, str(Content.PACKAGES[pkg])]))
+	print("  mutator: %s" % ("none" if mut == "" else "%s (%s)" % [mut, Content.MUTATORS[mut]["desc"]]))
+	print(Sweep.header("daily_run", ",".join(Roster.names()), config, [seed_v]))
+	for bot_name in Roster.names():
 		var game = Game.new(seed_v, config)
-		var bot = BOTS[bot_name].new()
-		bot.reset(seed_v * 7919 + 17)
-		if bot.has_method("set_sim"):
-			bot.set_sim(game)
-		var actions := 0
-		while not game.over and actions < 4000 and game.total_turns < 400:
-			game.step(bot.choose_action(game.snapshot(), game.legal_actions()))
-			actions += 1
+		Sweep.run_loop(game, Roster.make(bot_name, seed_v))
 		var outcome := "WON" if game.won else ("died floor %d (%s)" % [game.floor_num, game.death_cause])
-		print("  %-10s %s — turns %d, bloom %d" % [bot_name, outcome, game.total_turns, game.bloom])
+		print("  %-16s %s — turns %d, bloom %d" % [bot_name, outcome, game.total_turns, game.bloom])
 		if bot_name == "optimizer":
 			print("  verification hash: %s" % game.state_hash().substr(0, 16))
 	quit(0)

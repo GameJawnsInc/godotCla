@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#.......#","#@>.....#","#.......#","#########"]},"kit":["seed_bomb","mycelium_dash"],"pool":["grow_spike","water_jet","sun_flare"]},
+"actions": [{"dir":[1,0],"type":"move"},{"type":"descend"}],
+"expect": {"events":[{"t":"descend","to_floor":2},{"offers":["grow_spike","seed_bomb+tangle","mycelium_dash+scatter"],"slots":["affinity","upgrade","wild"],"t":"draft_offer"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "D4 the one-draw-per-slot rng contract, pinned in plain mode. The kit is seed_bomb (growth) plus the mobility slot and the pool is three ids, so the affinity slot has EXACTLY ONE candidate (grow_spike, the only growth base) and so does the upgrade slot (seed_bomb+tangle, the even-floor parity pick of the one held build-defining base; both mycelium_dash variants are pure mobility and define no build, so the D4 upgrade filter keeps them off that list - d4_upgrade_filter.json), while the wild slot has five - since Block D6 the universe is the three pool bases plus FOUR variants, two per held base, minus the two ids already drawn. A draw that skipped or shortened itself on a one-candidate list - randi_range(lo, lo) is an early return that never advances the generator, which is why _draw_draft_offers draws rng.randi() and indexes with the remainder - would leave BOTH one-candidate slots pinned and shift every later slot: that mutation leaves offers 0 and 1 standing and deals seed_bomb+reclaim where the wild slot deals mycelium_dash+scatter, so this record fails on its offers without needing the state hash",
+"sim_version": 14,
+"hash": "d7b8250a399f80b9731221b7fcfee11c80f731cb578d651fb784319880345828"
+}

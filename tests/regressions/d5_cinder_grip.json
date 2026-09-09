@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["##########","#.......>#","#@..G....#","#........#","##########"],"terrain":[{"kind":"oil","pos":[4,2]}]},"grafts":["oil_tithe"],"kit":["solar_lance","sun_flare","mycelium_dash"],"pool":["solar_lance","sun_flare","mycelium_dash"]},
+"actions": [{"slot":0,"target":[1,0],"type":"ability"},{"type":"end_turn"}],
+"expect": {"events":[{"id":"solar_lance","t":"ability"},{"t":"ignite","tile":"(4, 2)"},{"id":"cinder_grip","on":"ignite","t":"hook","tile":"(4, 2)"},{"status":"root","t":"status","turns":1},{"t":"rooted"}],"floor":1,"timeout":true,"turns":1,"won":false},
+"note": "D5 cinder_grip (fire, need 3): the kit's solar_lance and sun_flare plus the oil_tithe graft are this run's three fire tags, so _tag_counts reads fire 3 and the resonance is active from turn one - the third hook source, scanned after the kit rows and the grafts with the resonance id as the source id. The lance lights the oil the coal golem is standing on and the ignite hook roots the golem for a turn: it spends its next action standing in the fire it cannot step out of ({t: rooted} on the end_turn) and the burn bills it 1 more. Zero new vocabulary - the ignite kind, the status_at op and the root status all shipped before D5, and status_at with no enemy in the ctx falls back to _enemy_at(tile), which is exactly the ignite ctx. oil_tithe is the third fire tag and nothing else here beyond the {t: tithe} that opens the log (1 off the oil-aimed lance). Take one fire tag off the config, or stop _hook scanning the resonances, and the hook, the root and the rooted event all vanish in plain mode",
+"sim_version": 14,
+"hash": "e36cd2519774303b46e34996266855044db42c9761c6fede85903201f39e69de"
+}

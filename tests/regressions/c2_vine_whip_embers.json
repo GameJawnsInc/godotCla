@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["###########","#........>#","#.........#","#@.*.E....#","#.........#","#.........#","###########"]},"kit":["vine_whip+lash","seed_bomb","mycelium_dash"],"pool":["vine_whip+lash","seed_bomb","mycelium_dash"]},
+"actions": [{"slot":0,"target":[5,3],"type":"ability"}],
+"expect": {"events":[{"amt":1,"src":"fire:env","t":"damage","who":"extractor_engine"},{"amt":3,"src":"vine_whip+lash","t":"damage","who":"extractor_engine"},{"status":"stun","t":"status","turns":1},{"amt":1,"id":"vine_whip+lash","kind":"then","t":"rider"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "C2 vine_whip+lash embers: the yank drags the extractor across the burning tile at (3,3) - 3 lash plus 1 from the fire it is dragged through, and the then rider (if outcome_crossed fire) stuns it for a turn",
+"sim_version": 14,
+"hash": "07b9d43fce491780100c2c73f1980fc94302f35e10fba729d7fa1cf939d3c2c2"
+}

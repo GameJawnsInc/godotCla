@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"bloom":8,"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#######","#..>..#","#@+...#","#.....#","#######"]},"kit":["solar_lance","seed_bomb","mycelium_dash"],"pool":["solar_lance","seed_bomb","mycelium_dash"]},
+"actions": [{"dir":[1,0],"type":"move"},{"item":"graft","pick":0,"type":"buy"}],
+"expect": {"events":[{"discarded":"verdant_pulse","id":"bloom_surge","item":"graft","t":"buy"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "shrine grafts are a choice sink: two offers, buying one discards the other (the stock draws from all ten Content.GRAFTS since C3)",
+"sim_version": 14,
+"hash": "d7d004a1f7be9453291434c0c6c4561ac1e6ce6da2f5fcc4f5645a4f16f87d58"
+}

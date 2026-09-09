@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"bloom":6,"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["########","#..>...#","#@+~k~.#","#......#","########"]},"kit":["solar_lance","seed_bomb","mycelium_dash"],"pool":["solar_lance","seed_bomb","mycelium_dash"]},
+"actions": [{"dir":[1,0],"type":"move"},{"keep":0,"scrap":1,"type":"upcycle_ability","variant":0},{"slot":0,"target":[1,0],"type":"ability"}],
+"expect": {"events":[{"id":"seed_bomb","t":"upcycle_scrap"},{"id":"solar_lance+noon","t":"upcycle_ability"},{"id":"solar_lance+noon","t":"ability"},{"t":"ignite","tile":"(3, 2)"},{"amt":4,"src":"solar_lance+noon","t":"damage","who":"smokestack"},{"t":"death","who":"smokestack"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "D6 the forge offers BOTH siblings, half one: the action carries a `variant` index into Content.variants_of(solar_lance) = [solar_lance+noon, solar_lance+pierce], and legal_actions lists one upcycle_ability per (keep, scrap, variant) triple, so a player at the shrine chooses which fork. variant 0 forges Noon Lance and the kit becomes [solar_lance+noon, mycelium_dash] - the cast that follows names it and deals 3 + the clear-sky bonus = 4 to the smokestack at (4,2), killing it outright and stopping there, having lit only the oil in front of it. d6_forge_variant_b is the SAME seed, board and actions with variant 1: 2 damage, the stack alive, and the oil at (5,2) behind it lit. Point either record's index at the other sibling and it fails in plain mode on its upcycle_ability id and every event after it; blockb_forge_once.json pins the third case, an action with NO variant key at all, which is index 0",
+"sim_version": 14,
+"hash": "0716ac9997959e878c9d9338b41f32ed5c52e289bbb64fa5f99ba1dd003b2a5f"
+}

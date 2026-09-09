@@ -1,9 +1,36 @@
 extends "res://bots/bot_base.gd"
 ## Optimizer persona: deterministic heuristic play aimed at winning.
-## Priorities: descend > strike > lance > dodge telegraphed damage > cleanse
-## when safe > path to stairs > pull a blocker into reach > end turn.
+## Priorities: descend > spike > strike > seed-on-head > lance > dodge
+## telegraphed damage > cleanse when safe > path to stairs > pull a blocker
+## into reach > end turn.
+
+## sim/content.gd under a shouting name: the subclasses (fanatic, deeproot)
+## already declare a `Content` const of their own and GDScript forbids
+## redeclaring an inherited member.
+const CONTENT := preload("res://sim/content.gd")
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
+
+## Ability preference, best first: this ranks the draft offers. Base ids only;
+## an upgrade inherits its base's place and ranks just above it (see
+## _pref_rank). Since Block D6 an upgrade id is "<base>+<variant>", so the two
+## siblings of a fork share one rank and the earlier offer wins the tie -
+## deterministic, and a deliberate abstention: this persona has no opinion on
+## which fork is better, and the sweeps that answer that question lock the kit.
+const DRAFT_PREF := [
+	"sun_flare", "grow_spike", "geyser", "thorn_shield", "water_jet",
+	"tide", "sap_snare", "moss_filter", "spore_cloud", "gust", "vine_whip",
+	"pollen_burst", "solar_lance", "seed_bomb", "updraft", "overgrowth",
+	"anchor_roots", "burrow", "fungal_ring", "clear_air", "steam_vent", "root_wall",
+	"mycelium_dash",
+]
+
+## Effect ops that put damage on an enemy tile. _est_dmg reads their "dmg"
+## (plus the rider arithmetic around it) and ignores every other op - a bot
+## guess, not a sim call, so it stays cheap enough for every candidate.
+## "pull_line" is the Block D6 rake (vine_whip+rake): a pull that runs down a
+## line, so its "dmg" is read exactly like `pull`'s.
+const DMG_OPS := ["damage", "aoe_damage", "lance", "pull", "pull_line"]
 
 
 func get_bot_name() -> String:
@@ -43,11 +70,16 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 					if int(snap["dim"]) >= 2:
 						return a
 
+	# Shrine reroll (Block D2) is decided BEFORE the counter is read: a graft
+	# that fits nothing is still a legal buy, so asking after _shop_choice
+	# would spend the purse on the misfit and never spin.
+	if by.has("reroll") and _wants_reroll(snap, by.get("buy", [])):
+		return by["reroll"][0]
+
 	if by.has("buy"):
-		for item in ["graft", "heal", "ability", "item"]:
-			for a in by["buy"]:
-				if a["item"] == item:
-					return a
+		var deal := _shop_choice(by["buy"], snap)
+		if not deal.is_empty():
+			return deal
 
 	if by.has("descend"):
 		return by["descend"][0]
@@ -75,11 +107,13 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		if best_bomb != null:
 			return best_bomb
 
-	# 3 damage for 1 charge beats everything else on the menu
+	# 3+ damage for 1 charge beats everything else on the menu. The spike's
+	# per-growth rider makes WHICH enemy it hits matter, so the target comes
+	# from _est_dmg (kill first, then biggest estimate) instead of kit order.
 	if by.has("ability"):
-		for a in by["ability"]:
-			if _kit_id(snap, a["slot"]) == "grow_spike":
-				return a
+		var spike := _best_spike(snap, by["ability"])
+		if not spike.is_empty():
+			return spike
 
 	# Desperation: 120+ turns on one floor means some stable loop has eaten
 	# the run (spawn streams, corner shield-cycling, dodge orbits). Stop
@@ -117,7 +151,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		if by.has("strike"):
 			for a in by["strike"]:
 				var e = _enemy_at(snap, ppos + a["dir"])
-				if e != null and e["hp"] <= 1:
+				if e != null and e["hp"] <= CONTENT.STRIKE_DMG:
 					return a
 		var out := _dodge(snap, by, threat)
 		if not out.is_empty():
@@ -147,7 +181,7 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		for a in by["strike"]:
 			var se = _enemy_at(snap, ppos + a["dir"])
 			if se != null and (se["traits"].has("spiked") or se.get("elite", false)):
-				if se["hp"] > 1 and snap["player"]["hp"] + snap["player"]["shield"] <= 6:
+				if se["hp"] > CONTENT.STRIKE_DMG and snap["player"]["hp"] + snap["player"]["shield"] <= 6:
 					continue
 			filtered.append(a)
 		if filtered.is_empty():
@@ -171,11 +205,24 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		if best != null:
 			return best
 
+	# Seed on head: the bomb plants growth on the enemy's own tile, which both
+	# makes the spike legal against it and feeds the spike's growth rider - so
+	# the spike that follows this same turn lands for its capped maximum.
+	# Sits below the strike ladder (never spend 3 charge on what a punch
+	# finishes) and above the generic casts.
+	if by.has("ability"):
+		var head := _seed_on_head(snap, by["ability"])
+		if not head.is_empty():
+			return head
+
 	if by.has("ability"):
 		var near := _enemies_within(snap, 2)
 		for a in by["ability"]:
 			var aid: String = _kit_id(snap, a["slot"])
-			if aid == "sun_flare" and near >= 2:
+			# the flare pays for two targets, or for one it finishes: the
+			# estimate counts the burning-ground bonus (and the oil this very
+			# cast lights first), which is the light-then-flare finisher
+			if aid == "sun_flare" and (near >= 2 or _aoe_finishes(snap, _kit_full_id(snap, a["slot"]))):
 				return a
 			if aid == "pollen_burst" and _enemies_within(snap, 1) >= 2:
 				return a
@@ -242,20 +289,14 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 
 
 func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
-	var pref := [
-		"sun_flare", "grow_spike", "geyser", "thorn_shield", "water_jet",
-		"tide", "sap_snare", "moss_filter", "spore_cloud", "gust", "vine_whip",
-		"pollen_burst", "solar_lance", "seed_bomb", "updraft", "overgrowth",
-		"anchor_roots", "burrow", "fungal_ring", "clear_air", "steam_vent", "root_wall",
-	]
 	var offers: Array = snap["draft_offers"]
 	var best_pick := -1
-	var best_rank := 999
+	# unlisted offers rank after every listed id (still pickable when nothing
+	# listed is on the table); the sentinel is huge so some offer always wins
+	# over skipping - an upgrade of anything beats its plain form (r * 2 - 1)
+	var best_rank := 1 << 30
 	for i in offers.size():
-		var r: int = pref.find(String(offers[i]).trim_suffix("+"))
-		if r == -1:
-			r = 500
-		r = r * 2 - (1 if String(offers[i]).ends_with("+") else 0)
+		var r: int = _pref_rank(String(offers[i]))
 		if r < best_rank:
 			best_rank = r
 			best_pick = i
@@ -267,21 +308,233 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 		return legal[legal.size() - 1]
 	if candidates.size() == 1:
 		return candidates[0]
-	# kit is full: drop the least-used ability. Never drop mobility, and never
-	# drop the growth engine - the Furnace core is only vulnerable near growth.
+	# kit is full: drop the least-used ability that the run's loadout does not
+	# protect (_protected_ids) - for "tender" that is mobility, the escape
+	# button, and seed_bomb, the growth engine the Furnace core needs.
 	var uses: Dictionary = snap["player"]["uses"]
 	var kit: Array = snap["player"]["kit"]
+	var protected := _protected_ids(snap)
 	var best_a: Dictionary = candidates[0]
 	var best_u := 999999
-	for a in candidates:
-		var slot: int = a["drop"]
-		if String(kit[slot]).trim_suffix("+") == "mycelium_dash" or String(kit[slot]).trim_suffix("+") == "seed_bomb":
-			continue
-		var u: int = uses.get(kit[slot], 0)
-		if u < best_u:
-			best_u = u
-			best_a = a
+	# Block D5: a drop that would break a resonance the run has ALREADY lit is
+	# taken only when every other drop would too. The pass runs first over the
+	# non-breaking drops and falls back to the whole list, so the tie-break
+	# inside each pass is the unchanged "least-used, never protected" rule.
+	for pass_keeps_resonance in [true, false]:
+		for a in candidates:
+			var slot: int = a["drop"]
+			if protected.has(CONTENT.base_id(String(kit[slot]))):
+				continue
+			if pass_keeps_resonance and _drop_breaks_resonance(snap, slot, best_pick):
+				continue
+			var u: int = uses.get(kit[slot], 0)
+			if u < best_u:
+				best_u = u
+				best_a = a
+		if best_u < 999999:
+			break
 	return best_a
+
+
+## Would taking offer `pick` in place of kit slot `drop` switch OFF a resonance
+## the run currently has? The ACTIVE set is read from snapshot()["resonances"] -
+## the sim's own derived answer, never re-derived here - and only the arithmetic
+## of the swap is done bot-side, against the Content.RESONANCES row's own tag
+## and need. No tag and no resonance id is named in this file.
+##
+## The persona deliberately does NOT chase a threshold it has not met: the
+## Block D5 `need` values were priced off the reach this policy already
+## produces (fire 3 in 40.0% of tender optimizer runs, growth 3 in 36.7%), and
+## a persona that drafted toward thresholds would move the very number the
+## thresholds were chosen from - the same abstention Block D6 made when it
+## refused to give this persona an opinion about which fork is better. Holding
+## on to what the run has already built is a different question, and this is
+## the only side of it a heuristic drafter can answer.
+func _drop_breaks_resonance(snap: Dictionary, drop: int, pick: int) -> bool:
+	var active: Array = snap.get("resonances", [])
+	if active.is_empty():
+		return false
+	var kit: Array = snap["player"]["kit"]
+	if drop < 0 or drop >= kit.size():
+		return false
+	var counts := _tag_counts(snap)
+	var offers: Array = snap.get("draft_offers", [])
+	var gained: Array = _ability_tags(String(offers[pick])) if pick >= 0 and pick < offers.size() else []
+	var lost: Array = _ability_tags(String(kit[drop]))
+	for rid in active:
+		var row: Dictionary = CONTENT.RESONANCES.get(String(rid), {})
+		if row.is_empty():
+			continue
+		var tag := String(row["tag"])
+		var n: int = int(counts.get(tag, 0))
+		if lost.has(tag):
+			n -= 1
+		if gained.has(tag):
+			n += 1
+		if n < int(row["need"]):
+			return true
+	return false
+
+
+## Tags of an ability id, from its own row with the base row as the fallback -
+## a Block D6 variant carries its base's tags verbatim, so both reads agree.
+func _ability_tags(aid: String) -> Array:
+	var row: Dictionary = CONTENT.ABILITIES.get(aid, CONTENT.ABILITIES.get(CONTENT.base_id(aid), {}))
+	return row.get("tags", [])
+
+
+## Tag histogram over the kit AND the held grafts, counted with multiplicity -
+## the same two sources a resonance counts. Kept separate from _kit_tag_counts,
+## which ranks a shop graft against the KIT only and must not start counting the
+## grafts already owned.
+func _tag_counts(snap: Dictionary) -> Dictionary:
+	var counts := _kit_tag_counts(snap)
+	for gid in snap["player"].get("grafts", []):
+		for tag in CONTENT.GRAFTS.get(String(gid), {}).get("tags", []):
+			counts[tag] = int(counts.get(tag, 0)) + 1
+	return counts
+
+
+## Rank of an ability id in DRAFT_PREF; lower is better. Unlisted ids rank
+## after everything listed. The doubled scale leaves each base one step of
+## room so an upgrade ranks strictly better than the plain base.
+## Block D6: read through Content.base_id / Content.is_upgrade, NEVER
+## trim_suffix("+") / ends_with("+") - a variant id ("grow_spike+impale") is
+## returned unchanged by trim_suffix and would fall off DRAFT_PREF entirely,
+## collapsing this persona's whole draft preference to "unlisted".
+func _pref_rank(aid: String) -> int:
+	var r: int = DRAFT_PREF.find(CONTENT.base_id(String(aid)))
+	if r == -1:
+		r = DRAFT_PREF.size()
+	return r * 2 - (1 if CONTENT.is_upgrade(String(aid)) else 0)
+
+
+## Base ids this persona never drops or scraps, from the run's loadout row
+## (Content.LOADOUTS[snapshot.loadout].protect - loadout data, not a bot
+## literal, so a new loadout protects its own escape button with no bot
+## change). Fallback for an unknown/absent loadout id (a hand-built snapshot,
+## or a save from before the loadout table): every held ability whose
+## Content.ABILITIES role is "mobility".
+func _protected_ids(snap: Dictionary) -> Array:
+	var lid := String(snap.get("loadout", ""))
+	if not CONTENT.LOADOUTS.has(lid):
+		return _mobility_ids(snap["player"]["kit"])
+	var out: Array = []
+	for aid in CONTENT.LOADOUTS[lid]["protect"]:
+		out.append(CONTENT.base_id(String(aid)))
+	return out
+
+
+## The mobility half of an id list: the entries whose Content.ABILITIES role
+## is "mobility", as base ids. Used by fanatic, whose drop guard protects only
+## the escape button (an off-build seed_bomb is fair game for the build).
+func _mobility_ids(ids: Array) -> Array:
+	var out: Array = []
+	for aid in ids:
+		var base := CONTENT.base_id(String(aid))
+		if String(CONTENT.ABILITIES.get(base, {}).get("role", "")) == "mobility":
+			out.append(base)
+	return out
+
+
+## Shrine purchase, in the old order (graft, heal, ability, item), from the
+## legal list only. Empty dict when nothing on the counter is worth taking.
+func _shop_choice(buys: Array, snap: Dictionary) -> Dictionary:
+	var graft := _first_graft(buys, snap)
+	if not graft.is_empty():
+		return graft
+	for a in buys:
+		if a["item"] == "heal":
+			return a
+	for a in buys:
+		if a["item"] == "ability":
+			return a
+	for a in buys:
+		if a["item"] == "item":
+			return a
+	return {}
+
+
+## The shop stocks two grafts and one pick closes the counter (Block C3 spec E).
+## Rank the stocked offers by how well they fit the kit actually in hand: score
+## each offer by the kit's tag histogram summed over that graft's Content.GRAFTS
+## tags, and take the highest. A fire kit takes Ember Sap, a growth kit takes
+## Compost, and a graft sharing no tag with the kit scores 0. Ties - including
+## the all-zero case that reproduces the old behaviour - fall back to the lowest
+## offer index, so the pick stays deterministic and rng-free. Everything is read
+## from Content, so a new GRAFTS row ranks itself with no bot change.
+## Empty dict when no graft is affordable.
+func _first_graft(buys: Array, snap: Dictionary) -> Dictionary:
+	var kit_tags := _kit_tag_counts(snap)
+	var offers: Array = snap.get("shop", {}).get("grafts", [])
+	var best: Dictionary = {}
+	var best_score := -1
+	var best_pick := 1 << 30
+	for a in buys:
+		if a["item"] != "graft":
+			continue
+		var pick := int(a.get("pick", 0))
+		var gid := String(offers[pick]) if pick >= 0 and pick < offers.size() else ""
+		var score := _graft_fit(gid, kit_tags)
+		if score > best_score or (score == best_score and pick < best_pick):
+			best_score = score
+			best_pick = pick
+			best = a
+	return best
+
+
+## Tag histogram of the kit as held: every slot contributes its
+## Content.ABILITIES tags, counted with multiplicity, so a kit carrying three
+## fire abilities weighs "fire" three times. Upgrade forms fold onto their base
+## through base_id (a "+" row carries its base's tags).
+func _kit_tag_counts(snap: Dictionary) -> Dictionary:
+	var counts := {}
+	for aid in snap["player"]["kit"]:
+		var row: Dictionary = CONTENT.ABILITIES.get(CONTENT.base_id(String(aid)), {})
+		for tag in row.get("tags", []):
+			counts[tag] = int(counts.get(tag, 0)) + 1
+	return counts
+
+
+## How well a graft fits a kit tag histogram: the kit counts summed over the
+## graft's own tags. 0 for an unknown id or a graft sharing no tag with the kit.
+func _graft_fit(gid: String, kit_tags: Dictionary) -> int:
+	var n := 0
+	for tag in CONTENT.GRAFTS.get(gid, {}).get("tags", []):
+		n += int(kit_tags.get(tag, 0))
+	return n
+
+
+## Spin the shrine counter (Block D2) instead of buying from it: the graft
+## counter is open, nothing on it both fits the kit and is affordable (every
+## legal graft buy scores 0 on _graft_fit), a spin is left, and the purse still
+## covers the cheapest graft the table can hold after paying for the spin - so
+## a reroll is never the last thing a run's bloom buys. Price and spins left
+## come from snapshot().shop (reroll_price / rerolls_left), never from the sim.
+func _wants_reroll(snap: Dictionary, buys: Array) -> bool:
+	var sh: Dictionary = snap.get("shop", {})
+	var offers: Array = sh.get("grafts", [])
+	if offers.is_empty() or int(sh.get("rerolls_left", 0)) <= 0:
+		return false
+	var kit_tags := _kit_tag_counts(snap)
+	for a in buys:
+		if String(a.get("item", "")) != "graft":
+			continue
+		var pick := int(a.get("pick", -1))
+		var gid := String(offers[pick]) if pick >= 0 and pick < offers.size() else ""
+		if _graft_fit(gid, kit_tags) > 0:
+			return false  # an affordable offer already fits the kit: buy it
+	return int(snap["bloom"]) >= int(sh.get("reroll_price", 1 << 30)) + _cheapest_graft_price()
+
+
+## The cheapest price any Content.GRAFTS row can carry - the purse a spin has
+## to leave behind. Table read, no graft id named: a new cheap row moves this
+## with no bot change.
+func _cheapest_graft_price() -> int:
+	var best := 1 << 30
+	for gid in CONTENT.GRAFTS:
+		best = mini(best, int(CONTENT.GRAFTS[gid].get("price", 1)))
+	return 1 if best == (1 << 30) else best
 
 
 ## Step out of telegraphed damage; when cornered, shove an adjacent attacker
@@ -324,9 +577,16 @@ func _dodge(snap: Dictionary, by: Dictionary, threat: Dictionary) -> Dictionary:
 					best_dash = a
 		if not best_dash.is_empty():
 			return best_dash
+		# rooting only swallows the intents Content.STATUSES.root blocks
+		# (move / advance / drag today), so a snare on an attacker whose
+		# wind-up root cannot touch dodges nothing. Read the table, never
+		# the literal: a row edit re-aims the snare with no bot change.
+		var root_blocks: Array = CONTENT.STATUSES.get("root", {}).get("blocks", [])
 		for a in by["ability"]:
 			if _kit_id(snap, a["slot"]) == "sap_snare":
-				return a
+				var se = _enemy_at(snap, a["target"])
+				if se != null and root_blocks.has(String(se["intent"].get("type", ""))):
+					return a
 		for a in by["ability"]:
 			if _kit_id(snap, a["slot"]) == "gust" and _enemy_at(snap, ppos + a["target"]) != null:
 				return a
@@ -415,7 +675,11 @@ func _threat_tiles(snap: Dictionary) -> Dictionary:
 			ignite_coming = true
 	for tile in snap["terrain"].keys():
 		var k: String = snap["terrain"][tile]["kind"]
-		if k == "fire" or (ignite_coming and k == "oil"):
+		# threat = terrain that burns whoever stands in it, plus anything
+		# flammable while an ignite_all is telegraphed
+		var burns: bool = int(CONTENT.terrain(k, "tick_dmg_player", 0)) > 0
+		var will_burn: bool = ignite_coming and bool(CONTENT.terrain(k, "flammable", false))
+		if burns or will_burn:
 			t[tile] = true
 	return t
 
@@ -437,6 +701,229 @@ func _growth_adj_to(snap: Dictionary, pos: Vector2i) -> bool:
 	return false
 
 
+## Growth tiles orthogonally adjacent to `pos` - what the sim's
+## growth_adjacent_target rider counts (the tile itself never counts).
+func _growth_adj_count(snap: Dictionary, pos: Vector2i) -> int:
+	var n := 0
+	for d in DIRS:
+		if String(snap["terrain"].get(pos + d, {}).get("kind", "")) == "growth":
+			n += 1
+	return n
+
+
+## Kit slot id as written, upgrade suffix and all: _est_dmg needs the exact
+## row, and "grow_spike+impale" is not "grow_spike" (_kit_id folds it onto the
+## base).
+func _kit_full_id(snap: Dictionary, slot: int) -> String:
+	return String(snap["player"]["kit"][slot])
+
+
+## What a cast costs right now: Game.ability_cost mirrored over the snapshot -
+## standing on growth applies the cost delta of the ability's own "surge" rule
+## to a cost-2+ cast. The stat half of a surge (Block D1) never moves a price;
+## _surge_stat reads that half for the estimates.
+func _cast_cost(snap: Dictionary, aid: String) -> int:
+	var adef: Dictionary = CONTENT.ABILITIES.get(aid, {})
+	if adef.is_empty():
+		return 99
+	var base := int(adef["cost"])
+	if base >= 2 and String(snap["terrain"].get(snap["player"]["pos"], {}).get("kind", "")) == "growth":
+		# Game._surge_cost_delta: an explicit dict without "cost" moves no price
+		var surge: Dictionary = adef.get("surge", CONTENT.SURGE_DEFAULT)
+		return maxi(1, base + int(surge.get("cost", 0)))
+	return base
+
+
+## The `key` delta a cast of `adef` would surge by right now (Block D1): the
+## row's "surge" dict is read only while the tender stands on growth, which is
+## the sim's own condition for a stat surge (Game._surges - any stat key makes
+## the cast surge, whatever the cost). 0 anywhere else, and 0 for a row whose
+## surge carries no such key. Read from the row, never from an id.
+func _surge_stat(adef: Dictionary, key: String, snap: Dictionary) -> int:
+	if String(snap["terrain"].get(snap["player"]["pos"], {}).get("kind", "")) != "growth":
+		return 0
+	return int(adef.get("surge", CONTENT.SURGE_DEFAULT).get(key, 0))
+
+
+## Damage `aid` would land on an enemy standing at `target`, read from Content
+## alone: the base "dmg" of every damage-dealing effect, the surge delta the
+## sim adds to that key while the tender stands on growth (Block D1), plus the
+## rider arithmetic (per, bonus) as the snapshot's terrain scores it. No sim
+## call and no clone, so it is affordable on every candidate action.
+## `target` is the tile the enemy stands on - for "dir" and "self" abilities
+## the caller passes the tile it expects to be hit, never the direction.
+func _est_dmg(aid: String, target: Vector2i, snap: Dictionary) -> int:
+	var adef: Dictionary = CONTENT.ABILITIES.get(aid, {})
+	if adef.is_empty():
+		return 0
+	# the sim adds a stat surge to every effect that carries the key, before
+	# the riders grow it - so it lands on the base "dmg" here too
+	var surge_dmg := _surge_stat(adef, "dmg", snap)
+	var total := 0
+	for eff in adef.get("effects", []):
+		var op := String(eff["op"])
+		if not DMG_OPS.has(op):
+			continue
+		var dmg := int(eff.get("dmg", 0))
+		if eff.has("dmg"):
+			dmg += surge_dmg
+		if op == "lance" and int(snap.get("dim", 0)) == 0:
+			dmg += int(eff.get("clear_smog_bonus", 0))
+		if eff.has("per"):
+			var per: Dictionary = eff["per"]
+			var add := int(per.get("add", {}).get("dmg", 0))
+			if add != 0:
+				var n := _per_count(per, target, snap)
+				var cap := int(per.get("cap", 0))
+				if cap > 0:
+					n = mini(n, cap)
+				dmg += add * n
+		if eff.has("bonus") and _bonus_holds(eff, target, snap):
+			dmg += int(eff["bonus"].get("dmg", 0))
+		total += dmg
+	return total
+
+
+## Game._rider_per over the snapshot, for the counts a bot can read off a
+## tile. Unknown counts read as 0, exactly like the sim's closed set.
+func _per_count(per: Dictionary, target: Vector2i, snap: Dictionary) -> int:
+	var n := 0
+	match String(per.get("count", "")):
+		"growth_adjacent_target":
+			n = _growth_adj_count(snap, target)
+		"enemies_adjacent_target":
+			for d in DIRS:
+				if _enemy_at(snap, target + d) != null:
+					n += 1
+	return n
+
+
+## Game._rider_if over the snapshot for an effect's "bonus" rider aimed at
+## `target`. One deliberate deviation: a cast that ignites lights the
+## flammable ground under the target before it rolls damage (aoe_damage and
+## lance run their ignite pass first), so oil under the target already counts
+## as fire here. Unknown predicates fail closed, like the sim.
+func _bonus_holds(eff: Dictionary, target: Vector2i, snap: Dictionary) -> bool:
+	var kind := String(snap["terrain"].get(target, {}).get("kind", ""))
+	for pred in eff["bonus"].get("if", []):
+		for key in pred:
+			match String(key):
+				"target_on":
+					var kinds: Array = pred[key]
+					if kinds.has(kind):
+						continue
+					if kinds.has("fire") and bool(eff.get("ignite", false)) \
+							and bool(CONTENT.terrain(kind, "flammable", false)):
+						continue
+					return false
+				"target_adjacent":
+					var near_kinds: Array = pred[key]
+					var found := false
+					for d in DIRS:
+						if near_kinds.has(String(snap["terrain"].get(target + d, {}).get("kind", ""))):
+							found = true
+					if not found:
+						return false
+				"self_on":
+					if String(snap["terrain"].get(snap["player"]["pos"], {}).get("kind", "")) != String(pred[key]):
+						return false
+				"dim":
+					if int(snap.get("dim", 0)) != int(pred[key]):
+						return false
+				_:
+					return false
+	return true
+
+
+## Best legal grow_spike cast: a target the estimate kills outright first,
+## then the biggest estimate (the rider pays per growth tile beside the
+## target). Empty dict when no spike is legal.
+func _best_spike(snap: Dictionary, abilities: Array) -> Dictionary:
+	var best: Dictionary = {}
+	var best_key := -999999
+	for a in abilities:
+		if _kit_id(snap, a["slot"]) != "grow_spike":
+			continue
+		var e = _enemy_at(snap, a["target"])
+		var est := _est_dmg(_kit_full_id(snap, a["slot"]), a["target"], snap)
+		var key := est + (1000 if e != null and est >= int(e["hp"]) else 0)
+		if best.is_empty() or key > best_key:
+			best_key = key
+			best = a
+	return best
+
+
+## Would this self-centred aoe finish something? True when the estimate kills
+## an enemy inside the first damaging effect's radius.
+func _aoe_finishes(snap: Dictionary, aid: String) -> bool:
+	var adef: Dictionary = CONTENT.ABILITIES.get(aid, {})
+	var radius := -1
+	for eff in adef.get("effects", []):
+		if DMG_OPS.has(String(eff["op"])):
+			radius = int(eff.get("radius", 0))
+			break
+	if radius <= 0:
+		return false
+	var ppos: Vector2i = snap["player"]["pos"]
+	for e in snap["enemies"]:
+		if absi(e["pos"].x - ppos.x) + absi(e["pos"].y - ppos.y) > radius:
+			continue
+		if _est_dmg(aid, e["pos"], snap) >= int(e["hp"]):
+			return true
+	return false
+
+
+## Seed on head: bomb the tile an enemy is standing on (enemy-occupied tiles
+## are legal "tile" targets). The bomb plants growth under and around it,
+## which both makes grow_spike legal against that enemy and feeds the spike's
+## growth-adjacent rider up to its cap, so the spike that follows on the next
+## decision - still this turn - lands for its maximum.
+## Trigger: the kit holds a spike and a bomb; the enemy's own tile is a legal
+## bomb target with fewer adjacent growth tiles than the spike's rider cap
+## (otherwise the seed adds nothing); the enemy outlives a plain punch; and
+## this turn's charge covers both casts. Ties break on fewest growth already
+## there, then the meatiest target. Empty dict when nothing qualifies.
+func _seed_on_head(snap: Dictionary, abilities: Array) -> Dictionary:
+	var kit: Array = snap["player"]["kit"]
+	var spike := ""
+	for i in kit.size():
+		if snap["player"]["gummed"].has(i):
+			continue
+		if CONTENT.base_id(String(kit[i])) == "grow_spike":
+			spike = String(kit[i])
+			break
+	if spike == "":
+		return {}
+	# a spike row with no per rider still gains legality from the seed, so it
+	# counts as cap 1: seed only when nothing grows beside the target yet
+	var effs: Array = CONTENT.ABILITIES.get(spike, {}).get("effects", [])
+	var cap := 1
+	if not effs.is_empty():
+		cap = maxi(1, int((effs[0] as Dictionary).get("per", {}).get("cap", 0)))
+	var charge := int(snap["player"]["charge"])
+	var spike_cost := _cast_cost(snap, spike)
+	var best: Dictionary = {}
+	var best_adj := 99
+	var best_hp := -1
+	for a in abilities:
+		var aid := String(kit[a["slot"]])
+		if CONTENT.base_id(aid) != "seed_bomb":
+			continue
+		if charge < _cast_cost(snap, aid) + spike_cost:
+			continue
+		var e = _enemy_at(snap, a["target"])
+		if e == null or int(e["hp"]) <= CONTENT.STRIKE_DMG:
+			continue
+		var adj := _growth_adj_count(snap, a["target"])
+		if adj >= cap:
+			continue
+		if best.is_empty() or adj < best_adj or (adj == best_adj and int(e["hp"]) > best_hp):
+			best_adj = adj
+			best_hp = int(e["hp"])
+			best = a
+	return best
+
+
 func _enemy_at(snap: Dictionary, pos: Vector2i) -> Variant:
 	for e in snap["enemies"]:
 		if e["pos"] == pos:
@@ -456,7 +943,8 @@ func _nearest_enemy_dist(snap: Dictionary) -> int:
 
 func _hazard(snap: Dictionary, pos: Vector2i) -> bool:
 	var k: String = snap["terrain"].get(pos, {}).get("kind", "")
-	return k == "fire" or k == "goo" or k == "rich_goo"
+	# hazard = terrain that damages the player for stepping onto it
+	return int(CONTENT.terrain(k, "enter_dmg_player", 0)) > 0
 
 
 func _lance_hits(snap: Dictionary, dir: Vector2i) -> bool:
@@ -468,11 +956,25 @@ func _lance_hits(snap: Dictionary, dir: Vector2i) -> bool:
 			return false
 		if m["tiles"][p.y * int(m["w"]) + p.x] != 1:
 			return false
-		if snap["terrain"].get(p, {}).get("kind", "") == "smoke":
+		if bool(CONTENT.terrain(snap["terrain"].get(p, {}).get("kind", ""), "blocks_beam", false)):
 			return false
 		if _enemy_at(snap, p) != null:
 			return true
 	return false
+
+
+## Is a graft on the counter worth walking to? Grafts are priced per offer
+## since the pricing pass (the sim publishes shop.graft_prices, 3 to 8 bloom),
+## so a flat purse threshold would send this bot to a counter it cannot buy
+## from: the cheapest offer is the only price that makes the trip pay.
+func _graft_worth_detour(snap: Dictionary) -> bool:
+	var prices: Array = snap["shop"].get("graft_prices", [])
+	if prices.is_empty():
+		return false
+	var cheapest: int = int(prices[0])
+	for p in prices:
+		cheapest = mini(cheapest, int(p))
+	return int(snap["bloom"]) >= cheapest
 
 
 func _path_step(snap: Dictionary, threat: Dictionary) -> Vector2i:
@@ -483,7 +985,7 @@ func _path_step(snap: Dictionary, threat: Dictionary) -> Vector2i:
 	# accidentally beating the un-mutated baseline)
 	var shrine: Vector2i = snap["map"]["shrine"]
 	if shrine != Vector2i(-1, -1) and snap["player"]["pos"] != shrine and int(snap["dim"]) == 0:
-		var worth: bool = snap["shop"].has("graft") and snap["bloom"] >= 5
+		var worth: bool = _graft_worth_detour(snap)
 		if snap["shop"].get("heal", false) and snap["bloom"] >= 3 and snap["player"]["hp"] <= snap["player"]["max_hp"] - 4:
 			worth = true
 		if worth:
@@ -571,7 +1073,9 @@ func _bfs_step(snap: Dictionary, strict: bool, threat: Dictionary, goal: Vector2
 				if threat.has(nxt):
 					continue
 				var k: String = snap["terrain"].get(nxt, {}).get("kind", "")
-				if k == "fire" or k == "goo" or k == "rich_goo" or k == "oil":
+				# bad footing: anything that hurts on entry, plus corruption
+				# (oil) - a strict route steps on neither
+				if int(CONTENT.terrain(k, "enter_dmg_player", 0)) > 0 or CONTENT.is_corruption(k):
 					continue
 			prev[nxt] = cur
 			queue.append(nxt)
@@ -584,7 +1088,7 @@ func _nearest_corruption(snap: Dictionary) -> Vector2i:
 	var bd := 99999
 	for t in snap["terrain"].keys():
 		var k := String(snap["terrain"][t]["kind"])
-		if k != "oil" and k != "goo" and k != "rich_goo":
+		if not CONTENT.is_corruption(k):
 			continue
 		var d: int = absi(t.x - pp.x) + absi(t.y - pp.y)
 		if d < bd:

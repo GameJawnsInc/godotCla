@@ -17,9 +17,13 @@ const AudioKit := preload("res://shell/audio.gd")
 const Profile := preload("res://meta/profile.gd")
 const PROFILE_PATH := "user://tender_profile.json"
 const RUN_SAVE_PATH := "user://tender_run.save"
-# Bump whenever a sim change alters replay behaviour - stale saves are
-# discarded rather than replayed into divergence.
-const RUN_SAVE_VERSION := 1
+# Replay compatibility rides on the sim's own version: a stale log replayed
+# across a sim change diverges silently, so bump Game.SIM_VERSION there and
+# every stamp (this save, regression records, autopsy dumps) follows.
+const RUN_SAVE_VERSION := Game.SIM_VERSION
+## Finished run logs are kept, not deleted: a real death is a replayable
+## (seed, config, actions) pair - see tests/import_run.gd. This many survive.
+const RUNS_KEEP := 10
 
 const CFG_PATH := "user://tender.cfg"
 
@@ -59,29 +63,30 @@ const BIOME_PAL := {
 ## sprite id, display name, one-line blurb — legend sheet and hold-tooltips
 const LEGEND := [
 	["player", "You, the Tender", "descend, cleanse, survive"],
-	["stairs", "Stairs", "the way down - your goal each floor"],
-	["shrine", "Shrine", "stand here to open the shop"],
-	["vent", "Vent", "vents reinforcements as the smog rises"],
-	["supply", "Supply pod", "walk over it to stock your satchel (2 slots)"],
-	["oil", "Oil", "corruption - cleanse it (adjacent) for bloom"],
-	["goo", "Goo", "corruption - cleansing yields bloom"],
-	["rich_goo", "Rich goo", "corruption - cleanses for extra bloom"],
-	["growth", "Growth", "heals 1 HP per turn while you stand on it"],
-	["fire", "Fire", "burns whoever stands in it"],
-	["smoke", "Smoke", "blocks solar lances"],
+	["stairs", "Stairs", "the way down"],
+	["shrine", "Shrine", "stand here to shop"],
+	["vent", "Vent", "releases enemies as the smog rises"],
+	["supply", "Supply pod", "step on it to stock your satchel (2 slots)"],
+	["oil", "Oil", "corruption - cleanse from beside it for bloom. Burns"],
+	["goo", "Goo", "corruption - cleanse for bloom. Hurts to step in"],
+	["rich_goo", "Rich goo", "corruption - cleanse for extra bloom. Hurts to step in"],
+	["ash", "Ash", "corruption from burnt oil - cleanse for bloom. Never shields the core"],
+	["growth", "Growth", "stand on it: heal 1 HP a turn"],
+	["fire", "Fire", "burns whoever stands in it. Leaves ash"],
+	["smoke", "Smoke", "blocks beams. Screens tar/drain/grapple from 2+ tiles away"],
 	["roots", "Roots", "blocks enemies for a while"],
-	["drill_bot", "Drill Bot", "melee - telegraphs its strike a turn ahead"],
+	["drill_bot", "Drill Bot", "melee - shows its strike a turn ahead"],
 	["oil_sludge", "Oil Sludge", "slow, leaves oil, splits when killed"],
 	["sludgeling", "Sludgeling", "weak spawn"],
-	["leech_drone", "Leech Drone", "drains your banked charge from range"],
-	["tar_spitter", "Tar Spitter", "gums up one of your abilities"],
-	["coal_golem", "Coal Golem", "SPIKED (melee hurts you back); bursts into smoke"],
-	["welded_hulk", "Welded Hulk", "two drill bots ASSIMILATED; spiked and heavy"],
+	["leech_drone", "Leech Drone", "drains banked charge from range"],
+	["tar_spitter", "Tar Spitter", "gums one of your abilities"],
+	["coal_golem", "Coal Golem", "SPIKED: melee costs you 1 HP. Bursts into smoke"],
+	["welded_hulk", "Welded Hulk", "two drill bots welded - spiked and heavy"],
 	["extractor_engine", "Extractor", "summons sludgelings - kill it first"],
-	["rust_hound", "Rust Hound", "fast - moves twice; SPIKED"],
+	["rust_hound", "Rust Hound", "SPIKED - moves twice"],
 	["cinder_mite", "Cinder Mite", "ignites oil"],
-	["pump_jack", "Pump Jack", "pumps out fresh oil"],
-	["smokestack", "Smokestack", "makes the smog clock tick faster"],
+	["pump_jack", "Pump Jack", "pumps fresh oil"],
+	["smokestack", "Smokestack", "speeds up the smog clock"],
 	["magnet_crane", "Magnet Crane", "drags you toward it every turn"],
 	["furnace_core", "Furnace Core", "floor 7 boss"],
 	["overseer", "The Overseer", "floor 7 boss"],
@@ -93,13 +98,34 @@ const DIRS4 := {
 	"left": Vector2i(-1, 0), "right": Vector2i(1, 0),
 }
 
+## Draft slot roles (Content.DRAFT_SLOT_REPORTS) as card badges: one word per
+## role, drawn gold on the card. Presentation only - the sim reports the role
+## and the sheet just names it, so a role with no entry here draws no badge
+## rather than a wrong one.
+const DRAFT_SLOT_LABEL := {
+	"affinity": "AFFINITY",
+	"upgrade": "UPGRADE",
+	"wild": "WILD",
+	"focus": "FOCUS",
+}
+
 var game
 var seed_v := 0
 var screen := "menu"  # menu | game | tutorial
-var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | intro | help | shop | log | settings
+var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | up_keep | up_scrap | up_variant | intro | help | shop | log | settings
+## Did the roll that produced the draft on screen spend an armed focus? Read
+## off the draft_offer event, because a focus slot that found no candidate
+## yields no FOCUS card and the snapshot cannot tell that from an ordinary
+## draft. False after a resume mid-draft (no event seen), where the card
+## itself is the only evidence left.
+var _draft_focus_spent := false
 var mode_slot := -1
 var mode_targets: Array = []
 var mode_pick := -1
+## The forge's scrap slot, held between the up_scrap tap and the up_variant
+## sheet (Block D6: a base forks into two named variants, so a forge is a
+## three-tap choice - keep, scrap, then which fork).
+var mode_scrap := -1
 var flash := ""
 var font: Font
 var hotspots: Array = []
@@ -111,6 +137,10 @@ var help_page := 0
 var zoom_room := false     # camera toggle: fit the current room, not the floor
 var inspect_live := false  # magnifier toggle: hover/drag shows tooltips instantly
 var _game_is_run := false  # current `game` is a real run (RESUME-able)
+var save_lost := false     # a saved run was discarded by a version bump (menu notice)
+## Where finished run logs are archived. A var, not a const, so a test can
+## point the archive at scratch space instead of the player's own runs.
+var runs_dir := "user://runs"
 
 # settings (persisted to user://tender.cfg)
 var hold_ms := 420
@@ -149,7 +179,14 @@ const FX_MS := 700
 var _fx: Array = []  # transient map effects {kind, pos: Vector2 tile, text, col, t0}
 var _floor_fade_ms := -99999  # descend wipe: new floor fades in from dark
 var profile  # meta career: unlocks tiers/packages across runs (meta/profile.gd)
-var sel_tier := 0  # difficulty picked on the menu, clamped to what is unlocked
+## The four run choices the title screen makes, all persisted in tender.cfg
+## and all clamped to what the career unlocked (_clamp_selection). PLAY turns
+## them into a run config through profile.game_config; in daily seed mode the
+## seed's own Profile.daily_config replaces them for that run.
+var sel_tier := 0        # difficulty, clamped to profile.unlocked_tier
+var sel_loadout := "tender"  # Content.LOADOUTS id: the starting kit
+var sel_package := ""    # the one package committed to the run ("" = none)
+var sel_mutator := ""    # the one mutator the run carries ("" = none)
 var run_tier := 0  # tier the live run actually started at
 var _run_recorded := false
 var _run_unlocks: Array = []
@@ -167,6 +204,7 @@ func _ready() -> void:
 	audio = AudioKit.new()
 	add_child(audio)
 	_load_settings()
+	_clamp_selection()
 	audio.sfx_on = sfx_on
 	audio.music_on = music_on
 	set_process(true)
@@ -180,21 +218,65 @@ func _ready() -> void:
 	queue_redraw()
 
 
+## Today's daily seed (UTC date): the same number for everyone, so the menu
+## can show today's config before PLAY rolls the seed.
+func _daily_seed() -> int:
+	return hash(Time.get_date_string_from_system(true)) & 0x7FFFFFFF
+
+
 func _roll_seed() -> void:
 	if seed_mode == "daily":
-		seed_v = hash(Time.get_date_string_from_system(true)) & 0x7FFFFFFF
+		seed_v = _daily_seed()
 	else:
 		seed_v = (int(Time.get_unix_time_from_system()) * 1103515245 + Time.get_ticks_msec()) % 1000000
 
 
+## Keep the menu's run choices inside what the career actually unlocked: the
+## cfg file is written by whatever build ran last, and load_from can drop an
+## unlock when content is renamed. Called on boot, on every menu draw and
+## before a run starts, so an impossible selection can never reach the sim.
+func _clamp_selection() -> void:
+	sel_tier = clampi(sel_tier, 0, _max_tier())
+	if not profile.available_loadouts().has(sel_loadout):
+		sel_loadout = "tender"
+	if not profile.unlocked_packages.has(sel_package):
+		sel_package = ""
+	if not profile.unlocked_mutators.has(sel_mutator):
+		sel_mutator = ""
+
+
+## The highest difficulty the DIFFICULTY row may show. The career gate is
+## profile.unlocked_tier, but that number is the one unlock load_from cannot
+## filter against Content, and a profile written by a build with more tiers
+## (or kept while Content.TIERS shrank) hands back a tier that is not in the
+## table: _menu_rows reads Content.TIERS[sel_tier - 1] for the row's name, and
+## an out-of-range read there empties the whole menu - no PLAY, no QUIT. So
+## the table's own size is the second bound, at the one place that picks the
+## number rather than at every place that reads it.
+func _max_tier() -> int:
+	return mini(int(profile.unlocked_tier), Content.TIERS.size())
+
+
+## The config PLAY starts a run with: the menu's own choices through the
+## career gate, or - in daily seed mode - the seed's own frozen daily config,
+## which no career unlock touches (a daily needs nothing unlocked).
+func _run_config() -> Dictionary:
+	if seed_mode == "daily":
+		return Profile.daily_game_config(seed_v)
+	var muts: Array = [] if sel_mutator == "" else [sel_mutator]
+	return profile.game_config(sel_tier, muts, sel_loadout, sel_package)
+
+
 func _new_game() -> void:
-	sel_tier = clampi(sel_tier, 0, int(profile.unlocked_tier))
-	run_tier = sel_tier
-	var cfg: Dictionary = profile.game_config(sel_tier)
+	_clamp_selection()
+	var cfg: Dictionary = _run_config()
+	run_tier = int(cfg.get("tier", 0))
 	game = Game.new(seed_v, cfg)
+	_draft_focus_spent = false  # a fresh run never inherits the last one's focus
 	_game_is_run = true
 	_run_recorded = false
 	_run_unlocks = []
+	save_lost = false  # the notice stands until the player starts a fresh run
 	if _run_save != null:
 		_run_save.close()
 	_run_save = FileAccess.open(RUN_SAVE_PATH, FileAccess.WRITE)
@@ -214,6 +296,7 @@ func _new_game() -> void:
 func _start_tutorial() -> void:
 	screen = "tutorial"
 	game = Game.new(1, Tutorial.game_config())
+	_draft_focus_spent = false
 	_game_is_run = false
 	tut_step = 0
 	tut_done = false
@@ -233,8 +316,11 @@ func _load_run() -> void:
 		return
 	var head = str_to_var(f.get_line())
 	if not (head is Dictionary) or int(head.get("v", -1)) != RUN_SAVE_VERSION:
+		# the sim moved under the log: replaying it would diverge silently, so
+		# the save goes - but the player is told why their run vanished
 		f.close()
 		DirAccess.remove_absolute(RUN_SAVE_PATH)
+		save_lost = true
 		return
 	var g = Game.new(int(head["seed"]), Dictionary(head["config"]))
 	while not f.eof_reached() and not g.over:
@@ -258,12 +344,78 @@ func _load_run() -> void:
 	mode = "normal"
 	log_lines = []
 	for ev in game.snapshot()["events"]:
+		if String(ev.get("t", "")) == "draft_offer":
+			_draft_focus_spent = bool(ev.get("focus", false))
 		var s := _ev_text(ev)
 		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
 			log_lines.append(s)
 	_run_save = FileAccess.open(RUN_SAVE_PATH, FileAccess.READ_WRITE)
 	if _run_save != null:
 		_run_save.seek_end()
+
+
+## Game-over site: the run's own record (Game.run_summary(), stamped with the
+## tier and seed mode the shell chose) goes to the career profile - or to the
+## daily board when the seed came from the daily challenge, since a daily
+## scores its seed and unlocks nothing. Then the action log is closed and
+## archived. Called once per run, from _act.
+func _record_finished_run() -> void:
+	_run_recorded = true
+	var summary: Dictionary = game.run_summary()
+	summary["tier"] = run_tier
+	summary["seed_mode"] = seed_mode
+	_run_unlocks = []
+	if seed_mode == "daily":
+		profile.record_daily(summary)
+	else:
+		var prev_ut: int = int(profile.unlocked_tier)
+		_run_unlocks = profile.record_run(summary)
+		if int(profile.unlocked_tier) > prev_ut:
+			_run_unlocks.push_front("tier:%d" % int(profile.unlocked_tier))
+	profile.save(PROFILE_PATH)
+	if _run_save != null:
+		_run_save.close()
+		_run_save = null
+	_archive_run()
+
+
+## A finished run's action log is a replayable record, not litter: move it to
+## runs_dir as run_<seed>_<yyyymmdd>_<won|died>.save and keep the newest
+## RUNS_KEEP. tests/import_run.gd turns one into a regression pair.
+func _archive_run() -> void:
+	if not FileAccess.file_exists(RUN_SAVE_PATH):
+		return
+	var d := Time.get_date_dict_from_system()
+	var outcome := "won" if (game != null and game.won) else "died"
+	var dest := "%s/run_%d_%04d%02d%02d_%s.save" % [
+		runs_dir, seed_v, int(d["year"]), int(d["month"]), int(d["day"]), outcome]
+	DirAccess.make_dir_recursive_absolute(runs_dir)
+	if FileAccess.file_exists(dest):
+		DirAccess.remove_absolute(dest)  # same seed, same day: the newer log wins
+	if DirAccess.rename_absolute(RUN_SAVE_PATH, dest) != OK:
+		DirAccess.copy_absolute(RUN_SAVE_PATH, dest)
+	DirAccess.remove_absolute(RUN_SAVE_PATH)  # no-op after a successful rename
+	_prune_runs()
+
+
+## Keep the newest RUNS_KEEP logs. Ordered by (modified time, name) so the
+## sweep is deterministic even when several land in the same second.
+func _prune_runs() -> void:
+	var dir := DirAccess.open(runs_dir)
+	if dir == null:
+		return
+	var keys: Array = []
+	dir.list_dir_begin()
+	var name := dir.get_next()
+	while name != "":
+		if not dir.current_is_dir() and name.ends_with(".save"):
+			keys.append("%020d|%s" % [FileAccess.get_modified_time(runs_dir + "/" + name), name])
+		name = dir.get_next()
+	dir.list_dir_end()
+	keys.sort()  # oldest first
+	while keys.size() > RUNS_KEEP:
+		var k := String(keys.pop_front())
+		DirAccess.remove_absolute(runs_dir + "/" + k.substr(k.find("|") + 1))
 
 
 func _load_settings() -> void:
@@ -274,6 +426,10 @@ func _load_settings() -> void:
 		intro_mode = String(cf.get_value("ui", "intro_mode", "once"))
 		sfx_on = bool(cf.get_value("ui", "sfx_on", true))
 		music_on = bool(cf.get_value("ui", "music_on", true))
+		sel_tier = int(cf.get_value("ui", "tier", 0))
+		sel_loadout = String(cf.get_value("ui", "loadout", "tender"))
+		sel_package = String(cf.get_value("ui", "package", ""))
+		sel_mutator = String(cf.get_value("ui", "mutator", ""))
 
 
 func _save_settings() -> void:
@@ -283,6 +439,10 @@ func _save_settings() -> void:
 	cf.set_value("ui", "intro_mode", intro_mode)
 	cf.set_value("ui", "sfx_on", sfx_on)
 	cf.set_value("ui", "music_on", music_on)
+	cf.set_value("ui", "tier", sel_tier)
+	cf.set_value("ui", "loadout", sel_loadout)
+	cf.set_value("ui", "package", sel_package)
+	cf.set_value("ui", "mutator", sel_mutator)
 	cf.save(CFG_PATH)
 
 
@@ -325,7 +485,8 @@ func _act(a: Dictionary) -> void:
 		tooltip = []
 		queue_redraw()
 		return
-	var keep_shop := mode == "shop" and String(a.get("type", "")) == "buy"
+	# a purchase or a reroll made from the sheet reopens it
+	var keep_shop := mode == "shop" and ["buy", "reroll"].has(String(a.get("type", "")))
 	var evs: Array = game.step(a)
 	if _game_is_run and _run_save != null:
 		_run_save.store_line(var_to_str(a).replace("\n", " "))
@@ -333,17 +494,10 @@ func _act(a: Dictionary) -> void:
 	_arm_anim(prev, prev_floor)
 	_spawn_fx(evs, prev)
 	if game.over and _game_is_run and not _run_recorded:
-		_run_recorded = true
-		var prev_ut: int = int(profile.unlocked_tier)
-		_run_unlocks = profile.record_run({"won": game.won, "floor": game.floor_num, "tier": run_tier})
-		if int(profile.unlocked_tier) > prev_ut:
-			_run_unlocks.push_front("tier:%d" % int(profile.unlocked_tier))
-		profile.save(PROFILE_PATH)
-		if _run_save != null:
-			_run_save.close()
-			_run_save = null
-		DirAccess.remove_absolute(RUN_SAVE_PATH)
+		_record_finished_run()
 	for ev in evs:
+		if String(ev.get("t", "")) == "draft_offer":
+			_draft_focus_spent = bool(ev.get("focus", false))
 		var s := _ev_text(ev)
 		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
 			log_lines.append(s)
@@ -524,6 +678,113 @@ func _legal_of(kind: String) -> Array:
 
 # --- input --------------------------------------------------------------------
 
+## Android's Back button and back gesture. project.godot sets
+## application/config/quit_on_go_back to false - without it the OS kills the
+## app on the first Back press, from any screen - so the whole rule lives here,
+## and it is the SAME rule ESC follows: one step up one level. Nothing else in
+## the shell may implement "back"; a second copy would drift from this one.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		_back(true)  # the menu is the root, and Android's root gesture quits
+
+
+## Go UP one level, and return the level that was left (the return value is
+## how a headless test can pin the root case without quitting the runner).
+## Every modal state the shell can be in has exactly one way out and it is
+## this function: ESC, the Back button and the sheets' own BACK/CLOSE buttons
+## all end up here or in the tap tag it calls, so the touch build and the
+## keyboard build can never disagree about what "back" means.
+##
+## `quit_at_root` is the one place the two callers differ. Back at the MENU is
+## the root of the app and Android's convention is to leave it (the run, if
+## any, is saved per action and RESUME restores it byte-exact), while ESC on a
+## desktop has never quit from the menu and still does not.
+func _back(quit_at_root: bool = false) -> String:
+	# a held tooltip is drawn over everything, so it is what Back closes first
+	if not tooltip.is_empty():
+		tooltip = []
+		tooltip_tile = Vector2i(-1, -1)
+		# ...and the HOLD that raised it goes with it. _process re-shows a
+		# tooltip for as long as _held is true and hold_ms has passed, so
+		# clearing only the text let the very next frame put the same tooltip
+		# back - and every Back after that was eaten by it in turn, for as
+		# long as the finger (or the mouse button) stayed down. Dropping the
+		# hold here is also what stops the eventual release from counting as a
+		# tap: _unhandled_input only calls _click for a press SHORTER than
+		# hold_ms, and this one is already longer.
+		_held = false
+		queue_redraw()
+		return "tooltip"
+	if screen == "menu":
+		if mode == "settings":
+			mode = "normal"
+			queue_redraw()
+			return "settings"
+		if quit_at_root:
+			_tap("quit")  # is_inside_tree-guarded, so a test can call it
+			return "quit"
+		return "root"
+	if game == null or game.over or (screen == "tutorial" and tut_done):
+		# the end-of-run sheet and the tutorial's last card are read-only: the
+		# run is already recorded and archived, so there is nothing to lose
+		_tap("menu")
+		return "menu"
+	var was := mode
+	match was:
+		"up_variant":
+			_tap("forge_back")  # the fork sheet's own BACK: return to the scrap tap
+			return was
+		"up_scrap":
+			mode = "up_keep"  # one tap back up the forge's three-tap choice
+			mode_pick = -1
+			flash = ""
+			queue_redraw()
+			return was
+		"up_keep":
+			# the forge was entered off the shrine sheet, so that is where
+			# backing out of it lands - free, and the kit is untouched
+			mode = "normal"
+			flash = ""
+			_tap("shop")
+			queue_redraw()
+			return was
+		"draft_drop":
+			_tap("draft_back")  # back to the offer cards, nothing picked
+			return was
+		"target_dir", "target_tile", "cleanse":
+			_cancel_aim()
+			return was
+		"shop", "log", "help", "intro", "settings":
+			mode = "normal"
+			flash = ""
+			queue_redraw()
+			return was
+	# mode is "normal" from here: no sheet is up
+	if game.phase == "draft":
+		# the draft is the sim's own phase, not a shell sheet - only a pick or
+		# a skip closes it - so Back leaves for the menu; the run save carries
+		# the pending draft and RESUME comes back to this same sheet
+		_tap("menu")
+		return "menu"
+	if zoom_room:
+		zoom_room = false  # back out to the whole-floor camera first
+		queue_redraw()
+		return "zoom"
+	_tap("menu")
+	return "menu"
+
+
+## Drop a targeting mode without spending anything. Entering an aim costs
+## nothing, so leaving one must cost nothing either: ESC, the Back button, a
+## D-pad press and a second tap on the aiming slot all land here.
+func _cancel_aim() -> void:
+	mode = "normal"
+	mode_targets = []
+	mode_slot = -1
+	flash = ""
+	queue_redraw()
+
+
 func _unhandled_input(ev: InputEvent) -> void:
 	if ev is InputEventKey and ev.pressed and not ev.echo:
 		_key(ev.keycode)
@@ -596,7 +857,7 @@ func _show_tooltip(pos: Vector2) -> void:
 			var islot := int(String(hsp["tag"]).get_slice(":", 1))
 			if islot < game.player["items"].size():
 				var idef: Dictionary = Content.ITEMS[game.player["items"][islot]]
-				tooltip = ["%s - tap to use (free action)" % idef["name"], idef["desc"]]
+				tooltip = ["%s - tap to use (no turn)" % idef["name"], idef["desc"]]
 				tooltip_tile = Vector2i(-1, -1)
 				queue_redraw()
 				return
@@ -605,9 +866,12 @@ func _show_tooltip(pos: Vector2) -> void:
 			var aid: String = game.player["kit"][slot]
 			var adef: Dictionary = Content.ABILITIES[aid]
 			var tc: int = game.ability_cost(aid)
-			var thdr := "%s - costs %d charge" % [adef["name"], tc]
-			if tc < int(adef["cost"]):
-				thdr += " (verdant surge!)"
+			var thdr := "%s - %d charge" % [adef["name"], tc]
+			# Game._surges, not a cost comparison: since Block D1 a surge may be a
+			# STAT bump with no discount (Grow Spike +1 dmg, Water Jet +1 push) and
+			# it still spends the tile - the old test said nothing about those
+			if game._surges(adef):
+				thdr += "  ·  surges, spends the tile"
 			tooltip = [thdr, _ability_desc(aid)]
 			tooltip_tile = Vector2i(-1, -1)
 			queue_redraw()
@@ -623,7 +887,11 @@ func _show_tooltip(pos: Vector2) -> void:
 			lines.append("%s - hp %d%s" % [_ename(e["kind"]), e["hp"], "  ELITE" if e.get("elite", false) else ""])
 			lines.append(_intent_words(e))
 			if e["traits"].has("spiked") or e.get("elite", false):
-				lines.append("SPIKED - striking it in melee costs you 1 HP")
+				lines.append("SPIKED - melee costs you 1 HP")
+			# what the row refuses to walk through, straight off the data
+			var avoid: Array = Content.ENEMIES.get(e["kind"], {}).get("avoid", [])
+			if not avoid.is_empty():
+				lines.append("avoids: %s - detours, unless the way round is long" % ", ".join(avoid))
 			if not row.is_empty():
 				lines.append(row[2])
 	if lines.is_empty() and snap["player"]["pos"] == t:
@@ -658,6 +926,12 @@ func _dir_from_key(k: int) -> Vector2i:
 
 
 func _key(k: int) -> void:
+	# ESC is the keyboard's Back, and it is the SAME handler the Android Back
+	# button uses (KEY_BACK is here too: some devices deliver the hardware
+	# button as a key event rather than as the window notification).
+	if k == KEY_ESCAPE or k == KEY_BACK:
+		_back(k == KEY_BACK)
+		return
 	if screen == "menu":
 		if mode == "settings":
 			mode = "normal"
@@ -680,10 +954,16 @@ func _key(k: int) -> void:
 			_buy("heal")
 			return
 		if mode == "shop" and k == KEY_B:
-			_buy("ability")
+			_buy("ability")  # full kit: nothing to buy, just a flash
 			return
 		if mode == "shop" and k == KEY_G:
-			_buy("graft")
+			_buy_graft(0)
+			return
+		if mode == "shop" and k == KEY_J:
+			_buy_graft(1)  # the shrine offers two grafts; J takes the second
+			return
+		if mode == "shop" and k == KEY_R:
+			_reroll()  # inside the sheet R redraws the counter, outside it restarts
 			return
 		mode = "normal"
 		queue_redraw()
@@ -694,15 +974,6 @@ func _key(k: int) -> void:
 		elif k == KEY_N:
 			seed_v += 1
 			_new_game()
-		return
-	if k == KEY_ESCAPE:
-		if mode == "normal":
-			_tap("menu")
-		else:
-			mode = "normal"
-			mode_targets = []
-			flash = ""
-			queue_redraw()
 		return
 	if k == KEY_L:
 		mode = "help"
@@ -742,8 +1013,25 @@ func _dir_input(d: Vector2i) -> void:
 	match mode:
 		"target_dir":
 			_try_ability_target(mode_slot, d)
+		"target_tile":
+			# a tile aim cannot be aimed with a direction, and falling through
+			# to _move_or_strike here MOVED the tender - and struck whatever
+			# stood beside it - out of a mode the player was still in, with no
+			# free way back on a touchscreen. Reaching for a direction means
+			# "get me out of this": cancel, free, no turn, no strike.
+			_cancel_aim()
+			_flash("aim cancelled")
 		"cleanse":
 			_cleanse_at(game.player["pos"] + d)
+		"up_keep", "up_scrap", "up_variant":
+			# the forge's three taps are a modal choice, and the two selection
+			# steps draw no sheet - so the D-pad is still on screen right
+			# beside the SHRINE SHOP button the context line points at, and
+			# falling through here MOVED the tender and struck whatever stood
+			# next to it, for a charge and a turn, out of a choice the player
+			# was still in. Same rule as a tile aim: reaching for a direction
+			# in a modal state means "get me out of this", and it is free.
+			_flash("finish the forge choice, or step back")
 		_:
 			_move_or_strike(d)
 
@@ -757,7 +1045,7 @@ func _cleanse_at(target: Vector2i) -> void:
 			return
 	var pp: Vector2i = game.player["pos"]
 	var kind: String = game.terrain.get(target, {}).get("kind", "")
-	var corrupt: bool = kind in ["oil", "goo", "rich_goo"]
+	var corrupt: bool = Content.is_corruption(kind)
 	if corrupt and absi(target.x - pp.x) + absi(target.y - pp.y) == 1:
 		if screen == "tutorial":
 			_flash("out of charge - press END to refill")
@@ -770,7 +1058,25 @@ func _cleanse_at(target: Vector2i) -> void:
 				_act(a)
 				return
 	else:
-		_flash("aim at corruption right next to you")
+		_flash(_cleanse_hint())
+
+
+## Why CLEANSE just refused. "no corruption beside you" was the only answer,
+## and it is a lie in the two cases that actually happen: the tender STANDING on
+## the slick (cleanse reaches a neighbour, never the tile underfoot) and a slick
+## the tender's own lance set alight (fire is not corruption until it burns down
+## to ash). Both read as a dead end - the tutorial's last cleanse step allows no
+## ability, so a player told there is nothing there has nothing left to try.
+func _cleanse_hint() -> String:
+	if game == null:
+		return "no corruption beside you"
+	var here := String(game.terrain.get(game.player["pos"], {}).get("kind", ""))
+	if Content.is_corruption(here):
+		return "you're standing on it - step off first"
+	for d in DIRS4.values():
+		if String(game.terrain.get(game.player["pos"] + d, {}).get("kind", "")) == "fire":
+			return "still burning - wait for the ash"
+	return "no corruption beside you"
 
 
 func _move_or_strike(d: Vector2i) -> void:
@@ -808,19 +1114,78 @@ func _move_or_strike(d: Vector2i) -> void:
 	_flash("blocked")
 
 
+## Buy heal / ability / item. A full kit has no room for the ability card:
+## the sim stops offering it, so the tap just says so.
 func _buy(item: String) -> void:
 	for a in _legal_of("buy"):
-		if a["item"] == item:
+		if String(a.get("item", "")) != item:
+			continue
+		_act(a)
+		return
+	_flash("can't buy that")
+
+
+## The shrine offers two grafts and sells one; `pick` indexes shop.grafts.
+func _buy_graft(pick: int) -> void:
+	for a in _legal_of("buy"):
+		if String(a.get("item", "")) == "graft" and int(a.get("pick", -1)) == pick:
 			_act(a)
 			return
 	_flash("can't buy that")
 
 
+## Redraw the shrine counter (Block D2). Every rule - on the shrine, a
+## re-drawable slot still stocked, the per-floor cap, the escalating price -
+## is the sim's, so the shell just looks for the action and flashes when the
+## card is dead.
+func _reroll() -> void:
+	for a in _legal_of("reroll"):
+		_act(a)
+		return
+	_flash("can't reroll")
+
+
+## The one bit of ability metadata the shell reads, mirroring the sim rule:
+## a mobility ability is never a legal forge scrap (sim/game.gd _is_mobility).
+func _is_mobility(aid: String) -> bool:
+	return String(Content.ABILITIES.get(aid, {}).get("role", "")) == "mobility"
+
+
+## The legal forge actions for one (keep, scrap) pair, in legal_actions order -
+## which is Content.variants_of order, so entry 0 is always the variant that
+## reproduces the pre-Block-D6 "+" row. Straight off the sim: the shell never
+## builds a forge the sim would reject, and never names a variant id itself.
+func _forge_actions(keep: int, scrap: int) -> Array:
+	var out: Array = []
+	for a in _legal_of("upcycle_ability"):
+		if int(a.get("keep", -1)) == keep and int(a.get("scrap", -1)) == scrap:
+			out.append(a)
+	return out
+
+
 func _ability_press(slot: int) -> void:
+	if slot >= game.player["kit"].size():
+		return
+	# toggle: tapping the slot you are already aiming with puts the aim down.
+	# No new button, and it is where the finger already is - the aim was armed
+	# from this same slot. Tapping a DIFFERENT slot still switches aim.
+	if (mode == "target_dir" or mode == "target_tile") and mode_slot == slot:
+		_cancel_aim()
+		_flash("aim cancelled")
+		return
+	if mode == "up_variant":
+		# the forge's fork sheet owns the screen: keep and scrap are already
+		# chosen, so a kit tap here would silently cast instead
+		_flash("pick which way it grows, or BACK")
+		return
 	if mode == "up_keep":
-		var kid := String(game.player["kit"][slot])
-		if kid.ends_with("+") or not Content.ABILITIES.has(kid + "+"):
-			_flash("that one cannot be forged further")
+		var can_keep := false
+		for a in _legal_of("upcycle_ability"):
+			if int(a.get("keep", -1)) == slot:
+				can_keep = true
+				break
+		if not can_keep:
+			_flash("that one can't be forged further")
 			return
 		mode_pick = slot
 		mode = "up_scrap"
@@ -828,11 +1193,25 @@ func _ability_press(slot: int) -> void:
 		return
 	if mode == "up_scrap":
 		if slot == mode_pick:
-			_flash("pick a DIFFERENT ability to scrap")
+			_flash("pick a DIFFERENT one to scrap")
 			return
-		_act({"type": "upcycle_ability", "keep": mode_pick, "scrap": slot})
-		return
-	if slot >= game.player["kit"].size():
+		# Block D6: the sim lists one forge action per (keep, scrap, VARIANT)
+		# triple, so a forked base offers two. One match acts at once (a package
+		# ability has a single "+" form); two or more open the fork sheet.
+		var acts_v := _forge_actions(mode_pick, slot)
+		if acts_v.size() == 1:
+			_act(acts_v[0])
+			return
+		if acts_v.size() > 1:
+			mode_scrap = slot
+			mode = "up_variant"
+			flash = ""
+			queue_redraw()
+			return
+		if _is_mobility(String(game.player["kit"][slot])):
+			_flash("can't scrap your mobility ability")
+		else:
+			_flash("can't scrap that")
 		return
 	var acts: Array = []
 	for a in _legal_of("ability"):
@@ -846,7 +1225,9 @@ func _ability_press(slot: int) -> void:
 	if ttype == "dir" or ttype == "enemy_line":
 		mode = "target_dir"
 		mode_slot = slot
-		_flash("AIM %s: D-pad or tap beside you" % Content.ABILITIES[aid]["name"])
+		# the flash names the way OUT as well as the way in: on a phone there
+		# is no ESC key, so the cancel has to be written on the screen
+		_flash("AIM %s: D-pad or tap beside you  ·  slot cancels" % Content.ABILITIES[aid]["name"])
 	elif acts.size() == 1:
 		_act(acts[0])
 	else:
@@ -855,7 +1236,7 @@ func _ability_press(slot: int) -> void:
 		mode_targets = []
 		for a in acts:
 			mode_targets.append(a["target"])
-		_flash("AIM %s: tap a green tile" % Content.ABILITIES[aid]["name"])
+		_flash("AIM %s: tap a green tile  ·  D-pad or slot cancels" % Content.ABILITIES[aid]["name"])
 	queue_redraw()
 
 
@@ -938,14 +1319,45 @@ func _tap(tag: String) -> void:
 		var islot := int(tag.get_slice(":", 1))
 		if islot < game.player["items"].size():
 			_act({"type": "use_item", "slot": islot})
+	elif tag.begins_with("buy:graft:"):
+		_buy_graft(int(tag.get_slice(":", 2)))
 	elif tag.begins_with("buy:"):
 		_buy(tag.get_slice(":", 1))
 	elif tag.begins_with("upcycle:"):
-		_act({"type": "upcycle", "keep": int(tag.get_slice(":", 1))})
-	elif tag == "forge":
-		mode = "up_keep"
+		var keep := int(tag.get_slice(":", 1))
+		var pressed := false
+		for a in _legal_of("upcycle"):
+			if int(a.get("keep", -1)) == keep:
+				_act(a)
+				pressed = true
+				break
+		if not pressed:
+			_flash("the press is closed")
+	elif tag == "reroll":
+		_reroll()
+	elif tag.begins_with("forgevar:"):
+		var vi := int(tag.get_slice(":", 1))
+		var picked := false
+		for a in _forge_actions(mode_pick, mode_scrap):
+			if int(a.get("variant", 0)) == vi:
+				_act(a)
+				picked = true
+				break
+		if not picked:
+			_flash("the forge is cold")
+			mode = "normal"
+			queue_redraw()
+	elif tag == "forge_back":
+		mode = "up_scrap"
 		flash = ""
 		queue_redraw()
+	elif tag == "forge":
+		if _legal_of("upcycle_ability").is_empty():
+			_flash("the forge is cold")
+		else:
+			mode = "up_keep"
+			flash = ""
+			queue_redraw()
 	elif tag.begins_with("draft:"):
 		_draft_pick(int(tag.get_slice(":", 1)))
 	elif tag.begins_with("drop:"):
@@ -958,14 +1370,14 @@ func _tap(tag: String) -> void:
 		var can := not _legal_of("cleanse").is_empty()
 		if not can and game != null:
 			for d in DIRS4.values():
-				if String(game.terrain.get(game.player["pos"] + d, {}).get("kind", "")) in ["oil", "goo", "rich_goo"]:
+				if Content.is_corruption(String(game.terrain.get(game.player["pos"] + d, {}).get("kind", ""))):
 					can = true
 					break
 		if can:
 			mode = "cleanse"
 			queue_redraw()
 		else:
-			_flash("no corruption beside you")
+			_flash(_cleanse_hint())
 	elif tag == "descend":
 		if not _legal_of("descend").is_empty():
 			_act({"type": "descend"})
@@ -1027,7 +1439,13 @@ func _tap(tag: String) -> void:
 				music_on = not music_on
 				audio.set_music(music_on)
 			"tier":
-				sel_tier = (sel_tier + 1) % (int(profile.unlocked_tier) + 1)
+				sel_tier = (sel_tier + 1) % (_max_tier() + 1)
+			"loadout":
+				sel_loadout = String(_cycle(profile.available_loadouts(), sel_loadout))
+			"package":
+				sel_package = String(_cycle(_with_none(profile.unlocked_packages), sel_package))
+			"mutator":
+				sel_mutator = String(_cycle(_with_none(profile.unlocked_mutators), sel_mutator))
 			"hold":
 				hold_ms = {300: 420, 420: 650, 650: 300}.get(hold_ms, 420)
 			"seed":
@@ -1036,6 +1454,66 @@ func _tap(tag: String) -> void:
 				intro_mode = {"once": "always", "always": "never", "never": "once"}.get(intro_mode, "once")
 		_save_settings()
 		queue_redraw()
+
+
+## The entry after `cur` in `opts`, wrapping round; the first entry when `cur`
+## has fallen out of the list (an unlock the career no longer has).
+static func _cycle(opts: Array, cur):
+	if opts.is_empty():
+		return cur
+	return opts[(opts.find(cur) + 1) % opts.size()]
+
+
+## `ids` with the "none" choice ("") in front - the package and mutator rows
+## always offer opting out.
+static func _with_none(ids: Array) -> Array:
+	var out: Array = [""]
+	out.append_array(ids)
+	return out
+
+
+## Display name for a run choice: loadouts and mutators carry one in Content,
+## a package is just its id, and "" is the opted-out row.
+static func _choice_name(kind: String, id: String) -> String:
+	if id == "":
+		return "none"
+	match kind:
+		"loadout":
+			return String(Content.LOADOUTS[id]["name"]) if Content.LOADOUTS.has(id) else id
+		"mutator":
+			return String(Content.MUTATORS[id]["name"]) if Content.MUTATORS.has(id) else id
+	return id.capitalize()
+
+
+## The title screen's row stack as data: [label, tap tag, highlighted]. A row
+## with an empty tag is a line of text, not a button (the daily config line).
+## Built here so a headless test can read exactly what the menu offers.
+func _menu_rows() -> Array:
+	var rows: Array = []
+	var has_resume: bool = (game != null and not game.over and _game_is_run) \
+		or FileAccess.file_exists(RUN_SAVE_PATH)
+	if has_resume:
+		rows.append(["RESUME RUN", "resume", true])
+	rows.append(["PLAY", "play", true])
+	if int(profile.unlocked_tier) > 0:
+		var tn := "base run" if sel_tier == 0 else String(Content.TIERS[sel_tier - 1]["name"])
+		rows.append(["DIFFICULTY %d: %s" % [sel_tier, tn], "set:tier", false])
+	if seed_mode == "daily":
+		# a daily's loadout, package and mutator come from the seed, not from
+		# the menu: one line saying what today hands everyone
+		var d: Dictionary = Profile.daily_config(_daily_seed())
+		rows.append(["TODAY: %s · %s · %s" % [
+			_choice_name("loadout", String(d["loadout"])),
+			_choice_name("package", String(d["package"])),
+			_choice_name("mutator", String(d["mutator"]))], "", false])
+	else:
+		rows.append(["LOADOUT: %s" % _choice_name("loadout", sel_loadout), "set:loadout", false])
+		rows.append(["PACKAGE: %s" % _choice_name("package", sel_package), "set:package", false])
+		rows.append(["MUTATOR: %s" % _choice_name("mutator", sel_mutator), "set:mutator", false])
+	rows.append(["TUTORIAL", "tutorial", false])
+	rows.append(["SETTINGS", "settings", false])
+	rows.append(["QUIT", "quit", false])
+	return rows
 
 
 func _draft_key(k: int) -> void:
@@ -1076,11 +1554,47 @@ func _ename(kind: String) -> String:
 	return Content.ENEMIES[kind]["name"] if Content.ENEMIES.has(kind) else kind
 
 
+## The name of the enemy an event names by id (the screen event reports the
+## enemy, not its kind); "Something" if it has already left the board.
+func _ename_by_id(id) -> String:
+	for e in game.enemies:
+		if e["id"] == id:
+			return _ename(String(e["kind"]))
+	return "Something"
+
+
+## What a screened intent is called in the log. The raw type is the fallback,
+## so a new Content.SCREENED_INTENTS entry still reads as a sentence.
+func _screen_word(itype: String) -> String:
+	match itype:
+		"gum": return "tar"
+		"drain": return "drain"
+		"drag": return "grapple"
+	return itype
+
+
+## Purchase ids in words for the log ("bloom_surge" -> "Bloom Surge").
+func _shop_name(item: String, id: String) -> String:
+	match item:
+		"heal":
+			return "a heal"
+		"graft":
+			return String(Content.GRAFTS.get(id, {}).get("name", id))
+		"ability":
+			return String(Content.ABILITIES.get(id, {}).get("name", id))
+		"item":
+			return String(Content.ITEMS.get(id, {}).get("name", id))
+	return id if id != "" else item
+
+
 func _ev_text(ev: Dictionary) -> String:
 	match String(ev.get("t", "")):
 		"damage":
 			if ev.get("who", "") == "player":
-				return "You take %d damage (%s)" % [ev["amt"], ev.get("src", "?")]
+				# defensive: qualified sources ("fire:solar_lance") read as "fire"
+				var src := String(ev.get("src", "?"))
+				var ci := src.find(":")
+				return "You take %d dmg (%s)" % [ev["amt"], src.substr(0, ci) if ci >= 0 else src]
 			return "%s takes %d" % [_ename(ev["who"]), ev["amt"]]
 		"death":
 			return "%s destroyed" % _ename(ev["who"])
@@ -1091,7 +1605,7 @@ func _ev_text(ev: Dictionary) -> String:
 		"cleanse":
 			return "Cleansed +bloom - the air thins"
 		"room_bloom":
-			return "The room BLOOMS  +%d bloom, a supply pod drops" % ev.get("bonus", 2)
+			return "Room BLOOMS - +%d bloom and a supply pod" % ev.get("bonus", 2)
 		"item_pickup":
 			return "Picked up %s" % Content.ITEMS[ev["id"]]["name"]
 		"item_use":
@@ -1099,15 +1613,17 @@ func _ev_text(ev: Dictionary) -> String:
 		"satchel_full":
 			return "Satchel full (2 slots)"
 		"stairs_dormant":
-			return "The stairs are dormant - green the floor (%d/%d)" % [ev.get("have", 0), ev.get("need", 0)]
+			return "Stairs dormant - green the floor (%d/%d)" % [ev.get("have", 0), ev.get("need", 0)]
 		"stairs_awaken":
 			return "The floor greens - THE STAIRS AWAKEN"
+		"quota_reclamp":
+			return "Corruption burned away - gate now needs %d" % ev.get("need", 0)
 		"seal_burst":
-			return "An overgrown vent chokes - spawn absorbed"
+			return "Overgrown vent chokes - spawn absorbed"
 		"floor_restored":
-			return "FLOOR RESTORED - the skies clear (+%d bloom)" % ev.get("bonus", 5)
+			return "FLOOR RESTORED - skies clear (+%d bloom)" % ev.get("bonus", 5)
 		"verdant":
-			return "Verdant surge - the growth fuels your cast (-1)"
+			return "Verdant surge - the growth feeds your cast"
 		"assimilate":
 			return "The machines WELD into a hulk"
 		"upcycle":
@@ -1124,8 +1640,11 @@ func _ev_text(ev: Dictionary) -> String:
 			return "A vent releases a drill bot"
 		"gummed":
 			return "Tar gums up an ability"
+		"screened":
+			return "%s's %s is lost in the smoke" % [
+				_ename_by_id(ev.get("id", -1)), _screen_word(String(ev.get("intent", "")))]
 		"drain":
-			return "Leech drone drains %d banked charge" % ev["amt"]
+			return "Drone drains %d banked charge" % ev["amt"]
 		"drag":
 			return "You are dragged"
 		"stoke":
@@ -1135,9 +1654,9 @@ func _ev_text(ev: Dictionary) -> String:
 		"vents_clogged":
 			return "The boss clogs the vents with goo"
 		"core_shielded":
-			return "Core shielded - cleanse the corruption beside it"
+			return "Core shielded - cleanse the corruption round it"
 		"dredge":
-			return "The Dredge devours %d growth and heals" % ev["tiles"]
+			return "The Dredge eats %d growth and heals" % ev["tiles"]
 		"summon":
 			return "The extractor summons a sludgeling"
 		"split":
@@ -1149,9 +1668,16 @@ func _ev_text(ev: Dictionary) -> String:
 		"smoke_burst":
 			return "The golem bursts into smoke"
 		"buy":
-			return "Bought %s" % str(ev.get("id", ev.get("item", "")))
+			var what := _shop_name(String(ev.get("item", "")), String(ev.get("id", "")))
+			if String(ev.get("discarded", "")) != "":
+				return "Bought %s (discarded %s)" % [what, _shop_name("graft", String(ev["discarded"]))]
+			return "Bought %s" % what
+		"reroll":
+			return "Rerolled (-%d bloom)" % int(ev.get("cost", 0))
 		"draft_upgrade":
 			return "Upgraded to %s" % str(ev["id"])
+		"draft_skip":
+			return "Skipped - next draft adds a focus offer"
 		"shield":
 			return "Shield up (%d)" % ev["total"]
 		"thorns":
@@ -1159,15 +1685,19 @@ func _ev_text(ev: Dictionary) -> String:
 		"anchor":
 			return "Anchored - drags can't move you"
 		"undim":
-			return "Air clears a little - regen recovers"
+			return "Air clears - regen recovers"
 		"immune":
-			return "The boss shrugs off the status"
+			return "The boss shrugs it off"
 		"stunned":
 			return "Enemy stunned"
 		"staggered":
-			return "Staggered - it loses its wind-up"
+			return "Staggered - wind-up lost"
 		"rooted":
 			return "Enemy rooted in place"
+		"resisted":
+			return "Root cooldown - the snare slides off"
+		"ash":
+			return "The fire burns down to ash"
 		"floor":
 			return "— %s —" % str(ev.get("name", "next floor"))
 		"illegal":
@@ -1191,7 +1721,7 @@ func _intent_words(e: Dictionary) -> String:
 		"gum":
 			return "will gum an ability"
 		"fuse":
-			return "WELDING with a neighbour - kill or shove one to stop it"
+			return "WELDING - kill or shove one of the pair"
 		"summon":
 			return "summons in %d" % it["in"]
 		"ooze":
@@ -1310,6 +1840,33 @@ func _txt_c_fit(cx: float, ypos: float, s: String, color: Color, size: int, max_
 	_txt_c(cx, ypos, s, color, _fit_size(s, size, max_w))
 
 
+## Greedy word wrap into at most `lines` lines of `max_w`, shrinking the font
+## only when wrapping alone cannot do it. Returns {lines, size} so the caller
+## draws at the size that actually fitted. _txt_fit is the one-line version and
+## goes all the way down to 9px, which is what made a long card description
+## unreadable on a phone; tests/test_shell.gd _check_card_text holds every
+## shipped description to a size this can wrap without shrinking much.
+func _wrap(s: String, size: int, max_w: float, lines: int) -> Dictionary:
+	var words := s.split(" ", false)
+	while size > 9:
+		var out: Array = []
+		var cur := ""
+		for w in words:
+			var test: String = String(w) if cur == "" else cur + " " + String(w)
+			if font.get_string_size(test, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x <= max_w:
+				cur = test
+			else:
+				if cur != "":
+					out.append(cur)
+				cur = String(w)
+		if cur != "":
+			out.append(cur)
+		if out.size() <= lines:
+			return {"lines": out, "size": size}
+		size -= 1
+	return {"lines": [s], "size": size}
+
+
 ## Top inset so notches / punch-hole cameras don't cover the status strip.
 func _safe_top(vh: float) -> float:
 	var pad := vh * 0.012
@@ -1406,6 +1963,8 @@ func _draw() -> void:
 		_draw_draft(snap, vw, vh)
 	if mode == "shop":
 		_draw_shop(snap, vw, vh)
+	elif mode == "up_variant":
+		_draw_forge_variants(vw, vh)
 	elif mode == "log":
 		_draw_logsheet(vw, vh)
 	elif mode == "help":
@@ -1470,36 +2029,31 @@ func _draw_menu(vw: float, vh: float) -> void:
 	_txt_c(vw / 2.0 + 2, vh * 0.155 + 2, "T E N D E R", Color(0, 0, 0, 0.55), int(vh * 0.065))
 	_txt_c(vw / 2.0, vh * 0.155, "T E N D E R", COL_GOLD, int(vh * 0.065))
 	_txt_c(vw / 2.0, vh * 0.195, "a solarpunk roguelike", COL_CREAM, int(vh * 0.021))
+	if save_lost:
+		# review §6.0: a version bump used to eat the run without a word
+		_txt_c_fit(vw / 2.0, vh * 0.228, "your saved run was lost to an update",
+			COL_GOLD, int(vh * 0.019), vw * 0.9)
 
 	var bw := vw * 0.62
 	var bx := (vw - bw) / 2.0
-	var has_resume: bool = (game != null and not game.over and _game_is_run) \
-		or FileAccess.file_exists(RUN_SAVE_PATH)
-	var has_tier: bool = int(profile.unlocked_tier) > 0
-	sel_tier = clampi(sel_tier, 0, int(profile.unlocked_tier))
 	# build the row list first, then size the stack to the space above the footer
-	var rows: Array = []
-	if has_resume:
-		rows.append(["RESUME RUN", "resume", true])
-	rows.append(["PLAY", "play", true])
-	if has_tier:
-		var tn := "base run" if sel_tier == 0 else String(Content.TIERS[sel_tier - 1]["name"])
-		rows.append(["DIFFICULTY %d: %s" % [sel_tier, tn], "set:tier", false])
-	rows.append(["TUTORIAL", "tutorial", false])
-	rows.append(["SETTINGS", "settings", false])
-	rows.append(["QUIT", "quit", false])
+	_clamp_selection()
+	var rows: Array = _menu_rows()
 	var top := vh * 0.46
 	var bottom := vh * 0.935
-	var gap := vh * 0.02
+	var gap := vh * 0.016
 	var bh := minf(vh * 0.072, (bottom - top - gap * (rows.size() - 1)) / rows.size())
 	var y := top + (bottom - top - (bh * rows.size() + gap * (rows.size() - 1))) / 2.0
 	for row in rows:
-		_button(Rect2(bx, y, bw, bh), String(row[0]), String(row[1]), int(bh * 0.38),
-			COL_GOLD if bool(row[2]) else COL_DIM_TEXT)
+		if String(row[1]) == "":
+			_txt_c_fit(vw / 2.0, y + bh * 0.66, String(row[0]), COL_CREAM, int(bh * 0.30), bw)
+		else:
+			_button(Rect2(bx, y, bw, bh), String(row[0]), String(row[1]), int(bh * 0.38),
+				COL_GOLD if bool(row[2]) else COL_DIM_TEXT)
 		y += bh + gap
-	var career := "seed mode: %s" % seed_mode
+	var career := "%s seed" % seed_mode
 	if int(profile.runs) > 0:
-		career += "  ·  runs %d · wins %d · best floor %d" % [profile.runs, profile.wins, profile.best_floor]
+		career += "  ·  runs %d · wins %d · best %d" % [profile.runs, profile.wins, profile.best_floor]
 	_txt_c_fit(vw / 2.0, vh * 0.972, career, COL_DIM_TEXT, int(vh * 0.016), vw * 0.92)
 
 
@@ -1509,16 +2063,25 @@ func _draw_settings(vw: float, vh: float) -> void:
 	var bw := vw * 0.88
 	var bh := vh * 0.08
 	var names := {300: "short", 420: "normal", 650: "long"}
-	_button(Rect2(vw * 0.06, y, bw, bh), "Hold-to-inspect delay:  %s" % names.get(hold_ms, "normal"), "set:hold", int(bh * 0.3))
+	_button(Rect2(vw * 0.06, y, bw, bh), "Hold delay:  %s" % names.get(hold_ms, "normal"), "set:hold", int(bh * 0.3))
 	y += bh + vh * 0.025
-	_button(Rect2(vw * 0.06, y, bw, bh), "Run seed:  %s" % ("random every run" if seed_mode == "random" else "daily (same for everyone)"), "set:seed", int(bh * 0.28))
+	_button(Rect2(vw * 0.06, y, bw, bh), "Run seed:  %s" % ("random every run" if seed_mode == "random" else "daily (same for all)"), "set:seed", int(bh * 0.28))
 	y += bh + vh * 0.025
 	_button(Rect2(vw * 0.06, y, bw, bh), "Intro tips:  %s" % intro_mode, "set:intro", int(bh * 0.3))
 	y += bh + vh * 0.025
 	_button(Rect2(vw * 0.06, y, bw, bh), "Sound effects:  %s" % ("on" if sfx_on else "off"), "set:sfx", int(bh * 0.3))
 	y += bh + vh * 0.025
 	_button(Rect2(vw * 0.06, y, bw, bh), "Music:  %s" % ("on" if music_on else "off"), "set:music", int(bh * 0.3))
-	y += bh + vh * 0.05
+	y += bh + vh * 0.03
+	# the globalized path is absolute, so the whole line used to shrink to the
+	# 9px _fit_size floor whatever the label said - the tail is the useful half
+	var rp := ProjectSettings.globalize_path(runs_dir)
+	var rparts := rp.split("/", false)
+	if rparts.size() > 2:
+		rp = ".../%s/%s" % [rparts[rparts.size() - 2], rparts[rparts.size() - 1]]
+	_txt_fit(Vector2(vw * 0.06, y + vh * 0.02), "runs saved to %s" % rp,
+		COL_DIM_TEXT, int(vh * 0.018), bw)
+	y += vh * 0.05
 	_button(Rect2(vw * 0.06, y, bw, bh), "BACK", "close", int(bh * 0.34))
 
 
@@ -1570,6 +2133,119 @@ func _chip(x: float, ypos: float, icon: String, value: String, vw: float, vh: fl
 	return x + isz + vw * 0.008 + font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x + vw * 0.035
 
 
+## Block D5 resonance readout, one entry per Content.RESONANCES row in table
+## order: {id, name, desc, tag, need, count, active}. A resonance is free,
+## permanent and automatic, so the player has to be able to SEE the counts and
+## the thresholds - "fire 2 of 3" - or the whole element is invisible until it
+## silently starts working.
+##
+## `active` is read from snapshot()["resonances"], the sim's own derived
+## answer; only `count` is computed here, over the same two sources the sim
+## counts (the kit rows' tags and the held grafts' tags), so the shell never
+## re-implements the threshold rule - it only shows how far along the count is.
+## A variant row carries its base's tags verbatim, so the row is read straight
+## with the base row as the fallback.
+func _resonance_state(snap: Dictionary) -> Array:
+	var pl: Dictionary = snap["player"]
+	var counts := {}
+	for aid in pl["kit"]:
+		var row: Dictionary = Content.ABILITIES.get(String(aid),
+			Content.ABILITIES.get(Content.base_id(String(aid)), {}))
+		for tag in row.get("tags", []):
+			counts[tag] = int(counts.get(tag, 0)) + 1
+	for gid in pl.get("grafts", []):
+		for tag in Content.GRAFTS.get(String(gid), {}).get("tags", []):
+			counts[tag] = int(counts.get(tag, 0)) + 1
+	var active: Array = snap.get("resonances", [])
+	var out: Array = []
+	for rid in Content.RESONANCES:
+		var r: Dictionary = Content.RESONANCES[rid]
+		out.append({
+			"id": String(rid), "name": String(r["name"]), "desc": String(r["desc"]),
+			"tag": String(r["tag"]), "need": int(r["need"]),
+			"count": int(counts.get(String(r["tag"]), 0)), "active": active.has(String(rid)),
+		})
+	return out
+
+
+## The elements strip under the skies bar: every resonance the run has any
+## claim on. A lit row reads "FIRE 3/3 Cinder Grip"; a row one card short reads
+## "fire 2/3 Cinder Grip", which is the state the player has to be able to see
+## to aim a draft at it. Rows the run holds nothing for are dropped, so an
+## empty strip costs no space at all - and with fire the only element that
+## ships a row, that IS a state a run reaches: a kit holding neither fire card
+## draws no strip until it drafts one or buys a fire graft.
+func _resonance_line(snap: Dictionary) -> String:
+	var parts: Array = []
+	for r in _resonance_state(snap):
+		if int(r["count"]) <= 0:
+			continue
+		var tag := String(r["tag"])
+		parts.append("%s %d/%d %s" % [
+			tag.to_upper() if r["active"] else tag, r["count"], r["need"], r["name"]])
+	return " · ".join(parts)
+
+
+## The one-clause note a card earns from the resonance table: what taking it
+## (or, with `losing` set, dropping it) does to an element. "" when the card
+## touches no resonance tag - most cards, most of the time.
+##   +fire 3/3 - lights Cinder Grip     the card that crosses the threshold
+##   +fire 3/3 - would light Cinder Grip  the same, but the kit is full and
+##                                        the drop is not chosen yet
+##   +fire 2/3 Cinder Grip              progress toward one
+##   BREAKS Cinder Grip (fire 2/3)      a drop that puts a lit row out
+##
+## A draft on a FULL kit is a SWAP, so neither half of it can be read off one
+## card. `swap_tags` carries the tags of the OTHER card in the swap and the
+## arithmetic nets both sides - the same sum bots/optimizer.gd
+## _drop_breaks_resonance does. Without it the drop sheet badges BREAKS on a
+## same-element swap (drop one growth card, take another: the count never
+## moves). It is only ever known on the drop sheet, where the pick is already
+## made; on the offer sheet the drop is still unchosen, so a card that would
+## cross a threshold says "would light" and leaves the arithmetic to the
+## sheet that has both halves.
+func _resonance_note(snap: Dictionary, tags: Array, losing: bool,
+		swap_tags: Array = [], unresolved_swap: bool = false) -> String:
+	var parts: Array = []
+	for r in _resonance_state(snap):
+		var tag := String(r["tag"])
+		if not tags.has(tag):
+			continue
+		var need := int(r["need"])
+		var n: int = int(r["count"]) + (-1 if losing else 1)
+		if swap_tags.has(tag):
+			n += 1 if losing else -1
+		if losing:
+			if bool(r["active"]) and n < need:
+				parts.append("%s out (%s %d/%d)" % [r["name"], tag, n, need])
+		elif bool(r["active"]):
+			continue  # already lit; a fourth fire card buys nothing
+		elif n >= need:
+			parts.append("+%s %d/%d %s %s" % [
+				tag, n, need, "would light" if unresolved_swap else "lights", r["name"]])
+		else:
+			parts.append("+%s %d/%d %s" % [tag, n, need, r["name"]])
+	return "  ·  ".join(parts)
+
+
+## Tags of an ability id: its own row, the base row as the fallback (a Block D6
+## variant carries its base's tags verbatim, so the two agree).
+func _ability_tags(aid: String) -> Array:
+	return Content.ABILITIES.get(aid, Content.ABILITIES.get(Content.base_id(aid), {})).get("tags", [])
+
+
+## The run's config in one line, from the sim's own snapshot: which loadout is
+## being played, then the package and the mutator that shaped the run. Drawn
+## under the skies bar so what a run is set to is never a mystery mid-floor.
+func _config_line(snap: Dictionary) -> String:
+	var parts: Array = [_choice_name("loadout", String(snap.get("loadout", "tender")))]
+	for pkg in snap.get("packages", []):
+		parts.append(_choice_name("package", String(pkg)))
+	for m in snap.get("mutators", []):
+		parts.append(_choice_name("mutator", String(m)))
+	return " · ".join(parts)
+
+
 func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	var pl: Dictionary = snap["player"]
 	var pad := _safe_top(vh)
@@ -1596,6 +2272,8 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	var span := choke * 1.15
 	var frac: float = clampf(snap["smog"] / span, 0.0, 1.0)
 	_txt(Vector2(mx, y2 + mh + vh * 0.0155), "SKIES", COL_DIM_TEXT, int(vh * 0.0125))
+	_txt_fit(Vector2(mx + vw * 0.075, y2 + mh + vh * 0.0155), _config_line(snap),
+		COL_DIM_TEXT, int(vh * 0.0125), vw * 0.55)
 	draw_rect(Rect2(mx, y2, mw, mh), Color("6fae9c"))
 	draw_rect(Rect2(mx, y2, mw, mh * 0.45), Color("8cc7ae"))
 	draw_circle(Vector2(mx + mw * 0.93, y2 + mh * 0.42), mh * 0.30, Color("f2e4a0"))
@@ -1624,19 +2302,38 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	if snap["smog"] >= choke:
 		var pulse := 0.45 + 0.35 * sin(Time.get_ticks_msec() / 180.0)
 		draw_rect(Rect2(mx - 2, y2 - 2, mw + 4, mh + 4), Color(0.88, 0.29, 0.23, pulse), false, 2.0)
-	if _threat_tiles(snap).has(pl["pos"]):
-		_txt(Vector2(mx + mw + vw * 0.03, y2 + mh), "! INCOMING", COL_RED, int(vh * 0.021))
+	# the floor and green readouts are RIGHT-aligned, so they have to be measured
+	# before "! INCOMING" is drawn - it used to start at a fixed x with no width
+	# budget at all and ran straight through them (~280px of overlap at
+	# 1080x2400, on the one line that is telling you something is about to hit)
 	var fl := "floor %d/7" % snap["floor"]
 	var fsz := int(vh * 0.02)
 	var fw := font.get_string_size(fl, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x
 	_txt(Vector2(vw - fw - vw * 0.025, y2 + mh), fl, COL_GOLD, fsz)
+	var right_edge := vw - fw - vw * 0.045
 	if int(snap["green_need"]) > 0:
 		var gl := "green %d/%d" % [snap["greened"], snap["green_need"]]
 		var done: bool = int(snap["greened"]) >= int(snap["green_need"])
 		var gw := font.get_string_size(gl, HORIZONTAL_ALIGNMENT_LEFT, -1, int(vh * 0.016)).x
 		_txt(Vector2(vw - fw - gw - vw * 0.055, y2 + mh), gl,
 			Color(0.6, 0.85, 0.55) if not done else COL_DIM_TEXT, int(vh * 0.016))
+		right_edge = vw - fw - gw - vw * 0.075
+	if _threat_tiles(snap).has(pl["pos"]):
+		var ix := mx + mw + vw * 0.02
+		_txt_fit(Vector2(ix, y2 + mh), "! INCOMING", COL_RED, int(vh * 0.021),
+			maxf(right_edge - ix, vw * 0.06))
 	_status_end = pad + row_h * 1.35 + mh + vh * 0.022
+	# Block D5: the elements strip, drawn under the config line - a lit tag in
+	# caps, a tag still short of its threshold in lower case with its count.
+	# Nothing is drawn (and no space is taken) while the run holds no card of
+	# any resonating element.
+	var rline := _resonance_line(snap)
+	if rline != "":
+		_txt(Vector2(mx, y2 + mh + vh * 0.031), "ELEMENTS", COL_DIM_TEXT, int(vh * 0.0125))
+		_txt_fit(Vector2(mx + vw * 0.075, y2 + mh + vh * 0.031), rline,
+			COL_GOLD if not snap.get("resonances", []).is_empty() else COL_DIM_TEXT,
+			int(vh * 0.0125), vw * 0.85)
+		_status_end += vh * 0.0155
 
 
 func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
@@ -1682,7 +2379,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	var blight := {}
 	for bt in snap["terrain"].keys():
 		var bk := String(snap["terrain"][bt]["kind"])
-		if bk == "oil" or bk == "goo" or bk == "rich_goo":
+		if Content.is_corruption(bk):
 			blight[bt] = true
 			for d in DIRS4.values():
 				blight[bt + d] = true
@@ -1761,7 +2458,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 					draw_circle(ctr + Vector2(_ts * 0.26, -_ts * 0.18), _ts * 0.022, Color(0.95, 0.9, 0.55))
 			else:
 				_sprite(tk, t)
-			if tk == "oil" or tk == "goo" or tk == "rich_goo":
+			if Content.is_corruption(tk):
 				var shm := 0.04 + 0.04 * sin(Time.get_ticks_msec() / 600.0 + float(t.x * 5 + t.y * 3))
 				draw_circle(_tile_rect(t).get_center() + Vector2(-_ts * 0.15, -_ts * 0.1),
 					_ts * 0.10, Color(0.62, 0.55, 0.68, shm))
@@ -2014,7 +2711,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		_txt_c(vw / 2.0 + 2, scy + 2, nm, Color(0, 0, 0, 0.6 * sa), nsz)
 		_txt_c(vw / 2.0, scy, nm, Color(COL_GOLD, sa), nsz)
 		_txt_c(vw / 2.0, scy + vh * 0.028, "floor %d of 7" % snap["floor"], Color(COL_CREAM, sa * 0.85), int(vh * 0.018))
-		_txt_c(vw / 2.0, scy + vh * 0.052, "green %d tiles to wake the stairs" % snap["green_need"],
+		_txt_c(vw / 2.0, scy + vh * 0.052, "cleanse %d to wake the stairs" % snap["green_need"],
 			Color(0.6, 0.85, 0.55, sa * 0.9), int(vh * 0.016))
 
 	# event banners (stairs awaken, floor restored)
@@ -2045,9 +2742,7 @@ func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
 		var usable: bool = int(pl["charge"]) >= live_cost and not pl["gummed"].has(i)
 		var aiming: bool = (mode == "target_dir" or mode == "target_tile") and mode_slot == i
 		_box(r, _sb_gold if aiming else _sb)
-		var icon := "ab_" + aid.trim_suffix("+")
-		if not Art.ART.has(icon):
-			icon = "ab_default"
+		var icon := _ability_icon(aid)
 		var isz := int(b * 0.68)
 		var tx := Art.tex(icon, isz)
 		if tx != null:
@@ -2058,7 +2753,9 @@ func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
 			if verdant:
 				pipc = Color(0.55, 0.9, 0.45) if usable else Color(0.4, 0.55, 0.38)
 			draw_circle(r.position + Vector2(b * 0.12 + c * b * 0.14, b * 0.88), b * 0.05, pipc)
-		if aid.ends_with("+"):
+		# Content.is_upgrade, never ends_with("+"): "solar_lance+noon" is an
+		# upgrade and does not end in "+"
+		if Content.is_upgrade(aid):
 			_txt(Vector2(r.position.x + b * 0.8, r.position.y + b * 0.24), "+", COL_GOLD, int(b * 0.3))
 		if pl["gummed"].has(i):
 			_txt_c(r.get_center().x, r.get_center().y + b * 0.12, "GUM %d" % pl["gummed"][i], COL_RED, int(b * 0.22))
@@ -2071,14 +2768,22 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 	var msg := ""
 	var col := COL_DIM_TEXT
 	match mode:
+		# a touch build has no ESC key, so these name what a FINGER can tap:
+		# the SHRINE SHOP button is still drawn beside the D-pad through both
+		# selection steps (it is free, and it changes nothing), and the fork
+		# sheet carries its own BACK. Android's Back button walks the same
+		# steps (_back), one level per press.
 		"up_keep":
-			msg = "FORGE: tap the ability to upgrade to + (ESC cancels)"
+			msg = "Tap the ability to grow  ·  SHRINE SHOP backs out"
 			col = COL_GOLD
 		"up_scrap":
-			msg = "Now tap the ability to SCRAP for parts (ESC cancels)"
+			msg = "Tap the one to SCRAP  ·  SHRINE SHOP backs out"
+			col = COL_GOLD
+		"up_variant":
+			msg = "Which way does it grow?  ·  BACK to redo the scrap"
 			col = COL_GOLD
 		"cleanse":
-			msg = "CLEANSE: tap corruption beside you (or D-pad)"
+			msg = "Tap corruption beside you (or D-pad)"
 			col = COL_TARGET
 		"target_dir":
 			msg = flash
@@ -2093,12 +2798,12 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 			elif screen == "tutorial":
 				msg = ""
 			elif snap["floor"] == 7:
-				msg = "Objective: DESTROY THE BOSS  (tap here for the log)"
+				msg = "DESTROY THE BOSS  ·  tap for log"
 			elif int(snap["greened"]) < int(snap["green_need"]):
-				msg = "Objective: green the floor (%d/%d cleansed) - stairs dormant" % [snap["greened"], snap["green_need"]]
+				msg = "Stairs dormant - cleanse %d/%d to green the floor" % [snap["greened"], snap["green_need"]]
 				col = Color(0.6, 0.85, 0.55)
 			else:
-				msg = "Objective: reach the gold-ringed stairs  (tap for log)"
+				msg = "Reach the gold-ringed stairs  ·  tap for log"
 	_txt_fit(Vector2(vw * 0.025, y), msg, col, int(vh * 0.022), vw * 0.95)
 	_hot(Rect2(0, vh * Z_AB_END, vw, vh * (Z_CTX_END - Z_AB_END)), "log")
 
@@ -2123,6 +2828,9 @@ func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
 	for i in 2:
 		var ir := Rect2(dx + (b + gap) * 2 * i, dy + (b + gap) * 2, b, b)
 		if i < items.size():
+			# ITEM ids, not ability ids: Content.ITEMS keeps the plain "+"
+			# convention (the shrine press is not forked by Block D6), so
+			# trim_suffix / ends_with on "+" stay exactly right here.
 			_icon_button(ir, "it_" + String(items[i]).trim_suffix("+"), "item:%d" % i, false)
 			if String(items[i]).ends_with("+"):
 				_txt(Vector2(ir.position.x + ir.size.x * 0.74, ir.position.y + ir.size.y * 0.3), "+", COL_GOLD, int(ir.size.y * 0.3))
@@ -2149,15 +2857,24 @@ func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
 
 
 func _draw_tooltip(vw: float, vh: float) -> void:
+	# WRAP, don't shrink. Fitting each line to one _txt_fit line put the same
+	# ABILITY_DESC row a card shows at 34px into this box at 25px - and because
+	# the lines share one size, the widest one dragged the enemy's name and HP
+	# down with it. Two lines per tooltip line, at the size the box asked for.
 	var fsz := int(vh * 0.021)
+	var rows: Array = []
 	for line in tooltip:
-		fsz = _fit_size(line, fsz, vw * 0.9)
+		var w := _wrap(String(line), fsz, vw * 0.86, 2)
+		fsz = mini(fsz, int(w["size"]))
+	for i in tooltip.size():
+		for l in _wrap(String(tooltip[i]), fsz, vw * 0.86, 2)["lines"]:
+			rows.append([String(l), i])
 	var bw := 0.0
-	for line in tooltip:
-		bw = maxf(bw, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x)
+	for row in rows:
+		bw = maxf(bw, font.get_string_size(String(row[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x)
 	bw += vw * 0.04
 	var lh := fsz * 1.5
-	var bh := tooltip.size() * lh + vh * 0.018
+	var bh := rows.size() * lh + vh * 0.018
 	var anchor := Vector2(vw / 2.0, vh * 0.3)
 	if tooltip_tile != Vector2i(-1, -1):
 		var r := _tile_rect(tooltip_tile)
@@ -2169,9 +2886,21 @@ func _draw_tooltip(vw: float, vh: float) -> void:
 	draw_rect(Rect2(bx, by, bw, bh), Color(0.03, 0.05, 0.04, 0.97))
 	draw_rect(Rect2(bx, by, bw, bh), COL_GOLD, false, 1.5)
 	var y := by + lh * 0.85
-	for i in tooltip.size():
-		_txt(Vector2(bx + vw * 0.02, y), tooltip[i], COL_TEXT if i == 0 else COL_DIM_TEXT, fsz)
+	for row in rows:
+		_txt(Vector2(bx + vw * 0.02, y), String(row[0]),
+			COL_TEXT if int(row[1]) == 0 else COL_DIM_TEXT, fsz)
 		y += lh
+
+
+## Keep a sheet's trailing button inside the sheet's own panel. A button whose
+## y accumulates behind a variable number of cards walks off the bottom: the
+## drop sheet's BACK (five kit cards, which is the only shape that sheet has)
+## landed 32px below the frame and 52px from the screen edge at 1080x2400 -
+## inside Android's home-gesture strip, on the one control that leaves a sheet
+## the player is FORCED to resolve. The shrine's CLOSE never moved because it
+## is pinned at a constant vh*0.885; these are pinned to the same floor.
+func _sheet_button_y(y: float, h: float, vh: float) -> float:
+	return minf(y, vh * 0.955 - h)
 
 
 func _sheet(vw: float, vh: float, title: String) -> float:
@@ -2190,81 +2919,310 @@ func _sheet(vw: float, vh: float, title: String) -> float:
 	return vh * 0.16
 
 
+## Sprite key for an ability id. The art is per BASE ability, so the id is
+## folded with Content.base_id and NEVER with trim_suffix("+"): since Block D6
+## an upgrade id is "<base>+<variant>", which trim_suffix returns unchanged -
+## every variant would miss its icon and fall back to "ab_default".
+func _ability_icon(aid: String) -> String:
+	var icon := "ab_" + Content.base_id(aid)
+	return icon if Art.ART.has(icon) else "ab_default"
+
+
 func _ability_desc(aid: String) -> String:
-	return Content.ABILITY_DESC.get(aid.trim_suffix("+"), "")
+	# exact id first (every variant carries its own line), base as fallback -
+	# base_id, never trim_suffix("+"): Block D6 variant ids do not end in "+"
+	return Content.ABILITY_DESC.get(aid, Content.ABILITY_DESC.get(Content.base_id(aid), ""))
 
 
-## A choice card: icon, title with cost, and the effect explained inline -
-## the whole card is the tap target, so no extra info taps needed.
-func _card(r: Rect2, icon: String, title: String, desc: String, tag: String, vh: float) -> void:
+## A choice card: icon and name on the head row, the effect WRAPPED underneath
+## across the card's full width. The description used to be one _txt_fit line,
+## and _fit_size shrinks to 9px to make a long line fit - on a phone shop of
+## seven offers that is unreadable, which is the whole reason for the wrap.
+## The head row carries the numbers as glyphs rather than words: `pips` is a
+## charge cost drawn as the dots the ability bar already uses for it, and the
+## right edge carries EITHER `badge` (the draft's slot label) or `price` (the
+## shrine's bloom cost beside the bloom sprite), never both.
+func _card(r: Rect2, icon: String, name_: String, desc: String, tag: String, vh: float,
+		badge: String = "", pips: int = 0, price: int = -1, afford: bool = true,
+		up: bool = false) -> void:
 	_box(r, _sb_card)
-	var isz := int(r.size.y * 0.62)
-	var tx := Art.tex(icon, isz)
-	var text_x := r.position.x + r.size.y * 0.28
-	if tx != null:
-		draw_texture(tx, r.position + Vector2(r.size.y * 0.19, (r.size.y - isz) / 2.0))
-		text_x = r.position.x + r.size.y * 1.05
-	var max_w := r.position.x + r.size.x - text_x - vh * 0.01
-	_txt_fit(Vector2(text_x, r.position.y + r.size.y * 0.42), title, COL_TEXT, int(r.size.y * 0.27), max_w)
-	_txt_fit(Vector2(text_x, r.position.y + r.size.y * 0.76), desc, COL_DIM_TEXT, int(r.size.y * 0.2), max_w)
+	var L := _card_layout(r, icon, name_, desc, badge, pips, price, up)
+	var ic: Dictionary = L["icon"]
+	if ic["size"] > 0:
+		var tx := Art.tex(String(ic["id"]), int(ic["size"]))
+		if tx != null:
+			draw_texture(tx, ic["pos"])
+	var nm: Dictionary = L["name"]
+	_txt(nm["pos"], String(nm["text"]), COL_TEXT, int(nm["size"]))
+	var pp: Dictionary = L["pips"]
+	for c in int(pp["n"]):
+		draw_circle(Vector2(float(pp["pos"].x) + c * float(pp["step"]), float(pp["pos"].y)),
+			float(pp["radius"]), COL_GOLD)
+	if L.has("up"):
+		_txt(L["up"]["pos"], "+", COL_GOLD, int(L["up"]["size"]))
+	if L.has("badge"):
+		_txt(L["badge"]["pos"], String(L["badge"]["text"]), COL_GOLD, int(L["badge"]["size"]))
+	if L.has("price"):
+		var pr: Dictionary = L["price"]
+		var ptx := Art.tex("ic_bloom", int(pr["icon_size"]))
+		if ptx != null:
+			draw_texture(ptx, pr["icon_pos"], Color(1, 1, 1, 1.0 if afford else 0.45))
+		_txt(pr["pos"], String(pr["text"]), COL_GOLD if afford else COL_RED, int(pr["size"]))
+	var de: Dictionary = L["desc"]
+	var ly: float = float(de["pos"].y)
+	for line in de["lines"]:
+		_txt(Vector2(float(de["pos"].x), ly), String(line), COL_DIM_TEXT, int(de["size"]))
+		ly += float(de["line_h"])
 	_hot(r, tag)
+
+
+## Where every piece of a card lands, as data - the shell draws this dict and
+## nothing else, so tests/test_shell.gd can assert on the SIZE a description
+## ends up at (the owner's "text very small on screens") without a display, and
+## tests/render_sheet.gd can draw the same dict as an SVG screenshot. Two
+## renderers, one layout: sim/game.gd earns its ASCII view the same way.
+func _card_layout(r: Rect2, icon: String, name_: String, desc: String,
+		badge: String = "", pips: int = 0, price: int = -1, up: bool = false) -> Dictionary:
+	var h := r.size.y
+	var pad := h * 0.09
+	var isz := int(h * 0.40) if Art.ART.has(icon) else 0
+	var name_x := r.position.x + pad
+	if isz > 0:
+		name_x += isz + h * 0.14
+	var right := r.position.x + r.size.x - pad
+	var base_y := r.position.y + h * 0.35
+	var out := {
+		"icon": {"id": icon, "pos": r.position + Vector2(pad, h * 0.05), "size": isz},
+	}
+	if badge != "":
+		var bsz := _fit_size(badge, int(h * 0.22), r.size.x * 0.36)
+		right -= font.get_string_size(badge, HORIZONTAL_ALIGNMENT_LEFT, -1, bsz).x
+		out["badge"] = {"text": badge, "pos": Vector2(right, base_y), "size": bsz}
+		right -= h * 0.1
+	elif price >= 0:
+		# a price you cannot meet is drawn red, so a thin purse reads off the
+		# card instead of off a refusal after the tap
+		var psz := int(h * 0.26)
+		right -= psz
+		var ipos := Vector2(right, base_y - psz * 0.82)
+		right -= h * 0.04
+		var ps := str(price)
+		right -= font.get_string_size(ps, HORIZONTAL_ALIGNMENT_LEFT, -1, psz).x
+		out["price"] = {"text": ps, "pos": Vector2(right, base_y), "size": psz,
+			"icon_pos": ipos, "icon_size": psz}
+		right -= h * 0.1
+	# reserve what the head row draws AFTER the name - the gap, the pips and the
+	# upgrade "+" - before fitting the name into what is left. Reserving only
+	# "pips * h*0.15" (and flooring the allowance at h*0.6) let _fit_size grow a
+	# long name right up to the badge and then drew the "+" past it: 19 of the 39
+	# upgrade cards collided at 1080x2400 and 30 at 1080x2640, none at 16:9,
+	# because the tail is sized in h and h/vw grows with the aspect ratio
+	var plus_sz := int(h * 0.28)
+	var tail := 0.0
+	if pips > 0 or up:
+		tail = h * 0.13 + pips * h * 0.14
+		if up:
+			tail += h * 0.02 + font.get_string_size("+", HORIZONTAL_ALIGNMENT_LEFT, -1, plus_sz).x
+	var nsz := _fit_size(name_, int(h * 0.28), maxf(right - name_x - tail, h * 0.2))
+	out["name"] = {"text": name_, "pos": Vector2(name_x, base_y), "size": nsz}
+	# cost pips: the same dots, in the same gold, as the ability bar draws under
+	# every slot - the number is never spelled out twice
+	var px := name_x + font.get_string_size(name_, HORIZONTAL_ALIGNMENT_LEFT, -1, nsz).x + h * 0.13
+	out["pips"] = {"n": pips, "pos": Vector2(px, base_y - h * 0.09),
+		"step": h * 0.14, "radius": h * 0.045}
+	# the same gold "+" the ability bar puts on a grown slot, so the word
+	# "upgrade" never has to be spelled out on a card that is short of width
+	if up:
+		out["up"] = {"pos": Vector2(px + pips * h * 0.14 + h * 0.02, base_y), "size": plus_sz}
+	var wrapped := _wrap(desc, int(h * 0.19), r.size.x - pad * 2.0, 2)
+	var dlines: Array = wrapped["lines"]
+	var dsz: int = int(wrapped["size"])
+	var lh := float(dsz) * 1.2
+	out["desc"] = {
+		"lines": dlines, "size": dsz, "line_h": lh, "nominal": int(h * 0.19),
+		"pos": Vector2(r.position.x + pad,
+			r.position.y + h * 0.47 + (h * 0.47 - lh * dlines.size()) / 2.0 + float(dsz)),
+	}
+	return out
+
+
+## The shrine sheet as data: one [icon, name, desc, tag, price, pips] row per
+## offer, in sheet order. The price is a number the card draws beside the bloom
+## sprite, not words inside the name - a seven-offer shrine has no width to
+## spend on "  -  4 bloom" seven times. Split out of the drawing so the headless test can assert what
+## a shrine offers (and what it stops offering). Every row's tag resolves
+## through game.legal_actions() when tapped - the shell never hand-builds a
+## purchase the sim would reject.
+func _shop_cards(snap: Dictionary) -> Array:
+	var shop: Dictionary = snap["shop"]
+	var pl: Dictionary = snap["player"]
+	var cards: Array = []
+	if shop.get("heal", false):
+		cards.append(["ic_hp", "Heal", "+4 HP, up to your max",
+			"buy:heal", game.shop_cost("heal"), 0])
+	if shop.has("ability"):
+		var aid: String = shop["ability"]
+		var icon := _ability_icon(aid)
+		var adesc := _ability_desc(aid)
+		cards.append([icon, String(Content.ABILITIES[aid]["name"]), adesc, "buy:ability",
+			game.shop_cost("ability"), int(Content.ABILITIES[aid]["cost"])])
+	var offers: Array = shop.get("grafts", [])
+	# every graft is priced from its own Content.GRAFTS row, so the two offers
+	# rarely cost the same: the sim publishes the per-offer prices as
+	# shop.graft_prices and the card shows this graft's price, never a flat one
+	var gprices: Array = shop.get("graft_prices", [])
+	for i in offers.size():
+		var gid: String = offers[i]
+		var gcost: int = int(gprices[i]) if i < gprices.size() else game.shop_cost("graft", gid)
+		var gdesc: String = "Permanent  ·  %s" % Content.GRAFTS[gid]["desc"]
+		# a graft carries tags too, so a shrine purchase is the other way an
+		# element is crossed (Block D5) - undertow takes a hydraulics kit from
+		# displace 1 to displace 2 with no kit change at all
+		var gnote := _resonance_note(snap, Content.GRAFTS[gid].get("tags", []), false)
+		if gnote != "":
+			gdesc += "  ·  %s" % gnote
+		if offers.size() > 1:
+			gdesc += "  ·  take one only"
+		cards.append(["shrine", String(Content.GRAFTS[gid]["name"]), gdesc,
+			"buy:graft:%d" % i, gcost, 0])
+	if shop.has("item") and pl["items"].size() < Content.ITEM_CAP:
+		var iid: String = shop["item"]
+		cards.append(["it_" + iid, String(Content.ITEMS[iid]["name"]),
+			"One use  ·  %s" % Content.ITEMS[iid]["desc"], "buy:item", game.shop_cost("item"), 0])
+	# the two shrine services come straight out of legal_actions(): a boarded
+	# shrine, a forge already spent this floor or a thin purse yields nothing,
+	# and the card list follows without repeating a single sim rule
+	var pits: Array = pl["items"]
+	for a in _legal_of("upcycle"):
+		var k := int(a.get("keep", -1))
+		if k < 0 or k >= pits.size():
+			continue
+		var kid := String(pits[k])
+		var mat := String(pits[1 - k])
+		# kid + "+" is an ITEM id: the press is not forked, so Content.ITEMS
+		# keeps the plain "+" convention (Block D6 forked abilities only)
+		cards.append(["it_" + kid, "Press " + String(Content.ITEMS[kid]["name"]),
+			"Spend your %s to make %s" % [Content.ITEMS[mat]["name"], Content.ITEMS[kid + "+"]["name"]],
+			"upcycle:%d" % k, game.shop_cost("press"), 0])
+	if not _legal_of("upcycle_ability").is_empty():
+		cards.append(["ab_default", "Forge an ability",
+			"Grow one ability, scrap another. Once per floor",
+			"forge", game.shop_cost("forge"), 0])
+	# the repeatable sink: the card shows while a re-drawable slot is stocked
+	# (a bought-out counter can never be redrawn) and prices itself from the
+	# derived snapshot keys - the price climbs with every spin
+	# (a shrine that can never spin - the Spinning Shrine mutator off - shows
+	# no card: rerolls_left reads 0 with nothing spun)
+	var rleft := int(shop.get("rerolls_left", 0))
+	var rspun := int(shop.get("rerolls", 0))
+	if (shop.has("ability") or shop.has("grafts") or shop.has("item")) and (rleft > 0 or rspun > 0):
+		var rprice := int(shop.get("reroll_price", 0))
+		var rdesc := "Redraws the ability, graft and item offers  ·  %d spin%s left" % [
+			rleft, "" if rleft == 1 else "s"]
+		if rleft <= 0:
+			rdesc = "No spins left this floor"
+		elif snap["bloom"] < rprice:
+			rdesc = "Not enough bloom to spin"
+		cards.append(["ic_bloom", "Reroll", rdesc, "reroll", rprice, 0])
+	return cards
+
+
+## The draft sheet as data: one [icon, name, desc, tag, badge, pips, upgrade]
+## row per offer, in sheet order - the same split _shop_cards makes, so the
+## headless test and tests/render_sheet.gd read the sheet without drawing it.
+func _draft_cards(snap: Dictionary) -> Array:
+	var slots: Array = snap.get("draft_slots", [])
+	var cards: Array = []
+	for i in snap["draft_offers"].size():
+		var aid: String = snap["draft_offers"][i]
+		var adef: Dictionary = Content.ABILITIES[aid]
+		var role := String(slots[i]) if i < slots.size() else ""
+		# Block D5: what this card does to an element, straight off the resonance
+		# table - the card is where a threshold is crossed, so it is where the
+		# count has to be legible
+		var cdesc := _ability_desc(aid)
+		var note := _resonance_note(snap, _ability_tags(aid), false, [],
+			snap["player"]["kit"].size() >= Content.KIT_MAX)
+		if note != "":
+			cdesc = "%s  ·  %s" % [cdesc, note]
+		cards.append([_ability_icon(aid), String(adef["name"]), cdesc, "draft:%d" % i,
+			String(DRAFT_SLOT_LABEL.get(role, "")), int(adef["cost"]), Content.is_upgrade(aid)])
+	return cards
+
+
+## The same, for the drop sheet a full kit forces.
+func _drop_cards(snap: Dictionary) -> Array:
+	var cards: Array = []
+	var offers_d: Array = snap.get("draft_offers", [])
+	var taking: Array = _ability_tags(String(offers_d[mode_pick])) \
+		if mode_pick >= 0 and mode_pick < offers_d.size() else []
+	for i in snap["player"]["kit"].size():
+		var kid: String = snap["player"]["kit"][i]
+		# Block D5: dropping a card can put a lit element OUT, and that is the
+		# one consequence of a drop the kit list cannot otherwise show
+		var ddesc := _ability_desc(kid)
+		var dnote := _resonance_note(snap, _ability_tags(kid), true, taking)
+		if dnote != "":
+			ddesc = "%s  ·  %s" % [ddesc, dnote]
+		cards.append([_ability_icon(kid), String(Content.ABILITIES[kid]["name"]), ddesc,
+			"drop:%d" % i, "BREAKS" if dnote != "" else "",
+			int(Content.ABILITIES[kid]["cost"]), Content.is_upgrade(kid)])
+	return cards
 
 
 func _draw_shop(snap: Dictionary, vw: float, vh: float) -> void:
 	hotspots.clear()
 	var y := _sheet(vw, vh, "SHRINE SHOP")
-	_txt(Vector2(vw * 0.06, y), "your bloom: %d" % snap["bloom"], COL_GOLD, int(vh * 0.026)); y += vh * 0.055
+	_txt(Vector2(vw * 0.06, y), "bloom  %d" % snap["bloom"], COL_GOLD, int(vh * 0.026))
+	y += vh * 0.05
+	var cards := _shop_cards(snap)
+	var bot := vh * 0.86  # the CLOSE button lives below this
+	var gap := vh * 0.02
 	var ch := vh * 0.105
-	if snap["shop"].get("heal", false):
-		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "ic_hp",
-			"Heal  —  %d bloom" % game.shop_cost("heal"),
-			"Restore 4 HP (up to your maximum)", "buy:heal", vh)
-		y += ch + vh * 0.022
-	if snap["shop"].has("ability"):
-		var aid: String = snap["shop"]["ability"]
-		var icon := "ab_" + aid.trim_suffix("+")
-		if not Art.ART.has(icon):
-			icon = "ab_default"
-		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), icon,
-			"%s  —  %d bloom" % [Content.ABILITIES[aid]["name"], game.shop_cost("ability")],
-			_ability_desc(aid), "buy:ability", vh)
-		y += ch + vh * 0.022
-	if snap["shop"].has("graft"):
-		var gid: String = snap["shop"]["graft"]
-		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "shrine",
-			"%s  —  %d bloom" % [Content.GRAFTS[gid]["name"], game.shop_cost("graft")],
-			"Graft (permanent): %s" % Content.GRAFTS[gid]["desc"], "buy:graft", vh)
-		y += ch + vh * 0.022
-	if snap["shop"].has("item") and snap["player"]["items"].size() < Content.ITEM_CAP:
-		var iid: String = snap["shop"]["item"]
-		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "it_" + iid,
-			"%s  —  %d bloom" % [Content.ITEMS[iid]["name"], game.shop_cost("item")],
-			"Consumable: %s" % Content.ITEMS[iid]["desc"], "buy:item", vh)
-		y += ch + vh * 0.022
-	var pits: Array = snap["player"]["items"]
-	if pits.size() == 2 and int(snap["bloom"]) >= Content.UPCYCLE_ITEM_COST:
-		for k in 2:
-			var kid := String(pits[k])
-			if kid.ends_with("+"):
-				continue
-			var mat := String(pits[1 - k])
-			_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "it_" + kid,
-				"Upcycle %s  —  %d bloom" % [Content.ITEMS[kid]["name"], Content.UPCYCLE_ITEM_COST],
-				"Press %s into it: makes %s" % [Content.ITEMS[mat]["name"], Content.ITEMS[kid + "+"]["name"]],
-				"upcycle:%d" % k, vh)
-			y += ch + vh * 0.022
-	var can_forge := false
-	for kk in snap["player"]["kit"]:
-		var kks := String(kk)
-		if not kks.ends_with("+") and Content.ABILITIES.has(kks + "+"):
-			can_forge = true
-	if can_forge and snap["player"]["kit"].size() >= 2 and int(snap["bloom"]) >= Content.UPCYCLE_ABILITY_COST:
-		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), "ab_default",
-			"Upcycle an ability  —  %d bloom" % Content.UPCYCLE_ABILITY_COST,
-			"Forge one kit ability into its + form; scrap another for parts", "forge", vh)
-		y += ch + vh * 0.022
-	y += vh * 0.04
-	_button(Rect2(vw * 0.25, y, vw * 0.5, vh * 0.07), "CLOSE", "close", int(vh * 0.026))
+	if not cards.is_empty():
+		ch = minf(ch, maxf(vh * 0.06, (bot - y - gap * (cards.size() - 1)) / cards.size()))
+	for c in cards:
+		var cprice := int(c[4])
+		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), String(c[0]), String(c[1]), String(c[2]),
+			String(c[3]), vh, "", int(c[5]), cprice, int(snap["bloom"]) >= cprice)
+		y += ch + gap
+	if cards.is_empty():
+		_txt(Vector2(vw * 0.06, y + vh * 0.04), "Boarded up - nothing for sale.", COL_DIM_TEXT, int(vh * 0.024))
+	_button(Rect2(vw * 0.25, vh * 0.885, vw * 0.5, vh * 0.07), "CLOSE", "close", int(vh * 0.026))
+
+
+## The forge's fork sheet (Block D6). A base ability upgrades into one of two
+## named variants and the shrine sells both, so once keep and scrap are picked
+## the last question is which way it grows. The cards come straight off the
+## legal forge actions for that (keep, scrap) pair, so the sheet can only ever
+## offer a fork the sim would accept - and the sibling a floor's parity draft
+## cannot deal is always here.
+func _draw_forge_variants(vw: float, vh: float) -> void:
+	hotspots.clear()
+	var y := _sheet(vw, vh, "THE FORGE")
+	var kit: Array = game.player["kit"]
+	var acts := _forge_actions(mode_pick, mode_scrap)
+	var kid := String(kit[mode_pick]) if mode_pick >= 0 and mode_pick < kit.size() else ""
+	var sid := String(kit[mode_scrap]) if mode_scrap >= 0 and mode_scrap < kit.size() else ""
+	_txt_fit(Vector2(vw * 0.06, y), "Scrap %s, grow %s. Pick one:" % [
+		Content.ABILITIES.get(sid, {}).get("name", sid),
+		Content.ABILITIES.get(kid, {}).get("name", kid)],
+		COL_TEXT, int(vh * 0.024), vw * 0.88)
+	y += vh * 0.055
+	var variants: Array = Content.variants_of(Content.base_id(kid))
+	var bh := vh * 0.115
+	for a in acts:
+		var vi := int(a.get("variant", 0))
+		if vi < 0 or vi >= variants.size():
+			continue
+		var vid := String(variants[vi])
+		var adef: Dictionary = Content.ABILITIES[vid]
+		_card(Rect2(vw * 0.05, y, vw * 0.9, bh), _ability_icon(vid), String(adef["name"]),
+			_ability_desc(vid), "forgevar:%d" % vi, vh, "", int(adef["cost"]), -1, true, true)
+		y += bh + vh * 0.02
+	y += vh * 0.015
+	_button(Rect2(vw * 0.25, _sheet_button_y(y, bh * 0.6, vh), vw * 0.5, bh * 0.6),
+		"BACK", "forge_back", int(bh * 0.24))
 
 
 func _draw_logsheet(vw: float, vh: float) -> void:
@@ -2277,37 +3235,66 @@ func _draw_logsheet(vw: float, vh: float) -> void:
 		y += fsz * 1.45
 
 
+## The descent draft (Block D4). Each card carries the slot that rolled it -
+## AFFINITY (shares a tag with your kit and grafts), UPGRADE (the "+" form of
+## something you hold), WILD (anything in the pool) or FOCUS (the extra
+## affinity offer a previous skip bought). The roles are read straight off
+## snapshot().draft_slots, so the sheet can never label a card as something
+## the sim did not roll it as. Whether the roll SPENT a focus is a different
+## question - a focus slot with no candidate left yields no card - and that
+## comes off the draft_offer event (_draft_focus_spent), so a skip that
+## bought nothing says so instead of reading as an ordinary draft.
 func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 	hotspots.clear()
 	var y := _sheet(vw, vh, "DESCENT DRAFT")
-	_txt_fit(Vector2(vw * 0.06, y), "Choose one ability to take down with you:", COL_TEXT, int(vh * 0.024), vw * 0.88); y += vh * 0.055
+	var slots: Array = snap.get("draft_slots", [])
+	# a FOCUS card on the sheet vs a focus the roll spent: the second is the
+	# truth about the skip, and only the draft_offer event carries it
+	var focused: bool = slots.has("focus")
+	var spent: bool = focused or _draft_focus_spent
+	# the head names the labels the sheet actually carries: Upgrades Only deals
+	# nothing but UPGRADE cards, and pointing at AFFINITY there would be a lie
+	var head := "Take one down with you:"
+	if focused:
+		head = "Your skip bought the FOCUS offer:"
+	elif spent:
+		head = "Nothing left to focus on - no extra offer:"
+	elif slots.has("affinity"):
+		head = "Take one down with you. AFFINITY matches your build:"
+	_txt_fit(Vector2(vw * 0.06, y), head, COL_TEXT, int(vh * 0.024), vw * 0.88); y += vh * 0.038
+	# the run's elements, so the counts a card moves are on the same sheet as
+	# the cards (Block D5). Nothing is drawn - and the head keeps exactly its
+	# old spacing - when no element is started, and the drop sheet skips the
+	# strip because it is the taller of the two (five kit cards) and its cards
+	# carry the BREAKS badge anyway.
+	var rline := _resonance_line(snap)
+	if rline != "" and mode != "draft_drop":
+		_txt_fit(Vector2(vw * 0.06, y), "ELEMENTS  %s" % rline,
+			COL_GOLD if not snap.get("resonances", []).is_empty() else COL_DIM_TEXT,
+			int(vh * 0.019), vw * 0.88)
+		y += vh * 0.028
+	else:
+		y += vh * 0.017
 	var bh := vh * 0.105
 	if mode != "draft_drop":
-		for i in snap["draft_offers"].size():
-			var aid: String = snap["draft_offers"][i]
-			var adef: Dictionary = Content.ABILITIES[aid]
-			var icon := "ab_" + aid.trim_suffix("+")
-			if not Art.ART.has(icon):
-				icon = "ab_default"
-			var up := "  (upgrade)" if aid.ends_with("+") else ""
-			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), icon,
-				"%s  —  %d charge%s" % [adef["name"], adef["cost"], up],
-				_ability_desc(aid), "draft:%d" % i, vh)
+		for c in _draft_cards(snap):
+			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), String(c[0]), String(c[1]), String(c[2]),
+				String(c[3]), vh, String(c[4]), int(c[5]), -1, true, bool(c[6]))
 			y += bh + vh * 0.02
 		y += vh * 0.015
-		_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.65), "skip - take nothing", "skip_draft", int(bh * 0.24))
+		_button(Rect2(vw * 0.25, _sheet_button_y(y, bh * 0.65, vh), vw * 0.5, bh * 0.65),
+			"skip again - +1 affinity next draft" if spent
+				else "skip - +1 affinity offer next draft",
+			"skip_draft", int(bh * 0.24))
 	else:
-		_txt_fit(Vector2(vw * 0.06, y), "Kit is full - tap what to DROP for it:", COL_RED, int(vh * 0.024), vw * 0.88); y += vh * 0.05
-		for i in snap["player"]["kit"].size():
-			var kid: String = snap["player"]["kit"][i]
-			var kicon := "ab_" + kid.trim_suffix("+")
-			if not Art.ART.has(kicon):
-				kicon = "ab_default"
-			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), kicon,
-				Content.ABILITIES[kid]["name"], _ability_desc(kid), "drop:%d" % i, vh)
+		_txt_fit(Vector2(vw * 0.06, y), "Kit full - tap what to DROP:", COL_RED, int(vh * 0.024), vw * 0.88); y += vh * 0.05
+		for c in _drop_cards(snap):
+			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), String(c[0]), String(c[1]), String(c[2]),
+				String(c[3]), vh, String(c[4]), int(c[5]), -1, true, bool(c[6]))
 			y += bh + vh * 0.02
 		y += vh * 0.02
-		_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.65), "BACK", "draft_back", int(bh * 0.26))
+		_button(Rect2(vw * 0.25, _sheet_button_y(y, bh * 0.65, vh), vw * 0.5, bh * 0.65),
+			"BACK", "draft_back", int(bh * 0.26))
 
 
 func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
@@ -2343,6 +3330,15 @@ func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 	if run_tier > 0:
 		seedline += "  ·  difficulty %d" % run_tier
 	_txt_c(vw / 2.0, oy, seedline, COL_DIM_TEXT, int(vh * 0.02))
+	# Block D5: what the run's build ended up being, from the sim's own active
+	# set - the free permanents a player earns are worth naming at the end
+	var lit: Array = []
+	for r in _resonance_state(snap):
+		if bool(r["active"]):
+			lit.append(String(r["name"]))
+	if not lit.is_empty():
+		oy += vh * 0.032
+		_txt_c_fit(vw / 2.0, oy, "resonating: %s" % ", ".join(lit), COL_GOLD, int(vh * 0.021), vw * 0.92)
 	oy += vh * 0.05
 	for u in _run_unlocks.slice(0, 4):
 		var us := String(u)
@@ -2374,24 +3370,26 @@ func _draw_intro(vw: float, vh: float) -> void:
 		["The combine poisoned the world. You are a Tender.", COL_TEXT],
 		["Descend all 7 floors and shut down the Furnace.", COL_TEXT],
 		["", COL_TEXT],
-		["MOVE with the D-pad, or tap a tile next to you.", COL_TEXT],
+		["MOVE with the D-pad, or tap a tile beside you.", COL_TEXT],
 		["Move into an enemy to attack it.", COL_TEXT],
-		["RED tiles are incoming damage. Stay off them.", COL_TEXT],
+		["RED tiles are incoming damage. Stay off.", COL_TEXT],
 		["The GOLD-RINGED stairs are the way down.", COL_TEXT],
 		["", COL_TEXT],
-		["Move fast: smog rises every turn, and deep smog kills.", COL_GOLD],
+		["Smog rises every turn. Deep smog kills - move fast.", COL_GOLD],
 		["", COL_TEXT],
-		["CLEANSE oil and goo: earn bloom AND thin the smog.", COL_TEXT],
-		["Spend bloom at shrines - graft prices rise as you stack them.", COL_TEXT],
-		["Cleanse a WHOLE room and it blooms: bonus + a supply pod.", COL_TEXT],
-		["The stairs are DORMANT until you green the floor's quota.", COL_GOLD],
-		["Cast FROM growth: it fuels the ability (-1 charge, tile spent).", COL_TEXT],
-		["SPIKED enemies (golems, elites) hurt to punch - use abilities.", COL_TEXT],
-		["Shrines UPCYCLE: press 2 items into one, forge abilities to +.", COL_TEXT],
-		["Swarming drill bots WELD into hulks - break the pair up first.", COL_RED],
-		["Green growth heals you while you stand on it.", COL_TEXT],
-		["", COL_TEXT],
-		["HOLD your finger on anything to see what it is.", COL_GOLD],
+		["CLEANSE oil and goo: bloom AND thinner smog.", COL_TEXT],
+		["Shrines offer TWO grafts at their own prices - take one only.", COL_TEXT],
+		["Cleanse a WHOLE room: bonus bloom and a supply pod.", COL_TEXT],
+		["The stairs stay DORMANT until you green the floor.", COL_GOLD],
+		["Cast FROM growth: it surges the ability, and the tile is spent.", COL_TEXT],
+		["Punching SPIKED enemies costs you 1 HP. Use abilities.", COL_TEXT],
+		["Shrines UPCYCLE: press 2 items into 1, forge an ability into a variant.", COL_TEXT],
+		["Drill bots in pairs WELD into hulks - split them up.", COL_RED],
+		["Growth heals you while you stand on it.", COL_TEXT],
+		# the intro is exactly as long as the screen: this line took the blank
+		# that used to sit above the HOLD line rather than adding a 22nd row
+		["ELEMENTS: enough cards of one and it RESONATES all run.", COL_GOLD],
+		["HOLD anything to see what it is.", COL_GOLD],
 	]:
 		if pair[0] != "":
 			_txt_fit(Vector2(x, y), pair[0], pair[1], int(vh * 0.0235), vw * 0.88)

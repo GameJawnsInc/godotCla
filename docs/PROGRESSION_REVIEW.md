@@ -1,0 +1,2738 @@
+# Progression review: build depth and combo potential
+
+An adversarial review of TENDER's progression systems (draft, kit, shrine,
+grafts, items, upcycling, bloom economy, green gate, meta career) and of the
+batch AI runners that are supposed to measure them. The question asked was:
+*why does the game not yet have build depth or combo potential, and what would
+give it both?*
+
+**Status (2026-09-05).** Block A harness and bot work has landed (no sim
+behaviour change, no `RUN_SAVE_VERSION` bump); the v2 re-baseline is the
+"instrument v2 re-baseline" entry in `docs/BALANCE.md`. Landed: `bots/roster.gd`
+as the single bot registry (plus the `deeproot_rollout` persona), `tests/tally.gd`
+and the shared `Sweep.run_loop` with Wilson CIs and the paired sign test (7.1);
+the deeproot round-robin candidates, pickable unlisted offers, table-driven
+fanatic with `set_build`, the `sap_snare` dodge fix, and the sprout repair (7.2);
+the locked-kit `sweep_combos` lift rewrite with `SWEEP_MODE=drift`, sharding,
+and the permanent reference kits in `sweep_tiers` (7.3); `tests/draft_oracle.gd`
+and rollout drafting (7.4); the regression corpus, `tests/test_regressions.gd`,
+playtest bands as CI gates, the `test_meta` structural asserts, and `floor_def`
+coverage in `test_invariants` (7.6); `measure_bosses` per-kit rows with
+`BOSS_KIT` (7.7); and from 6.1 only the sim-ignored data: ability `tags`/`role`,
+`Content.ARCHETYPES`, `Content.base_id`, `archetypes_for`, and the read-only
+`snapshot()` fields `pool`/`packages`/`loadout`. NOT done: `Content.LOADOUTS`,
+one package per run via `profile.game_config`, the mutator picker and
+`Profile.daily_config` (6.1); `deeproot_plan` (7.5); the Block B sim patch
+(6.2) and everything after it.
+
+**Status (2026-09-05b).** Block B (6.2) has landed as one batched sim patch;
+the re-baseline is the "bump 2" entry in `docs/BALANCE.md`. Shipped:
+`Game.SIM_VERSION := 2` as the single replay-version source (the shell, the
+regression library and the autopsy runner reference it); side-rng shop stock
+with a shrineless floor stocking nothing and mapgen as the only
+config-dependent main-rng consumer at floor entry (1); `by` on fire tiles with
+`fire:<by>` / `collision:<aid>` enemy-side sources and player-side sources
+left alone (2); `_reclamp_quota()` at the end of every playing `step()` with
+`quota_reclamp` / `stairs_awaken` events and bloom-0 enemy oil that still
+counts toward `greened` (3); the `grafts` and `bloom` config keys (4); and the
+choice sinks - two graft offers with one discarded, and press/forge priced
+through `Content.SHOP_COSTS` with the forge capped at one use per floor (5).
+Shipped and then withdrawn inside the same bump: the third choice sink, a
+drop slot on a full-kit ability purchase that could never take a mobility
+ability. It fixed defect 8 (a dead shop slot at a full kit) but measured as
+straight power for greed, so the owner removed it and accepted defect 8 as-is
+- with a full kit the shrine's ability card is simply not for sale, exactly as
+before the bump (see the "bump 2 revision" entry in `docs/BALANCE.md`).
+Alongside it: the two-graft shrine sheet and the run-lost notice in the
+shell, `tests/test_economy.gd`, `tests/sweep_grafts.gd`, `tests/import_run.gd`,
+a regenerated 27-record regression corpus, and attribution counters in
+`tests/tally.gd`. NOT done and still open: `deeproot_plan` (7.5); the
+re-judgement of tiers 6-8 on a grafted ceiling that 6.2 makes a precondition
+for economy content; protecting mobility abilities on *draft* drops (only the
+forge path is protected, the purchase path no longer existing); defect 8 (a
+full kit has nothing to buy at the ability card), which the owner has now
+accepted rather than fixed; and defects 4 (fuse bounty) and 6
+(draft-drop gummed transfer), together with the 6.5 deferrals - reroll, per-HP
+heal, and the prune-versus-forge split. Two measurement gaps the bump left
+behind: `quota_reclamp` fired 0 times in 550 bot runs, so the strandable-gate
+fix is verified only synthetically, and no bot ever used the press or the
+forge. One target moved and was then moved back: magpie broke the 0-5% greed
+canary at 20/100 [13, 29] as shipped, the A/B attributed it to the full-kit
+ability purchase (10/100 with that path removed, 6/100 pre-bump, 17/100 at
+double price), and removing the path lands the canary at **10/100 = 10%
+[6, 17]** - the A/B's prediction to the win, the interval and the buy count,
+and statistically indistinguishable from the pre-bump 6/100 [3, 12]. The band
+is still not met (the interval clears 5%), but that is the older drift, not
+the bump: pre-bump measured 6/100 [3, 12], whose point estimate was already
+over target. The 5% gate line at 30 seeds returned the same FAIL for the
+shipped bump and for the revision that undid it, so it was reporting seed
+noise around a true rate near 10%; the gate's trip line was re-derived to a
+10% CI lower bound with 0-5% kept as the design target and 10/100 [6, 17]
+recorded as the rise baseline (BALANCE.md 2026-09-05d). The graft sweep's first
+out-of-sample number is also in: solar_core 25/30 vs 10/30 (16:1, p=0.00),
+the other five grafts within noise.
+
+**Status (2026-09-05c).** Block C1a (6.3, the first of C1's two commits) has
+landed: the effect grammar and the data tables, with **zero behaviour change**
+and `Game.SIM_VERSION` still 2. Shipped in `sim/game.gd`: the cast context
+`{aid, adef, target, origin, casts_before, moved}` with the per-turn counters
+`casts_this_turn` / `moved_this_turn` (Game vars copied by `clone()` and
+deliberately *not* in `snapshot()`, so `state_hash()` does not move; a later
+block exposes them with a version bump); `_apply_effect` returning an outcome
+(`hit`, `ignited`, `pushed`, `collided`, `converted`, `planted`, `washed`,
+`affected`, `crossed`, plus `tiles` for `who: on_planted`), with `_push_enemy`,
+`_wash_dir` and the pull threading displacement and crossed terrain back; and
+the four rider keys `if` / `per` / `bonus` / `then` evaluated by `_rider_if`,
+`_rider_per` and `_bonus_dmg` and nowhere else, emitting
+`{t: "rider", id, kind, amt}` whenever a rider actually changes something. In
+`sim/content.gd`: `TERRAIN` (8 kinds), `REACTIONS` (fire-spreads and
+fire-burns-out enabled; damp, roots-burn and smoke-smother present as disabled
+rows), `STATUSES` (stun / root / spore), `SURGE_DEFAULT`, and the helpers
+`Content.terrain()` / `Content.is_corruption()`, which replace every terrain,
+status and reaction literal the sim used to hardcode - the environment phase's
+spread and decay now runs through one `_terrain_react()`. No content row carries
+a rider yet, so no rider event fires today. Harness side: `tests/test_grammar.gd`
+(137 checks) exercises the grammar on hand-built effects, `tests/test_content.gd`
+gained the section-8 lint over the closed op/rider vocabulary and the tables
+(with a self-test of 19 deliberately bad rows and the C2 rider rows), and
+`tests/tally.gd` counts rider events by kind and by ability id and folds them
+into the combo rate. Proof of no behaviour change: `test_regressions` passes
+plain and with `REGRESS_STRICT=1` over all 27 stored state hashes with no
+`REGEN` and no re-recording, `test_determinism` passes, and a per-step
+event-stream + `state_hash` parity probe (optimizer / magpie / sprout / fanatic
+at 30 seeds, deeproot at 5) is byte-identical to the pre-C1a tree. One
+deviation from the spec: `fire_spreads` inherits only `by`, not the oil tile's
+bloom flag - carrying the flag moved two strict hashes, so it waits for C1b's
+version bump. What this enables: C1b (ash, root blocking `advance` / `drag`,
+spore add-stack, item stun through `_apply_status`) is now a matter of flipping
+table rows, and C2's riders on the `+` forms are data rows against a vocabulary
+the lint already enforces and the Tally already measures.
+
+**Status (2026-09-06).** Block C1b (6.3, the second of C1's two commits) has
+landed and **`Game.SIM_VERSION` is 3** - the first deliberate behaviour change
+since bump 2, and all of it made by editing C1a's tables rather than the code
+that reads them. Shipped in `sim/content.gd`: a `TERRAIN` row `ash`
+(corruption true, `shields_core` false, washable, `convertible` true, bloom 1,
+never generated by mapgen) with `TERRAIN.fire.burns_to` and
+`REACTIONS.fire_burns_out.result` pointing at it, so a fire that burns out
+leaves cleansable corruption instead of bare floor; a new `convertible` key
+that turns the `convert_radius` literal into a table read (oil, goo, ash true;
+`rich_goo` false); `STATUSES.root` blocking `move`, `advance` *and* `drag`
+with a stagger-style `cooldown: 2` whose refusals emit
+`{t: "resisted", id, status}`; and `STATUSES.spore` stacking by addition to a
+cap of 6 - the first row to use C1a's add-with-cap path. In `sim/game.gd`:
+`spore_vial`/`spore_vial+` routed through `_apply_status`, so the hardcoded
+boss exclusion is now the table's massive immunity and the immune event fires
+for bosses in range; a `_tile_dict()` helper that pays off C1a's one deviation
+by carrying the source oil tile's bloom flag through `fire_spreads` and
+`_ignite`, so enemy oil burns to bloom-0 fire and bloom-0 ash; and `kind` on
+the `cleanse` event. Consumers in the same block: `optimizer._dodge` reads
+`Content.STATUSES.root.blocks` instead of the literal `"move"`; ash has an SVG
+sprite, a shell legend row and the ASCII glyph `,`; `tests/render_frame.gd`
+can stamp ash (`FRAME_ASH`); `tests/test_shell.gd` now asserts every
+`Content.TERRAIN` kind has a sprite, a glyph and a legend row;
+`tests/test_invariants.gd` checks which kinds mapgen actually emits; and
+`tests/tally.gd` counts ash, cleanses by kind, `resisted`, and statuses by
+name. The re-baseline is the "bump 3 (C1b)" entry in `docs/BALANCE.md`: suite
+green including the playtest gate ("gate: all PASS"), no persona outside the
+other run's Wilson interval at 30 seeds (deeproot 23/30 [59, 88], optimizer
+11/30 [22, 54], magpie 5/30 [7, 34], deeproot_rollout 29/30 [83, 99]), the
+100-seed magpie canary at 13/100 [8, 21] against a recorded rise baseline of
+10/100 [6, 17] (not a signal by the 2026-09-05d rule), every fanatic build
+still above zero (48/240 total), and the corpus regenerated 27 -> 32 records
+(25 re-stamped with zero outcome diffs, 2 re-recorded after their action logs
+desynced, 5 new hand-scripted records for ash, root, spore, the vial and the
+wash path). Ash is a live mechanic in play - 1,695 burnouts over 210 runs,
+cleansed by every persona - while root's cooldown and spore's stacking are
+close to unmeasured: 0 `resisted` events in 210 playtest runs, 0 spore
+statuses anywhere, and 0 rooted/resisted/spore events across the whole
+bot-derived corpus.
+
+One spec premise was refuted rather than implemented in C1b itself, and was
+recorded as such: 6.3 says ash makes burnt oil stop shrinking the green quota,
+but as C1b shipped `_reclamp_quota` fired at *ignition* (fire was not
+corruption in `Content.TERRAIN`) and the clamp only ever lowers `green_need`,
+so lighting a slick still opened a dormant stairs exactly as it did in bump 2.
+The 2026-09-06b revision (`docs/BALANCE.md`) closes it at the same
+`SIM_VERSION` 3: `Content.counts_as_corruption` counts a fire as the ash it
+will leave at the two counting sites (`_count_corruption`,
+`_room_has_corruption`) while every other rule keeps `is_corruption`, so
+ignition and burnout emit no `quota_reclamp`, the room bloom and
+`floor_restored` wait for the ash, and no persona's win count moved at 30
+seeds (the magpie canary is unchanged at 13/100 [8, 21]). Also still open
+from earlier blocks: `quota_reclamp` has now never fired in a bot run across
+three bumps (0 over this bump's 210 playtest, 240 graft-sweep and 100 canary
+runs, and 0 again over the revision's 210 playtest and 100 canary runs), and
+press/forge upcycles are still 0/0 for every persona. NOT done, in 6.3 order:
+**C2** (riders on the `+` forms, then the two base `grow_spike` /
+`sun_flare` rows) - the vocabulary, the lint and the Tally counters all exist
+and `riders: 0.00/run` for every persona because no content row carries one
+yet, so C2 is now pure data work; **C3** (the `_hook` dispatcher, grafts as `stat | mod | hooks`
+data, and the four rule grafts), which this bump's graft sweep argues for
+harder than bump 2 did - `solar_core` now clears p < 0.05 in sample (20/30
+[49, 81] vs 11/30 [22, 54], 10:1, p=0.01) on top of its out-of-sample
+25/30 vs 10/30 (16:1, p=0.00), so the table is one lever and five fillers;
+the nine package `+` rows; the profile that sees builds; and everything in
+6.1 and 7.5 that bump 2 left open (`Content.LOADOUTS`, one package per run,
+the mutator picker, `Profile.daily_config`, `deeproot_plan`), plus the tier
+6-8 re-judgement on a grafted ceiling.
+
+**Status (2026-09-06c).** Block C2 (6.3) has landed and **`Game.SIM_VERSION` is
+4**. It is pure data: seven `sim/content.gd` rows gained a rider against C1a's
+existing grammar, no `sim/game.gd` rule changed (only the version constant and
+its comment), and `tests/test_content.gd`'s lint accepted every row unedited
+("8 rider rows -> 0 failures"). The rows as shipped: `grow_spike`
+`{dmg: 3, per: {growth_adjacent_target, cap: 1, add: {dmg: 1}}}` and
+`grow_spike+` the same with `cap: 2` at range 4 - a deliberate deviation from
+the 6.3 text, which gave the base row cap 2 as well, so that the upgrade stays
+an upgrade; `sun_flare` `{dmg: 1, ignite, bonus: {dmg: 1, if: target_on fire}}`
+and `sun_flare+` the same at `dmg: 2`; `water_jet+` `then: root 1 if
+[{outcome: collided}, {outcome: pushed}]` (the conjunct is the spec's
+`moved >= 1` guard, expressed in the grammar rather than as a new key);
+`vine_whip+` `then: stun 1 if outcome_crossed fire`; `seed_bomb+` `then: root 1
+who on_planted`. Costs, tags, roles and target shapes are untouched; the one
+number that moved is `grow_spike+`, which was a flat `dmg: 4` and now deals 3
+with no adjacent growth and 5 with two. Bots landed with it
+(`optimizer._est_dmg` reading Content instead of hardcoded guesses, plus a
+seed-on-head branch; fanatic's gardener leads with it), and the corpus went
+32 -> 39 records, all `sim_version: 4`, with one outcome flip
+(`det_optimizer_s42` now wins).
+
+The re-baseline is the "2026-09-06c - bump 4 (C2)" entry in `docs/BALANCE.md`:
+suite green including the playtest gate ("gate: all PASS", "regressions: 39 ok,
+0 failed" plain and `REGRESS_STRICT=1`), no persona outside the other run's
+Wilson interval at 30 seeds (optimizer 13/30 [27, 61], deeproot 22/30 [56, 86],
+magpie 5/30 [7, 34], deeproot_rollout 28/30 [79, 98]), every fanatic build
+still above zero (41/150) with the turtle canary identical cell for cell
+(1/30 [1, 17]), and wanderer clean at 100 seeds (0/100 [0, 4], zero script
+errors, zero illegal actions). **Three of the seven rows discharge the 6.0
+shipping gate and four do not.** SHIP: `grow_spike` (locked lift +7, 10/30
+[19, 51] -> 17/30 [39, 73], signature share 0.36 -> 0.83, damage taken 19.1 ->
+13.7), `grow_spike+` (23.87 riders/run in its forced kit) and `seed_bomb+`
+(5.30 riders/run in the seed-on-head kit; the first content to make `resisted`
+non-zero in bot play). HOLD on gate (ii), the once-per-run line: `sun_flare`
+0.03 riders/run and `sun_flare+` 0.63 in the forced kit - the rows fire, but
+the review's own telemetry put "enemy on fire" under 1% of sightings. HOLD on
+(ii) and (iv): `water_jet+` fired 9 rider events over 680 runs, all of them for
+deeproot or deeproot_rollout, and `vine_whip+` fired **zero**; both rows'
+30-seed locked blocks are byte-identical to the pre-C2 tree, so they cost
+nothing and bought nothing. They are correct - `tests/test_grammar.gd` casts
+both through `Game.step` and `c2_water_jet_pin.json` / `c2_vine_whip_embers.json`
+replay them - they simply have no opportunity rate in play, which is the
+question 6.0 (ii) exists to ask. No row was patched or removed to make a gate
+pass; the four HOLDs are the owner's call. Gate (v) is clean except one thing:
+magpie gained a timeout (0 -> 1 at both 30 and 100 seeds) and its 100-seed
+canary rose 13/100 [8, 21] -> 19/100 [13, 28] in a same-seed A/B against the
+pristine pre-C2 tree - not a signal by the 2026-09-05d rule (the lower bound
+13% does not clear 17%), but the highest of the four 100-seed readings taken
+under instrument v2 (10, 13, 13, 19 per 100) and the first whose whole interval
+sits above 10%. Still open from
+earlier blocks and unchanged here: `quota_reclamp` has never fired in a bot run
+(0 again over the 680 runs in this bump that print the counter) and
+press/forge upcycles are 0/0
+for every persona. NOT done, in 6.3 order: **C3** (the `_hook` dispatcher,
+grafts as `stat | mod | hooks` data, the four rule grafts), the nine package
+`+` rows, the profile that sees builds, and everything in 6.1 and 7.5.
+
+**Status (2026-09-06d).** Block C3 (6.3) has landed and **`Game.SIM_VERSION` is
+5**. Three pieces shipped together: `Game._hook(kind, ctx)` (`sim/game.gd:2037`)
+called immediately after the existing `_emit` at all seven kinds this section
+names (`Content.HOOK_KINDS` = ignite, staggered, cleanse, growth_planted, kill,
+shield_break, collision), sources scanned in fixed order (kit slots, then
+`player.grafts`), `Content.HOOK_DEPTH_MAX` 3 and `HOOK_STEP_CAP` 12 with
+`{t: "hook_capped"}` once per step, and the positional ops `damage_at`,
+`status_at`, `terrain_at`; `GRAFTS` rewritten as `{name, desc, tags}` plus
+exactly one of `stat | mod | hooks`, with `_graft_stat` / `_graft_mod`
+replacing all six `_has_graft` sites (`_has_graft` is gone from the tree); and
+the four rule grafts as specified - `ember_sap` (ignite, 1 damage, cap 3),
+`undertow` (staggered -> root 1), `compost` (kill -> growth), `oil_tithe`
+(first oil-aimed cast each turn costs 1 less, floored at 1, `{t: "tithe"}`).
+The six legacy grafts are numerically untouched: a parity probe against the
+pristine pre-C3 tree (optimizer, 10 seeds, each graft pre-installed) reports
+identical per-step event-stream hashes, `state_hash` and `rng.state` on all 60
+rows. `tests/test_content.gd` gained the graft lint the section asked for
+("23 bad rows -> 23 failures; 5 good rows -> 0 failures"), including the ban on
+hook rows that grant shield, thorns, heal or cleanse credit. Optimizer, magpie
+and fanatic now pick the stocked graft whose tags overlap the kit most, read
+from `Content` so a new row ranks itself; deeproot is unchanged and buys no
+grafts. The corpus went 39 -> 45 records, all `sim_version: 5`, with six new
+`c3_*` records - one per rule graft plus the per-turn cap and a three-stat-graft
+case.
+
+The re-baseline is the "2026-09-06d - bump 5 (C3)" entry in `docs/BALANCE.md`,
+and it is a **full** re-baseline: the shrine draws its two graft offers from
+`Content.GRAFTS` through the side rng, so ten rows instead of six re-roll every
+shop on every seed even for a bot that buys nothing. Suite green including the
+playtest gate ("gate: all PASS", "regressions: 45 ok, 0 failed" plain and
+`REGRESS_STRICT=1`), no persona outside the other run's Wilson interval at 30
+seeds (optimizer 14/30 [30, 64], deeproot 22/30 [56, 86], magpie 5/30 [7, 34],
+fanatic 7/30 [12, 41], deeproot_rollout 27/30 [74, 97]), **zero timeouts for
+every persona** - which closes 06c's one unmet gate-(v) item, magpie's timeout,
+at both 30 and 100 seeds - every fanatic build above zero (53/240 over all
+eight builds) with the turtle canary at 2/30 [2, 21] against 06c's 1/30
+[1, 17], magpie's canary at 17/100 [11, 26] (the first reading in the v2 series
+that did not rise; the trip line is still a lower bound clearing 17%), and
+wanderer clean at 100 seeds (0/100 [0, 4], zero script errors, zero illegal
+actions). **Three of the four rule grafts discharge the 6.0 shipping gate and
+one does not.** SHIP: `compost` (23-32 hooks per run wherever it is held;
+deeproot +5, 22/30 [56, 86] -> 27/30 [74, 97] at p = 0.12 with damage taken
+11.0 -> 4.8), `ember_sap` (4.93 / 4.30 / 11.13 hooks per run for optimizer
+tier 0, optimizer tier 6 and deeproot; the first content in the project that
+damages the player) and `oil_tithe` (2.10 / 2.27 / 4.40 tithes per run).
+**HOLD on gate (ii)**: `undertow` fires 8 hooks over 30 optimizer runs at
+tier 0 and **1** over 30 at tier 6, against 128 over 30 deeproot runs - the
+optimizer staggers 0.37 times a run and deeproot 4.27, so this is C2's
+`water_jet+` shape again, a shove rider only the search personas reach. No rule
+graft's win delta is distinguishable from zero at 30 seeds in either tier for
+either bot (worst sign-test p = 0.50), so nothing here is a measured warp, and
+nothing was patched to make a gate pass. What C3 did **not** fix, and its own
+numbers make louder: `solar_core` is now four-for-four on the Method rule and
+its tier-6 row (5/30 [7, 34] -> 22/30 [56, 86], +17, p = 0.00) is the largest
+graft effect ever recorded here, while owning all ten grafts is worth exactly
+the same 26/30 as owning `solar_core` alone at tier 0. Still open from earlier
+blocks and unchanged here: `quota_reclamp` has never fired in a bot run (0
+again over this bump's 1,310 runs that print the counter) and press/forge
+upcycles are 0/0 for every persona. NOT done, in 6.3 order: **the nine package
+`+` rows**, the **profile that sees builds**, **`deeproot_plan`** (7.5), the
+**tier 6-8 re-judgement** review 6.2 defers to a grafted ceiling - which now
+has its grafted ceiling, since the tier-6 graft table above is the first
+measurement of one - and everything in 6.1.
+
+**Status (2026-09-06e).** Block C4 (6.3, the two closing items) has landed and
+**`Game.SIM_VERSION` is 6**. **Block C is complete.** Four pieces shipped
+together. (1) **The nine package `+` rows** (`sim/content.gd:214-261`), one per
+package ability, offered only when the base is held and forged only from a held
+base: costs never move, each row takes one numeric bump and at most one rider,
+and only where the C1a vocabulary states the base identity - `tide+` takes
+`water_jet+`'s then-root, `geyser+` takes `sun_flare+`'s on-fire bonus, and
+`fungal_ring+` takes `seed_bomb+`'s growth rider because `grow_radius` ignores
+its `radius` key (`sim/game.gd:1615-1626`), so there was no number to bump.
+(2) **`Content.MUTATORS` as data**: every row now carries a `config` dict read
+through one helper, `Game._mut(key, default)` (`sim/game.gd:162`, first hit wins
+for scalars, Arrays concatenate), with a closed `MUTATOR_CONFIG_KEYS`
+vocabulary and **no `mutators.has(` left anywhere in `sim/game.gd`**; the six
+existing rows reproduce their old numbers exactly (a parity probe against the
+pristine tree over optimizer x six mutators x seeds 1..10 reports "PARITY: diff
+empty (before vs after, 60 games)"), and three new rows land on top - `no_lance`
+(`pool_ban` + `kit_ban`), `wide_draft` (`draft_offers: 4`) and `upgrades_only`
+(`draft_upgrades_only`). (3) **`Game.effective_uses` and `run_summary()`**
+(`sim/game.gd:69, 1514`): a cast counts as effective only when an effect outcome
+fired or a rider ran; copied by `clone()`, kept out of `snapshot()` so it adds
+no hash churn. (4) **The profile that sees builds** (`meta/profile.gd`):
+`record_run(summary)` takes the whole `run_summary()` dict (the old
+`{won, floor, tier}` shape still works), keeps a 50-entry history and a
+cumulative `casts_by_base`, gains `won_with` / `wins_without` / `casts` /
+`grafts_owned_at_win`, dispatches explicitly on `kind` to four `unlocked_*`
+buckets with a `push_error` on anything else, filters every stored id against
+`Content` on load, and files dailies into `daily_best` without ever touching the
+career. `DRAFT_POOL` was not shrunk.
+
+The re-baseline is the "2026-09-06e - bump 6 (C4)" entry in `docs/BALANCE.md`,
+and its headline is that it is **not** a re-baseline: a `+` row can only enter a
+game whose pool holds its base, the nine bases live only in the three packages,
+and the mutator refactor is a table read, so **every persona number is identical
+to 06d cell for cell** - seven personas at 30 seeds, the magpie and wanderer
+100-seed canaries, and a 30-seed optimizer `verify_kit` all reproduce the
+previous entry exactly, not merely inside its interval. Suite green including
+the playtest gate ("gate: all PASS", "regressions: 57 ok, 0 failed" plain and
+`REGRESS_STRICT=1`, "grammar: OK (527 checks)", "mutators: 9 rows over 10 of 10
+config keys", "meta: OK"), zero timeouts across all 770 runs in the entry, and
+the corpus re-stamp was the cleanest yet: all 45 stale records replayed "hash
+ok" *before* the bump, so `REGEN=1` rewrote one line per file and **no bot log
+was re-recorded**, unlike bumps 4 and 5. Twelve new `c4_*` records take the
+corpus to 57.
+
+**Four of the nine `+` rows discharge the shipping gate and five do not.**
+SHIP: `geyser+` (13 offers, 12 picks, 42 casts, 1.40/run), `spore_cloud+`
+(4/3/39, 1.30/run), `gust+` (3/2/32, 1.07/run) and `tide+` (6/5/29, 0.97/run -
+one cast under a literal reading of the bar, 14.5 casts in each run that held
+it). HOLD, none of them for a measured warp: `fungal_ring+` on opportunity rate
+(11 casts over 30 runs, the C2 `water_jet+` / C3 `undertow` shape a third time),
+`burrow+` and `updraft+` because **neither measured persona casts a
+pure-mobility ability other than `mycelium_dash`** (the bases are picked 23
+times and cast 0 in 60 runs), `steam_vent+` because it is offered and never
+picked, and `clear_air+` because it has **never been offered in any run** - its
+base is picked once in the 150 runs whose pool holds it, and
+`tests/test_content.gd` already names `clear_air` as the only one of the 23
+draftable ids covered by no archetype core. The three new mutators are all
+indistinguishable from the base run at 30 seeds (optimizer 14/30 [30, 64];
+`no_lance` 13/30 [27, 61], `wide_draft` 16/30 [36, 70], `upgrades_only` 11/30
+[22, 54]), with zero timeouts and zero illegal actions each. The measurement
+finding the block hands forward is about the harness rather than the content:
+**`sweep_packages` with the optimizer cannot judge package content** - over 120
+runs the bot took 99 package picks and made 4 package casts, so its flat table
+measures pool dilution and nothing else, and package rows must be judged by
+`measure_fanatic`'s package archetypes (tidecaller 8/30 [14, 44], skyrunner
+5/30 [7, 34], sporewright 2/30 [2, 21]) or by a forced-kit ceiling run.
+
+**What remains, and it is now all Block D (6.4) plus the two carried items.**
+Nothing from 6.3 is outstanding. Carried forward from earlier blocks:
+**`deeproot_plan`** (7.5) and everything in **6.1** (the run-start choice: the
+mutator picker stayed out of C4's scope, so the three new mutators have data,
+descs and invariants but no shell surface), plus the **tier 6-8 re-judgement**
+6.2 defers to a grafted ceiling, which has had its grafted ceiling since 06d and
+still has not been re-run. Block D in 6.4 order: the affinity-slotted draft with
+"focus" on skip (which now has the prerequisite it was waiting on - a draft the
+sim can vary in width and content, since `draft_offers` and
+`draft_upgrades_only` prove both knobs work through one table read); evolve
+forks; enemies that read terrain; per-ability stat surges and Spore Trail; one
+resonance per element; and repeatable economy sinks, one at a time. Two
+unlock-layer consumers exist but have nothing to consume:
+`unlocked_loadouts` and `unlocked_grafts` are written, saved and filtered, and
+no `MILESTONES` row or `game_config` key reads either, which is the seam a
+loadout block would land in. Still open from earlier blocks and unchanged here:
+`solar_core` is the largest graft effect on record and C3 chose not to price it;
+`quota_reclamp` has never fired in a bot run (0 again across this bump's 530
+counted runs); the press is a dead sink and the forge nearly so; `hook_capped`
+has never fired in play. New to the open list: `tests/daily_run.gd` picks its
+mutator as `Content.MUTATORS.keys()[seed % size]`, so growing the table 6 -> 9
+changed every date's daily and no record covers it, and
+`tests/test_invariants.gd`'s `FDEF_MUTATORS` is a hardcoded pair rather than an
+enumeration of `Content.MUTATORS`.
+
+**Status (2026-09-06f).** **7.5 has landed**, as a bot-only change:
+`bots/deeproot_plan.gd`, one `bots/roster.gd` entry and `tests/test_bots.gd`,
+with no `sim/` or `shell/` edit, `Game.SIM_VERSION` still 6 and legacy
+`deeproot` untouched, so the two personas' columns differ only by the bot. The
+acceptance measurement is the "2026-09-06f" entry in `docs/BALANCE.md`. Two of
+the four acceptance criteria are met literally - shrine stands 2.47 and 2.27
+per run against a bar of 1.5, and 74 and 65 graft purchases against a bar of
+"above zero", at tiers 0 and 6 - one fails upward and one fails outright. Wins
+are **not** within CI of legacy: 29/30 = 97% [83, 99] against 22/30 = 73%
+[56, 86] at tier 0 and 27/30 = 90% [74, 97] against 12/30 = 40% [25, 58] at
+tier 6, disjoint at both tiers with the planner above, which is the direction
+that costs nothing. Timeouts are not zero: 1 in 30 at each tier, against 0 in
+60 for legacy on the same seeds, and neither runner prints the seed. Runtime is
+3.1 to 3.4x (`tests/test_bots.gd` reports 3.25x over 5 seeds; the two 30-seed
+acceptance jobs measured 277 s -> 852 s and 326 s -> 1110 s), at the top of the
+accepted 2 to 3x. The **tier 6-8 re-judgement 6.2 deferred to a grafted
+ceiling** is discharged here: the planner is 27/30 [74, 97] at tier 6, 18/20
+[70, 97] at tier 7 and 13/20 [43, 82] at tier 8, every tier winnable, and
+legacy at tier 6 has meanwhile fallen from Block A's 18/30 = 60% [42, 75] to
+**12/30 = 40% [25, 58]** with no tier-6 measurement in the four bumps between.
+7.5's own question - how much combo depth does the content contain - has a
+number: at tier 0 over the same 30 seeds the planner takes combos/run from
+**16.70 to 56.77** and riders/run from **1.33 to 9.13**, but **32.74 of that
++40.07 is the single `verdant` counter** (2.83 -> 35.57) and 214 of the +234
+rider events are `grow_spike` and `grow_spike+`, while ignite(ability) *falls*
+and `vine_whip+` stays at zero: the depth is real, large, and almost entirely
+one axis. Two instrument findings come with it. The locked lift table is
+**saturated** under this persona - every locked single and pair is 20/20
+[84, 100], so every lift is +0 with `p=1.00` - and only the continuous columns
+preserve the C2 ranking (`grow_spike + sun_flare` +3.40 combos/run over its
+best single, `grow_spike + water_jet` +1.95, `vine_whip + water_jet` -7.25,
+the same order as the optimizer's +5 / +3 / -2 in wins). And the C2/C3 HOLD
+rows re-tested under search split three ways: `undertow` clears gate (ii) at
+2.60 hooks per run (SHIP-UNDER-SEARCH), `water_jet+` moves from literally never
+firing to 0.80 riders per run but still misses the once-per-run bar,
+`sun_flare` sits at 0.45, and `vine_whip+` fires **zero** times in 20 forced-kit
+runs that cast the whip 29.9 times each - the one row a stronger instrument did
+not move.
+
+**Status (2026-09-07).** **Block A (6.1) is closed** and **`Game.SIM_VERSION`
+is 7**. Four pieces landed together. (1) **`Content.LOADOUTS`**
+(`sim/content.gd:340-359`): six starting kits as data - `tender` (the current
+starter, `kit == STARTING_KIT`), `tidewarden`, `flarekeeper`, `spiker`,
+`lasher` and the package-gated `skyrunner` - each `{name, desc, kit, protect,
+requires}`, each keeping `seed_bomb` and exactly one `role == "mobility"`
+ability, both linted by `tests/test_content.gd` against 16 deliberately bad
+fixtures. `Game._init` (`sim/game.gd:113-118, 131-135`) takes the kit from the
+row unless a sweep passed an explicit `kit`, warns and plays `tender` on an
+unknown id, and applies `kit_ban` / `pool_ban` afterwards, so
+`tidewarden` + `no_lance` keeps three slots where `tender` + `no_lance` keeps
+two. (2) **One package per run**: `profile.game_config(tier, mutators, loadout,
+package)` (`meta/profile.gd:229`) returns `{packages: [pkg] or [], tier,
+mutators, loadout}` with **no `kit` key**, degrading a loadout that is locked
+or whose package requirement is unmet to `tender`, and a locked package to
+none, so the draft pool is 14 or 17 ids and never 23; the old width returns as
+the unlockable `open_pool` mutator (`sim/content.gd:550-551`, `MILESTONES` row
+at 606, `requires
+{wins: 1}`). (3) **The pickers and a career-agnostic daily**: the title screen
+gains LOADOUT / PACKAGE / MUTATOR rows persisted in `tender.cfg` beside the
+tier, the status line names the active loadout, packages and mutators, and
+`Profile.daily_config(seed)` (`meta/profile.gd:273`) derives the day's three
+choices from the seed alone over frozen lists (`DAILY_LOADOUTS` /
+`DAILY_PACKAGES` / `DAILY_MUTATORS`, lines 28-30) so growing a content table
+never moves an earlier date; `tests/daily_run.gd` and the shell read the same
+function. (4) **The harness axis**: `sweep_lib.tier_config` became
+`env_config`, adding `SWEEP_LOADOUT` and `SWEEP_UNLOCK=fresh|package:<id>|all`
+to every runner that goes through it, and the bots' drop guards read
+`Content.LOADOUTS[snapshot.loadout].protect` (fallback: held mobility
+abilities) instead of hardcoded ids.
+
+The measurement is the "2026-09-07 - Block A closure" entry in
+`docs/BALANCE.md`. Its headline is the same shape as C4's: **a player who never
+touches the new rows is playing the identical game.** The 30-seed six-persona
+playtest reproduces 06e/06f cell for cell (optimizer 14/30 [30, 64], deeproot
+22/30 [56, 86], magpie 5/30, fanatic 7/30, sprout 1/30, wanderer 0/30, every
+KPI and hook counter equal), the 100-seed magpie canary is unchanged at
+**17/100 [11, 26]** (the rise line is still [6, 17], so not a signal), and a
+`verify_kit` run of `config { }` against `config { "loadout": "tender" }`
+diffs **empty** below the header. Suite green including the gate ("gate: all
+PASS", "regressions: 60 ok, 0 failed" plain and `REGRESS_STRICT=1`, "meta: OK",
+"economy: OK (155 checks)", "loadouts: 6 rows, 5 package-free"), and the corpus
+re-stamp was clean: 57 records stale on `sim_version` alone, all "hash ok"
+before the bump, no bot log re-recorded, three new `c5_*` records taking the
+corpus to 60.
+
+**All six loadouts ship; none of them is a difficulty setting.** At the
+optimizer over 30 seeds, spiker 21/30 [52, 83], tidewarden and flarekeeper
+16/30 [36, 70], tender 14/30 [30, 64], lasher 12/30 [25, 58] and skyrunner
+11/30 [22, 54] with **zero timeouts anywhere**, which clears the winnability
+gate (3/30, no timeouts) on every row and clears skyrunner's separate 30-seed
+`verify_kit` bar. Under `deeproot_plan` at 20 seeds
+the five package-free rows are 18-20/20 (tender 18/20 [70, 97], the other
+four 20/20 [84, 100]) and `skyrunner` is 10/20 [30, 70]; that table is read on
+its continuous columns, where **each loadout's identity is the maximum of its
+own counter** - tidewarden 18.55 collisions per run, flarekeeper 3.65
+ability-ignites, lasher 12.25 staggers, spiker 25.00 riders, against tender's
+4.65 / 2.10 / 2.55 / 9.20. The loadouts do play differently; the heuristic bot
+simply cannot show it. The 6.1 probe's ranking did **not** survive: it was
+recorded before every sim bump from 2 to 7 and read tidewarden 8/20,
+flarekeeper 8/20, spiker 7/20 and lasher 6/20 against tender 9/20, where
+today's 20-seed rerun inside `tests/test_meta.gd` reads tidewarden 12/20,
+flarekeeper 10/20, spiker 15/20, lasher 9/20 and skyrunner 6/20 against the
+same tender 9/20. Spiker went from the bottom of the probe (7/20, below
+tender) to the top of both of today's tables (15/20 at 20 seeds, 21/30 at 30),
+and
+C2's growth-adjacency rider on `grow_spike` is the obvious suspect, but the
+two columns are separated by six bumps of content and nothing here pins the
+attribution. The measurement that matters more than the spread is
+*why* it is small: the optimizer **drops the loadout's signature ability**
+(`water_jet` 22 drops in 30 runs, `vine_whip` 22, `gust` 20) and rebuilds the
+same `grow_spike` + `seed_bomb` engine from every start, so its table measures
+distance-to-the-bot's-preferred-build. The planner, which keeps every kit, is
+where "this loadout plays differently" is actually visible.
+
+**The package commitment costs nothing measurable.** Optimizer, 30 seeds,
+`SWEEP_UNLOCK` axis: `fresh` 14/30 [30, 64], `package:mycology` 13/30 [27, 61],
+`package:hydraulics` 14/30 [30, 64], `package:aeolian` 14/30 [30, 64], `all`
+14/30 [30, 64] - every cell reproducing 06e's `sweep_packages` table, with kit
+entropy 3.86 -> 3.83 / 3.96 / 3.76 / 4.48 and `P(plus offered|draft)` 0.68 ->
+0.55 / 0.55 / 0.55 / 0.50. 06e's finding that this axis cannot judge package
+*content* stands unchanged and is if anything sharper: 104 package picks across
+the 120 package-carrying runs, and the only package ids that appear in any
+casts line are `gust` at 0.0/run and `spore_cloud` at 0.1/run.
+
+**What Block A leaves open.** Two consumers the C4 status called "written,
+saved and filtered, with nothing to consume" now have consumers -
+`unlocked_loadouts` is read by `available_loadouts` and the shell, and
+`open_pool` gives `unlocked_mutators` a second reason to exist - but
+`unlocked_grafts` still has no `MILESTONES` row and no `game_config` key, so
+that seam is the only one of the four left empty. New to the open list:
+`tests/verify_kit.gd`, `tests/measure_fanatic.gd`, `tests/draft_oracle.gd` and
+`tests/sweep_packages.gd` build their configs inline and therefore ignore
+`SWEEP_LOADOUT` / `SWEEP_UNLOCK` / `SWEEP_TIER` (every `verify_kit` row in the
+BALANCE entry was produced by a scratch copy that starts from
+`Sweep.env_config({})`); `open_pool` has no 30-seed win-rate row, only the
+structural checks and an 8-seed smoke row; and `skyrunner`, the one loadout
+that gives up `mycelium_dash`, is the only row where the ceiling drops as well
+as the heuristic (10/20 [30, 70] under the planner against 18-20/20 for the
+rest) - it casts its wind kit harder than any other row casts anything
+(`gust` 36.4 and `updraft` 37.3 per run, the table's top combo rate at 66.25)
+and loses to the clock instead: verdant surges 7.40/run against 25.65-31.45,
+turns per floor 21.7 against 8.1-11.0, 13 stall floors, 252 of its 299 damage
+points from smog. That is a measurement of the mobility slot, and it also
+retires 06e's "no persona casts a pure-mobility ability other than
+`mycelium_dash`" as a statement about the abilities rather than about the
+heuristic bot. Everything else outstanding is Block D (6.4) plus the carried
+items already listed at 06e.
+
+**Status (2026-09-07b).** **The graft pricing pass is done** and
+**`Game.SIM_VERSION` is 8**. This closes 6.3 C3's last open clause - *"every
+graft measured pre-installed ... before it is priced"* - by turning the price
+itself into data. Every `Content.GRAFTS` row now carries a `price` (int >= 1,
+required by the `tests/test_content.gd` lint), `Game.shop_cost(item, id = "")`
+starts a graft from that row's own number before adding `GRAFT_PRICE_STEP` per
+graft already owned and the tier markup, `legal_actions` gates each of the
+shrine's two offers on its own price, `_act_buy` resolves the pick before
+pricing it, and `snapshot().shop` publishes a derived `graft_prices` array so
+the shell cards and `deeproot_plan`'s shrine detour read the per-offer price
+without calling back into the sim; the id-less `SHOP_COSTS["graft"]` = 4
+survives as the fallback, and no path touches the rng. The prices come from
+the tables already in `docs/BALANCE.md` (06d, 06f, 07): **solar_core 8**
+(the one lever), compost 6, ember_sap and oil_tithe 5, undertow 4, and the
+five rows that sit inside noise at both tiers at 3. A second, deliberately
+unused, addition is the `regen_on_growth` stat key, which exists only so the
+"should the lever be conditional instead?" question could be measured against
+real content.
+
+The measurement is the "2026-09-07b - bump 8" entry in `docs/BALANCE.md`, and
+its headline is a **negative result about the instrument**: pricing the lever
+at double the old flat cost changed the number of runs in which `solar_core`
+was bought by *zero* for magpie (10/30), fanatic (4/30) and optimizer (6/30),
+and by one for sprout - the heuristic personas pick by tag overlap among the
+offers they can afford, so a price gates them and does not steer them. The one
+persona that weighs a graft against its own cost, `deeproot_plan`, did move:
+at tier 6 it now buys `solar_core` in 3 of 16 graft purchases where 06f had 22
+of 65, and `compost` in 9 of 16. The default game is otherwise intact - the
+30-seed persona table has wanderer and deeproot (which buy no grafts)
+**bit-identical** to 07 and the four shopping personas each within one win of
+it, the gate reads "gate: all PASS", and the 100-seed magpie canary is
+10/100 [6, 17], back to its recorded rise baseline and well under the 17%
+trip line. Suite green throughout ("regressions: 62 ok, 0 failed" plain and
+`REGRESS_STRICT=1`, "economy: OK (170 checks)", "bots: OK (49 checks)",
+"determinism: OK (61 checks, 8 personas)", "meta: OK", "shell smoke: OK"); the
+corpus went 60 -> 62 with 38 records stale on `sim_version` alone, 18 hash-only
+(the derived `graft_prices` sits inside the snapshot the state hash reads),
+four bot logs re-recorded because a logged graft buy is no longer affordable,
+and two new `c6_*` demos. The follow-up entry "2026-09-07c" (bots and the hash
+view only, **no `SIM_VERSION` bump**) closes the three items this pass left
+open - the optimizer/magpie shrine detour now gates on
+`bloom >= min(shop.graft_prices)`, `state_hash()` hashes the stored `shop`
+dict so derived snapshot keys stay out of it, and the stale `solar_core`
+comment cites 06d/07b - at an unchanged 30-seed gate ("gate: all PASS") and an
+unchanged 100-seed magpie canary (10/100 [6, 17]).
+
+**What the pass deliberately did not decide.** `solar_core` is **priced, not
+nerfed**: this tree measures it at +13 [70, 95] at tier 0 and +19 [63, 90] at
+tier 6, louder than 06d's +12/+17, so the graft table is still one lever plus
+nine rows inside noise. The alternative - `{stat: {regen_on_growth: 1}}`, +1
+regen only while standing on growth - was measured in a scratch tree at the
+same price and keeps about a third of the tier-6 lift (+6, p = 0.11) and none
+of the tier-0 lift (+1, 7:6 discordant), while pushing the planner's
+turns-on-wins from 61 to 73. The trade-off (a build-dependent lever and more
+variety, against a table where nothing measurably matters and a "stand still
+to be paid" loop this project has twice designed against) is written up in the
+BALANCE entry's alternative-probe section as **a decision for the project
+owner**, not taken here.
+
+**Status (2026-09-07d).** **Block D item 1 (6.4, "Per-ability stat surges and
+Spore Trail") has shipped** and **`Game.SIM_VERSION` is 9**. Its gate was met
+before the work began - the `surge` key has existed with identical defaults
+since C1a and the gardener's lift is on record in 06c - so the question this
+pass had to answer was the bullet's own fallback clause, *"cap `per` at 1 when
+surged if lift is excessive"*. **It does not fire.** The surge rule now lives
+in one place (`Game._surges`: the tender stands on growth and the row's own
+`surge` dict carries something that applies - a `cost` delta that lowers a
+cost of 2 or more, or any stat delta), a surge still eats the tile and emits
+`verdant`, and the stat half is added to the matching key of every effect of
+that cast that carries it, on a duplicated effect, before the riders run, with
+one `{t: "surge", id, keys}` per cast. Seven rows carry one - `grow_spike(+)`
+`{dmg: 1}`, `water_jet(+)` `{push: 1, collision_dmg: 1}`, `sun_flare(+)`
+`{cost: -1, radius: 1}`, `seed_bomb+` `{radius: 1}` - the keys are a closed
+int-only set `{cost, dmg, push, collision_dmg, radius, dist, turns, ttl}`
+lint-checked against the row's own effects, `grow_radius` reads its `radius`
+key (defect 16 closed; radius 1 is the plus it always drew), and
+`mycelium_dash+` gained the new positional op `plant_origin` - Spore Trail,
+the departure tile becomes growth when it is bare floor.
+
+The measurement is the "2026-09-07d - bump 9 (D1)" entry in
+`docs/BALANCE.md`, and its headline is a **null result on the row the review
+was worried about**. On the locked lift table the review's own gate uses
+(`sweep_combos`, optimizer, 30 seeds, tier 0, base3 `{kit: K, pool: K}`),
+measured against a `git archive` copy of the pre-D1 commit on the same seeds:
+`grow_spike` **20/30 [49%, 81%] before and after**, `sun_flare` 10/30
+[19%, 51%] before and after, `water_jet` 7/30 [12%, 41%] before and after -
+the jet's whole block byte-identical - with the HOLD line at 25/30 and the
+largest single delta **zero**. What moves is what a small conditional bonus
+should move: the spike row's combos/run 31.67 -> 33.50 and its damage taken
+11.8 -> 11.2, and one win each way on the two spike pairs. The reason is the
+tension the design paragraph states: the surge spends the growth tile that is
+also the tender's heal and the same tile `grow_spike`'s `per` rider wants
+beside the target, so a `+1` there is paid for, not free.
+
+The default game is intact - the 30-seed persona table is inside every 07c
+interval (wanderer, sprout and deeproot within a decimal; fanatic 7/30 ->
+6/30, optimizer 13/30 -> 12/30, magpie 5/30 unchanged), the gate reads
+"gate: all PASS" at 0 illegal actions and 0 timeouts for six personas, and the
+100-seed magpie canary is 7/100 [3%, 14%] against a recorded 10/100 [6, 17] -
+a fall inside noise, and the canary watches rises. Suite green throughout
+("regressions: 68 ok, 0 failed" plain and `REGRESS_STRICT=1`, "grammar: OK
+(614 checks)", "economy: OK (183 checks)", "bots: OK (83 checks)",
+"determinism: OK (61 checks, 8 personas)", "meta: OK", "content: OK", "shell
+smoke: OK", 1400 + 1540 procgen generations with 0 violations); the corpus went
+62 -> 68 with six new `d1_*` demos, 54 records re-stamped on `sim_version`
+alone, one hand-authored record whose hash moved because its `water_jet` is
+now cast from growth, and seven bot logs re-recorded on their personas.
+
+**What the pass measured and deliberately did not act on.** Spore Trail is a
+**shipped no-op at this sample**: the mobility `+` is a draft dead letter
+(optimizer 0/31 offers, deeproot 0/25, fanatic 0/24, magpie 0/15 and 0/51 over
+100 seeds; the one pick in the table is sprout's 1/12, and that sprout never
+casts a dash), so it had to be measured on locked kits, where it plants **5 tiles over 30
+optimizer runs and 14 over 30 magpie runs** and wins the identical seed set
+before and after. `seed_bomb+`'s radius surge fires once per 30 runs in the
+same configs. Both rows are correct (`tests/regressions/d1_spore_trail.json`,
+`d1_seed_bomb_plus_surge.json`, `tests/test_grammar.gd`) and neither is a
+balance event yet - they are content waiting for a draft or a loadout that
+reaches them, which is 6.4's affinity-draft bullet, not this one. The two
+surges no bot can plan for (`water_jet`'s push/collision and the flare's extra
+ring, invisible to `optimizer._est_dmg` and `_aoe_finishes`) are exactly the
+two rows whose locked numbers did not move at all; whether that is the content
+or the instrument is the open question this entry hands forward.
+
+**Status (2026-09-07e).** **Block D item 2 (6.4, "Repeatable economy sinks,
+one at a time") has shipped as code behind the `spinning_shrine` mutator and
+is HELD as a default**, and **`Game.SIM_VERSION` is 10**. The switch is the
+mutator config key `shop_reroll` (`_reroll_legal` returns false without it and
+the derived `rerolls_left` reads 0); a default run never lists the action and
+reads exactly as 07d did. The sink is the one the bullet names first: a
+shrine reroll, side-rng only, a *choice* sink and not a stat one. Action
+`{"type": "reroll"}` is legal in phase `play` while the tender stands on the
+shrine, the counter still holds a re-drawable slot (`ability`, `grafts`,
+`item`), `shop.rerolls < Content.SHOP_REROLL_CAP` and the purse covers
+`shop_cost("reroll")`; every other case emits `{t: "illegal", action:
+"reroll"}`. Each stocked re-drawable slot is redrawn from the same candidate
+rule that stocked it (`_shop_ability_candidates` / `_shop_graft_candidates` /
+`_base_item_ids` through one shared `_shop_draw`), minus the offer on the
+counter whenever an alternative exists, each from its own generator
+`_side_rng("reroll<n>_ability" / "_graft" / "_item")` - so the main rng never
+moves, `rng.state` is unchanged across a spin, and the *same* seed and floor
+redraw identically in two fresh games. Bought slots never come back and the
+three services are never touched. The price is data and escalates:
+`Content.SHOP_COSTS["reroll"]` (2) + `Content.SHOP_REROLL_STEP` (1) per spin
+already taken + the tier markup - 2, 3, 4 at tier 0 - capped at
+`Content.SHOP_REROLL_CAP` (3) spins per floor's stock. `shop.rerolls` is
+stored stock (so `clone()` copies it and `state_hash()` sees it, which is the
+whole of what bump 10 invalidates - the hash of every record whose final shop
+is stocked, no action and no main-rng draw); `reroll_price` and
+`rerolls_left` are derived `_shop_snapshot` keys and stay out of the hash.
+
+The measurement is the "2026-09-07e - bump 10 (D2)" entry in
+`docs/BALANCE.md`, and its headline is the half of the gate that failed.
+**The optimizer half passes**: 100 seeds, working tree against a
+`git archive HEAD` copy on the same seeds, 46/100 [37%, 56%] against 47/100
+[38%, 57%], with avg floor 6.1, turns on wins 84.0 vs 85.0, turns/floor 15.4
+vs 15.3, stall floors 21 vs 21, bloom unspent 33.0 vs 33.0 and shrine turns
+*down* 1.85 -> 1.23 - clock discipline intact, on 13 spins in 100 runs costing
+0.3 bloom a run. **The magpie half fails.** The 30-seed merge gate reads
+"FAIL magpie canary <= 10% (design target 0-5%): 7/30 CI [12%, 41%]" and
+`tests/playtest.gd` exits 1; at 100 seeds greed reads 13/100 [8%, 21%] in
+sample and 18/100 [12%, 27%] out of sample against 7/100 [3%, 14%] and 9/100
+[5%, 16%] before, and pooled over the same 200 seeds it wins 19 seeds it used
+to lose against 4 it used to win - 31/200 = 15.5% [11%, 21%] vs 16/200 = 8%
+[5%, 13%], sign **p = 0.0026**. The 100-seed canary rule (a lower bound
+clearing 17%) still says pass, so the two lines disagree and the entry says to
+quote both; the paired A/B is what breaks the tie. The mechanism is the one
+6.4 anticipated in reverse: greed's buy *counts* barely move (grafts 280 ->
+288, abilities 99 -> 99, heals 96 -> 97, items 180 -> 177) while its
+conversion goes 0.54 -> 0.72 and its end-of-run purse 24.5 -> 17.2, because a
+redraw that excludes the current offer is a search over the counter and greed
+has the most surplus bloom to spend on searching.
+
+**Verdict: HOLD, with the retune written up as data.** Nothing was changed in
+the measure phase. The three options, in the order the entry recommends, are
+`SHOP_REROLL_STEP` 1 -> 2 (2, 4, 6 - leaves the first spin, the only one the
+optimizer buys, at 2 and taxes only greed's repeat spinning),
+`SHOP_COSTS["reroll"]` 2 -> 3 (blunter, and it also prices out the
+optimizer's single considered spin) and `SHOP_REROLL_CAP` 3 -> 2 (least
+effective as measured: magpie already averages ~1.4 spins per floor against a
+cap of 3, so the cap binds the tail, not the mean). One at a time, which is
+the bullet's own rule. Everything else is green: "regressions: 72 ok, 0
+failed" plain and `REGRESS_STRICT=1`, "economy: OK (247 checks)" (183 at 07d)
+with four new reroll sections, "bots: OK (111 checks)" (83 at 07d),
+"determinism: OK (61 checks, 8 personas)", "meta: OK", "content: OK", "shell
+smoke: OK", "grammar: OK (614 checks)", 1400 + 1540 procgen generations with 0
+violations, and 0 illegal actions for every persona in every run of the entry.
+The corpus went 68 -> 72 (four `d2_*` demos; 46 records re-stamped on
+`sim_version` alone, 18 hash-only because their final shop now stores
+`rerolls: 0`; the four bot logs the pre-switch pass re-recorded went back to
+their bump-9 actions once the switch was off, with a hash-only diff).
+
+**After the entry, every lever was measured, and none clears the gate.**
+`SHOP_REROLL_STEP` 2, `SHOP_COSTS["reroll"]` 3 and `SHOP_REROLL_CAP` 2, one at
+a time on the same 200 paired seeds, all land at 22-23/200 for the magpie
+against 16 before and 31 as shipped, and all read 7/30 [12, 41] on the
+30-seed gate line - the price levers do not reduce greed's spinning (5.25 ->
+4.89-5.12 spins/run) but raise what it spends on it (15.2 -> 18.8 bloom/run),
+because that persona spends whatever is left. So the sink is worth about
+three points of greed at any price and seven at the shipped one, and the
+decision was made as a *switch* rather than a *price*: the reroll ships as
+the `spinning_shrine` mutator (unlocked at the first win, like `open_pool`),
+the default run keeps 07d's numbers and a green gate, and turning it on for
+everyone is one `_mut` default away with the lever table (BALANCE.md 07e,
+"The levers, measured") as the price of it. The 6.4 sink question is
+therefore answered as far as data can answer it and stops at the design call.
+
+**One instrument property, stated so it is not mistaken for a bug.**
+`deeproot` and `deeproot_plan` evaluate `reroll` like any other legal action,
+and because the redraw is side-rng deterministic a `clone()`-based search
+**sees the new offers before paying for them**. Their reroll numbers are
+therefore an *oracle upper bound* on the sink - what it is worth with perfect
+information about the redraw - and the gap down to optimizer and magpie is the
+value of that information to a human. It is **unmeasured**: both took 0 spins
+in 20 runs each (18/20 [70%, 97%] for the planner, 14/20 [48%, 85%] for
+deeproot, delta +4) because neither goes to the shrine at all (0.80 and 0.20
+shrine turns per run against magpie's 18.47). A config that puts a searcher at
+the counter with a purse is what would produce that number, and it is the
+number that would say how much of greed's +7.5 points is information rather
+than bloom.
+
+**Status (2026-09-07f).** **Block D item 3 (6.4, "Enemies read terrain") has
+shipped as a default rule** - no mutator switch - and **`Game.SIM_VERSION` is
+11**. Finding 5.2 is closed on both halves. `Content.ENEMIES` rows carry an
+optional `avoid: [terrain kinds]` (default `[]` = terrain-blind, exactly the
+pre-D3 chase); seven of the ten ordinary mobile rows carry `["fire"]`, and
+`welded_hulk` ("nothing stops the hulk"), `coal_golem` ("made of coal"),
+`cinder_mite` ("the igniter WANTS fire"), the three stationary kinds and all
+three bosses carry none, each deviation carrying its one-line reason in the
+row. `Game._chase_step` is now a shortest-path search over integer step costs -
+1 per tile plus `Content.ENEMY_AVOID_COST` (4) for an avoided one, passability
+still `_open()`, goal any tile at manhattan 1 from the tender - run on a bucket
+queue drained in ascending cost, within a cost by fewer avoided tiles and then
+by push order, neighbours pushed in `DIRS` order. For a row with an empty avoid
+list every key is `(c, 0)`, nothing is ever re-pushed, and the drain order is
+the old BFS's dequeue order, so the returned step is **byte-identical to the
+pre-D3 chase**; `tests/test_grammar.gd` keeps that BFS as a reference
+implementation and proves it over 210 generated floors, every enemy against
+sampled tender positions, on clean boards and on fire-scattered ones
+("d3 parity: 210 floors, 17270 clean-board comparisons, 17270 fire-board
+comparisons, 0 mismatches"), and the same probe run in a `git archive HEAD`
+copy returns the same counts at `SIM_VERSION` 10. Both the `move` intent and
+the boss `advance` intent go through the search, neither special-cased. The
+review's warning about the proposed fix is respected exactly: the smoke rule is
+**not** `_line_clear` and never consults intervening enemies or walls. A
+`TERRAIN` row carries `screens` (smoke alone), `Content.SCREENED_INTENTS` is
+the closed list `["drain", "gum", "drag"]`, and `Game._screened` - read at
+`_execute_intent` only, so the intent is still computed and telegraphed -
+fizzles one as `{t: "screened", id, intent}` when the tender stands on or
+beside a screening tile, unless the enemy is adjacent (no smoke-screening at
+arm's length) or its row is `massive` (bosses see through smoke, the same
+exemption `_apply_status` uses).
+
+The measurement is the "2026-09-07f - bump 11 (D3)" entry in `docs/BALANCE.md`,
+and **the gate the bullet named passes on every line**. The gate is the
+immortal-fence question - *"the row most likely to produce an immortal-fence
+canary hit (fire-avoiding enemies plus pump-jack refuelled oil): turtle and
+magpie 100-seed stall canaries are the gate"* - measured in this tree and in a
+`git archive HEAD` copy of the pre-D3 commit on the same seeds. **Magpie's
+stall floors fell 63 -> 59 per 100 runs (0.94x) and the turtle's moved 48 -> 49
+(1.02x)**, against a limit of 1.25x, with **zero timeouts in every run of the
+entry** - 30-seed playtest across six personas, magpie 100 in both trees,
+optimizer 100 in both trees, fanatic turtle+pyro 100 in both trees, deeproot
+20. `tests/playtest.gd` at 30 seeds with the gate on reads "gate: all PASS" and
+exits 0 (magpie 6/30 CI [10%, 37%], optimizer 15/30 CI [33%, 67%], deeproot
+22/30 CI [56%, 86%], 0 illegal actions everywhere). The fence does not form
+because `ENEMY_AVOID_COST` is a **toll and not a wall**: an enemy with no cheap
+detour pays 4 and walks through the fire, which
+`tests/regressions/d3_avoid_no_fence.json` pins as a record and a mutation that
+made avoided tiles impassable fails.
+
+**The pyro row moved, upward, and it is the entry's finding.** 6.4 predicted
+the archetype would move because enemies pathing around fire change what a fire
+is for; at 100 seeds it goes **28/100 [20%, 37%] -> 32/100 [24%, 42%]** while
+the fire damage it deals **falls 40%** (195 -> 116 points) at a flat ignition
+rate (4.54 -> 4.39 ability ignitions, 6.10 -> 6.07 environment ignitions per
+run). Fire stopped being a damage source and became a wall the pyro can place.
+The two win intervals overlap almost entirely and neither runner prints
+`wins_by_seed`, so the +4 carries no sign test and the entry asks for an
+out-of-sample re-measure (`FANATIC_SEED_FROM=101`) before anyone calls the pyro
+buffed; what the gate reads is the hard rule ("every build > 0 at 100 seeds"),
+and it holds with turtle 3/100 [1%, 8%] and pyro 32/100. The same -28% to -41%
+in enemy fire damage appears in all four paired runs (magpie 68 -> 41,
+optimizer 168 -> 120, turtle 99 -> 71, pyro 195 -> 116), and for the optimizer
+the whole fall is the lance's own fires (`solar_lance` 94 -> 51) while the
+cinder mite's are **identical at 44** - the igniter carries no avoid list, so
+nothing dodges what it lights. Optimizer
+clock discipline is intact (46/100 [37%, 56%] against 47/100 [38%, 57%], turns
+on wins 87.0 vs 85.0, turns/floor 15.5 vs 15.3, smog at descend 9.0 both,
+damage taken 18.9 vs 19.0), with two cells drifting the same way on the watch
+list (stall floors 21 -> 23, quota-unmet deaths 2 -> 4). Suite green throughout
+("regressions: 77 ok, 0 failed" plain and `REGRESS_STRICT=1`, "content: OK"
+with the D3 lint self-test at 4 bad enemy rows / 2 bad screens / 5 bad costs /
+5 bad intent lists, "grammar: OK (666 checks)", "economy: OK (256 checks)" with
+"rng pins: 50 seeds, 0 moved" and "d3 rng: floor-entry pins 10 seeds / 60
+entries, 0 moved", "bots: OK (116 checks)", "determinism: OK (61 checks, 8
+personas)", "meta: OK", "shell smoke: OK", 1400 + 1540 procgen generations with
+0 violations); the corpus went 72 -> 77 with five new `d3_*` demos, 69 records
+re-stamped on `sim_version` alone and three bot logs re-recorded on their
+personas.
+
+**Verdict: SHIP, with `ENEMY_AVOID_COST` unmeasured as a lever.** Nothing was
+changed in the measure phase and the named lever was not touched. What the
+entry hands forward is that **the smoke screen is shipped correct and
+unmeasured as counter-play**: it fires 0.10 to 0.20 times per run for every
+persona in the roster and not one of those screens is aimed - no bot reads the
+`screens` key or routes to smoke - so this pass measured the rule's cost to the
+enemies, not its value to a player, the same profile as C2's `water_jet+` and
+C3's `undertow`. `drag`, the third entry of `SCREENED_INTENTS`, has never
+fizzled in play at all (0 against 61 gums and 12 drains over the entry's 600
+runs). And
+`avoid` is measured as a list of exactly one kind on exactly one terrain: no
+board ever forces a two-kind trade-off, so the first row that avoids `oil`
+needs its own before/after, because oil is generated by mapgen and fire is not.
+
+**Status (2026-09-07g).** **Block D item 4 (6.4, "Affinity-slotted draft with
+`focus` on skip") is implemented and SHIPPED**, and `Game.SIM_VERSION` is 12.
+Finding 5.1's draft half is closed in the code: `Content.DRAFT_SLOTS` is
+`["affinity", "upgrade_or_affinity", "wild"]` and names the role that rolls each
+offer (an offer past the list - `wide_draft` asks for four - is "wild"); the
+**affinity set** of a run is the union of `Content.ABILITIES[id].tags` over the
+held kit and `Content.GRAFTS[id].tags` over the held grafts minus
+`Content.AFFINITY_IGNORED_TAGS`, and this draft rule is the one rule for which
+the sim reads `tags` at all. `AFFINITY_IGNORED_TAGS` (`["mobility"]`) now means
+**"these tags do not define a build"** and is read by *both* build-steering
+slots through the one helper pair `Game._tag_defines_build` /
+`Game._build_defining`: the affinity set drops the tag, and the upgrade slot
+drops a `+` form whose base carries nothing else (`mycelium_dash+`, `burrow+`;
+never `updraft+`, which is `["wind", "mobility"]` and has an identity beyond
+moving). That second half is the one review finding from the D4 adversarial
+pass that changed a rule - two lenses found it independently - and it narrows
+the slot's **list** only: the universe is untouched, so a wild slot can still
+offer a mobility `+` form and the shrine forge still upcycles one, and under
+`draft_upgrades_only` the `+` list *is* the universe and stays unfiltered.
+`Game._draw_draft_offers` spends **exactly one main-rng draw per slot** whatever
+the candidate lists hold, padding an empty list from the wild list - reported
+`"wild"`, except the focus slot, which keeps its `"focus"` label through the
+padding - and spending the draw even when that is empty too, so the draw count
+is the slot count and never the kit, the grafts or the pool; and a skip arms the
+stored `focus`, whose next draft rolls one extra trailing affinity slot,
+spent by that roll whether the player picks or not and **never paid in bloom**,
+which is 5.1's own constraint. `draft_slots` and `focus` are stored snapshot
+keys, so both enter `state_hash()`; `legal_actions` and `_act_draft` are
+unchanged in shape; no bot was touched, deliberately, so that what the slots do
+to *unchanged* policies is what gets measured.
+
+The measurement is the "2026-09-07g - bump 12 (D4)" entry in `docs/BALANCE.md`,
+and **the verdict is SHIP: every gate line passes**. `tests/playtest.gd` at 30
+seeds with the gate on reads "gate: all PASS" and exits 0 (magpie 4/30 CI
+[5%, 30%], optimizer 11/30 CI [22%, 54%], deeproot 26/30 CI [70%, 95%], 0
+illegal actions and 0 timeouts everywhere); every fanatic build stays above zero
+in **both** 100-seed samples (in sample the floor is anchor 2/100 [1%, 7%] and
+turtle 3/100 [1%, 8%], total 188/800; out of sample turtle 3/100 [1%, 8%] and
+anchor 6/100 [3%, 12%], total 233/800; 0 timeouts in 1600 runs, against
+166/800 before); the optimizer's 100-seed interval overlaps its before column
+(44/100 [35%, 54%] against a re-measured 46/100 [37%, 56%]); signature share is
+up on both required columns (optimizer 0.42 -> 0.51, unweighted mean of the
+eight fanatic build rows 0.278 -> 0.301 / 0.296); and **picking still beats
+always-skipping**, the line that replaced the original regret gate, though five
+samples later that line turns out to say only "the margin did not move" (below).
+
+**The original gate line was retired as mis-specified, and that is the entry's
+main methodological finding.** It read "oracle regret per draft not higher than
+before by more than 0.05". Regret rose in **all six** slot/filter configurations
+measured (0.158 pooled before, 0.24-0.28 after) because the **ceiling** rose -
+best fork 113 -> 120-139 - and not because play got worse: the
+`["upgrade_or_affinity", "wild", "wild"]` configuration holds the optimizer's
+oracle pick count at exactly the pre-D4 90 and its policy wins at exactly the
+pre-D4 15/30 and still reads 0.27. This is the same error 6.4 warned about for
+kit-set entropy, made a second time in a different metric: an acceptance number
+that a uniform lottery optimises will always reject content that stops being a
+lottery. The replacement is a **within-instrument** line - the oracle's bot-pick
+win count minus its always-skip count, both from the same forks of the same
+policy on the same seeds, so a moving ceiling cancels. On two samples it read +13 before, -15 for the
+unfiltered D4 slots and +3 for the shipped rule, which looked like a clean
+separation. **Three more samples per tree retired that reading.** Over five
+independent 30-seed samples the statistic pools to **+2 for the shipped tree
+and +2 for the pre-D4 tree** - identical - with per-sample values swinging
+from -18 to +21. So the replacement line is under-powered at this sample size
+and the claim that one slot mix "fails" it is withdrawn; what the line supports
+is "D4 leaves the pick-versus-skip margin where it found it", and nothing
+finer. The same five paired samples do establish the ceiling cleanly: best
+fork is higher in **5 of 5** samples (663 against 540 in total, sign test
+p = 0.031), which is the robust oracle finding of the block. The methodological
+lesson is therefore the same one twice, and it is now a rule: **a gate line
+whose per-sample noise has never been measured is not a gate line** - regret
+was retired for measuring the ceiling, and its replacement survives only as a
+"did not move" statement because its noise band is wider than the effect it
+was meant to detect.
+
+**The upgrade filter's evidence is direct, and it is not a win-rate claim.** Unfiltered, `mycelium_dash+` was offered 158 times in 511 optimizer
+drafts and taken 0 times (103/0 pre-D4), and 79 of 311 upgrade-slot offers over
+seeds 1..60 (25%) were a mobility `+` form: the slot meant to deepen a build
+spent a quarter of itself on the one `+` form every loadout is guaranteed to
+hold, because Block A lints exactly one mobility ability into every kit. On the
+shipped tree the same probe reads **0 of 310** upgrade-slot offers and **24
+pure-mobility `+` offers from wild slots**, and the 100-seed optimizer run reads
+`mycelium_dash+` 0/36 where it read 0/158. Upgrades taken go 156 -> 181,
+plus-form casts 711 -> 920, the upgrade slot's pick rate 0.23 -> 0.28
+(optimizer) and 0.31 -> 0.34 (deeproot), and three of the five optimizer wins
+the unfiltered slots had cost come back (41 -> 44 against 46).
+`tests/test_grammar.gd` pins it at "264 upgrade-slot offers over 264 drafts, 0
+pure mobility" over all six loadouts x 44 seeds, and
+`tests/regressions/d4_upgrade_filter.json` pins both halves on one board - the
+upgrade slot deals `seed_bomb+` while the wild slot deals `mycelium_dash+` on
+the same roll.
+
+**The mechanism is the tag list, and in a default run it has one value.** The
+starter kit is `solar_lance` (sun, fire), `seed_bomb` (growth) and
+`mycelium_dash` (mobility, which defines no build), so a default run's affinity
+set is `{sun, fire, growth}` from turn one and only a graft buy or a pick widens
+it. Builds made of that half assemble far more often - fanatic never-completed
+core falls 30% -> 13% (pyro), 67% -> 36% (gardener, the one row whose interval
+separates in both samples: 33/100 [25%, 43%] -> 53/100 [43%, 62%] and 56/100
+[46%, 65%]) and 52% -> 19% (lance-free pyro) - and builds made of the other half
+assemble less: both shovers 83%/85% -> 95%/95% in sample. The same fact reaches
+the meta layer: `TIER0_CAREER_RUNS` in `tests/test_meta.gd` had to rise 22 -> 24
+because the `lasher` milestone is `requires {won_with: ["vine_whip"]}` and a
+tender-led career is offered the displace-tagged `vine_whip` less often. The
+variety that would make the affinity slot mean something different per run is
+Block A's loadouts, and they are not the default config; the `test_meta` loadout
+smoke gate shows the starter loadout at the bottom of the six (tender 6/20
+against spiker 14/20). The measurement still owed is **the same gate lines under
+a non-tender loadout** (`SWEEP_LOADOUT=spiker` or `lasher`, whose kits carry bark
+and displace), to separate "affinity works" from "affinity favours
+sun/fire/growth".
+
+Two structural notes the entry hands forward. **The focus half of the feature is
+measured on two personas**: magpie, optimizer and deeproot skipped 0 times in
+406 drafts between them, so `focus` never armed for them at all, and the card is
+taken 2/41 by the fanatic and 1/2 by sprout. Its value to skilled play is
+unmeasured - the same profile as C2's `water_jet+`, C3's `undertow` and D3's
+smoke screen. And **the six-configuration grid in the balance entry is decision
+evidence, not a baseline**: the two prototype rows that carried a mobility
+filter (levC, levD) filtered on `role` rather than on tags *and* removed the
+filtered ids from the universe, so they are a different rule from the shipped
+one and none of their cells (levD read optimizer 56/100, fanatic 209/800, magpie
+3/100, pooled +13) may be quoted as a number for this tree.
+
+Suite green throughout ("regressions: 83 ok, 0 failed" plain and with
+`REGRESS_STRICT=1`, "content: OK" with the D4 lint self-test at 5 bad slot
+lists / 5 bad name lists / 5 bad ignored-tag lists and "loadout affinity: 6 / 6
+kits hold a build-defining ability", "grammar: OK (730 checks)", "economy: OK
+(256 checks)" with "rng pins: 50 seeds, 0 moved" and "d3 rng: floor-entry pins
+10 seeds / 58 entries, 0 moved", "bots: OK (126 checks)", "determinism: OK (61
+checks, 8 personas)", "meta: OK", "shell smoke: OK", 1400 + 1540 procgen
+generations with 0 violations). The corpus went 77 -> **83** with six new `d4_*`
+demos; every one of the 77 old hashes moved because `draft_slots` and `focus`
+are stored snapshot keys, and at the upgrade-filter pass **all 20 bot logs were
+re-recorded on their personas, of which 13 changed and 7 came back
+byte-identical** - the re-record deliberately covered every log the change could
+have moved, not only the nine that stopped replaying, because a draft pick is an
+index: `det_optimizer_s42` replayed byte-identical with a matching hash and
+still changed when re-recorded.
+
+**Status (2026-09-07h).** **Block D's "evolve forks" bullet (6.4) is
+implemented** and `Game.SIM_VERSION` is 13. Each of the **fifteen base-pool
+abilities' `+` rows is now two named variants** keyed `<base>+<word>`: variant A
+reproduces the pre-D6 row byte for byte (only the key and the display name
+change, pinned against a frozen copy of the old table in
+`tests/test_grammar.gd`), and variant B forks it on shape, target, status or
+count rather than on a number - which is why five B rows are *sidegrades* of
+their own base rather than supersets (`root_wall+cage` loses the `tile` shape,
+`sap_snare+blight` swaps root for spore, `grow_spike+throng` swaps the `per`
+count, `bramble_coat+bristle` trades duration for damage, `overgrowth+palisade`
+writes roots instead of growth), an explicit exemption from C4's "numeric bumps
+only" convention that is written into `sim/content.gd` rather than left to be
+discovered. `Content.variants_of(base)` is derived by **scanning** `ABILITIES`,
+never hand-maintained, and returns two entries for a forked base, one for a
+package ability (those keep their single plain `+` form and are deliberately not
+forked) and none for an id with no upgrade. The **forge sells either** -
+`legal_actions` lists one `upcycle_ability` per (keep, scrap, variant) triple, a
+missing `variant` index means 0 (the A row, so an old log forges the behaviour
+it recorded) and an out-of-range index is illegal and changes nothing - and the
+**draft parity-picks one**: the `upgrade_or_affinity` slot's list holds
+`Content.variant_for(base, _pending_floor)` per held build-defining base, A on
+even floors and B on odd across the floors 2..7 a run drafts on, chosen with
+**no rng draw**, so D4's one-main-rng-draw-per-slot contract is untouched and
+the sibling a floor cannot deal is always buyable at the forge. Six new
+vocabulary items of an eight-slot budget, each used by a shipped row: `pierce`
+(a `lance` bool - the beam no longer breaks on the first body, so oil *behind*
+an enemy can be lit), `pull_line` (a new op that rakes a whole `dir` line
+toward the tender), `center` (an `aoe_status` key that moves the blast off the
+tender's own head), `ignite_ttl` (an `aoe_damage` key: the ttl of the fires
+*this* effect lights, a spread fire still taking the table ttl), and `kind` +
+`ttl` on `convert_radius` (what a converted corruption tile becomes,
+lint-forbidden from naming a corruption row - a player-made corruption tile
+would be both a bloom faucet and a green-gate faucet).
+
+The measurement is the "2026-09-07h - bump 13 (D6)" entry in `docs/BALANCE.md`,
+and **the verdict is SHIP, after one more gate line was retired for asserting a
+property the tree never had**. Four lines passed as written: **no sibling is
+strictly dominated** (0 of 15 pairs in sample and 0 of 15 out of sample; the
+lowest sign-test p in 30 paired comparisons is 0.12 and no pair's Wilson
+intervals are disjoint), `tests/playtest.gd` at 30 seeds with the gate on reads
+"gate: all PASS" and exits 0 (optimizer 16/30 [36%, 70%], deeproot 26/30
+[70%, 95%], magpie 4/30 [5%, 30%], 0 illegal and 0 timeouts in 180 runs), every
+fanatic build stays above zero at 100 seeds (floor turtle 2/100 [1%, 7%], total
+**205/800** after the rake fix below, 0 timeouts in those 800 runs), and **both stall canaries fall** - magpie
+67/71 = 0.94x in sample and 138/144 = 0.96x pooled over 200 seeds, turtle
+40/48 = 0.83x, against a 1.25x limit that 07g left at its recorded high. The
+line that fails is **"zero timeouts anywhere"**, on exactly one run: the magpie
+canary crosses the 400-turn cap on **seed 49**, where the bump-12 tree died of
+smog on floor 3 at **turn 317** of the same cap. Its kit at the cap holds **no
+variant at all**, so no fork row is nameable as the lever, and a control over
+the fifteen *base* rows (configs identical on both trees) at seeds 101..130
+reads **pre-D6 1 timeout, post-D6 2**, both on seed 122 - a locked-kit timeout
+on that seed is a property of the tree before this block. The measurement pass reported the failing number rather than rewriting the
+verdict, and that was right. What settled it was measuring the LINE: magpie
+timeouts over 200 fresh seeds read **pre-D6 1, post-D6 2**, and pooled over
+every magpie seed taken for this block, **1 in 400 before against 3 in 400
+after** - not a measurable rate change, and not zero before. "Zero timeouts
+anywhere" therefore asserted a property the codebase did not have when the line
+was written, which makes it unmeetable rather than strict; it is replaced by
+zero timeouts for the **gated** personas (which `playtest.gd` enforces and which
+passes) plus no material rise in the canary rate. That is the third gate line
+retired across two blocks, all written by the same hand before the baseline was
+taken, and the rule now recorded in BALANCE.md is to measure a proposed line on
+the unchanged tree before quoting it.
+
+**Two defects the measurement found, one fixed and one recorded.** `vine_whip+rake`
+was cast **364 times over 20 locked-kit runs at about 1% effectiveness**,
+because `pull_line` is the first `dir` ability whose empty cast is a pure no-op
+and `_ability_targets` offers a `dir` ability all four directions
+unconditionally. Fixed with a ninth target shape, `dir_enemy` (offered only
+where the line holds an enemy, walking as `pull_line` walks), plus
+`Game._is_dir_shape` for the two sites that compared against the literal, plus
+`Content.TARGET_SHAPES` and a lint - the shape vocabulary had never been closed
+at all. The rake now casts 0.9 a run at 100% effectiveness and its pair reads
+12/30 against 12/30. The recorded one: **no persona ever forges** (0 uses in 68
+runs), and the forge is the only place a sibling is *chosen*, so this block
+measures forks as assignments and not as choices. That also explains its
+largest cell, the fanatic gardener falling 53/100 to 39/100 with two of its
+three core abilities forked and no way for it to forge for the sibling it
+wants.
+
+**The acceptance clause needed a new instrument, and the reason is the
+measurement blindness the block was warned about.** No heuristic persona forges
+(`upcycles 0/0` everywhere, as since 09-05b), the parity rule means one floor
+deals one sibling, and in the gated playtest nothing casts a `mycelium_dash` or
+`pollen_burst` variant at all - so read off a playtest, "no strictly dominated
+sibling" would pass *vacuously*. `tests/sweep_forks.gd` (new, permanent) instead
+runs each sibling as a **locked kit** (`{kit: K, pool: K}`) against the same
+seeds and the un-upgraded base, defines DOMINATED precisely in its header
+(the loser's Wilson interval entirely below the winner's **and** a paired sign
+test at p < 0.05 favouring the winner) and implements exactly that, prints its
+own **noise band** before any verdict (a Wilson half-width at 30 seeds is about
+17 points near 50%, so two siblings must differ by roughly 35 points before the
+rule can fire, and "not separated at this N" is therefore the expected and
+honest answer), and reports a pair whose siblings are both **never cast** as
+**UNREAD rather than as a pass**. Four pairs are unread by the optimizer in sample
+(`root_wall`, `pollen_burst`, `overgrowth`, `bramble_coat`) and the proof is in
+the table: their A and B rows are identical in *every* column, because a card
+that is never cast cannot change a run. Those four were then re-run under
+`FORKS_BOT=deeproot`, which casts all eight of their siblings - 0 UNREAD, 0
+dominated, 0 timeouts - so the clause is answered for **15 of 15 pairs** across
+the two personas, with the caveat that deeproot wins 24-28 of 30 in all twelve
+of those configs and the column is therefore saturated: it establishes coverage,
+not power. `tests/tally.gd` gained the counters that make the
+comparison possible at all - `casts_by_id` and `effective_casts_by_id`, keyed by
+the full variant id, since every other per-ability table folds through
+`Content.base_id` - and the entry flags the three pairs those counters cannot
+judge: `shield`, `anchor` and `undim` set no outcome counter, so
+`thorn_shield+plate`, `anchor_roots+bedrock` and `moss_filter+sieve` can never
+register an effective cast while their siblings always can.
+
+**Two content findings the entry hands forward.** The **gardener** fanatic build
+falls 53/100 [43%, 62%] -> 39/100 [30%, 49%] with never-complete 36% -> 48%: its
+core is `seed_bomb` + `grow_spike` + `overgrowth`, two of which now fork, so on
+odd floors the upgrade slot deals it `seed_bomb+reclaim` and `grow_spike+throng`
+where the pre-D6 slot dealt the row the build was tuned around. The intervals
+overlap and it is one sample, but it is the largest cell in the entry and the
+one most likely to be a real cost of the parity rule - and if it repeats out of
+sample the lever is the parity rule itself, not a fork's numbers. And
+`vine_whip+rake` is cast **18.7 times a run at 0.2 effective** (23.1 / 0.1 out
+of sample) against `lash`'s 1.07 / 1.07: the optimizer has no line-occupancy
+test for the new `pull_line` op and fires the rake at empty axes, so it is a
+**bot** defect that makes every rake win cell a measurement of a bot misusing
+the card. The two design-phase falsifiers split:
+`overgrowth+palisade`'s **fired on the optimizer** - 0 casts in 60 locked seeds
+- and is rescued only by the search bot at 0.07 casts per run, so its two
+`convert_radius` keys are correct, linted and demoed but barely exercised by
+play; `bramble_coat+bristle`'s **did not fire** - under deeproot it is cast more
+than `briar` (1.27 against 0.77 per run) and wins one seed more, and the turtle
+canary's stall floors fall 48 -> 40, so neither half of its "cast no more, win
+strictly less" condition holds, though the thorns-hit column the falsifier
+actually named does not exist per variant (`thorns` sets no outcome counter, so
+both siblings read eff 0.00) and one +1 win at 30 seeds validates nothing.
+
+The corpus went 83 -> **92 records** ("regressions: 92 ok, 0 failed" plain and
+with `REGRESS_STRICT=1`) with nine new `d6_*` demos, one per rule including the
+forge pair `d6_forge_variant_a`/`_b` (same seed, board and actions, `variant` 0
+against 1, different kits). 52 base-`+` occurrences across 20 records were
+renamed to their A variant, 11 draft/forge demos were re-pinned by replay
+because the universe now holds both siblings, and **all 20 bot logs were
+re-recorded, of which 16 changed and 4 came back byte-identical** - the bump-12
+index-pick hazard arriving a second time: `det_magpie_s42` had *both* its offer
+lists move and replayed unchanged only because its stored pick index names the
+affinity offer in both. Suite green throughout ("content: OK" with
+"variants: 24 bases carry an upgrade (15 forked into 2, 9 package singles)" and
+an effect-grammar self-test at 38 bad rows -> 38 failures, "grammar: OK (889
+checks)" with "d6 table: 39 upgrade rows, 15 bases forked in two, parity A/B by
+floor", "economy: OK (264 checks)" with "d6 forge: 8 (keep, scrap, variant)
+triples on a 3-ability kit, all legal, one price", "bots: OK (147 checks)",
+"determinism: OK (61 checks, 8 personas)", "meta: OK", "shell smoke: OK", and
+1400 + 1540 procgen generations with 0 violations).
+
+**What remains in the whole roadmap.** Nothing from 6.2 or 6.3 is outstanding.
+**Block D (6.4) is SIX of six bullets done and CLOSED**: per-ability stat
+surges (07d), repeatable economy sinks (07e), enemies that read terrain (07f),
+the affinity-slotted draft (07g), evolve forks (this entry) and, at bump 14
+(2026-09-08), one resonance per element - `Content.RESONANCES`, a third
+passive source read by the existing `_passive_stat` / `_passive_mod` / `_hook`
+machinery, with every tag that ships nothing documented in data. That last
+bullet shipped as ONE element rather than four: `cinder_grip` (fire 3) is the
+only row. Two others were authored, implemented and measured out inside the
+same uncommitted bump - a displace row on its own pre-registered falsifier and
+a growth row on the greed canary, the second by the owner, after the measure
+phase's named lever (`need` 3 -> 4) was itself measured and FAILED. The
+readings are in BALANCE.md 2026-09-08 and beside the table in
+`sim/content.gd`: *displace joins control as an element waiting for
+vocabulary, not for reach*, and *growth waits for a payoff that pays on an act
+rather than on a turn spent in place, because a rate over turns is a greed
+subsidy at every threshold*. Carried forward from earlier blocks and
+unchanged: **`unlocked_grafts` is dead at BOTH ends** - no `Content.MILESTONES`
+row carries a `graft` kind, so nothing writes the bucket, and `game_config`
+returns no `grafts` key, so nothing reads it; the dispatch arm and its test
+fixture are the only things keeping it alive. (Corrected 2026-09-09: this
+paragraph previously also said the **mutator picker** has no shell surface.
+It does - `shell/main.gd` draws a `MUTATOR:` row and cycles it, landed in
+a223f93, and all 11 mutators have an unlock. And it said `solar_core` was
+"unpriced against its own measurement"; it has been priced at 8 since bump 8,
+and what actually remains there is the OWNER question of whether it should
+become the conditional `regen_on_growth` variant - which D5's `deep_loam` cut
+is new evidence against.) Open items this block did not touch: `quota_reclamp` has still never fired in a
+bot run; `hook_capped` has still never fired in play; and **the press and the
+forge remain dead sinks** - `upcycles 0/0` for every persona in every run in
+this entry, which now also means the fork *choice*, the visible half of this
+block, has zero harness coverage outside `tests/test_economy.gd`'s legality
+check and the two forge demos. New to the open list: a single 3-card draft can
+spend two of its cards on the two siblings of one base (~10-12% of rolls by
+direct probe), which is legal, follows from `universe = bases + upgrades`, and
+is pinned by no demo.
+
+**Added 2026-09-09, found by a ship-readiness audit rather than by a block:**
+7.6's **golden-hash test and its Android hash readout were never built and
+were never listed as open** - they simply vanished from the status paragraphs.
+`grep -rln golden tests/*.gd` and `grep -n state_hash shell/*.gd` both return
+nothing. This matters because the daily challenge is advertised as the same
+run for everyone: its seed is `hash(date_string)` while every shop and pod
+draw is `hash([seed, floor, tag])`, and nothing in the tree checks that those
+agree across platforms. Solo play is unaffected - only the daily's "same run
+for everyone" claim rests on it. Ship-relevant, not ship-blocking.
+
+Also on the open list and never tracked: review defect 4 (`fuse` erases the
+partner with no death event, so the elite bounty is never paid) and defect 6
+(a draft drop writes the new ability into the kit slot in place, carrying a
+live `gummed` onto it - the forge path shifts it correctly, the draft path
+does not). Both are small and neither is player-visible enough to block a
+build.
+
+**Bump 14 (2026-09-08) implemented the LAST item in the 6.4 roadmap, and it
+shipped as ONE element.** "One resonance per element" is
+`Content.RESONANCES`: one row per resonating tag, `{name, desc, tag, need}`
+plus exactly one of `stat` / `mod` / `hooks` - the same three-way shape a
+`Content.GRAFTS` row makes, read by the same `_passive_stat` / `_passive_mod`
+/ `_hook` machinery, so the block added a SOURCE and not a system, with zero
+new ops, stat keys, mod keys, hook kinds, predicates or terrain keys. **One
+row ships**: `cinder_grip`, fire 3, an `ignite` hook that roots a machine
+standing on the tile as it lights. "Mobility never counts" is enforced as a
+lint against `AFFINITY_IGNORED_TAGS` rather than by a tag literal in
+`sim/game.gd`, and **ten** tags ship nothing with the reason recorded per tag
+beside the table.
+
+Two rows were authored, implemented, measured and CUT, and both cuts are
+worth more to a later block than the row that survived. `follow_through`
+(displace 2, a `collision` hook) went first, on its own pre-registered
+falsifier: 22 hooks over 30 optimizer runs against a stated cut line of 30, 21
+out of sample, and only 5 landing anything, because a collision that kills
+erases the body before the hook runs. `deep_loam` (growth 3,
+`stat {regen_on_growth: 1}`) then failed a DIFFERENT pre-registered line - at
+300 seeds per loadout the greed canary rose on all six loadouts and its Wilson
+lower bound cleared the 10% trip line on `spiker` (56/300 = 18.7%
+[14.7, 23.5] against 38/300 = 12.7% [9.4, 16.9] pre-D5) - and the measure
+phase held the block with the lever named. **The lever was then measured and
+it failed too**: `need` 4 reads 48/300 = 16.0% [12.3, 20.6], a lower bound
+still clear of the 10 line, and `need` 5 passes only at 39/300 = 13.0%
+[9.7, 17.3] - one win and +0.3 points over the row's absence, which is a pass
+bought by switching the row off. The owner cut it. The row
+pays per turn BEGUN standing on growth and the greed persona stands there
+about twice as often as the skilled one (23.6-26.7% of turns against
+13.4-15.8%), so `need` changes how OFTEN the row is on and never WHO it pays:
+its canary cost is proportional to its effect. **A pre-registered lever is a
+hypothesis about the remedy, not a promise that the remedy works** - and the
+whole reason this was visible at all is that the row, the loadout, the persona
+and the lever were all written down before the numbers. That is also the only
+reason any of the three outcomes here is trustworthy.
+
+**What now remains in this whole review, plainly.** Nothing from 6.1, 6.2, 6.3
+or 6.4 is unimplemented. What is left in the document is of three kinds, and
+none of it is a queued feature:
+
+1. **6.5 is the dropped list** - a record of refusals with their reasons
+   (overcharge and tithe, per-HP heal, an early reroll, a tag-scored optimizer
+   draft list, alternative boss-gate keys, `damp` and slippery collision,
+   constraint tiers 9-10, shrinking `DRAFT_POOL`, a shover starter without
+   `seed_bomb`, a `player['mobility']` field, a lance-free pyro). Re-opening
+   one of those is a design decision, not a backlog item. D5 adds TWO entries
+   in the same spirit, and both are refusals with a measurement attached
+   rather than opinions. **(a) Displace, and control before it, are elements
+   waiting for VOCABULARY, not for reach.** `collision` is the only
+   `HOOK_KINDS` entry forced movement produces and the band persona
+   essentially never produces it (0.03 collisions a run free drafting, 0.73 on
+   a kit of nothing but pushers); nothing fires when a status lands, so
+   control has no seat at all. Both would need a new hook kind and a dispatch
+   site - a system change, which is what a source-shaped block may not do.
+   **(b) Growth is waiting for a payoff SHAPE, not a threshold.** The only
+   payoff the closed key set can give it is a rate over turns
+   (`regen_on_growth`), and a rate over turns spent somewhere the player
+   chooses pays the greed persona about twice what it pays the skilled one, at
+   every value of `need` - so the row's canary cost is proportional to its
+   effect and no threshold buys a pass with the row still doing anything.
+   Growth resonates when a key exists that pays on an ACT (a cast, a plant, a
+   cleanse); every closed `PASSIVE_STAT` / `PASSIVE_MOD` key today is
+   survivability, charge or bloom.
+2. **6.6 was two design tensions reserved to the owner; both were ANSWERED on
+   2026-09-08 and 6.6 now records the decisions.** No `bark_burst`: the turtle
+   stays a designed canary with no win condition. Both disabled reaction rows
+   stay disabled - `roots_burn` (fire x growth) on THEME, because burning your
+   own growth as a primary strategy runs against what the game is about, and
+   `smoke_smother` (smoke x fire) merely because nothing needs it. D5 had
+   walked up to the first of those and stopped, which turned out to be the
+   right call: `bark` was refused a resonance partly because every payoff the
+   closed vocabulary offers it is survivability (`shield_cap`,
+   `floor_start_shield`, and the `shield` / `thorns` ops that
+   `HOOK_FORBIDDEN_OPS` blocks as the documented stall vector), and the one
+   non-defensive payoff anyone had named for it was that same `bark_burst`.
+   With the decision taken, bark's emptiness is settled design rather than a
+   gap: a bark payoff would need a NEW shape that is not defence, and none has
+   been proposed. A content block still may not settle 6.6 by shipping
+   something inside a resonance.
+3. **7.7 carries two runner questions no lens ever considered**, and they are
+   the only genuinely un-scoped proposals left in the review: `measure_bosses`
+   still has no per-boss-BY-KIT reading (the `BOSS_KIT` axis exists; the
+   measurement has never been taken at 30 seeds with deeproot), and **a
+   `weak_to` / `resist` by damage-source family on `Content.ENEMIES`** - the
+   cheapest "world reacts to build" surface in the document, raised by the
+   completeness critic, picked up by no lens, no design phase and no block
+   since. D5 is the block that makes it interesting rather than decorative: a
+   run now has a machine-readable element identity (`snapshot().resonances`
+   and the tag counts under it), so an enemy row that resists or is weak to a
+   damage family would meet a build the sim can already name.
+
+Carried forward from earlier blocks and untouched by D5: `unlocked_grafts` is
+dead at BOTH ends (no `MILESTONES` row has a `graft` kind, so nothing writes
+it, and `game_config` returns no `grafts` key, so nothing reads it);
+`quota_reclamp` has still never fired in a bot run; **`hook_capped` has still never fired in play** (D5
+predicted the cut displace row would produce the first firing through a
+collision kill-chain into `compost`, so cutting it left that counter at zero);
+and the **press and the forge remain dead sinks** at `upcycles 0/0` for every
+persona. Four findings D5 hands to whoever writes the next content block, all
+transferable. **(i)** A hook whose effect targets a BODY is worth what its
+**landing** rate says, not what its firing rate says (`cinder_grip` fires 9.5
+times a run on a locked fire-3 kit and lands 0.80, an 8.4% landing rate
+against a 29% prediction extrapolated from a damage hook). **(ii)** A derived
+`snapshot()` key must be erased from the `state_hash()` view or it moves the
+whole corpus for nothing - `resonances` is, so 88 of 93 records hashed
+identically across the bump, and after both cuts all 93 are stamp-only against
+bump 13 with all 20 bot logs byte-identical. **(iii)** A FREE permanent must
+be measured on the persona that maximises its trigger before the persona whose
+band it is priced against; `regen_on_growth` had a priced-graft optimizer
+reading (+1 win in 30 at 8 bloom, p = 1.00) and no canary reading at all, and
+the missing half is what the block turned on. **(iv)** A pre-registered lever
+is a hypothesis about the remedy, not a promise that it works: `need` 3 -> 4
+was named before the code, aimed at the right row on the right loadout, and
+still failed - write the lever down anyway, and budget for the lever itself
+failing.
+
+Method: four code audits (primitives, in-run progression, meta + runners, bot
+coverage), two instrumented headless measurements (event-stream telemetry over
+180 bot runs; a synergy-lift sweep of 7 hypothesised pairs at 24 seeds per
+config, tier 0 and tier 6), then five adversarial lenses each followed by a
+refuter that re-checked every claim against the code, a three-angle design
+panel with a judge, and a completeness critic. Every claim below cites a
+`file:line` in the tree at commit `eb4425f`; numbers come from the scripts
+listed in Appendix C.
+
+Date: 2026-09-05. Branch: `claude/skill-auto-runner-review-g24u57`.
+
+---
+
+## 1. Verdict in one page
+
+**The game has one build.** Across 180 runs and five personas the final kit
+contained `solar_lance`, `seed_bomb`, and `mycelium_dash` in 35-40 of 40 runs
+per bot; all variety lives in two flex slots dominated by `grow_spike`,
+`thorn_shield`, and `sun_flare`. Strike plus `solar_lance` plus `grow_spike`
+account for 97% of enemy damage for the optimizer, 98% for magpie, 97% for
+sprout, and 78% for the ceiling bot. Terrain-derived damage (fire, collision,
+thorns, spore) is 1.5% to 3.9% for heuristic play and 11% at the ceiling.
+
+**Combos do not fire in the harness, and the harness cannot tell us whether
+they could.** With `grow_spike` and `overgrowth` locked into the ceiling bot's
+kit for 24 runs, the spike landed next to overgrowth-made growth 3 times in
+total. With `sun_flare` and `root_wall` locked in, the flare went off while a
+wall stood 4 times in 24 runs. No hypothesised pair shows positive lift over
+its best single at either tier. This verdict is instrument-conditional: the
+only combo-capable bot is a greedy 1-ply searcher that cannot plan a setup
+turn and whose candidate list starves late kit slots, so the numbers bound
+what the current instrument can see, not what a human can do. Section 7 puts
+the instrument fix first for exactly that reason.
+
+**The reasons are structural, not numeric:**
+
+1. The effect grammar cannot express a combo. Every ability is a flat list of
+   effect ops with no conditions, triggers, or scaling
+   (`sim/game.gd:1250-1394`). Nine of 24 abilities are pure stat sticks; all
+   15 `+` upgrades are numeric bumps; zero grafts touch what an ability does
+   (`_apply_effect` has no graft consult).
+2. The draft cannot express a commitment. Six 1-of-3 offers from one uniform
+   pool that mixes new abilities and upgrades; nearly the whole pool (9 of
+   11) is seen every run; no synergy tags, no weighting toward the kit, no
+   reroll, no way to protect or replace a starter.
+3. The shrine is "buy whatever is stocked." One of each item per floor,
+   uniform draws, so the only decision is affordability. Every bot encodes
+   this as a fixed purchase order; the ceiling bot buys nothing and wins with
+   43 bloom unspent.
+4. Grafts are six flat stat modifiers consulted at exactly six sites
+   (`game.gd:350, 386, 771, 861, 1153, 1157`). None creates a build.
+5. The meta layer forces content rather than offering it: unlocked packages
+   are always in the pool (`meta/profile.gd:59`), diluting both targeted
+   synergies and upgrade odds (36% to 22% per offer with a full kit); no
+   package ability has a `+` form; mutators are unlockable but the shell
+   never exposes them (`shell/main.gd:193`).
+6. The harness cannot see any of this. No runner aggregates the event stream,
+   measures synergy lift, or records offer-vs-pick rates; `sweep_combos.gd`
+   measures "start with the pair, then drift to the bot's favourites"; the
+   ceiling bot cannot plan a two-step combo, never searches its drafts, leaves
+   drafted abilities in kit slots 3 and 4 entirely unevaluated on 13% to 22% of
+   the turns where they are legal, and can never draft `bramble_coat` or
+   `mycelium_dash+` at all because of a rank sentinel in the shared draft code.
+
+One correction to the framing above, raised by the review's own critic: the
+world is not entirely indifferent to the build. The Dredge eats growth and
+heals from it, and the boss core gate reads adjacent growth and corruption. So
+commitment does have a payoff today, but only as punishment for the gardener
+and a universal key for everyone else. There is no reward side.
+
+Sections 2 to 4 are the evidence. Section 5 is the adversarially verified
+finding list. Section 6 is the judged roadmap. Section 7 is the harness plan
+that has to land first, because an unmeasured mechanic reads as neutral and
+gets shipped as filler.
+
+---
+
+## 2. The systems as they are
+
+### 2.1 Effect grammar
+
+`_apply_effect(eff, adef, target)` dispatches on `eff["op"]` over 21 ops
+(`sim/game.gd:1250-1394`). Effects run in list order with no shared per-cast
+state, so two effects in one ability, or two abilities in one turn, never
+reference each other except through persistent terrain and status.
+
+| Class | Count | Abilities |
+|---|---|---|
+| World-state conditional (reads terrain, status, dim, position) | 13 | solar_lance, vine_whip, water_jet, mycelium_dash, sun_flare, overgrowth, grow_spike, tide, geyser, gust, updraft, clear_air, moss_filter |
+| Reactive (fires on an enemy action) | 2 | bramble_coat, anchor_roots |
+| Unconditional stat stick or terrain writer | 9 | thorn_shield, pollen_burst, sap_snare, spore_cloud, burrow, seed_bomb, fungal_ring, root_wall, steam_vent |
+| Output scales with a countable world quantity | 10 | solar_lance, water_jet, tide, sun_flare, overgrowth, pollen_burst, spore_cloud, geyser, clear_air, bramble_coat |
+| `+` forms that add a condition / remove one / add an op | 1 / 3 / 0 | solar_lance+ adds a dim conditional; seed_bomb+, root_wall+, moss_filter+ drop to cost 1 and lose verdant surge |
+
+Terrain is where DESIGN.md says combos live. The interaction matrix
+(Appendix A) shows what exists and what does not:
+
+- **Exists:** lance ignites oil and stops at smoke; wash removes oil and fire
+  and pushes the first enemy; pushes deal collision damage into walls, enemies,
+  and roots; growth discounts a 2-cost cast (verdant surge), heals, seals a
+  vent, is the dash target, the spike condition, and the boss-gate key; fire
+  spreads to adjacent oil one tile per turn; roots block pathing, pushes, and
+  vent spawns; stun pauses summon/ooze/stoke timers; thorns reflect melee,
+  slams within 2, and quakes.
+- **Absent:** fire never touches growth, goo, smoke, or roots; water never
+  touches goo, smoke, or growth; pull never drags oil or ignites; teleport
+  skips `_player_enter_tile` (`game.gd:1338`); root status gates only the
+  `move` intent, so a rooted adjacent enemy attacks every turn and the root
+  never ticks (`game.gd:569-572`); smoke blocks only the *player's* beam and
+  whip line, enemies have no line of sight anywhere; enemies never react to
+  growth, oil, goo, or smoke when pathing; statuses never stack (`game.gd:489`).
+
+Fire is the only terrain with a chain reaction, and its `ttl 2` was hardcoded
+in five places (`game.gd:613, 764, 1260, 1372, 1579`; superseded by C1a, see
+Status 2026-09-05c - `Content.TERRAIN` owns it now). Roots are the strongest
+hidden combo piece (collision walls, silent vent-spawn skip, BFS blocker) but
+beams pass straight through them.
+
+### 2.2 In-run progression
+
+| System | Shape | Where |
+|---|---|---|
+| Kit | 5 slots (3 under `kit_of_3`), starts with 3 fixed abilities; any slot may be dropped, including the only mobility, which is outside the pool and never re-offered | `content.gd:12, 178`; `game.gd:944-951` |
+| Draft | 6 drafts (descents 1-6) x 3 offers; candidates = unowned pool abilities + `+` forms of owned ones, one uniform draw without replacement; full kit turns each new pick into a drop; skip gives nothing | `game.gd:903, 914-929, 958` |
+| Upgrades | 15 `+` forms, all numeric; package abilities have none | `content.gd:114-174` |
+| Shrine | one heal (3), one ability (4), one graft (4 + 2 per owned), one item (2), each erased on purchase; press two items for 1; forge one ability to `+` by scrapping another for 3 | `game.gd:354-380, 1002-1043, 1097-1145` |
+| Grafts | 6 flat modifiers: +2 bank cap, growth heal +1, +2 shield cap, +1 bloom per cleanse, +1 regen, 2 shield at floor start | `game.gd:350, 386, 771, 861, 1153, 1157` |
+| Items | 5 base + 5 `+`, satchel 2, use is a free action; only `sun_capsule` (charge) and `iron_seed` (shield cap, +1 max HP on `+`) touch another system; none touches terrain | `game.gd:964-1000` |
+| Bloom | +1 per cleanse (+3 rich goo), +2 and a supply pod when a room's last corruption falls, +5 once when a floor is fully restored, +4 per elite kill; sinks as above | `game.gd:861, 880-886, 1078, 1422` |
+| Green gate | stairs dormant until `green_need` cleanses (2/3/3/3/3/4), clamped to generated corruption once at floor entry; quota cleanses thin smog by 2, the next four by 1, then 0 | `game.gd:341, 868-873` |
+| Verdant surge | a 2+ cost cast on growth costs 1 less and consumes the tile | `game.gd:1172-1189` |
+
+Draft decision space, measured by Monte Carlo over the real
+`_draw_draft_offers` (20k runs): about 9.0 of the 11 non-starter pool
+abilities are seen every run (12 of 20 with packages); random-legal policies
+reach 7k to 17k distinct final kits against an analytic bound of 122k (545k
+with packages). The pool is small enough that "what you see" is not the
+source of variety; only ordering and timing are.
+
+Per-floor bloom supply (200 seeds, tier 0): generated corruption
+6.0 / 9.9 / 16.1 / 21.9 / 24.2 / 22.9 / 6.0 tiles on floors 1-7, rich goo
+0.8-1.3 tiles on floors 2-6, 3-5 bloomable rooms per floor. A full-clear
+floor yields roughly 17 to 46 bloom; a quota-only floor 2 to 8. The whole
+graft set costs 54.
+
+### 2.3 Meta career
+
+`meta/profile.gd` unlocks by career events: reach floor 5 (mycology), first
+win (tier 1, hydraulics, `kit_of_3`, `double_oil`), first tier-1+ win
+(aeolian, `brittle`, `parched`), second win (`overtime`, `boarded`), then one
+tier per win up to 8. Everything a player can *choose* collapses to the tier
+picker: `game_config()` returns every unlocked package unconditionally
+(`profile.gd:59`), and the shell calls it with no mutators argument
+(`shell/main.gd:193`; `grep muta shell/` is empty). Six of nine milestones
+unlock content the shipped game cannot select. All eight tiers are difficulty
+or price modifiers; none reshapes the draft or the build space.
+
+### 2.4 Bots and runners
+
+Bot coverage of the 24 abilities (Appendix B) is narrow and hardcoded. The
+optimizer ladder has cast branches for 15 abilities and never casts nine of
+them; `geyser` and `pollen_burst` have branches that are structurally
+unreachable because the strike branch (`optimizer.gd:143`) runs first and is
+always legal when their trigger is true (22 and 10 held runs, 0 casts).
+Sprout casts only `solar_lance`. Fanatic supplies the only real triggers for
+the control abilities but aims tile casts at the first legal target, which is
+the topmost tile in scan order (`game.gd:1198-1208`), so `overgrowth`
+converted anything in at most 17 of 111 casts. Deeproot, the ceiling, is a
+greedy 1-ply searcher with `MAX_CANDIDATES = 30` filled in kit-slot order
+after all non-ability actions, so `seed_bomb` (slot 1, up to 25 targets)
+crowds out drafted abilities in slots 3-4 (23-35% of their candidates
+truncated on the base pool, 51-96% with packages); at a shrine 26-29
+non-ability actions leave room for zero or one ability. Its `_score()`
+(`deeproot.gd:107-135`) has no term for grafts, `+` forms, kit contents,
+gummed slots, thorns, anchor, growth underfoot, enemy statuses, terrain, or
+raw smog, and it does not search its drafts at all (`deeproot.gd:26` calls
+the optimizer's static list).
+
+Twelve runner scripts share one copy-pasted `BOTS` dict (6 copies) and one run
+loop (10 copies). `sweep_lib.run_one` returns only `{won, floor, turns, kit}`.
+No runner reads the event stream or `player.uses`, computes a confidence
+interval, exploits the paired-seed design, measures pair-vs-single lift, or
+records offer-vs-pick rates. `sweep_combos.gd` runs 66 pairs at 10 seeds with a
+30-point flag while BALANCE.md itself states the noise is plus or minus 8 in
+30; `BALANCE.md` still cites 45 pairs. No committed regression corpus exists
+despite CLAUDE.md mandating (seed, action list) pairs.
+
+---
+
+## 3. What the measurements say
+
+Scripts: `telemetry.gd` (40 seeds each for optimizer, fanatic, magpie,
+sprout; 20 for deeproot; tier 0, base pool) and `lift.gd` (deeproot, locked
+kits via `{kit: K, pool: K}`, 24 seeds per config). Full tables in Appendix C.
+
+### 3.1 How bots actually play
+
+| bot | win% | casts/run | strike share of (strike+cast) | top-3 damage sources | terrain-derived damage |
+|---|---|---|---|---|---|
+| optimizer | 42% | 22 | 58% | strike 39%, solar_lance 39%, grow_spike 19% | 2.3% |
+| fanatic | 25% | 67 | 25% | solar_lance 53%, strike 23%, grow_spike 13% | 3.9% |
+| deeproot | 90% | 42 | 18% | solar_lance 58%, strike 11%, grow_spike 9% | 11.1% |
+| magpie | 8% | 29 | 51% | solar_lance 35%, grow_spike 32%, strike 31% | 1.5% |
+| sprout | 0% | 12 | 62% | solar_lance 60%, strike 37% | 2.6% |
+
+Combo firings per run: ability-caused ignites 1.0-2.7 (environmental
+ignites 2.4-6.8); verdant surges 1.5-2.2 for optimizer/magpie/sprout, 6.0
+fanatic, 3.3 deeproot; staggers 0.17 optimizer, 1.5-1.7 deeproot/fanatic;
+collision hits 0.05-1.55; thorns hits 0 for every bot but fanatic (0.6);
+spore ticks 0 (no spore source in the base pool); floor restored 0.03-0.05
+(magpie 0.62). The `+5` restoration bonus is effectively magpie-only content.
+
+### 3.2 Drafting and kits
+
+Pick rates mirror the optimizer's hardcoded list: `sun_flare` 100%,
+`grow_spike` 86-90%, `thorn_shield` 81-87%, `water_jet` 65-84%, versus
+`anchor_roots` 0-7%, `bramble_coat` 0%, `root_wall` 0-3%, `overgrowth` 0-9%.
+The high-pick abilities are also the most dropped (`water_jet` 18 drops in 40
+optimizer runs, cast 0.4 per run held): they are placeholders until
+`grow_spike` or `thorn_shield` appear. `mycelium_dash+` was offered 118 times
+across four bots and picked 0 times. Skip rate is 0% for optimizer, deeproot,
+and magpie. The ceiling bot picks every draft and churns one slot constantly
+(2.95 drops per run).
+
+Dead-when-held (casts per run in which the ability was ever held, non-fanatic
+bots): `anchor_roots` 0-2.5, `bramble_coat` 0.0, `root_wall` 0.0, `overgrowth`
+0.0, `pollen_burst` 0.0-0.07, `sap_snare` 0.0-0.14 (held in 10 deeproot runs,
+drafted at 46-62%, cast 0 times). `mycelium_dash` is in 40/40 kits and cast
+0.15-0.42 times per run by four of five bots.
+
+Distinct final kit sets: 22/40 optimizer, 15/20 deeproot, 26/40 fanatic and
+magpie, 29/40 sprout, but every set contains the three starters.
+
+### 3.3 Economy
+
+Grafts are bought now (contradicting the pre-August BALANCE.md note):
+optimizer 55 in 40 runs, magpie 115, fanatic 59, spread almost uniformly over
+all six because they are bought by availability, not fit. Deeproot buys 3
+items in 20 runs and nothing else, finishing wins with 42.8 bloom unspent.
+Every bot ends with 30-44 unspent bloom on average. Upcycling was used 0 times
+in 180 runs (press and forge). Every `+` item seen in a satchel came from a
+pod or shop that hands out `+` forms directly (half the time), not from
+pressing. Bots hit `satchel_full` 0.7-0.9 times per run (magpie 3.5).
+
+### 3.4 Synergy lift
+
+Lift = pair wins minus the better single's wins, deeproot on locked 5-kits,
+N = 24, binomial standard error 2.4 wins at p = 0.5 and 1.5 at p = 0.9.
+
+| pair | tier 0 lift | tier 6 lift | tier 6 pair minus additive |
+|---|---|---|---|
+| grow_spike + overgrowth | +0 | +0 | -2 |
+| sun_flare + water_jet | -1 | -2 | -8 |
+| sun_flare + root_wall | +0 | -1 | -1 |
+| water_jet + vine_whip | +0 | -1 | -5 |
+| bramble_coat + root_wall | -1 | -2 | -2 |
+| sap_snare + sun_flare | -3 | -4 | -3 |
+| thorn_shield + overgrowth | +0 | -8 | -2 |
+
+Tier 0 is a ceiling: the 4-ability baseline (starters plus the near-inert
+`anchor_roots`) wins 23/24, so nothing can show lift. Tier 6 opens headroom
+(baseline 16/24) and single-ability value becomes visible: `water_jet` +7,
+`sun_flare` +6, `bramble_coat` +6, `grow_spike` +4, `vine_whip` +4,
+`overgrowth` +2, `root_wall` 0, `sap_snare` -1, `thorn_shield` -6 (a trap for
+the search bot: 729 casts in 24 runs, exactly the shield-spam bias on the
+BALANCE.md watch list). Every tier-6 pair is worth less than the sum of its
+solo gains. Drift controls (kit set but pool left default) confirm the
+existing `sweep_combos` methodology measures "start with the pair, then drift
+to the bot's favourites": the injected `overgrowth` was cast 0 times in 24
+drift runs.
+
+Two conclusions, held apart deliberately: (a) the current harness cannot see
+a two-step combo, so these numbers bound what is *measurable*, not what a
+human can do; (b) even so, the fact that the ceiling bot wins 96% with four
+buttons and gets *worse* with a fifth says the base run rewards a small
+efficient kit, not a build.
+
+### 3.5 Clock slack and the real combo budget
+
+Re-run of the critic's probe (`clock_margin.gd`; optimizer, fanatic, sprout
+40 seeds, deeproot 12, tier 0). Smog at descend and slack to the choke
+threshold on the floors where skilled play wins:
+
+| bot | floor 1 smog at descend | slack to choke | floor 3 smog | slack | floor 4 smog | slack | turns per floor (f1-4) | unspent charge per end_turn |
+|---|---|---|---|---|---|---|---|---|
+| deeproot | 5.3 | 32.7 | 5.2 | 30.8 | 5.7 | 28.3 | 8 to 10 | 0.00 to 0.06 |
+| optimizer | 5.5 | 32.5 | 7.7 | 28.3 | 14.4 | 19.6 | 9 to 20 | 0.08 to 2.10 |
+| fanatic | 6.8 | 31.1 | 9.8 | 26.2 | 13.7 | 20.3 | 10 to 18 | 0.11 to 0.22 |
+
+Deaths happen far past choke, not near it: optimizer floor-4 deaths at mean
+smog 50 against a choke of 34, fanatic floor-5 deaths at 91 against 32, both
+deeproot deaths at 154 against 30. Those are 20 to 120 turn stalls on one
+floor, which no runner flags because the only stall metric is the 400-turn
+cap. Quota-unmet deaths cluster on the gate floors: 3 of 5 optimizer and 3 of
+10 fanatic floor-6 deaths, 2 of 3 fanatic floor-2 deaths, ended with the quota
+unmet while corruption still existed. Two consequences for everything that
+follows: the "greed has a shape" clock is not what kills skilled bots, stalls
+are; and the binding budget on any multi-step combo is 3 charge per turn, not
+smog, so every proposed chain must fit in 3 charge or span turns via bank,
+surge, or an item.
+
+---
+
+## 4. Confirmed defects and inconsistencies
+
+Each of these was verified by reading the cited lines and, where marked, by a
+headless probe (`audit.gd`, `probe.gd`, `gate_scan.gd`, `trunc.gd` in the
+scratchpad).
+
+### 4.1 Progression correctness
+
+| # | Defect | Where | Verified |
+|---|---|---|---|
+| 1 | Shrine can stock the base of an owned `+` ability (`_stock_shop` checks only `kit.has(aid)`); buying yields X and X+ in one kit and the draft then upgrades the duplicate to a second X+ | `game.gd:368` | probe: 31/300 stocks |
+| 2 | Shop item and supply pods draw from all `Content.ITEMS.keys()` including the five `+` forms: half of shops and pods hand out upcycled items at 2 bloom, undercutting the 1-bloom press | `game.gd:378, 1092` | probe: 500/1000, 162/311 |
+| 3 | Non-cleanse corruption removal (wash, burnout, overgrowth) grants no bloom or `greened` and `green_need` is clamped only at floor entry, so the gate can become unreachable; the optimizer destroys about 10.7 corruption tiles per run bloomlessly | `game.gd:341, 850-885, 1385, 1522` | probe A4/B2; 0 bot softlocks in 120 runs |
+| 4 | `fuse` erases the partner with `enemies.erase()`: an elite partner's +4 bounty is never paid, no death event fires, the hulk is not elite | `game.gd:578-582` | probe |
+| 5 | `uses[]` never erases the base key on upgrade or forge and keeps dropped/scrapped abilities; it double-counts and feeds `state_hash()` | `game.gd:942, 951, 1032` | probe |
+| 6 | Draft drop writes the slot in place, so a live `gummed[slot]` transfers onto the freshly drafted ability across the floor transition | `game.gd:951` vs `389-392` | probe: gummed {3:1} |
+| 7 | `mycelium_dash` is droppable but outside `DRAFT_POOL` and shop stock: the only mobility can be lost forever; bots hardcode never dropping it, humans are unprotected | `content.gd:178`; `game.gd:944-951` | code |
+| 8 | Ability purchase has no drop path: dead when the kit is full and always dead under `kit_of_3` unless a forge shrinks the kit | `game.gd:217, 1114-1116` | probe |
+| 9 | `_stock_shop` draws ability and graft from the main rng while the item uses `_side_rng`; violates the side-channel rule in CLAUDE.md, and the graft draw vanishes once all six are owned, shifting the stream | `game.gd:371, 377` vs `378` | code |
+| 10 | Press and forge ignore the Gouging Prices markup and remain available at Boarded shrines | `game.gd:126-134, 1002-1028` | probe |
+| 11 | `deep_cells` is dead under `parched` (bank cap forced to 0 first) but still stocked and sold | `game.gd:1150-1153` | code |
+| 12 | Heal is a flat +4 for 3 at any HP below max (pays 3 for 1 at max-1) and `balm_fruit` at 2 bloom strictly dominates it when stocked | `game.gd:1106-1113` | probe |
+| 13 | `seed_bomb+`, `root_wall+`, `moss_filter+` drop to cost 1 and silently lose the verdant-surge interaction | `game.gd:1185-1189`; `content.gd:119, 135, 171` | code |
+| 14 | Enemy-made oil (sludge trail, pump-jack ooze, boss flood) cleanses for bloom and counts toward the quota; floor restoration cannot fire while a sludge or pump jack lives | `game.gd:590-597, 630-641, 719-722, 880-886` | code |
+
+### 4.2 Primitive-system inconsistencies
+
+| # | Issue | Where |
+|---|---|---|
+| 15 | Damage source strings hardcoded per op (`"solar_lance"`, `"vine_whip"`, `"sun_flare"`, `"grow_spike"`) although `adef` is in scope: geyser kills are attributed to sun_flare; any new ability using these ops is misattributed in events, autopsy, and `death_cause` | `game.gd:1264, 1295, 1376, 1394` |
+| 16 | `grow_radius` never reads `eff["radius"]`; the shape is always a plus | `game.gd:1266-1273` |
+| 17 | Collision damage hardcoded to 1 in `push_line` and `push_all` while wash ops take it from data; fire ttl 2 hardcoded in five places; smoke-burst ttl 3 hardcoded | `game.gd:613, 764, 1260, 1312, 1318, 1372, 1436, 1579` |
+| 18 | Root status only intercepts the `move` intent and only ticks when it blocks one; `sap_snare` does nothing to drain, gum, drag, or summon enemies and a rooted adjacent enemy attacks indefinitely | `game.gd:569-572` |
+| 19 | `teleport` skips `_player_enter_tile`; safe today only because tile targets exclude terrain | `game.gd:1338-1340` |
+| 20 | Drag destination check uses `_tile()`/`_enemy_at()` rather than `_open()`: the player can be dragged onto roots | `game.gd:672` |
+| 21 | Roots on a vent skip the reinforcement silently with no event, a stronger undocumented version of the growth seal | `game.gd:803` |
+| 22 | `aoe_damage` ignite radius includes distance 0: `sun_flare` on oil burns the caster | `game.gd:1371` |
+| 23 | Immunity split across `massive` (statuses, pull, push, wash) and `boss` (stagger, spore items); items write status directly bypassing `_apply_status` | `game.gd:486, 554, 982-987` |
+| 24 | `_compute_intents` assigns intents to stunned enemies that will not execute, so the snapshot's intent on a stunned enemy misleads renderers and bots | `game.gd:422-483, 564-567` |
+| 25 | `ELITE_DMG_BONUS := 0` is a dead constant; DESIGN.md says oil "spreads slowly" and "slows" but oil never spreads and slows only the player; `ABILITY_DESC` for root_wall, steam_vent, sap_snare, overgrowth describes behaviour the sim does not have | `content.gd:217-241, 307`; `docs/DESIGN.md:65` |
+
+### 4.3 Bot-versus-sim contradictions
+
+| # | Bot rule | Sim truth |
+|---|---|---|
+| 26 | `_lance_hits` scans 3 tiles (`optimizer.gd:465`, `sprout.gd:128`) | `solar_lance+` has range 4; the upgrade's extra tile is never used by heuristic play |
+| 27 | Boss gate = hp <= 6 and no growth adjacent (`optimizer.gd:61, 66`; `fanatic.gd:72`) | gate_hp is 6/5/5 and the gate also requires adjacent corruption (`game.gd:1414`) |
+| 28 | Fanatic "only build abilities" at the shop (`fanatic.gd:49-59`) | falls through to the optimizer's buy-anything branch: 72 of 86 ability purchases were off-build |
+| 29 | Optimizer item triggers match exact ids (`optimizer.gd:29-44`) | shop and pods hand out `+` items directly; they sit unused |
+| 30 | `_threat_tiles` models attack, slam, quake, ignite_all (`optimizer.gd:400-420`) | 17 intent arms; drag, gum, drain, flood, dredge are invisible to the survival gate |
+| 31 | Optimizer geyser/pollen_burst triggers need two adjacent enemies (`optimizer.gd:180, 182`) | strike branch runs first and is always legal then: 0 casts in 32 held runs |
+| 32 | Fanatic BUILDS is a const in the bot (`fanatic.gd:7-12`), chosen by `seed % 4` | not content data; omits `anchor_roots`, `moss_filter`, and all 9 package abilities; `measure_fanatic.gd:19` passes no config so packages are never measured |
+| 33 | Deeproot drafts by the optimizer's static list (`deeproot.gd:26`) | every "deeproot drafted X" claim in BALANCE.md measures the optimizer's preference list under search-quality play |
+
+### 4.4 Runner and documentation drift
+
+| # | Issue | Where |
+|---|---|---|
+| 34 | `sweep_combos` pairs: `DRAFT_POOL` minus starters is 12 extras = 66 pairs; BALANCE.md cites 45 | `tests/sweep_combos.gd:22-27`; `docs/BALANCE.md:101, 253` |
+| 35 | `SWEEP_BOT` accepts only `deeproot`; any other value silently runs the optimizer; `verify_kit`/`measure_bosses` index `BOTS[env]` unvalidated | `tests/sweep_lib.gd:10-11`; `verify_kit.gd:37`; `measure_bosses.gd:33` |
+| 36 | `VERIFY_EXTRAS` appends with no dedupe or `KIT_MAX` check and `Game._init` does not clamp kit size, so 6+ ability kits are measurable but illegal in play | `tests/verify_kit.gd:30-33`; `game.gd:68` |
+| 37 | `test_invariants` validates raw `Content.FLOORS`, never `Game.floor_def(n)`, so tier and mutator rosters are never invariant-checked | `tests/test_invariants.gd:17-19` |
+| 38 | `daily_run.gd` plays all packages plus one mutator; the shell daily plays profile packages and no mutator: the printed verification hash cannot match a phone run | `tests/daily_run.gd:22-24`; `shell/main.gd:184-193` |
+| 39 | The "Instrumentation (30 seeds)" that measured 77% lance casts was never committed | `docs/BALANCE.md:360` |
+| 40 | `BALANCE.md` "neither ceiling bot ever bought a graft" is stale for the optimizer (55 grafts in 40 runs) and still true for deeproot | `docs/BALANCE.md:361` |
+
+---
+
+## 5. Adversarially verified findings
+
+Five lenses produced 59 findings. Each was handed to a refuter who re-opened
+the cited lines, re-ran the finder's probes on fresh seeds where numbers were
+involved, and tried to break the claim. Tally: 34 confirmed, 25 partial, none
+refuted outright, and the refuters added 35 issues the finders missed. What
+follows is the surviving set grouped by theme, with the refuter's correction
+kept where it changes the reading. Severity is the post-refutation value.
+
+### 5.1 Build depth: kit, draft, archetypes
+
+**Starter incumbency is real but bot-side, and lance is replaceable
+(major, partial).** Deeproot on a locked kit with no `solar_lance` and no
+`sun_flare` (`seed_bomb`, `mycelium_dash`, `water_jet`, `vine_whip`,
+`grow_spike`) won 12/12 at tier 0 with damage split vine_whip 491 / collision
+482 / grow_spike 172. A push-and-burn game exists in the sim today. Nothing
+structural prevents a human from finding it: any slot can be dropped at a full
+draft and the forge can scrap lance. What prevents it is that every bot
+protects `mycelium_dash` and `seed_bomb` by hardcoded id
+(`optimizer.gd:276-278`) and lance survives as most-used, and that no
+BALANCE.md row has ever run a lance-free kit. The finder's original
+comparison (5-ability no-lance kit versus the 3-ability starter) was
+apples-to-oranges; against 5-ability lance kits the no-lance kit is equal, not
+better.
+
+**The draft is kit-blind only in the sense that matters (major, partial).**
+Offers do depend on the kit: `+` forms of owned abilities enter the candidate
+list and owned bases are excluded. What is missing is affinity between
+*different* abilities: no tags, no weighting, so a player who wants fire cannot
+raise the odds of seeing `sun_flare`. Pick rates are near-binary because there
+is no state for a pick to depend on.
+
+**Archetypes are lance riders by construction (minor, partial).** Fanatic's
+pyro is 82% lance damage and shover 79%, but `fanatic.gd:8-11` *defines* pyro
+as `[solar_lance, sun_flare]` and shover as including lance, so this measures
+the bot's table, not the content. Turtle's zero signature damage is documented
+design intent (a canary). Fix the instrument before adding finishers.
+
+**Only growth has a closed loop (major, partial).** Growth participates in
+seven mechanics and its generator is a starter. Fire has one chain, fixed
+damage, and no reader; water only deletes; smoke is read only by the player's
+own beams. The refuter's correction: fire and water do have one payoff the
+finder missed, since the boss core gate requires adjacent *corruption* and
+fire is not corruption, burning or washing the oil beside the core opens it
+(BALANCE.md records pyro going 0/8 to 4/8 from exactly that redesign). The
+economic point stands: the optimizer destroys about 10.7 corruption tiles per
+run bloomlessly, and the strandable quota (defect 3) is a worse tax than lost
+bloom.
+
+**All 15 `+` upgrades are numeric (minor, partial).** Verified. Two
+sub-claims failed: a cost-1 `+` is not a hidden downgrade (flat cost 1
+weakly dominates cost-2-surged-to-1, since no tile is consumed), and the
+0/118 pick rate of `mycelium_dash+` is a bot artifact, not evidence about
+upgrade design (see 5.5, the rank sentinel).
+
+**Skipping a draft yields nothing (note, partial).** True, but only
+strictly dominated while the kit is not full; once full, skip is the free
+option against a forced drop. Fanatic's 51% skip rate is its persona, not
+evidence. Any skip reward must be a choice (an extra offer), never bloom: six
+drafts times 2 bloom is a free graft for never engaging.
+
+### 5.2 Combo engine: effect grammar, statuses, terrain
+
+**The effect model has no conditions (major, confirmed).** The complete key
+vocabulary read from effect dicts is `op, dmg, radius, dist, turns, status,
+kind, ttl, push, collision_dmg, amount, ignite, clear_smoke, clear_smog_bonus`.
+No `if`, `per`, `when`, or `then`. Effects run in list order with no shared
+context, so a second effect cannot depend on the first's outcome. Nit: the ops
+themselves are state-dependent (ignite iff oil, convert iff oil or goo), so the
+accurate statement is that no conditional is *data-declared*. The game is
+playable without this, so it is an architecture gap, not a live defect.
+
+**There is no reaction layer (major, confirmed).** Reactive behaviour exists
+as two player fields polled at four hardcoded intent sites (thorns at attack,
+slam, quake; anchor at drag) plus one enemy on-death trait by string. `_emit`
+appends to lists the sim never reads. On-ignite, on-stagger, on-cleanse,
+on-kill, on-shield-break, on-collision cannot be authored for the player at
+all. Every chain must therefore fit inside one turn's three charge, which is
+why the 1-ply bot finds none.
+
+**The live combo graph is thinner than the pillar claims but not as thin as
+the finder said (major, partial).** The finder counted three write-to-read
+mechanisms and claimed both firing edges are starter-kit properties. The
+refuter found four misses: `moss_filter` writes dim and `solar_lance+` reads
+`dim == 0` (verified 3 to 4 damage); growth adjacency lifts the boss gate for
+every damage ability; the basic cleanse action plants growth, so `grow_spike`
+and the dash combo with the core loop, not only with drafted writers; gust and
+clear_air removing smoke re-open beam lines. What survives: seven abilities
+(`pollen_burst`, `sap_snare`, `spore_cloud`, `thorn_shield`, `bramble_coat`,
+`anchor_roots`, `moss_filter` in the finder's count, minus moss_filter) have
+no outgoing edge, statuses are terminal, and drafted-pair edges are thin.
+
+**Statuses are combo dead ends (major, confirmed).** Written by three
+abilities, read by zero ops. `_apply_status` uses max so a second
+`spore_cloud` on the same target is wasted. Root gates only the `move` intent.
+Bonus bug the refuter found: `optimizer._dodge` returns any `sap_snare` cast
+as a dodge, but rooting an adjacent attacker prevents nothing, so the dodge is
+a charge-wasting no-op that also depresses sap_snare's measured value. Items
+write stun directly, bypassing `_apply_status`, a second write path any
+status table must route.
+
+**Terrain has no data table (major, confirmed; superseded by C1a, see Status
+2026-09-05c).** Flammability, washability,
+corruption membership, passability, enter damage, and fire ttl are each
+hardcoded in game.gd, and corruption membership is duplicated in
+`deeproot.gd:70-72`, `optimizer._nearest_corruption`, and mapgen. Fire x
+growth, water x goo, smoke x fire, roots x fire are all inert. Adding any of
+them as content is impossible today and a five-site patch tomorrow.
+
+**Grafts cannot touch abilities (major, confirmed).** Six `_has_graft` sites,
+none in `_apply_effect` or targeting. `GRAFTS` holds only name and desc, so
+graft behaviour lives in game.gd, which already strains the data-driven
+principle. DESIGN.md's own example graft ("first ability each turn that
+targets oil is free") needs per-turn state and a target-tile predicate that
+do not exist. `Game.new` has no `grafts` config key, so graft combos cannot be
+swept regardless of the data model.
+
+**Growth empowers only via surge (minor, partial).** Verified, but the finder
+missed the boss gate (the largest growth read) and miscounted cost-1 abilities
+(13, not 12). The proposed `overcharge` op cannot work as written: bank is
+moved into charge and zeroed at turn start, so bank is always 0 while the
+player acts.
+
+**Chain damage is unattributed (minor, confirmed).** Fire tiles carry no
+originator; collision damage carries no pushing ability; four ops hardcode
+their source string so geyser kills read as sun_flare. The lift script had to
+invent proxies (`spike_on_overgrowth`, `flare_with_wall`) to detect combos at
+all. Telemetry-only impact, but it blocks every signature-damage metric.
+
+**Displacement into hazards is half-wired (minor, partial).** Pushes react to
+fire only. But the finder's "water_jet can never push into fire" is false: the
+washed line is only `range` tiles while the push carries `push` tiles beyond
+it, and a probe confirmed an enemy landing on fire at distance 3.
+
+**Enemies are terrain-blind (minor, confirmed).** `_chase_step` filters on
+`_open` only; ranged intents use manhattan with no line check; smoke is read
+only player-side. The proposed fix via the existing `_line_clear` is wrong
+because that helper also fails on intervening enemies (a leech behind a drill
+bot could no longer drain); an axis-only or adjacency smoke-screen rule is
+needed instead.
+
+### 5.3 Economy: shrine, grafts, items
+
+**Bloom never binds after floor 2 (major, confirmed and reproduced).**
+Sources per run: optimizer 42.4, fanatic 42.9, deeproot 43.8, magpie 67.2.
+Sinks per run: 10.5, 13.0, 0.3, 28.0. At shrine arrival on floors 3 to 6 the
+optimizer could afford everything stocked in 33 of 35 arrivals, magpie 54 of
+54, deeproot 13 of 13. The refuter's caveat: the optimizer's own comment
+records that off-path cleansing costs 11 wins per 100, so cheap bloom is partly
+a deliberate consequence of smog being the real currency. Still, no purchase
+competes with another after floor 2.
+
+**Graft purchase is never a decision, and the ceiling is calibrated on an
+un-grafted bot (major, partial, with a replication failure).** The finder's
+24-seed graft table at tier 6 ranked `verdant_pulse` +7 and `solar_core` +4.
+The refuter re-ran on 30 fresh seeds: `verdant_pulse` +0, `solar_core` +8,
+all six installed +8. Pooled over 54 seeds: none 27, verdant_pulse 34,
+solar_core 39, all six 43. So the direction holds (grafts matter at the
+ceiling and tiers 6 to 8 were judged by a bot that buys none) but the
+per-graft ranking is noise, exactly the 30-seed rule in BALANCE.md. The
+reachable pair (solar_core plus verdant_pulse installed at floor 3 for 10
+bloom) gave 17/24 versus 11/24, a real uplift.
+
+**The forge is mispriced as an upgrade (minor, partial).** Scrapping a
+load-bearing ability costs 8 wins in 24; scrapping a dead one costs nothing.
+It is a "prune a dead pick" action sold as concentration. Also repeatable in
+one visit down to a 1-ability kit, can scrap the only mobility, ignores tier
+markup, and works at Boarded shrines. The `+` value figure (+1/24) is a single
+24-seed pair, below the project's own bar.
+
+**The item press has no identity (minor, partial).** Half of shops and pods
+hand out `+` items directly. "Strictly dominated" was too strong:
+`spore_vial+` beats two vials (status uses max), `clearair_pod+` 12 beats
+10, and pressing frees a satchel slot. The real point stands: `+` forms are not
+exclusive to the press.
+
+**Dead bloom (minor, confirmed).** 19 to 31 bloom per run is earned after the
+last shrine stand and can never be spent; floor 7 stocks a shop with no shrine
+and consumes two main-rng draws for it.
+
+**Shrine visit rate is the actual reason the ceiling ignores the economy
+(major, partial).** Deeproot stands on a shrine in 7 of 1913 decisions. Its
+buy actions are always in the candidate list (non-ability actions are never
+truncated) and heal and item purchases are score-positive, yet none happen
+because `_refresh_field` never points at the shrine. A purchase oracle alone
+would fire almost never; routing is the fix.
+
+**Enemy-made oil is a latent bloom faucet (note, confirmed).** Sludge
+trails, pump-jack ooze, and boss floods cleanse for full bloom and quota
+credit. Small today (magpie 71 excess cleanses over 144 floors), but any
+repeatable bloom sink activates it.
+
+### 5.4 Meta career
+
+**Packages are forced permanent dilution (major, partial, reproduced).**
+Monte Carlo over the real draw: a committed two-ability build completes by
+the boss in 49.5% to 51.7% of runs on the 14-pool, 40% to 43% with one
+package, 27% to 29% with all three; `+` offers of the held pair fall from
+0.88 to 0.39 per run. The refuter's caveats: the model omits the shrine
+ability buy (absolute rates understated, relative drop holds), and a larger
+pool also raises the number of distinct reachable builds, which is the
+standard draft trade-off BALANCE.md knowingly recorded as "mild dilution".
+Not critical: win rates are flat at both bot levels. Real: package abilities
+are forge and upgrade dead ends.
+
+**Tier is the only run-start choice (major, confirmed).** The shell calls
+`game_config(sel_tier)` with no mutators; `grep mutator shell/` is empty; the
+win screen announces "UNLOCKED: KIT OF 3" for content that can never be
+selected (`shell/main.gd:2347-2354`). The sim already consumes `kit`, `pool`,
+`packages`, `mutators`; the tutorial passes a kit today. A loadout picker is
+profile, shell, and data work with zero sim change.
+
+**All nine milestones fall by run 4 (major, confirmed).** The profile stores
+six integers and two id lists; `record_run` receives `{won, floor, tier}`
+only; kit, grafts, uses, death cause, and turns are discarded. Build-based
+milestones ("win with overgrowth", "win without lance") are inexpressible.
+
+**Tiers never touch the build (minor, partial).** Verified, but DESIGN.md
+defines tiers as Ascension-style numeric stacks and the lift data shows tier 6
+does re-rank abilities indirectly. This is a design preference, not a defect.
+
+**`kit_of_3` is more coherent than it looks (minor, partial).** The shop
+ability slot is dead at start, but forge-then-rebuy re-opens it, so the
+mutator has an undocumented economy loop rather than a broken one.
+
+**Fanatic builds live in the bot (major, confirmed).** No meta feature can
+share them; package archetypes have never been tested as builds.
+
+**The daily is not the same for everyone (major, confirmed).** Fresh players
+draw from the 14-pool, veterans from the 23-pool, on the same seed; shop
+stock and every draft differ. Daily results also feed `record_run`
+unconditionally (`shell/main.gd:338`), so a public-seed daily win is a
+fixed-seed tier unlock.
+
+**Refuter additions in this area:** a stale or renamed package id in a saved
+profile raises "Invalid access to property or key" at `Game._init` on every
+PLAY (`game.gd:62` indexes `PACKAGES[pkg]` unchecked; `profile.gd:94` loads
+ids unvalidated), so renaming content bricks veteran profiles; `record_run`
+treats every non-package milestone kind as a mutator, so any new kind would
+silently land in `unlocked_mutators`.
+
+### 5.5 Measurement bias
+
+**The rank sentinel makes unlisted content undraftable (major, added by
+refuters).** In `optimizer._draft_choice` (inherited by deeproot and magpie,
+same pattern in sprout) an offer absent from the preference list scores
+`500 * 2 = 1000` (999 for its `+`) while `best_rank` starts at 999 with a
+strict less-than, so `bramble_coat` and `mycelium_dash+` can never be picked
+by three of six personas, and any *new* pool ability is undraftable by the
+ceiling until someone edits the list. Telemetry rows of 0/32, 0/24, 0/15,
+0/38 are structural zeros.
+
+**Deeproot's candidate list starves late slots (minor after replication).**
+The finder's "23% to 96%" was a per-target figure. Re-run on the finder's
+own probe: slot 3 and 4 abilities were entirely unevaluated on 13% to 21% of
+decisions where legal (grow_spike 13%, overgrowth 15%, sun_flare 19%,
+water_jet 21%). The shrine-starvation scenario did not occur. Real, modest,
+and the cheapest fix in the whole review.
+
+**Deeproot cannot see setups (major, confirmed).** Documented on the
+BALANCE.md watch list as "eval bias", but read too strongly: a setup that
+neither heals nor damages in the simulated turn scores below `end_turn` by
+construction. Multi-action turns do let a payoff fire when the setup is
+score-positive for another reason, so "drafted abilities never cast" is
+false; "setup for its own sake is invisible" holds.
+
+**Deeproot's drafts are not searched (major, confirmed).** `deeproot.gd:26`
+returns the optimizer's static list before any clone. Every BALANCE.md claim
+about what deeproot "drafts in winning kits" measures list order under
+search-quality play.
+
+**The pair sweep measures drift (major, confirmed).** `sweep_combos.gd` passes
+`{kit}` without `{pool}`; the optimizer drops the least-used non-protected
+slot, which is the injected pair. BALANCE.md:255 even calls these "locked
+5-ability kits", so the sweep author believed they were locked. Binomial
+check: at n = 10 and p = 0.8, about 2.2 false under-flags are expected across
+66 pairs, and BALANCE.md records exactly two 5/10 flags that dissolved at 30
+seeds. The refuter notes the drifting sweep still answers a legitimate
+question ("does seeding this pair change outcomes under free play"), so the
+historical conclusions are weak rather than wrong.
+
+**Locked configs are not seed-paired beyond floor 1 (added by refuters).**
+`_stock_shop` skips its main-rng ability draw when the pool equals the kit,
+and `_draw_draft_offers` draws fewer times once fewer than three candidates
+remain, so "same seeds across configs" is a paired design only for the
+floor-1 map. This applies to the lift table in Section 3.4 and to every
+sweep; until the shop draws move to the side stream, compare locked against
+locked only.
+
+**Fanatic measures four archetypes on four disjoint seed sets (added by
+refuters).** `build = seed % 4` assigns each archetype a residue class of
+seeds, so the per-build table compares builds on different worlds, and the
+"every build > 0 at 100 seeds" gate is confounded with seed subset.
+
+**No draft-decision oracle exists, and the one probe contradicts the
+finder's reading (major, partial).** Forking every draft the optimizer faced
+(8 seeds, 36 drafts, 26 seconds): 20 drafts were outcome-invariant across all
+picks including skip, skip won 19/36, and the optimizer's pick was in the
+winning class 31/36. The finder read this as "drafts barely matter"; the
+refuter points out 16 of 36 drafts flipped a deterministic run under a fixed
+policy, which is evidence they do, and that "invariant" conflates seed
+difficulty with draft irrelevance (seed 6 was all-win at every draft, seeds
+2, 5, 7, 8 all-lose at 9 of their 12). Nobody measures it; that is the
+finding.
+
+**Stalls are counted as losses in every sweep (added by refuters).**
+`run_one` caps at 400 turns but returns no timeout flag, so the failure mode
+BALANCE.md documents most often reads as "underperforms" with the cause
+invisible; only playtest counts timeouts.
+
+**Runners aggregate by raw kit id (added by refuters).** playtest and
+sweep_packages never trim `+`, so an ability and its upgrade are two rows,
+halving apparent hold and win counts for anything upgraded.
+
+**Every number in BALANCE.md is seeds 1..N (added by refuters).** No runner
+offers a seed offset, so "balanced across the pool" is also "balanced on
+these specific 30 or 100 floor-1 maps".
+
+### 5.6 What the refuters knocked down
+
+For honesty, the claims that did not survive: that fire and water have no
+payoff (the boss gate is one); that the boss gate has a single key (it has
+two); that water_jet can never push into fire; that a cost-1 `+` is a
+downgrade; that `mycelium_dash+`'s pick rate says anything about upgrade
+design; that shrine turns starve deeproot's ability candidates; that
+`kit_of_3` permanently kills the shop slot; that the verdant_pulse graft is
+strong; that "pair minus additive" being negative at tier 6 is synergy
+evidence (only the thorn_shield row, -8, exceeds noise); and that tiers
+"never" re-rank abilities. Several headline numbers rest on 12 to 24 seeds
+against the project's own 30-seed bar and are labelled as such wherever they
+appear above.
+
+---
+
+## 6. Roadmap: the game
+
+Three designers wrote independent roadmaps (primitives-first,
+commitment-first, measurement-first); a judge scored them 8 / 8 / 7 and merged
+them. The ordering below is the judge's, with the critic's corrections folded
+in. Each block gates the next. The rule throughout: no mechanic ships without
+the bot branch that exploits it and the runner column that counts it, because
+BALANCE.md shows an unexploited mechanic reads as neutral and gets shipped as
+filler.
+
+### 6.0 Ordering, bumps, and the shipping gate
+
+- **Block A (now)** is harness, bot, and profile work only. No sim behaviour
+  change, no `RUN_SAVE_VERSION` bump. It ends with a v2 instrument
+  re-baseline in BALANCE.md; every pre-v2 number is labelled and never mixed.
+- **Block B (next, bump 2)** is one batched sim patch whose only intended
+  balance change is closing the strandable quota. Everything that reshuffles
+  the main rng stream or changes shop shape lands here so BALANCE.md
+  re-baselines once.
+- **Block C (next, bump 3)** is the effect grammar and the data tables, with
+  the grammar preceding every build-defining graft. The critic is right that
+  this block as the judge scheduled it carries about 25 content rows behind
+  one before/after; it is split below into C1 (vocabulary and tables,
+  hash-identical), C2 (riders on `+` forms), C3 (hooks and rule grafts), each
+  with its own BALANCE.md entry even if they share a version bump.
+- **Block D (later)** items each sit behind a measured gate.
+- **Every bump wipes in-flight phone runs.** `shell/main.gd:235-237` deletes
+  the saved run silently on a version mismatch and finished logs are deleted
+  on completion. Before bump 2, the shell should show a "run lost to update"
+  notice and keep the last N finished logs under `user://` with an export
+  path, because those logs are exactly the (seed, config, actions) regression
+  pairs CLAUDE.md mandates and the only human play data the project could
+  have.
+
+**Shipping gate for a content row** (softened from the measurement-first
+angle, whose "lift CI excludes zero at 30 seeds" would need about 20 points of
+lift and block every honest combo): (i) a regression demo exists; (ii) the
+Tally shows the combo firing at least once per run in a forced kit at 30
+seeds; (iii) its locked lift CI is not below zero; (iv) signature-damage or
+terrain-derived share, or a continuous metric such as turns on wins or damage
+taken, moves in the intended direction; (v) magpie stays at or under 5% at 100
+seeds, the turtle canary and timeout count are unchanged, and wanderer at 100
+seeds shows zero script errors and zero illegal actions; (vi) any rider that
+grants shield, heal, thorns, or cleanse credit passes a deeproot-plan solo
+check. Every bump gets exactly one BALANCE.md entry with before/after for
+optimizer, magpie, deeproot, and deeproot-plan.
+
+**Charge, not smog, is the combo budget.** The critic's probe (re-run for
+this document; see Appendix C) found that skilled descents happen with the
+clock barely started and unspent charge per turn near zero for the ceiling.
+Every combo row below therefore carries a charge line: setup plus payoff
+against 3 regen, with and without a surge or item.
+
+### 6.1 Block A: run-start choice with zero sim change
+
+**Content.LOADOUTS and one package per run.** Data:
+`LOADOUTS = {id: {name, kit: [3 ids], protect: [ids], requires: {...}}}`.
+`tender` is the current starter (always available). Candidates verified
+bot-winnable in a 20-seed optimizer probe at tier 0: `tidewarden`
+`[water_jet, seed_bomb, mycelium_dash]` 8/20, `flarekeeper` `[sun_flare,
+seed_bomb, mycelium_dash]` 8/20, `spiker` `[grow_spike, seed_bomb,
+mycelium_dash]` 7/20, `lasher` `[vine_whip, seed_bomb, mycelium_dash]` 6/20,
+against 9/20 for the fixed kit. Every shipped loadout keeps `seed_bomb` (the
+boss-gate key most players will use) and a mobility ability; `skyrunner`
+`[gust, seed_bomb, updraft]` is gated on a 30-seed `verify_kit` pass.
+`profile.game_config(tier, mutators, loadout, package)` returns
+`{kit, packages: [package] or [], tier, mutators, loadout}`: a package becomes
+a run-scoped commitment, so the pool is 14 or 17, never 23. Add `snapshot()`
+fields `pool`, `packages`, `loadout` (read-only). Mutator effects move into a
+`config` override dict on `MUTATORS` applied generically in `Game._init`
+(`kit_max`, `max_hp_delta`, `bank_cap`, `oil_mult`, `pool_ban`,
+`draft_offers`) and must reproduce current numbers exactly, verified by
+`test_determinism` before and after. No bump: config already lives in the
+run-save header.
+
+Combos this makes the spine of a run rather than an accident: tidewarden plus
+`sun_flare` (jet pushes an enemy beyond the washed line into flare-lit oil,
+verified mechanic); flarekeeper plus `root_wall` (flare in a pen, finally
+measurable without lance in the kit); skyrunner (dash-line plus push-line
+positioning with no growth dependency, a mobility identity that exists in
+data and has never been played as a run). Charge: jet 1 plus flare 2 equals
+3, fits one turn.
+
+Bots and harness: the drop guard in optimizer, magpie, and fanatic reads
+`LOADOUTS[snapshot.loadout].protect` (fallback: any mobility-tagged ability)
+instead of hardcoded ids. `sweep_lib` gains an explicit unlock-state axis
+(fresh / committed-package / legacy-all) and `sweep_tiers` gains permanent
+lance-free rows. `test_meta` asserts each loadout is 3 known ids with one
+mobility ability and is optimizer-winnable at 3/20 or better; each package's
+ids land in `draft_pool` and the base pool is otherwise unchanged; each
+mutator's declared invariant holds on a fresh game (expectation table in the
+test, not in content); `game_config(9, ['nonexistent'])` clamps.
+
+**Mutator picker and career-agnostic daily.** The picker is the zero-design
+half of a real defect (unlocks announced, never selectable). A static
+`Profile.daily_config(seed)` returning `{loadout, package, mutator, tier: 0}`
+from the seed, used by both the shell and `tests/daily_run.gd`, makes the
+daily the same run for everyone; daily results go to `profile.daily_best` and
+never to `record_run`. The shell must display the active mutator.
+
+Risk: players who liked all-packages variety lose it; offer "open pool" as an
+unlockable mutator rather than the default.
+
+**Content.ARCHETYPES and ability tags as sim-ignored data.** Every
+`ABILITIES` entry gains `tags` from a closed vocabulary (sun, fire, water,
+wind, growth, bark, control, displace, smoke, mobility) and a `role` (setup,
+payoff, damage, defense, mobility, utility). `ARCHETYPES = {id: {name, core,
+requires}}` carries pyro (with lance), ember (lance-free fire), gardener,
+turtle (documented canary), shover, anchor, tidecaller, sporewright,
+skyrunner. `Content.archetypes_for(pool)` filters by requirements. The sim
+never reads either table, so this is fully compatible with the data-driven
+principle. Introduce `Content.base_id(aid)` now so the later fork migration
+is one sweep. Do **not** yet use tags to weight any draft (see 6.4).
+
+### 6.2 Block B: bump 2, the measurement-enabling sim patch
+
+One batched change to `RUN_SAVE_VERSION 2`, no intended balance change except
+closing the strandable gate:
+
+1. **Side-rng shop stock.** Ability from `_side_rng('shop_ability')`, graft
+   from `_side_rng('shop_graft')` (one generator each so list sizes do not
+   couple); the ability filter also excludes bases whose `+` is owned; skip
+   stocking when `map.shrine == (-1, -1)`. Add a determinism assertion that
+   `rng.state` after `_enter_floor` is independent of kit, grafts, and pool
+   size on 50 seeds. This is the prerequisite for every shop-shape
+   experiment and for seed-paired sweeps beyond floor 1.
+2. **Damage attribution.** Fire tiles carry `by` (ability id, `env`, enemy
+   kind, `furnace`); enemy-side sources become `fire:<by>` and
+   `collision:<aid>`; the four hardcoded source strings use the casting
+   ability's id. Player-side sources stay unchanged because `death_cause` and
+   the playtest death tables key on them. Strip the suffix at display in
+   `shell/main.gd:1083`.
+3. **Quota re-clamp.** `green_need = min(green_need, greened +
+   _count_corruption())` after wash, convert, burnout, and dredge, emitting
+   `quota_reclamp`. No bloom or room-bloom credit for convert (the refuter
+   showed `overgrowth+` on a fuel depot converting 13 tiles for one charge
+   would be a degenerate quota clearer). Enemy-made oil gets `{bloom: 0}` but
+   still counts toward `greened`, so pump-jack floors cannot strand.
+4. **Config keys** `grafts` (pre-installed) and `bloom` (starting) for
+   sweeps, so graft combos become sweepable as DESIGN.md promised.
+5. **Choice sinks, no new power.** Two-graft stock, pick one (the other is
+   discarded); ability purchase takes a drop slot like the draft does and can
+   never drop a mobility ability *(withdrawn: the drop-slot purchase shipped
+   in bump 2 and was removed again in the 2026-09-05c revision; defect 8, a
+   dead shop slot at a full kit, accepted as-is)*; press and forge priced
+   through `shop_cost` and gated on `not shop.is_empty()` so Boarded boards
+   them and Gouging Prices marks them up; forge capped at one per floor and
+   forbidden from scrapping the mobility ability; shop and pods draw from
+   base item ids only so `+` items exist only via the press. Deferred to
+   6.5: reroll, per-HP heal, prune-versus-forge split, because stacking nine
+   economy levers in one bump makes any canary movement unattributable.
+
+Shell work: two-graft shop UI, source display strip, version notice. Then
+`deeproot_plan` (6.6) and `tests/sweep_grafts.gd` on the six existing grafts
+at 30 or more seeds, and a re-judgement of tiers 6 to 8 on a grafted ceiling
+*before* any economy content. Only after that do graft values enter any bot
+table.
+
+The critic flags one silent nerf here: base-only pods remove the `+` items
+deeproot actually uses (`clearair_pod+` was 5 of its 17 item uses). Run
+deeproot at 30 seeds with base-only pods before shipping that line.
+
+### 6.3 Block C: the effect grammar and the data tables
+
+**C1. Cast context and the `if` / `per` / `then` / `bonus` vocabulary.**
+Three optional keys on any effect dict, evaluated by two helpers in game.gd
+and nowhere else. `if`: a closed v1 predicate set, `target_on: [kinds]`,
+`target_adjacent: [kinds]`, `self_on: kind`, `dim: n`,
+`casts_this_turn_min: n`, and inside `then` only `outcome: hit | ignited |
+pushed | collided | converted | planted` and `outcome_crossed: kind`. `per`:
+`{count: growth_adjacent_target | fire_within_self | oil_in_line |
+enemies_adjacent_target, radius, cap, add: {dmg: 1}}`. `bonus`: per affected
+enemy inside aoe_damage, lance, damage, and collision. `then`: a nested effect
+list run once when the parent's outcome has any counter above zero; no nested
+`then` (content lint). `_apply_effect` returns an outcome dict;
+`_push_enemy`, `_wash_dir`, and pull thread `collided` and `crossed` back.
+Player gains `casts_this_turn` and `moved_this_turn`, reset in
+`_begin_player_turn`. Emit `{t: 'rider', id, kind, amt}` for the Tally.
+
+Ship the tables in the same block: `Content.TERRAIN` (corruption,
+flammable, washable, bloom, ttl, enter damage, spreads_to, burns_to),
+`Content.REACTIONS` (a list consumed by one `_terrain_react()` in the
+environment phase), `Content.STATUSES` (stack rule, blocked intents, cap,
+tick damage), and a per-ability `surge` key defaulting to `{cost: -1}` so
+behaviour is identical. Two commits: the first replaces every literal with a
+lookup and must be hash-identical on the determinism seeds; the second
+enables ash (burnt oil becomes cleansable corruption that does not shield
+the core), root blocking `advance` and `drag` with a stagger-style cooldown,
+spore add-stack capped at 6, and item stun routed through `_apply_status`.
+Damp, roots-burn, and smoke-smother stay disabled rows. Fix
+`optimizer._dodge` to respect the new root semantics in the same change. Ash
+needs an ASCII glyph, an SVG sprite, a legend row, `render_frame`, and mapgen
+invariants: real shell work, flagged as such.
+
+**C2. Riders on the existing `+` forms first, then two base rows.** Offered
+only when the base is owned, so base-pool balance is untouched. Numbers to
+start: `grow_spike+` `{dmg: 3, per: {count: growth_adjacent_target, cap: 2,
+add: {dmg: 1}}}` (up to 5); `sun_flare+` `{dmg: 2, ignite, bonus: {dmg: 1,
+if: [{target_on: [fire]}]}}`; `water_jet+` `then: [{op: status_target,
+status: root, turns: 1, if: [{outcome: collided}]}]` with a `moved >= 1`
+guard so a wall-pinned enemy cannot be re-rooted every turn for one charge;
+`vine_whip+` `then: [{op: status_target, status: stun, turns: 1, if:
+[{outcome_crossed: fire}]}]`; `seed_bomb+` `then: root 1 on enemies standing
+on planted tiles`. Leave the cost-1 `+` costs alone. Then the two base rows
+as separate lift entries: `grow_spike` `per growth_adjacent_target cap 2`
+and `sun_flare` `bonus on fire`.
+
+Combos, with charge: seed-on-head (seed_bomb targeted on an enemy's tile
+plants the plus around it, grow_spike+ hits for 5; 2 + 1 = 3 charge, same
+turn, 1-ply visible); light-then-flare (lance ignites the oil line an enemy
+stands on, sun_flare+ deals 3 to it; 2 + 2 = 4, needs a surge or a
+capsule); drag through embers (whip pulls across a burning tile for 2 + fire
+1 + stun; 1 charge after a 2-charge lance); pin (jet collision roots for a
+turn so the lance line stays open; 1 + 2 = 3). Opportunity rates from the
+telemetry: enemies adjacent to oil 23% to 27% of sightings, on fire under 1%,
+adjacent to two or more growth 7% to 10%.
+
+Bots: deeproot sees same-turn riders through clone search once the
+round-robin fix lands; the optimizer replaces its hardcoded damage guesses
+with a Content-reading `_est_dmg(aid, target, snap)` that applies `per` and
+`bonus`, and gains a seed-on-head branch; fanatic gardener leads with it.
+
+**C3. Hook dispatcher and grafts as data.** `_hook(kind, ctx)` called after
+the existing `_emit` at ignite, staggered, cleanse, growth_planted, kill,
+shield_break, and collision, with sources in fixed order (kit slots, then
+grafts), a per-step depth cap as a Content constant, and positional ops
+`damage_at`, `status_at`, `terrain_at`. `GRAFTS` gains `tags` plus
+`stat | mod | hooks`; the six existing grafts move to data and
+`_graft_stat(key)` replaces the six `_has_graft` sites. First rule grafts
+limited to those with no stall surface: `ember_sap` (on ignite, 1 damage to
+whoever stands on the tile, per-turn cap 3), `undertow` (staggered enemies
+are also rooted 1 turn), `compost` (a kill leaves growth if the tile is
+empty), `oil_tithe` (first oil-targeting cast each turn costs 1 less, floored
+at 1). Every graft measured pre-installed via `config.grafts` at 30 seeds,
+tier 6, with deeproot-plan, reporting hooks fired and timeouts, before it is
+priced. Optimizer and magpie pick the stocked graft whose tags match the kit,
+read from Content so new grafts auto-rank.
+
+Combos: ember_sap plus water_jet plus lance (shove onto oil, lance the line:
+ignite 1 + tick 1 + lance 2 = 4 for 3 charge); undertow plus tide (four
+staggered enemies rooted a turn, two clean lance lines next turn); compost
+plus grow_spike (every kill is a growth tile, so the next enemy is "near
+growth"), a growth loop for non-gardeners.
+
+Dropped from this block on the judge's and refuters' evidence: `tended_bark`
+(cleanse grants shield) and any shield-break-to-thorns or burnout-to-growth
+graft, because cleanse, shield, and thorns riders are the stall vector
+BALANCE.md documents twice; a synthesized `DEFAULT_PLUS` rule for package
+abilities (an implicit rule nobody can read in content.gd); per-tile bloom
+credit on convert.
+
+**Package `+` rows.** Nine explicit entries once the rider vocabulary exists,
+costs never below 2 for cost-2 bases, gated by `sweep_packages` and the
+30-seed outlier rule.
+
+**Profile that sees builds (no bump, can land in parallel).** `record_run`
+takes the full summary the sim already exposes (`kit`, `grafts`, `uses`
+summed by base id, `bloom`, `turns`, `death_cause`, `seed`, `seed_mode`);
+`_meets` gains `won_with`, `casts`, `wins_without`, `grafts_owned_at_win`;
+explicit kind dispatch (package, mutator, loadout, graft) with `push_error`
+on unknown; `load_from` filters ids against Content so renamed content cannot
+brick a profile; a 50-entry history. Cast milestones count only casts that
+produced an effect event, against farming. Do **not** shrink `DRAFT_POOL`:
+every BALANCE.md number rests on the 14-pool; the pool grows only through
+loadouts, one package, and unlocked keystones. New mutators `no_lance`
+(`pool_ban`), `wide_draft` (`draft_offers: 4`), `upgrades_only`.
+
+### 6.4 Block D: later, each behind its gate
+
+- **Affinity-slotted draft with "focus" on skip.** Slot 1 affinity (shares a
+  tag with the kit or grafts), slot 2 upgrade-or-affinity, slot 3 wildcard;
+  always exactly three main-rng draws (pad lists) so draw count never depends
+  on kit. Skip sets `focus`; the next draft has one extra affinity offer;
+  never bloom. Ships only after loadouts vary the third starter,
+  `mycelium_dash` is tagged mobility rather than growth, the draft oracle has
+  shown skip is not already equal to the best pick, and baseline kit
+  diversity is on record. The critic's point stands: kit-set entropy cannot
+  be the acceptance KPI here because a uniform lottery maximises it and
+  affinity lowers it by design; use the oracle's conditional pick value and
+  signature-damage share instead.
+  *(Shipped 2026-09-07g; see the Status paragraph in this section. One
+  correction to the spec: **oracle regret is unusable as an acceptance number
+  for the same reason kit entropy is** - it is minimised by a lottery against
+  a fixed heuristic, and it rose in all six slot configurations measured
+  because the ceiling rose. The line that shipped is within-instrument:
+  bot-pick wins minus always-skip wins, pooled over two 30-seed samples. The
+  slot spec also needed one addition - the upgrade slot applies the same
+  "these tags do not define a build" filter the affinity set does, or a
+  quarter of its offers are the mobility `+` form every loadout is lint-
+  guaranteed to hold.)*
+- **Evolve forks.** Each `+` becomes two named variants keyed `base+variant`
+  with `Content.base_id()` and deterministic parity selection (no rng draw);
+  the forge offers both. Effort L, not M: 30 data rows, 6 to 8 op keys
+  (pierce, leaves, ignite_ttl, pull_line, status_area, per-tile flammable),
+  and the `+` suffix is load-bearing in the forge, `_act_draft`,
+  `ABILITY_DESC`, `uses`, shell slot keys, and every bot. Acceptance: no
+  strictly dominated sibling at 30 seeds; solo-check every shield, thorns, or
+  growth-writing variant.
+  *(Shipped 2026-09-07h; see the Status paragraph in this section. Two
+  corrections to the spec. **The acceptance clause cannot be read off a
+  playtest**: no persona forges, the parity rule means one floor deals one
+  sibling, and five of the fifteen pairs are cast by no heuristic persona at
+  all, so "no strictly dominated sibling" would pass vacuously. It is measured
+  instead by a new permanent runner, `tests/sweep_forks.gd`, which locks each
+  sibling as a kit, defines DOMINATED as "the loser's Wilson interval entirely
+  below the winner's AND a paired sign test at p < 0.05", prints its own noise
+  band first (a 30-seed Wilson half-width is about 17 points, so "not separated"
+  is the expected answer) and reports a pair whose siblings are never cast as
+  **UNREAD rather than as a pass** - four pairs are. And **six of the eight
+  op-key slots were enough**: `leaves`, `status_area` as an op and per-tile
+  `flammable` were all rejected for having exactly one user apiece when a
+  zero-vocabulary fork of equal quality existed; `status_area` shipped as a
+  `center` key on the existing `aoe_status` op instead. `pull_line` shipped and
+  is the one new op.)*
+- **Enemies read terrain.** Per-kind `avoid` lists as data driving a
+  Dijkstra with DIRS tie-break; a smoke-screen rule for ranged intents
+  (adjacency-based, intent still shown, blocked on execution; not the
+  existing `_line_clear`). The row most likely to produce an immortal-fence
+  canary hit (fire-avoiding enemies plus pump-jack refuelled oil): turtle and
+  magpie 100-seed stall canaries are the gate.
+- **Per-ability stat surges and Spore Trail.** `grow_spike` `{surge: {dmg:
+  1}}`, `water_jet` `{push: 1, collision_dmg: 1}`, `sun_flare` `{radius: 1}`,
+  `seed_bomb+` `{radius: 1}`; `mycelium_dash+` becomes "the departure tile
+  becomes growth". Deferred until the surge key exists with identical
+  defaults and the gardener's lift is measured; cap `per` at 1 when surged if
+  lift is excessive. Drop the overcharge-from-bank op (bank is always 0
+  during the player's turn).
+- ~~**One resonance per element** over kit and graft tags, through the hook and
+  mod layer; growth x2 is met from turn one under the fixed starter, so this
+  waits for loadouts; mobility never counts.~~ **IMPLEMENTED and SHIPPED at
+  bump 14 (2026-09-08) as ONE element, not four**: `Content.RESONANCES` holds
+  `cinder_grip` (fire 3) alone, plus a lint that makes "mobility never counts"
+  a data rule (`AFFINITY_IGNORED_TAGS`). Two rows were written, built,
+  measured and cut inside the same bump - displace on its own pre-registered
+  falsifier, growth on the greed canary after the measure phase's named lever
+  (`need` 3 -> 4) was measured at 48/300 = 16.0% [12.3, 20.6] and FAILED too,
+  against a pre-D5 38/300 = 12.7% [9.4, 16.9] and a need-3 56/300 = 18.7%
+  [14.7, 23.5]. The loadout, the persona and the row were all named in writing
+  by the pre-D5 baseline before the code existed; only the remedy was wrong.
+  Four things the block learned that a later one should not have to re-learn:
+  a hook whose effect targets a body is worth what its LANDING rate says, not
+  its firing rate (cinder_grip fires 9.5 times a run on a locked fire-3 kit
+  and lands 0.80); `collision` is a trigger the band persona essentially never
+  produces (0.03 a run free drafting, 0.73 on a kit of nothing but pushers),
+  which is what cut the displace row; a payoff shaped as a RATE over turns
+  spent where the player chooses is a greed subsidy at every threshold, which
+  is what cut the growth row; and a free permanent has to be measured on the
+  canary persona BEFORE the band persona, which is the measurement that was
+  missing. Displace and control share one blocker - neither has an event worth
+  hanging a rule on, so both wait for vocabulary - and growth waits for a key
+  that pays on an act rather than on a turn spent in place.
+- **Repeatable economy sinks, one at a time.** Bloom verified never to bind
+  after floor 2, so a sink is eventually needed, but every cheap bloom-to-power
+  sink in BALANCE.md history became a farm line and the enemy-oil faucet must
+  be closed first. Add exactly one (shrine reroll via side-rng first, a choice
+  sink), re-check the magpie canary at 100 seeds and optimizer clock
+  discipline, then consider the next. Per-HP repeatable heal was dropped:
+  every descent already heals 4 for free, and 30 to 44 surplus bloom would
+  become 30 to 44 HP.
+
+### 6.5 Dropped, with reasons
+
+Overcharge and tithe (strictly positive when charge is spare, multiplies legal
+actions, crosses the greed currency); per-HP heal (power sink); reroll and
+prune in the first shop bump (unattributable); tag-scored optimizer draft
+list (a designer prior swapped for a designer prior, re-baselines the
+heuristic band for a non-content reason); alternative boss-gate keys as data
+(the gate already has two keys, the finding's evidence was wrong); `damp` and
+slippery collision in the first terrain ship (a second terrain kind doubles
+shell work and re-clamp already handles the strand); constraint tiers 9 and
+10 (DESIGN.md defines tiers as numeric stacks and tiers 6 to 8 already sit at
+deeproot 8/10/6 of 20); shrinking `DRAFT_POOL` at run 1; a `shover` starter
+without `seed_bomb` and a separate `player['mobility']` field (breaks every
+kit-slot consumer); redefining fanatic's pyro without lance (add `ember`
+beside it instead).
+
+### 6.6 Two design tensions - RESOLVED by the owner (2026-09-08)
+
+Both were raised as owner decisions rather than content fixes, and both are
+now answered. They are settled design, not open questions: a later block may
+cite them, and may not quietly reverse them.
+
+**1. The turtle stays an anti-pattern. Leave as is.** No `bark_burst`
+finisher. Pure-defence play keeps its 2/100 fanatic floor and keeps its job as
+the clock's canary - if turtle win rates ever rise sharply, the clock has
+broken (2026-08-08). The consequence for content is the one D5 already
+observed and must stay true: `bark` has more carriers than `fire` (four base
+abilities, two grafts) and still cannot be given a payoff, because every one
+the closed vocabulary offers it is survivability. That is not a gap waiting to
+be filled. A bark payoff needs a NEW shape that is not defence, and the
+absence of one is the reason bark ships nothing - not an oversight.
+
+**2. Both disabled reaction rows stay disabled, for two different reasons.**
+
+`roots_burn` (fire x growth) is refused on THEME, which is a stronger and more
+durable reason than the balance one this section used to give. Burning your
+own growth as a primary strategy runs against what the game is about: the
+tender restores a poisoned floor, and growth is the restoration. The earlier
+argument - that it taxes gardener-pyro mixes through the dash network, the
+vent seal and the boss-gate quota - remains true and is now the second reason
+rather than the first. Do not re-open this one on a balance argument; the
+balance argument was never what was load-bearing.
+
+`smoke_smother` (smoke x fire) is refused more weakly: it is simply not
+NEEDED. Nothing in the game asks for it, so it stays off by default rather
+than by principle. Unlike `roots_burn` it could be revisited if a mechanic
+ever wanted it - it is a dormant row, not a closed door.
+
+The distinction between those two matters and is the point of writing them
+down separately: one is a theme boundary, the other is an unused idea.
+
+---
+
+## 7. Roadmap: the bots and batch runners
+
+This is Block A in full, plus the deeproot-plan persona from Block B. All of
+it is harness and bot work with no sim change and no version bump, and it is
+the precondition for believing any number in Section 6.
+
+### 7.1 Tally, KPIs, and statistics in `sweep_lib`
+
+A `Tally` (RefCounted) with `add(ev, action)` called on every event returned
+by `game.step()` inside one shared `Sweep.run_loop(game, bot, tally)`, which
+replaces the ten copies of the run loop. Fields, all ability keys normalised
+to base id with a separate `plus_casts` counter: casts by base, strikes,
+cleanses, moves, end_turns; offers, picks, upgrades, skips, drops by id;
+buys by kind, grafts by id, upcycles, item uses by id; bloom earned and spent,
+shrine turns, afford-all-at-arrival; combo counters (ignite by step type,
+verdant, staggered, collision hits, thorns hits, fire hits on enemies, spore
+ticks, convert, wash, room bloom, floor restored); enemy and player damage by
+source (split on `:` after bump 2); `timeout` as its own outcome, never a
+loss. The critic's additions, all cheap: smog at descend, gap to first dim
+and to choke, turns per floor, unspent charge per `end_turn`, a per-floor
+stall flag (turns on floor above 60 or smog above choke plus 30) reported
+separately from timeouts; "died with quota unmet" and quota remaining at
+death in the death-cause table; damage taken by enemy kind and
+strikes-into-spiked per run (the optimizer takes 167 HP from spikes in 40
+runs, its second-largest damage source, because its spiked filter only
+engages at 6 HP or less, which inflates the 58% strike share); item use with
+casts-in-the-same-turn; vault name per floor with bloom, ignites, and
+converts inside the vault room; illegal-action count.
+
+KPIs printed by every runner: signature-damage share (enemy damage from
+sources outside the loadout kit over total), terrain-derived share, combo
+rate per run, bloom conversion (spent over earned), and kit-set entropy
+(Shannon over sorted base-id final kits, recorded now as a baseline and read
+as a trade-off later, not a target). `wilson(w, n)` and a `paired(a, b)`
+discordant-seed sign test, with the stated caveat that pairing is exact only
+for the floor-1 map until bump 2. Every runner header prints bot name, config,
+and seed range; `SWEEP_SEEDS` and `SWEEP_SEED_FROM` for out-of-sample checks;
+playtest replaces "kit wins" with a per-base table of held / cast at least
+once / won.
+
+`bots/roster.gd` holds the single `BOTS` dict and a `by_name()` that
+`push_error`s on unknown names; `pick_bot` fails loudly instead of silently
+running the optimizer.
+
+### 7.2 Instrument repairs and the v2 re-baseline
+
+1. **Round-robin candidates in deeproot.** Group ability actions by slot,
+   stable-sort each slot's targets by manhattan distance to the nearest
+   enemy, pop one per slot until `MAX_CANDIDATES`. Acceptance via the existing
+   truncation probe: per-slot full truncation under 5% (was 13% to 22%).
+2. **Pickable unlisted offers.** Unlisted offers rank after every listed id
+   instead of 500, `best_rank` initialises huge, `mycelium_dash` joins the
+   preference list. Keep this minimal fix rather than re-scoring the list by
+   tags.
+3. **Fanatic on shared seeds with lance-free variants.** Public
+   `set_build(id)`; `measure_fanatic` runs every build on every seed and adds
+   `pyro_nolance` and `shover_nolance` beside the existing four (do not
+   redefine pyro). Remove non-wanted "buy ability" actions from `legal`
+   before calling the parent so purchases stop leaking off-build (72 of 86
+   were).
+4. **`sap_snare` dodge fix.** Counts as a dodge only when the target's intent
+   is `move`.
+5. **Sprout repair.** Give it item use and a `seed_bomb` / `grow_spike` cast
+   rule (the tutorial teaches both) and re-baseline its floor band; today it
+   casts only `solar_lance` and is not a usable instrument for teaching-curve
+   questions.
+
+Then record before/after at 30 seeds for optimizer, magpie, deeproot at tier
+0 and deeproot at tier 6 as one BALANCE.md entry, "instrument v2
+re-baseline".
+
+### 7.3 Locked-kit lift sweep
+
+Rewrite `sweep_combos.gd` around `Sweep.lift_row(base3, x, y, seeds, cfg,
+bot)`. Every config locked with `{kit: K, pool: K}`; singles are 4-kits with
+no filler (anchor_roots is not inert per the watch list); baseline is the
+3-kit; `lift = pair - max(single_x, single_y)`, also `pair - additive`.
+N at least 30, Wilson CI on every row, continuous secondaries (turns on
+wins, damage taken, combo rate, signature share), `SWEEP_TIER` with a
+documented headroom tier (deeproot 6, optimizer 0) and the note that a tier-6
+lift is lift in a different economy, `SWEEP_MODE=drift` kept as a labelled
+second question, `SWEEP_SHARD` for the 2.5-hour deeproot grid. Permanent
+reference rows in `sweep_tiers` and BALANCE.md: `starter5`, `lance_free_A`
+`[seed_bomb, mycelium_dash, sun_flare, water_jet, grow_spike]`,
+`lance_free_B` `[seed_bomb, mycelium_dash, water_jet, vine_whip, grow_spike]`,
+each with signature and terrain share. The single measurement that would
+most change this review's conclusions is running this table with a
+sequence-capable deeproot before any sim bump: if lift appears, "combos do
+not fire" was an instrument artifact and Block C shrinks; if it stays flat,
+the grammar work is justified.
+
+### 7.4 Draft oracle and rollout drafting
+
+`tests/draft_oracle.gd`: at every draft the policy bot faces, fork per
+distinct pick plus skip, roll out to game end with a fresh instance of the
+same persona, record `{seed, floor, kit_before, offers, chosen, pick_kind,
+won, turns, dmg_taken}`. Aggregate P(win | pick) minus P(win | skip) per
+offer with CI; kit-conditional value per (offer, co-held ability) where n is
+at least 10; stakes per draft (max minus min) split into decisive versus
+seed-decided drafts; policy regret. Optimizer about 2 minutes for 30 seeds;
+deeproot about 40 minutes, an overnight shard. This is the direct build-depth
+metric and it tests whether skip already equals the best pick before anyone
+rewards skipping. Deeproot gains `draft_mode = rollout` shipped as a separate
+persona `deeproot_rollout` so the legacy ceiling column survives; note that
+rolling out with the heuristic policy values an offer by what the optimizer
+can do with it.
+
+### 7.5 `deeproot_plan`
+
+A separate roster persona; legacy deeproot stays runnable through the whole
+transition. Layer 1: option-value eval terms computed only for ops the kit
+holds, read from Content so new content is covered (`damage` with
+`enemy_near_growth`: +6 per enemy adjacent to growth, cap 3; ignite ops: +4
+per oil tile in reach with an enemy on or adjacent, cap 3; push and pull ops:
++5 per enemy adjacent to a non-open tile along a pushable line, cap 2;
+surge-ready: +6; roots adjacent to an enemy while a push op is held: +3).
+Weights chosen against the existing scale so a 2-charge setup beats
+`end_turn` but a realised 2-damage spike still dominates. Layer 2: plan mode
+for candidates whose first op is a setup op (grow_radius, grow_wall,
+convert_radius, apply_status, aoe_status, create_terrain, the push and pull
+family, teleport, undim): after stepping the setup, enumerate follow-up
+ability actions with a round-robin cap of 12, score after the forced
+`end_turn`, take the max. Typical 2 to 3x runtime. Shrine routing:
+`_refresh_field` treats the shrine as a secondary goal when bloom covers the
+cheapest useful buy and no enemy is within 3. Graft weights come from a
+bot-side table regenerated by `tests/sweep_grafts.gd` at 30 or more seeds
+(the 24-seed ranking did not replicate); publish no weight before that run.
+Acceptance at 30 seeds, tiers 0 and 6: wins within CI of legacy, timeouts
+zero, shrine stands at least 1.5 per run, graft buys above zero, lift table
+re-run. The measured delta between deeproot_plan and deeproot in combo rate
+and lift is itself the answer to how much combo depth the content contains.
+
+### 7.6 Regression corpus and CI gates
+
+`tests/regressions/*.json` with schema `{seed, config, actions, expect:
+{won, floor, events: [...minimal fields]}, note, sim_version}` and
+`tests/test_regressions.gd` that replays each, fails on any illegal or error
+event, asserts outcome and expected event patterns, keeps the full state hash
+under `REGRESS_STRICT=1`, and regenerates with `REGEN=1` printing outcome
+diffs. Seed it with the determinism seeds times six bots, one autopsy per
+BALANCE.md degenerate line, and four hand-authored combo demonstrations on
+`fixed_floor` configs: seed_bomb then grow_spike the same turn, root_wall
+then water_jet collision, lance into oil then an environment-phase fire hit,
+moss_filter then solar_lance+ dealing 4. These are the existence proofs the
+combo-engine lens lacked. Add a golden-hash test (fixed seed, fixed config, N
+actions, expected `state_hash`) that the Android build can print on its
+settings screen, since the daily's "same for everyone" depends on Godot's
+Array and String hashes agreeing across platforms and versions.
+
+CI gates: playtest asserts each persona's BALANCE.md band against the Wilson
+interval (fail only when the whole interval is outside) and zero timeouts and
+illegal actions for optimizer and deeproot; wanderer at 100 seeds, zero
+script errors, zero illegal, dies floor 1 to 2; `sweep_tiers` fails when the
+deeproot upper bound at any tier is under 10%; `test_meta` structural asserts
+as listed in 6.1 plus a second career that replays tier 0 and names
+unreachable milestones, asserting unlock *sets* by run 40 rather than run
+numbers; `test_invariants` validates `Game.floor_def(n)` for every tier and
+mutator, not raw `Content.FLOORS`; `sweep_packages` prints offers per base
+ability per run, P(any `+` offered per draft), and archetype-core completion
+under a committed policy, asserting completion for pairs inside the committed
+package.
+
+### 7.7 Two runner questions the review could not answer
+
+`measure_bosses` reports arrivals and conversions per boss but never per boss
+by kit, so whether The Dredge already filters gardener kits and the Furnace's
+`ignite_all` filters shover kits is unmeasured at any N (the critic's probe:
+Dredge with garden kits 5/5 for the optimizer, n far too small). Extend it
+with a kit column and `BOSS_KIT` so locked archetypes run against each boss at
+30 seeds with deeproot. And no runner characterises the enemy roster as a
+build filter (spiked, smokestack, magnet crane, leech, tar spitter are the
+shipped "disruptors attack options"); a `weak_to` / `resist` by damage-source
+family on `ENEMIES` is the cheapest "world reacts to build" surface and was
+not considered by any lens.
+
+---
+
+## 8. Gaps the critic found
+
+Recorded so the next round can see what this one could not.
+
+- **The smog clock is slack for skilled play; stalls, not greed, kill.**
+  Winning descents on floors 1 to 4 happen at smog 3 to 8 with roughly 30
+  turns of choke slack; deaths occur 16 to 60 smog past choke, from being
+  stuck on a floor for 20 to 120 turns. Every "setup turn" caveat about
+  shrine dwell and two-step combos assumed a tight clock. The binding budget
+  on combos is 3 charge per turn, and `deep_cells` and `sun_capsule` are the
+  levers that relax it, unmeasured for that role.
+- **Quota-unmet deaths cluster on the gate floors.** In the critic's probe 3
+  of 5 optimizer floor-6 deaths and 3 of 10 fanatic floor-6 deaths ended with
+  the quota unmet while corruption still existed. That is a different failure
+  from the strand bug: bots cannot reach or afford the last quota tiles under
+  pressure. The green gate is a live build filter (a kit with no spare charge
+  for cleansing dies at the stairs), which the "no commitment payoff" finding
+  said did not exist. Autopsy those seeds before any ash or quota change.
+- **Vaults are never examined as a build surface.** Five terrain set-pieces
+  stamped one per floor from a per-floor list by the main rng; `fuel_depot`
+  appears only on floors 5 to 6, `old_garden` only on 2 to 3, no vault mixes
+  terrain. A pyro cannot meet a fuel vault before floor 5. Vault weighting by
+  kit tag is the cheapest "the world bends to the build" lever and was not
+  considered.
+- **Items as combo enablers.** The only free actions and the only in-turn
+  charge burst (`sun_capsule` +3 is a second 3-charge combo the same turn),
+  yet no finding measures combo turns enabled by items and no item writes
+  terrain. Bots walk over pods while full 0.7 to 3.5 times per run.
+- **Human-facing surfacing of builds is absent.** The tutorial never teaches
+  the draft, drops, upgrades, grafts, or the dash; the draft screen shows
+  offers but not the current kit. The 2026-08-11 degenerate line was found by
+  a human. Every proposal above that adds tags, riders, or two-graft shops
+  needs display, and a shell checklist belongs in each roadmap block.
+- **The save layer is unexamined.** A version mismatch deletes the in-flight
+  run with no message; no state hash is stored, so an un-bumped sim change
+  diverges silently on replay; finished logs are deleted. Store
+  `state_hash()` every N actions and verify on load; show a notice; keep the
+  last N logs with an export path.
+- **Unverified headline numbers.** Lance-free parity rests on 12 to 16 seeds
+  at a saturated tier; only `thorn_shield` and `water_jet` exceed two standard
+  errors among the tier-6 single deltas; the forge and `+` value figures are
+  single 24-seed pairs; the loadout probe is 20 seeds with no script on
+  record; the "9 of 11 abilities seen per run" and "21% to 36% `+` offers"
+  figures come from the audit's Monte Carlo, not from a published table.
+  Treat all of them as directions, not values, until the v2 instrument
+  reproduces them at 30 seeds.
+
+---
+
+## Appendix A. Interaction matrix (condensed)
+
+Rows are the primitive; columns say whether the sim reads or writes that
+state. Full matrix with line citations in the primitives audit
+(`scratchpad/wf/3_*.md`).
+
+| primitive | exists | absent |
+|---|---|---|
+| lance | ignites oil, stops at smoke and wall, +1 at dim 0 (`+` only), blocked by the boss gate | passes roots; never reads growth, goo, fire, supply |
+| pull | stops at wall, enemy, roots; fire on path damages; massive takes damage but does not move; staggers | never drags oil or ignites; goo, growth, supply ignored |
+| push (line, all, wash) | collision into wall, enemy, roots damages both; pushed enemy entering fire burns; massive immune; staggers | oil and goo on the destination do nothing; the player as blocker takes nothing |
+| wash | erases oil and fire in the line, then pushes the first enemy | goo, rich goo, growth, smoke, roots, supply untouched; a massive enemy truncates the wash |
+| growth | discounts a 2-cost cast (consumed), heals 1, seals a vent (consumed), dash target, spike condition, boss-gate key, dredge food | fire never spreads to it; enemies ignore it; nothing overwrites it |
+| fire | damages on stand and enter, spreads to oil one tile per turn, ttl 2 hardcoded five times | never touches growth, goo, smoke, roots; a burning tile cannot be cleansed |
+| smoke | blocks the player's lance and whip line; cleared by gust and clear_air; blocks terrain writes incidentally | enemies have no line of sight; does not block movement or fire |
+| roots | block pathing, player moves, pushes, spawn placement; silently skip a vent spawn | beams pass through; drag ignores them; never burn |
+| stun | skips the intent; pauses summon, ooze, stoke timers | no op reads it; never stacks |
+| root | blocks the `move` intent only, ticks only when it blocks | attack, drain, gum, drag, summon, advance proceed while rooted |
+| spore | ticks 1 per turn | never stacks (max); nothing consumes it |
+| thorns | reflect melee, slams within 2, quakes; fire even when fully shield-absorbed | not drag, gum, drain, spikes, fire; overwritten rather than maxed |
+| shield | absorbs every player damage source | does not stop drain (drain hits bank) |
+| drag | blocked by anchor; destination gets fire, goo, supply effects | can land on roots (uses `_tile` not `_open`) |
+
+## Appendix B. Bot coverage of the 24 abilities (condensed)
+
+"Cast" means measured casts when held, 60 seeds with all packages on
+(deeproot 10 runs). Full matrix in the bot audit (`scratchpad/wf/4_*.md`).
+
+| ability | sprout | optimizer / magpie | fanatic | deeproot |
+|---|---|---|---|---|
+| solar_lance | yes | yes | yes | yes |
+| seed_bomb | never | rest and boss gate only | gardener, turtle (topmost tile) | rarely (heal after end_turn) |
+| vine_whip | never | last-resort fallback | shover | 0 observed |
+| water_jet | never | dodge only | shover | rarely, truncated |
+| mycelium_dash | never | dodge only | inherits | heavily |
+| root_wall | never | never (no branch) | turtle | not held |
+| pollen_burst | never | branch unreachable (strike runs first) | shover | not observed |
+| sun_flare | never | 2+ within 2 | pyro | rarely, truncated |
+| thorn_shield | never | shield 0 and enemy near | turtle | yes (shield bias) |
+| overgrowth | never | never (no branch) | gardener (converts in 17 of 111 casts) | 0 observed |
+| sap_snare | never | dodge fallback (no-op vs adjacent) | turtle | not observed |
+| grow_spike | never | unconditional when legal | gardener | yes |
+| spore_cloud, geyser | never | branch unreachable or never | no build | 0 casts |
+| gust | never | dodge only | parent dodge | yes |
+| updraft | never | never | never | yes |
+| fungal_ring, burrow, tide, steam_vent, clear_air | never | never | never | searched, 0 or 1 casts |
+| bramble_coat | never | never drafted (sentinel) | turtle | no thorns term |
+| anchor_roots | never | dragger within 5 | no build | no anchor term |
+| moss_filter | never | dim 1+ | no build | via dim term |
+
+## Appendix C. Provenance
+
+All scripts live in the session scratchpad and are reproducible against
+commit `eb4425f` with `godot --headless --path . --script <file>`:
+
+- `telemetry.gd`, `telemetry_out.md`: event-stream tally, 40 seeds per
+  heuristic bot, 20 deeproot, tier 0, 190 seconds.
+- `lift.gd`, `lift2.gd`, `phase2.sh`, `analyze.py`, `lift_analysis.md`,
+  shard `*.jsonl`: synergy lift, deeproot, locked kits, 24 seeds per config,
+  tiers 0 and 6, plus drift controls.
+- `audit.gd`, `probe.gd` (40 interaction checks), `gate_scan.gd`,
+  `trunc.gd`, `trunc_probe.gd`, `uses_probe.gd`, `deep_probe.gd`,
+  `fanatic_aim.gd`, `fanatic_buy.gd`, `base4_probe.log`, `base5_probe.log`,
+  `order_probe.log`: audit probes for defects and bot coverage.
+- `combo_probe.gd` (21 combo existence and absence checks),
+  `refute_probe.gd`, `refute_bd.gd`, `bd_lock.gd`, `bd_arch.gd`,
+  `econ/econ.gd`, `econ/graft_value.gd`, `econ/heavy_out.txt`,
+  `draft_mc.gd`, `oracle_probe.gd`, `loadouts.gd`, `oppo.gd`,
+  `clock_margin.gd`: lens and refuter probes.
+- `wf/*.md`, `wf2/*.md`: the structured outputs of the four audits, the
+  telemetry measurement, the 59 findings with verdicts, the 35 refuter
+  additions, the three roadmaps, the judge, and the critic.
+
+The workflow ran 20 agents (4 audits, 1 measurement, 5 finders, 5 refuters,
+3 designers, 1 judge, 1 critic) plus the lift measurement completed out of
+band after a usage-limit interruption.

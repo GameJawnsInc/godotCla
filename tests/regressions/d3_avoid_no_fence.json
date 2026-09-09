@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#######","#>..*.#","#@.*d*#","#...*.#","#######"]},"kit":["sap_snare","seed_bomb","mycelium_dash"],"pool":["sap_snare","seed_bomb","mycelium_dash"]},
+"actions": [{"type":"end_turn"},{"slot":0,"target":[3,2],"type":"ability"}],
+"expect": {"events":[{"amt":1,"src":"fire:env","t":"damage","who":"drill_bot"},{"amt":1,"src":"fire:env","t":"damage","who":"drill_bot"},{"t":"ash","tile":"(3, 2)"},{"id":"sap_snare","t":"ability"},{"status":"root","t":"status","turns":2}],"floor":1,"timeout":true,"turns":1,"won":false},
+"note": "D3 an avoided tile is a cost, never a wall: the same drill bot with fire on all four of its neighbours has no detour left to buy, so the cheapest path is still through the flames - it steps west onto (3,2), takes the enter damage and then the environment tick standing there (2 of its 3 hp, both signed fire:env), and the ring burns out to ash around it. This is the case the Content.ENEMY_AVOID_COST doc names: a ring of fire is never an immortal fence, the enemy walks through when that is the cheapest way. sap_snare on (3,2) pins where it ended up",
+"sim_version": 14,
+"hash": "696d365eee610d236e1d8ec4c73541d86906fac90651b2eed67dfad2f47634ae"
+}

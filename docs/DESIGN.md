@@ -63,29 +63,187 @@ The theme should do mechanical work, not just paint.
 ### Terrain
 
 - Enemy terrain: **oil slick** (flammable, spreads slowly, slows), **sludge**
-  (damages on entry), **smoke** (blocks targeting through it; never hides
-  intents).
+  (damages on entry), **smoke** (blocks targeting through it and screens the
+  tender from ranged disruption; never hides intents — see Enemies).
 - Player terrain: **growth** (planted by abilities; slow heal while standing on
   it; some abilities require or empower on growth).
 - Neutral: **fire** (ignited oil; damages everyone; burns out), water, rubble,
   destructible machinery.
+- **Ash** — what a fire leaves when its ttl runs out. Still corruption, so it
+  counts against the floor's green quota and cleansing it pays Bloom like any
+  other corrupt tile, but it never shields the Furnace core, never catches
+  fire again, and mapgen never places it: ash only exists where something was
+  set alight. Water washes it away and convert-radius abilities turn it into
+  growth, exactly as they do oil and goo. Burning a slick therefore trades a
+  cleanup job for a different cleanup job instead of erasing it.
+- **Pending corruption** — a fire counts as the ash it will leave. For the
+  three *counting* questions — the floor's green quota, whether a room is
+  fully tended, and whether the floor is restored — a burning tile is already
+  corruption, so lighting a slick never discounts the quota, a room whose last
+  corrupt tile is on fire waits for the ash before it blooms, and the floor is
+  not restored until the burn is cleaned up. Everything else still asks the
+  plain question: fire is not cleansable while it burns, does not shield the
+  core, and washing it away is a real removal that does shrink the quota.
+  Burning is a delay, not a shortcut.
 - Cleansing corrupted tiles (via abilities) yields **Bloom**.
+- Terrain is **data, not code**: `Content.TERRAIN` holds one row per kind
+  (corruption, shields_core, flammable, washable, bloom yield, ttl/decays,
+  entry and per-turn damage, blocks, blocks_beam, screens, heal, burns_to) and
+  the sim reads it through `Content.terrain(kind, key, default)`. Terrain *reactions*
+  are data too: `Content.REACTIONS` rows (fire spreads into oil, fire burns
+  out; damp, roots-burn and smoke-smother present but disabled) are consumed
+  by one `_terrain_react()` in the environment phase. Enemy statuses live in
+  `Content.STATUSES` (stack rule, which intents the status blocks, the event a
+  blocked intent emits, per-turn tick damage, an optional re-application
+  cooldown). Adding a kind, a reaction or a status means adding a row.
+- Status rows in play: **root** blocks `move`, `advance` *and* `drag` — a
+  rooted enemy cannot walk, cannot close, and cannot haul the player around —
+  and carries a stagger-style cooldown of 2 turns, so a snare cannot be
+  chain-cast on the same enemy; a refused re-application emits `resisted`.
+  **Spore** stacks by *addition* up to a cap of 6 turns, so re-dosing a
+  target deepens the poison instead of merely refreshing it. **Stun** does
+  neither. Massive enemies (every boss) are immune to all three.
 
 ### Abilities
 
 - Data-driven recipes over effect primitives: damage, push, pull, dash, swap,
   shield, apply_status, create_terrain, convert_terrain, summon, drain/grant
   charge. Targeting shapes: melee, line, cone, radius, blink, growth-network.
+- Primitives compose through **riders**, four optional keys on any effect dict
+  (evaluated only by `Game._rider_if` / `_rider_per` / `_bonus_dmg`): `if` is a
+  closed predicate set that gates the effect (`target_on`, `target_adjacent`,
+  `self_on`, `dim`, `casts_this_turn_min`, and inside a `then` the parent's
+  `outcome` / `outcome_crossed`); `per` scales a number with a board count
+  (`growth_adjacent_target`, `fire_within_self`, `oil_in_line`,
+  `enemies_adjacent_target`, capped); `bonus` adds damage per affected enemy
+  when that enemy's tile satisfies its predicates; `then` runs sub-effects once
+  when the parent actually did something, never nested. An ability row may also
+  carry a `surge` dict — what standing on growth buys that cast (below).
+  Every effect returns an outcome — hit / ignited / pushed / collided /
+  converted / planted / washed / statused, the enemies affected, the terrain they crossed
+  — which is what riders read, so "lance the oil the enemy stands on, then the
+  flare hits harder" is a data row rather than a special case in code. Riders
+  emit a `rider` event so the harness can measure how often combos fire.
+- **Ten rows carry a rider today** (the rest are plain recipes). Two base
+  rows scale with the board: **Grow Spike** deals 3 and +1 for one adjacent
+  growth tile, **Sun Flare** deals 1 in a radius, ignites oil and adds +1 to
+  anything standing in fire. Five `+` forms - offered only once the base is
+  owned, so the base pool's balance is untouched - carry the sharper versions
+  (Block D6 gave each of them a name of its own; these are the variants that
+  inherit the behaviour the numbers below were measured on):
+  **Impaling Spike** takes the same count to two stacks at range 4 (3 to 5),
+  **Corona Flare** flashes for 2 with the same fire bonus, **Pinning Jet**
+  roots an enemy that was actually shoved *and* then hit something,
+  **Vine Lash** stuns an enemy dragged across a burning tile, and
+  **Tangle Bomb** roots whoever is standing on the growth it just planted. Four combos fall out of
+  them, and each is a charge budget as much as a board state: *seed on head*
+  (bomb an enemy's own tile, then spike it for 5 - 2 + 1 = 3 charge, one turn),
+  *light then flare* (lance the oil line an enemy stands on, then flare it for
+  3 - 2 + 2 = 4, so it needs a surge or a capsule), *drag through embers*
+  (whip an enemy across fire: 3 + burn + stun for 1 charge), and *pin* (a jet
+  collision roots, so the lance line stays open next turn - 1 + 2 = 3).
+  Three more riders live on the package `+` forms below.
+- **Surge: the tile you stand on is ammunition.** One rule, one place — a cast
+  *surges* when the tender stands on growth and the row's `surge` dict carries
+  something that applies to it: a `cost` delta that actually lowers a cost-2+
+  cast, or any stat delta. A surged cast eats the growth tile underfoot (event
+  `verdant`). The default dict is `{cost: -1}`, so most rows behave exactly as
+  they always did: a cost-2+ cast from growth is a charge cheaper, a cost-1
+  cast leaves the tile alone. Seven rows now spend that same tile on shape
+  instead: **Grow Spike** and **Grow Spike+** `{dmg: 1}` (3 → 4 *before* the
+  growth-adjacent rider, so a spike from your own garden beside the enemy's
+  lands for 5), **Water Jet** and **Water Jet+** `{push: 1, collision_dmg: 1}`
+  (shoves a tile further and slams a point harder — a jet that could not reach
+  the wall now can), **Sun Flare** and **Sun Flare+** `{cost: -1, radius: 1}`
+  (the discount they always had, plus reach 3) and **Seed Bomb+**
+  `{radius: 1}` (a 13-tile diamond instead of the plus). Stat keys are int
+  deltas — `dmg`, `push`, `collision_dmg`, `radius`, `dist`, `turns`, `ttl` —
+  added to the matching key of every effect of that cast that carries it,
+  before the riders scale it; the cast emits a `surge` event so the harness
+  counts them. The point is the tension: growth heals you while you stand on
+  it, and every surge trades that heal for a sharper cast.
+- **Spore Trail.** **Mycelium Dash+** leaves growth where you stood — the
+  `plant_origin` op writes growth on the departure tile once the tender is
+  gone, if that tile is bare floor with nothing standing on it. The mobility
+  slot lays its own network as it travels: the tile you left is a tile you can
+  dash back to, spike from, or surge off, so a dash is a setup rather than only
+  an escape (and a dash that plants counts as an effective cast in the run
+  summary).
 - Loadout: 4 ability slots + 1 mobility slot. Drafting while full = drop one.
 - Draft cadence: 1-of-3 at each descent; shrines/shops mid-floor spend Bloom.
 - Upgrades appear as draft options (e.g. cost reduction, bigger shape).
+- **The draft is slotted, not a lottery.** Each of the three offers is rolled
+  by a *role* (`Content.DRAFT_SLOTS`), so the same descent always asks the same
+  three questions: **affinity** (a pool ability sharing a tag with what you
+  already carry), **upgrade or affinity** (an upgrade of something you hold
+  when there is one, another build-matching offer when there isn't), and
+  **wild** (anything in the pool). A run that has committed to fire keeps
+  seeing fire, so wanting a build is a thing you can *do* rather than a thing
+  the roll does to you — the answer to review finding 5.1, "the draft is
+  kit-blind in the sense that matters".
+- **The affinity set** is the union of the tags of every ability in the kit
+  (an upgrade counts as its base) and of every graft owned, minus
+  `Content.AFFINITY_IGNORED_TAGS` — today just `mobility`, because every
+  loadout carries a mobility ability and a tag everyone has defines no build.
+  Buying a graft therefore widens what the next draft is likely to show you:
+  the shrine and the draft are one build conversation, not two.
+- **Neither build-steering slot spends itself on something that is no part of
+  a build.** The same list that keeps `mobility` out of the affinity set keeps
+  a pure-mobility upgrade off the upgrade slot: every loadout is guaranteed to
+  carry a mobility ability, so without the rule roughly a quarter of "deepen
+  your build" offers were the dash upgrade — a card measured at 158 offers and
+  0 takes across 511 bot drafts. It is a *tag* test, not a role test, so an
+  ability with an identity beyond moving (Updraft, which is wind as well as
+  mobility) still counts as a build. And it narrows only what that slot draws
+  from: the wild slot can still offer a mobility upgrade and the shrine forge
+  still sells one, so the card stays reachable for the run that actually wants
+  it.
+- **One draw per slot, always.** The roll spends exactly one main-rng draw per
+  offer whatever the candidate lists hold: a slot with nothing to offer falls
+  back to the wild list, and a slot with nothing left at all still spends its
+  draw and simply yields no card. That keeps the whole seed downstream of a
+  draft independent of the kit — two runs of the same seed diverge because of
+  what they *chose*, not because one of them had a shorter candidate list.
+- **Skipping buys focus.** Taking nothing arms `focus`: the next draft deals
+  one extra offer, an affinity one, and the arming is spent by that draft
+  whether or not you take a card. So "none of these three" is a real line of
+  play — pass now, get a wider look at your own build next floor — and the
+  draft has an answer to a bad hand that isn't a reroll. The reward is
+  deliberately *not* Bloom: Bloom would make skipping a shop decision priced
+  against grafts and heals, and every persona would learn one Bloom-optimal
+  skip rate. An extra affinity card is only worth taking when you actually
+  want the build, so the choice stays a build choice.
+- **Every upgrade is a fork, not a grade** (Block D6). A base ability does not
+  have "a `+` form"; it has **two named variants**, keyed `<base>+<variant>`
+  (`solar_lance+noon` and `solar_lance+pierce`, `bramble_coat+briar` and
+  `bramble_coat+bristle`). One of each pair reproduces the row that used to be
+  the plain `+`, so the measured balance point survives and every number this
+  block moved is attributable to the new sibling alone; the other is a real
+  alternative - more reach against more damage, a different status, a
+  different centre, a different target class. Five of the new siblings are
+  deliberately *sidegrades of their own base* rather than supersets (Root Cage
+  loses the `tile` shape, Blight Snare swaps root for spore, Throng Spike
+  counts bodies instead of growth, Bristle Coat trades duration for bite,
+  Palisade grows roots instead of growth), which is the one place the package
+  convention of "numeric bumps only" is knowingly broken.
+- **How you get one.** The descent draft offers **one** variant per base,
+  chosen by the parity of the floor you are entering - no roll, so the draft's
+  one-draw-per-slot contract is untouched and *which* sibling a slot could deal
+  is a property of the floor, not of luck. Drafts happen on floors 2-7, so both
+  siblings are reachable inside a single run, and the shrine **forge** always
+  sells either one: it lists one action per (keep, scrap, variant) triple, and
+  the shell asks the third question with both cards face up. No fork is ever
+  unobtainable. The nine package abilities and every consumable keep their
+  single plain `+` form - only the fifteen base-pool abilities are forked.
 - Starting pool: **Horticulture** core set (~12 abilities). Examples:
   - Solar Lance — line damage, stronger in clear smog.
   - Seed Bomb — radius, creates growth.
   - Vine Whip — pull enemy 2 tiles.
   - Root Wall — create blocking terrain, 2-turn life.
   - Water Jet — push + washes oil/extinguishes fire.
-  - Mycelium Dash (mobility) — teleport between growth tiles.
+  - Mycelium Dash (mobility) — teleport between growth tiles (Spore Trail
+    reaches further and leaves growth behind; Scattering Dash lands in a
+    1-damage burst instead).
 
 ### Enemies
 
@@ -97,6 +255,41 @@ The theme should do mechanical work, not just paint.
     your own kit costs turn economy.
   - **Extractor Engine** — visible 3-turn summon cycle until destroyed.
 - Enemy content is data (stats, intents, spawn tables) per style guide §6.
+- **Enemies read the floor.** Two rules, both data, both aimed at the same
+  hole: terrain used to be something only the player could see.
+- **Avoid lists — terrain is a cost, never a wall.** An enemy row may carry
+  `avoid: [terrain kinds]` (default `[]`, which is the old terrain-blind
+  behaviour exactly). The chase is a shortest-path search over integer step
+  costs: one per tile, plus `Content.ENEMY_AVOID_COST` (4) for a tile whose
+  kind the row avoids. So a machine walks *around* a burning tile when the way
+  round is at most that much longer (a tie on cost goes to the path through
+  fewer burning tiles, which is what makes "at most" inclusive), and walks
+  straight *through* it when the
+  detour costs more than the burn — a ring of fire is a toll, not an immortal
+  fence, and an enemy cornered by flame still comes for you (and takes the
+  entry damage for it). The lever is one constant, so "fire is scarier" is a
+  number, not a rewrite. Every mobile machine avoids fire; the exceptions are
+  characters: the **Welded Hulk** (nothing stops the hulk), the **Coal Golem**
+  (made of coal), the **Cinder Mite** (the igniter *wants* fire), the
+  stationary kinds, and every boss. Both the ordinary `move` intent and a
+  boss's `advance` go through the same search, so bosses inherit nothing and
+  lose nothing.
+- **Smoke screens ranged intents.** A `Content.TERRAIN` row may set
+  `screens: true` (smoke does; nothing else). An intent in the closed list
+  `Content.SCREENED_INTENTS` — drain, gum, drag: the three *disruption*
+  intents — fizzles when the tender stands on a screening tile or has one in
+  any of the four adjacent tiles. Two exemptions keep it honest: the enemy
+  must be non-adjacent (you cannot smoke-screen at arm's length, so a melee
+  answer to a spitter is still a melee answer), and `massive` enemies see
+  through it (bosses, the same exemption statuses use). The intent is still
+  computed and still telegraphed — the counter-play is *walking into the
+  smoke after you have read the telegraph*, which is the intent-visibility
+  pillar doing work rather than a hidden dodge roll. A screened action emits
+  `screened` and ends that enemy's turn.
+- Between the two, **fire is area denial as much as damage**: a line of flame
+  now bends a pack's approach for as long as it burns, which is what makes the
+  Coal Golem's smoke burst and the Cinder Mite's igniting genuinely
+  double-edged.
 
 ### Run structure (~30 min)
 
@@ -122,13 +315,182 @@ tests a different build muscle so no single draft strategy trivializes it.
 
 ### Shops and Grafts
 
-- Shrines/shops are Slay-the-Spire-style stores spending Bloom: 2–3 abilities,
-  1–2 upgrades for the current kit, a heal, a draft reroll, and one **Graft**.
-- **Grafts** are the relic analog: passive run-long modifiers, data-driven like
-  everything else (e.g. "+2 bank cap", "growth tiles heal +1", "first ability
-  each turn that targets oil is free"). Kit stays 4+1; Grafts are where
-  long-tail build identity accumulates.
-- Grafts enter the combo-sweep harness the same as abilities.
+- Shrines are Bloom stores, one per floor (the Furnace floor has none, and the
+  Boarded mutator boards the shop for the whole run). Stock is fixed in shape:
+  a **heal**, **one ability** drawn from the draft pool (never one already in
+  the kit, in either its base or an upgraded form), **two Grafts of which you buy
+  one** (the other is discarded), **one base item**, the **press** (upcycle a
+  held item to its `+` form) and the **forge** (scrap a kit ability to upgrade
+  another, at most once per floor - and since Block D6 the forge asks *which*
+  of the upgraded ability's two variants you want, so it is the reliable way
+  to the sibling this floor's draft parity cannot deal). Every price runs through
+  `Content.SHOP_COSTS`, so the Gouging Prices tier marks the whole sheet up.
+- With a full kit the shrine's ability card is simply not buyable: that shop
+  slot goes dead once you are kitted out (accepted), and the forge is the only
+  way to free a kit slot - it may never scrap the mobility ability, so a run
+  can always still move. The 1-of-3 draft at each descent has no reroll of its
+  own - its answer to a bad hand is the skip, which arms one extra affinity
+  offer on the next descent; the shrine counter has the reroll (below).
+- **Rerolling the counter** (the one repeatable Bloom sink) - **an opt-in
+  mutator, Spinning Shrine, unlocked at the first win**: measured default-on,
+  the greed canary rose from 8% to 15.5% of runs over 200 paired seeds and no
+  single price or cap lever brought it back under the merge gate (BALANCE.md
+  2026-09-07e), so a default run keeps the counter fixed and turning the
+  switch on for everyone is a deliberate decision, not a tweak. Under the
+  mutator, standing on the shrine you can spin the stock: **2 Bloom the first
+  time, +1 for every spin already taken on this floor, three spins at most**. A spin redraws the
+  ability card, the graft pair and the item from exactly the rules that
+  stocked them (the ability from the draft pool minus what you already hold,
+  the grafts from the rows you do not own, the item from the base items), each
+  one excluding what is on the counter right now whenever there is an
+  alternative to move to - with no alternative left the offer simply stays.
+  What a spin never does is reopen a slot you already bought: the heal, the
+  graft pair, the ability card and the item stay bought, and the press and the
+  forge are never touched. Like every shrine service it costs no charge and no
+  turn - the walk to the counter is the time cost. It is deliberately a
+  **choice** sink, not a stat sink: leftover Bloom buys another look at the
+  same three slots, never a number. The escalating price and the per-floor cap
+  are what keep "spin until it fits" from being the dominant line, and the
+  counter resets with the next floor's stock.
+- `+` items exist only through the press: the shrine and supply pods stock base
+  items only, so item upgrades are a spend, never a drop.
+- **Grafts** are the relic analog: passive run-long modifiers, and they are
+  **data, not code**. Every `Content.GRAFTS` row is `{name, desc, tags, price}`
+  plus exactly one of three shapes, and the sim reads the shape rather than the
+  id:
+  - `stat: {key: int}` — summed over everything you hold. Keys are a closed
+    set: `bank_cap`, `shield_cap`, `regen`, `regen_on_growth`, `growth_heal`,
+    `cleanse_bloom` (`regen_on_growth` pays only on the turns you begin
+    standing on growth; no shipped row uses it — it exists so a conditional
+    alternative to Solar Core can be measured).
+  - `mod: {key: value}` — a rule switch the sim looks up where the rule lives
+    (`floor_start_shield`, `oil_cast_discount`).
+  - `hooks: [{on, effects, cap_per_turn?, if?}]` — rows the hook dispatcher
+    runs when something happens. The seven hook kinds are `ignite`,
+    `staggered`, `cleanse`, `growth_planted`, `kill`, `shield_break` and
+    `collision`; effects are the ordinary effect grammar aimed at the tile the
+    event happened on, plus three positional ops (`damage_at`, `status_at`,
+    `terrain_at`). Nesting and per-step work are capped so a hook chain can
+    never run away, and `cap_per_turn` bounds a single graft's firing rate.
+  Adding a graft means adding a row. Nothing in the shop, the bots, the tests
+  or the shell learns its name.
+- The ten live rows: **Deep Cells** (+2 bank cap), **Verdant Pulse** (growth
+  heals +1), **Thick Bark** (+2 shield cap), **Bloom Surge** (cleansing yields
+  +1 bloom), **Solar Core** (+1 charge regen), **Carapace** (start each floor
+  with 2 shield), **Ember Sap** (whoever stands on a tile as it catches fire
+  takes 1, three times a turn), **Undertow** (staggered enemies are also rooted
+  a turn), **Compost** (a kill leaves growth where the enemy fell) and **Oil
+  Tithe** (the first cast aimed at oil each turn costs 1 less, never below 1).
+  Kit stays 4+1; Grafts are where long-tail build identity accumulates.
+- **Each graft carries its own price** (the row's `price`, in Bloom), and each
+  graft you already own still raises the price of the next one on top of that.
+  A shrine's two offers are therefore usually priced apart, and the card shows
+  what each one costs. The prices come from the measured tables, not from
+  flavour: Solar Core is 8 because it is the one row that moves win rate on
+  its own, Compost 6, Ember Sap and Oil Tithe 5, Undertow 4, and the five
+  stat/mod rows that sit inside noise are 3 so they are ever worth taking
+  against a lever. **The lever is priced, not nerfed** — Solar Core still does
+  exactly what it did, it just costs about a floor's worth of Bloom — and
+  whether the row should instead become conditional is an open call for the
+  project owner, measured but not taken (see `docs/BALANCE.md`, the
+  alternative-probe table).
+- Rule grafts are deliberately kept off the stall surface: a hook may not grant
+  shield, healing, thorns or cleanse credit, because those are the loops that
+  let a run stand still and win. Damage, control and economy only.
+- The combos the rule grafts are for: **Ember Sap + water_jet + lance** (shove
+  an enemy onto oil and lance the line — ignite 1, burn tick 1, lance 2, four
+  damage for three charge); **Undertow + a wide shove** (a whole staggered
+  group is rooted for a turn, which buys two clean lance lanes next turn); and
+  **Compost + grow_spike** (every kill leaves a growth tile, so the next enemy
+  is already standing next to growth) — a growth engine for a kit that never
+  drafted the gardener's tools.
+- Grafts enter the combo-sweep harness the same as abilities, and can be
+  pre-installed for a sweep via the run config (`tests/sweep_grafts.gd`).
+
+### Resonances (one per element)
+
+- Every ability and every graft carries **tags** — the elements: fire, growth,
+  displace, sun, water, bark, control, wind, smoke, economy, mobility. Hold
+  enough cards of one element and it **resonates**: a free, permanent rule
+  that runs for the rest of the run, with no charge cost, no Bloom cost and no
+  kit slot. It is a payoff for *committing*, not a stat stick you buy.
+- It counts the kit and the grafts together, so an element can be finished
+  with a card at a descent draft **or** with a graft at a shrine — and it
+  switches back off the moment the count drops, which a draft drop or a forge
+  scrap can do. That is the whole rule: no charges, no cooldown, no state.
+- **One ships.** It is the one element that had the reach, a verb of its own
+  to pay for, *and* a measured firing rate on the persona whose win band the
+  game is balanced against. Two more were written, built and measured, and
+  both were cut on tests written before the numbers — those are the two
+  bullets after this one, and they are worth more than the row that survived:
+  - **Cinder Grip** — *fire ×3*: a machine standing on a tile as it catches
+    fire is rooted a turn (three times a turn). Fire has been a positional
+    statement since enemies learned to path around it; this pays you for
+    lighting the oil *under* a machine instead of beside it — it cannot step
+    off, so it eats the extra burn tick and loses a step of approach. Fire has
+    exactly four carriers in the game (Solar Lance, Sun Flare, Ember Sap, Oil
+    Tithe), so ×3 is "the pyro pair plus a shrine purchase". Bosses are immune
+    the same way they are immune to every other status. Measured: it fires on
+    every ignition but only **8.4%** of those land on a body, which is +0.80
+    roots a run on a locked fire-3 kit and **0.13** a run at the reach free
+    drafting produces — a real but small payoff, and a third of what the
+    design phase predicted (BALANCE.md, bump 14). Being the only row also
+    makes its shape plain: with four carriers and ×3, only Tender and
+    Flarekeeper start with a fire card, so this is a lance-and-flare build's
+    identity rather than the game's.
+- **Displace was designed a row and it was cut**, on its own pre-registered
+  test, before the block shipped. Follow Through (*displace ×2*: every
+  collision you cause hits 1 harder, twice a turn) was meant to be the row
+  that makes the starting loadout mean something. The design phase wrote down
+  what would kill it — "fewer than 30 hooks over 30 optimizer runs on the
+  locked displace kit" — and the answer was **22**, and **21** out of sample:
+  0.73 a run against a predicted 2–6. Worse, only 5 of those 22 landed
+  anything, because a collision that kills erases the body before the hook
+  runs, and on that kit three quarters of collisions kill. Free drafting, the
+  band persona reached the threshold in 3 runs of 30 and fired the row zero
+  times. It was *not* dead at the ceiling — the search bot fired it nine times
+  a run on the same kit — but a free permanent that pays only a search bot is
+  not a build identity, and there is no smaller number to turn: the row was
+  active in every one of those runs and simply never got the geometry. Nor is
+  there anywhere else to seat it — `collision` is the only hook kind that
+  forced movement produces, and every passive stat the vocabulary offers is
+  survivability, charge or Bloom. So displace waits for vocabulary, the same
+  way control does, and the numbers are in BALANCE.md if it is ever revived.
+- **Growth was designed a row too, and the owner cut it** after the block was
+  built — on the greed canary, not on a fire rate. Deep Loam (*growth ×3*: +1
+  charge on the turns you begin standing on growth) worked exactly as
+  designed: it turned the tile you planted into income, it collided
+  productively with the surge rule, and it was the row most often switched on.
+  That was the problem. It pays **per turn spent standing on your own
+  growth**, and lingering on a floor to farm the garden *is* standing on your
+  own growth — so it paid the greedy, dawdling player about twice per turn
+  what it paid the skilled one, and the greed canary the game is gated on rose
+  from 12.7% to 18.7% wins. The threshold was the named remedy and it did not
+  work: ×4 still failed at 16.0%, even though it already cut the row's reach on
+  that loadout from 72% of runs to 30%, and ×5 passed at exactly one win above
+  the row's absence — a pass bought by not being switched on. The lesson is
+  bigger than the row: **a reward shaped as a rate over turns spent somewhere
+  you choose is a subsidy for taking your time**, and growth needs a payoff
+  that fires on an *act* (a cast, a plant, a cleanse) before it can resonate.
+  The numbers are in BALANCE.md.
+- **Ten elements ship nothing.** *Mobility* never counts — every
+  loadout is guaranteed a mobility ability, so it would be universal, and the
+  exclusion is a rule in the content lint rather than a special case in the
+  sim. *Sun* is the most reachable element in the game and shares both its
+  cards with fire, so a fire build would light two permanents off one
+  commitment. *Water* is a subset of displace on the ability side. *Wind* and
+  *smoke* are package-locked, and wind is met from turn one on the Skyrunner
+  kit — the exact failure the whole idea was held back for. *Bark*'s only
+  seat fires under once a run, and every payoff its vocabulary offers is
+  survivability, which is the stall pattern this game designs against.
+  *Control* is the one genuine omission: nothing fires when a status lands, so
+  the element has no event to hang a rule on. *Economy* is carried by no
+  ability at all — it would be bought, never built. And *displace* and
+  *growth* are the ninth and tenth: the two bullets above, rows written for
+  them, built, measured and taken back out.
+- Resonances are **not** part of what the draft's affinity slot chases: the
+  affinity set is read off the kit and the grafts only, so the draft never
+  hunts a threshold it created itself.
 
 ### Meta-progression
 
@@ -137,7 +499,63 @@ tests a different build muscle so no single draft strategy trivializes it.
   - **Mycology** — spores, tunneling, growth-network tricks.
   - **Hydraulics** — water, steam, washing/pushing.
   - **Aeolian** — wind, repositioning, smoke-clearing.
-- Every pool addition must pass a harness combo-sweep before shipping.
+- Every package ability has its own single `+` form (packages are not forked
+  into named variants - a package is already a one-per-run commitment), so a
+  package deepens as well as
+  widens: **Spore Cloud+** clouds a radius of 3 (two casts fill the spore
+  stack cap exactly), **Fungal Ring+** roots whoever is standing where the ring
+  sprouts, **Burrow+** tunnels 4, **Tide+** shoves 3 for 2 on impact and roots
+  what it slams, **Steam Vent+** holds its smoke 5 turns, **Geyser+** erupts for
+  2 and adds 1 to anything standing in fire, **Gust+** blows a line of 4,
+  **Updraft+** rides 4, and **Clear Air+** scrubs a radius of 4 and shoves 2.
+  Like every `+`, they appear only once the base is held, so adding a package
+  never changes the base pool's balance.
+- Every pool addition must pass a harness combo-sweep before shipping. Judge a
+  package by a persona that commits to its archetype (Tidecaller, Skyrunner,
+  Sporewright): a generalist bot drafts package abilities and then never casts
+  them, so a flat generalist table means "no dilution", not "no power".
+- The career profile keeps a **50-run history of whole runs** — the kit and
+  grafts held at the end, bloom, turns, death cause, seed, tier, mutators and
+  packages — plus a cumulative count of *effective* casts per ability (a cast
+  that actually did something, so a milestone cannot be farmed by casting into
+  empty air). Milestones read that history, so unlocks can ask for a **build**
+  and not just a depth: win holding a named ability, win holding none of a
+  named ability, land N of a cast, win with N grafts. Daily runs are scored
+  into their own best-per-seed table and never touch the career.
+
+### Run-start choices
+
+Three picks open a run, on top of the difficulty tier: a **loadout**, at most
+**one tech package**, and at most one **mutator**. All three are data the
+career unlocks, and all three are visible on the status line while the run is
+being played.
+
+- **Loadouts are the starting kit as data.** Six rows: **Tender** (the starter
+  — Solar Lance, Seed Bomb, Mycelium Dash), **Tidewarden** (Water Jet shoves in
+  place of the lance), **Flarekeeper** (Sun Flare lights the oil),
+  **Spiker** (Grow Spike pays off growth), **Lasher** (Vine Whip drags) and
+  **Skyrunner** (Gust, Seed Bomb, Updraft — wind positioning, no lance and no
+  dash, the one row that needs a package unlocked). Every row keeps **Seed
+  Bomb**, the boss-gate key, and exactly **one mobility ability**, so no
+  loadout can strand a run; the ids a persona may never drop or scrap travel
+  with the row instead of living in bot code.
+- **Each loadout is earned by playing the thing it hands you**: reach the
+  Refinery Gate for Tidewarden, the Cracking Yard for Flarekeeper, land 30 Grow
+  Spikes for Spiker, win a run holding Vine Whip for Lasher, shut down the
+  Furnace for Skyrunner.
+- **A package is a run-scoped commitment, not a permanent widening.** A run
+  drafts from the base pool plus at most one package — 14 ids or 17, never 23 —
+  so unlocking the third package deepens the choice instead of diluting every
+  draft. The old everything-at-once pool survives as a deliberate choice, the
+  **Open Pool** mutator, unlocked by the first win.
+- **The daily challenge derives all three from the date seed alone**, over
+  frozen lists, so growing a content table never moves an earlier date and
+  everyone plays the same run. Daily results are scored into their own
+  best-per-seed table and never touch the career.
+
+A loadout is a starting position, not a difficulty setting: the harness gates
+each one on being bot-winnable, and the spread between them is a balance
+number in `docs/BALANCE.md`, not a design promise.
 
 ### Post-win
 
@@ -148,7 +566,16 @@ Both replay hooks, both implemented as data over the same sim:
   Every tier must stay bot-winnable — the harness validates each one.
 - **Run modifiers** (mutators): optional, chosen at run start, unlock-gated
   (e.g. "no growth terrain", "double oil", "kit of 3"). Free-form spice on
-  top of the tier ladder.
+  top of the tier ladder. Each one is a row of data — a name, a description and
+  a small config the sim reads through a single lookup — so a new modifier is a
+  table entry, not a branch. Three of them rewrite the draft or the kit rather
+  than a stat: **Lance Embargo** takes Solar Lance out of the starting kit, the
+  draft pool and the shrine, so the run opens on two abilities and has to find
+  its own damage; **Wide Draft** deals four offers instead of three (the fourth
+  slot is a wild one, past the end of the role list); **Upgrades Only** never
+  offers a new ability at all, only the upgrades of what you already hold, so
+  the kit stops widening and starts deepening - every slot, the focus one
+  included, draws from that same list.
 
 ## Playtest personas (style guide §5)
 
@@ -157,8 +584,32 @@ Both replay hooks, both implemented as data over the same sim:
   sometimes; measures teaching-curve fairness.
 - **Optimizer** (minmaxer) — searches for best lines; measures true difficulty
   ceiling and finds degenerate combos.
+- **Deeproot Plan** (search that plans one setup ahead) — scores what the kit
+  *could* do next turn and follows a setup with its payoff inside the same
+  turn; the instrument that measures how much combo depth the content holds.
 - Key metrics: win rate per persona, death cause distribution, floor-of-death,
   Bloom collected vs. smog deaths, per-ability draft-to-win correlation.
+- **Personas have no fork opinion, on purpose.** The heuristic bots rank a
+  draft offer by its *base* ability, so the two variants of a fork tie and the
+  earlier offer wins - deterministic, and an abstention rather than a guess:
+  which sibling is better is exactly the question the locked-kit sweeps
+  (`{kit: K, pool: K}`, one config per variant) are for, and a hand-tuned
+  preference would bake the answer into the instrument that is supposed to
+  measure it. The search personas do have one: they clone, forge or cast each
+  sibling and score the result, with ties falling to `Content.variants_of`
+  order. But no persona forges at all - deeproot ENUMERATES the (keep, scrap,
+  variant) triples and has never selected one, and a 10-seed playtest still
+  prints `upcycles 0/0` on every persona block including deeproot's - so in
+  practice the third question the shrine now asks is exercised by human play
+  only, which is why the acceptance sweeps lock the kit instead of reading a
+  playtest.
+- The harness therefore counts casts **twice**: `casts_by_base`, which folds a
+  fork onto one key and keeps every pre-D6 number comparable, and
+  `casts_by_id` / `effective_casts_by_id`, which keep the siblings apart.
+  Read the second pair for a fork question - and read it knowing that three
+  pairs are structurally skewed, because `shield`, `anchor` and `undim` set no
+  outcome counter and so can never be an effective cast while their siblings'
+  second clause always can.
 
 ## Open questions
 

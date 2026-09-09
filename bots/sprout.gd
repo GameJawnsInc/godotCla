@@ -1,9 +1,19 @@
 extends "res://bots/bot_base.gd"
 ## Sprout persona: cautious noob. Greedy for Bloom even when unsafe, panics at
 ## low HP, hazard-blind movement, wastes charge, and only uses the obvious
-## buttons (strike, lance). Measures teaching-curve fairness.
+## buttons (strike, lance, plus the tutorial's seed bomb / grow spike and the
+## two self-explanatory consumables). Measures teaching-curve fairness.
+
+const Content := preload("res://sim/content.gd")
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
+
+## What a noob thinks is good, best first: this ranks the draft offers.
+const DRAFT_PREF := [
+	"sun_flare", "solar_lance", "grow_spike", "vine_whip", "water_jet",
+	"thorn_shield", "pollen_burst", "sap_snare", "seed_bomb", "root_wall",
+	"overgrowth",
+]
 
 
 func get_bot_name() -> String:
@@ -21,12 +31,27 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 			by[k] = []
 		by[k].append(a)
 
+	# the two consumables whose use is obvious: eat when hurting, drink when
+	# out of juice with something close. Free actions, no rng draw here.
+	if by.has("use_item"):
+		var pl0: Dictionary = snap["player"]
+		for a in by["use_item"]:
+			# ITEM ids, not ability ids: Content.ITEMS keeps the plain "+"
+			# convention (the shrine press is not forked by Block D6), so
+			# trim_suffix("+") is still exactly right here.
+			match String(pl0["items"][a["slot"]]).trim_suffix("+"):
+				"balm_fruit":
+					if int(pl0["hp"]) <= 4:
+						return a
+				"sun_capsule":
+					if int(pl0["charge"]) == 0 and _nearest_enemy_dist(snap) <= 3:
+						return a
+
 	# impulse shopping: heal first, then whatever is shiny
 	if by.has("buy") and rng.randf() < 0.5:
-		for item in ["heal", "ability", "graft"]:
-			for a in by["buy"]:
-				if a["item"] == item:
-					return a
+		var deal := _shop_impulse(by["buy"])
+		if not deal.is_empty():
+			return deal
 
 	# usually takes the stairs, sometimes lingers
 	if by.has("descend") and rng.randf() < 0.9:
@@ -57,6 +82,22 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 		for a in by["ability"]:
 			if _kit_id(snap, a["slot"]) == "solar_lance" and _lance_hits(snap, a["target"]):
 				return a
+		# the tutorial's other two buttons, pressed without any threat reading:
+		# a spike whenever it lights up; a bomb under its own feet when hurt
+		# and nothing is in the face (first legal tile if home is occupied)
+		for a in by["ability"]:
+			if _kit_id(snap, a["slot"]) == "grow_spike":
+				return a
+		if int(snap["player"]["hp"]) <= int(snap["player"]["max_hp"]) - 3 and not _enemy_adjacent(snap):
+			var first_bomb: Dictionary = {}
+			for a in by["ability"]:
+				if _kit_id(snap, a["slot"]) == "seed_bomb":
+					if a["target"] == ppos:
+						return a
+					if first_bomb.is_empty():
+						first_bomb = a
+			if not first_bomb.is_empty():
+				return first_bomb
 
 	# noob inefficiency: sometimes just stops with charge left over
 	if rng.randf() < 0.1:
@@ -80,19 +121,13 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 	# noobs pick what looks flashy, and sometimes at random
 	if rng.randf() < 0.25:
 		return legal[rng.randi_range(0, legal.size() - 1)]
-	var pref := [
-		"sun_flare", "solar_lance", "grow_spike", "vine_whip", "water_jet",
-		"thorn_shield", "pollen_burst", "sap_snare", "seed_bomb", "root_wall",
-		"overgrowth",
-	]
 	var offers: Array = snap["draft_offers"]
 	var best_pick := -1
-	var best_rank := 999
+	# unlisted offers rank after every listed id; the huge sentinel means an
+	# offer is always taken over skipping when nothing listed is on the table
+	var best_rank := 1 << 30
 	for i in offers.size():
-		var r: int = pref.find(String(offers[i]).trim_suffix("+"))
-		if r == -1:
-			r = 500
-		r = r * 2 - (1 if String(offers[i]).ends_with("+") else 0)
+		var r: int = _pref_rank(String(offers[i]))
 		if r < best_rank:
 			best_rank = r
 			best_pick = i
@@ -103,6 +138,43 @@ func _draft_choice(snap: Dictionary, legal: Array) -> Dictionary:
 	if candidates.is_empty():
 		return legal[legal.size() - 1]
 	return candidates[rng.randi_range(0, candidates.size() - 1)]
+
+
+## Rank of an ability id in DRAFT_PREF; lower is better. Unlisted ids rank
+## after everything listed; the doubled scale leaves room for an upgrade to
+## rank one step better than its plain base.
+## Block D6: read through Content.base_id / Content.is_upgrade, NEVER
+## trim_suffix("+") / ends_with("+") - a variant id ("solar_lance+pierce") is
+## returned unchanged by trim_suffix and would fall off DRAFT_PREF, collapsing
+## the noob's whole draft preference to "unlisted". The two siblings of a fork
+## share one rank and the earlier offer wins the tie: a noob has no fork
+## opinion, which is the persona.
+func _pref_rank(aid: String) -> int:
+	var r: int = DRAFT_PREF.find(Content.base_id(String(aid)))
+	if r == -1:
+		r = DRAFT_PREF.size()
+	return r * 2 - (1 if Content.is_upgrade(String(aid)) else 0)
+
+
+## Impulse purchase: heal, then an ability, then a graft - from the legal
+## list only. Empty dict when nothing on the counter gets taken.
+func _shop_impulse(buys: Array) -> Dictionary:
+	for a in buys:
+		if a["item"] == "heal":
+			return a
+	for a in buys:
+		if a["item"] == "ability":
+			return a
+	# the shrine offers two grafts and one pick closes the counter: sprout
+	# deliberately takes offer 0 (the cautious noob has no graft opinion);
+	# optimizer, magpie and fanatic rank the offers by tag overlap with the kit.
+	var graft: Dictionary = {}
+	for a in buys:
+		if a["item"] != "graft":
+			continue
+		if graft.is_empty() or int(a.get("pick", 0)) < int(graft.get("pick", 0)):
+			graft = a
+	return graft
 
 
 func _enemy_adjacent(snap: Dictionary) -> bool:
@@ -131,7 +203,7 @@ func _lance_hits(snap: Dictionary, dir: Vector2i) -> bool:
 			return false
 		if m["tiles"][p.y * int(m["w"]) + p.x] != 1:
 			return false
-		if snap["terrain"].get(p, {}).get("kind", "") == "smoke":
+		if bool(Content.terrain(snap["terrain"].get(p, {}).get("kind", ""), "blocks_beam", false)):
 			return false
 		for e in snap["enemies"]:
 			if e["pos"] == p:
@@ -151,7 +223,7 @@ func _bfs_step_blind(snap: Dictionary) -> Vector2i:
 		var bd := 99999
 		for t in snap["terrain"].keys():
 			var k := String(snap["terrain"][t]["kind"])
-			if k == "oil" or k == "goo" or k == "rich_goo":
+			if Content.is_corruption(k):
 				var d: int = absi(t.x - start.x) + absi(t.y - start.y)
 				if d < bd:
 					bd = d

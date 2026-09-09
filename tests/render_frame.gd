@@ -2,7 +2,9 @@ extends SceneTree
 ## Composes a full shell frame as a single SVG file, headless — the same
 ## sprites and layout the Godot shell draws, for screenshots without a
 ## display. FRAME_BOT/FRAME_SEED pick the run, FRAME_ACTIONS how far in,
-## FRAME_OUT where to write.
+## FRAME_OUT where to write. FRAME_ASH=<n> stamps n ash tiles next to the
+## player so the C1b burnt-oil terrain can be seen without waiting for a fire
+## to expire.
 ## Run: FRAME_SEED=42 FRAME_ACTIONS=150 FRAME_OUT=/tmp/frame.svg \
 ##   godot --headless --path . --script tests/render_frame.gd
 
@@ -64,6 +66,19 @@ func _init() -> void:
 		if game.over:
 			break
 		game.step(bot.choose_action(game.snapshot(), game.legal_actions()))
+
+	# FRAME_ASH=<n> stamps n ash tiles onto free floor near the player, so a
+	# frame containing ash (C1b: what a burnt-out fire leaves) can be rendered
+	# without waiting for one to burn out. Rendering-side only: the sim is
+	# never asked to place terrain, this pokes the dict the renderer reads.
+	var ash_want := 0
+	if OS.get_environment("FRAME_ASH") != "":
+		ash_want = maxi(1, int(OS.get_environment("FRAME_ASH")))
+	var ash_placed := _stamp_ash(game, ash_want)
+	var ash_tiles := 0
+	for t in game.terrain:
+		if String(game.terrain[t]["kind"]) == "ash":
+			ash_tiles += 1
 
 	var snap: Dictionary = game.snapshot()
 	var m: Dictionary = snap["map"]
@@ -150,5 +165,41 @@ func _init() -> void:
 	var f := FileAccess.open(out, FileAccess.WRITE)
 	f.store_string(doc)
 	f.close()
-	print("frame written to %s (floor %d, turn %d, %d enemies)" % [out, snap["floor"], snap["turn"], snap["enemies"].size()])
+	print("frame written to %s (floor %d, turn %d, %d enemies, %d ash tiles%s)" % [
+		out, snap["floor"], snap["turn"], snap["enemies"].size(), ash_tiles,
+		", %d stamped" % ash_placed if ash_placed > 0 else ""])
 	quit(0)
+
+
+## Put up to `want` ash tiles on empty walkable floor near the player, nearest
+## first. Returns how many were placed (0 when want is 0). Test scaffolding.
+func _stamp_ash(game, want: int) -> int:
+	if want <= 0:
+		return 0
+	var m: Dictionary = game.map
+	var w: int = m["w"]
+	var pp: Vector2i = game.player["pos"]
+	var taken := {pp: true}
+	for e in game.enemies:
+		taken[e["pos"]] = true
+	for v in m["vents"]:
+		taken[v] = true
+	taken[m["stairs"]] = true
+	taken[m["shrine"]] = true
+	var free: Array = []
+	for y in int(m["h"]):
+		for x in w:
+			var p := Vector2i(x, y)
+			if m["tiles"][y * w + x] != 1 or taken.has(p) or game.terrain.has(p):
+				continue
+			free.append(p)
+	free.sort_custom(func(a, b):
+		var da := absi(a.x - pp.x) + absi(a.y - pp.y)
+		var db := absi(b.x - pp.x) + absi(b.y - pp.y)
+		if da != db:
+			return da < db
+		return a.y * w + a.x < b.y * w + b.x)
+	var n: int = mini(want, free.size())
+	for i in n:
+		game.terrain[free[i]] = {"kind": "ash"}
+	return n

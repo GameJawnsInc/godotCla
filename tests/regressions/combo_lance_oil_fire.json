@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#......>#","#@..k...#","#.......#","#########"],"terrain":[{"kind":"oil","pos":[4,2]}]},"kit":["solar_lance","seed_bomb","mycelium_dash"],"pool":["solar_lance","seed_bomb","mycelium_dash"]},
+"actions": [{"slot":0,"target":[1,0],"type":"ability"},{"type":"end_turn"}],
+"expect": {"events":[{"t":"ignite"},{"amt":2,"src":"solar_lance","t":"damage"},{"amt":1,"src":"fire:solar_lance","t":"damage","who":"smokestack"}],"floor":1,"timeout":true,"turns":1,"won":false},
+"note": "combo demo: solar_lance ignites the oil under a smokestack and hits it, then the environment phase burns it for 1 more",
+"sim_version": 14,
+"hash": "663f5aa757160bebe4756e26f2c65dd8af96676a6ee75e1ab4413686e148b437"
+}

@@ -2,7 +2,10 @@ extends "res://bots/optimizer.gd"
 ## Magpie persona: greedy explorer. Plays the optimizer's competent game, but
 ## buys everything, cleanses with enemies looming, and routes to every
 ## corrupted tile before the stairs while the light holds. Measures what
-## greed costs against the smog clock.
+## greed costs against the smog clock. Since Block D2 it also spins the shrine
+## counter with any bloom the counter will not sell it anything for, which
+## makes it the canary for the repeatable sink: the persona that takes every
+## legal spin is the one that shows what unbounded rerolling would do.
 
 
 func get_bot_name() -> String:
@@ -22,10 +25,18 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 
 	# buy everything affordable, always
 	if by.has("buy"):
-		for item in ["heal", "graft", "ability"]:
-			for a in by["buy"]:
-				if a["item"] == item:
-					return a
+		var deal := _magpie_buy(by["buy"], snap)
+		if not deal.is_empty():
+			return deal
+
+	# greed spends the purse down (Block D2): standing on a counter that holds
+	# nothing this purse can buy, the last bloom goes into a spin rather than
+	# out of the run with the tender. No fit test and no reserve - this bot is
+	# the canary for a repeatable sink, so it takes every legal spin (the sim's
+	# per-floor cap and the escalating price are what stop it). Price and spins
+	# left ride in snapshot().shop; the legal list is the only gate read here.
+	if by.has("reroll") and not by.has("buy"):
+		return by["reroll"][0]
 
 	var threat := _threat_tiles(snap)
 
@@ -50,7 +61,9 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 	if by.has("move") and snap["dim"] < 2:
 		var shrine: Vector2i = snap["map"]["shrine"]
 		if shrine != Vector2i(-1, -1) and ppos != shrine:
-			var worth: bool = snap["shop"].has("graft") and snap["bloom"] >= 5
+			# grafts are priced per offer (shop.graft_prices, 3 to 8 bloom):
+			# the cheapest one on the counter is what makes the detour pay
+			var worth: bool = _graft_worth_detour(snap)
 			if snap["shop"].has("ability") and snap["bloom"] >= 4:
 				worth = true
 			if snap["shop"].get("heal", false) and snap["bloom"] >= 3 and snap["player"]["hp"] < snap["player"]["max_hp"]:
@@ -68,13 +81,31 @@ func choose_action(snap: Dictionary, legal: Array) -> Dictionary:
 	return super.choose_action(snap, legal)
 
 
+## Greedy shrine: heal, then a graft, then an ability - everything affordable
+## on the counter, in that order. Empty dict when nothing is affordable.
+func _magpie_buy(buys: Array, snap: Dictionary) -> Dictionary:
+	for a in buys:
+		if a["item"] == "heal":
+			return a
+	# the graft pick is the parent's tag-fit ranking (optimizer._first_graft):
+	# best overlap between the offer's Content.GRAFTS tags and the tags of the
+	# abilities in hand, ties to the lowest offer index
+	var graft := _first_graft(buys, snap)
+	if not graft.is_empty():
+		return graft
+	for a in buys:
+		if a["item"] == "ability":
+			return a
+	return {}
+
+
 func _nearest_corruption(snap: Dictionary) -> Vector2i:
 	var ppos: Vector2i = snap["player"]["pos"]
 	var best := Vector2i(-1, -1)
 	var best_d := 9999
 	for t in snap["terrain"].keys():
 		var k: String = snap["terrain"][t]["kind"]
-		if k != "oil" and k != "goo" and k != "rich_goo":
+		if not CONTENT.is_corruption(k):
 			continue
 		var d: int = absi(t.x - ppos.x) + absi(t.y - ppos.y)
 		if k == "rich_goo":

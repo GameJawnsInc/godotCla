@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#....k.>#","#.@...k.#","#....k..#","#.......#","#########"]},"kit":["pollen_burst+drift"],"pool":["pollen_burst+drift"]},
+"actions": [{"slot":0,"target":[5,2],"type":"ability"}],
+"expect": {"events":[{"id":"pollen_burst+drift","t":"ability","target":"(5, 2)"},{"id":1,"status":"stun","t":"status","turns":1},{"id":2,"status":"stun","t":"status","turns":1},{"id":3,"status":"stun","t":"status","turns":1}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "D6 `center`, the aoe_status key (pollen_burst+drift): the tile the radius is measured from. The tender stands at (2,2) and throws the cloud at (5,2), three tiles away; the three smokestacks at (5,1), (6,2) and (5,3) are all manhattan 1 from THAT tile and manhattan 4 from the tender, so every one of them is stunned by a radius-2 burst that a self-centred cast could not have touched at all. That is the whole fork: a self-centred stun is only castable once the pack has reached you, and drift stuns the clump where it forms. Make the key read \"self\" (or drop it) and the enemy loop measures from player.pos, no enemy is within 2, and all three status events disappear - the record fails in plain mode on pattern 2. Everything else is unchanged: the same enemies.duplicate() list order, the same _apply_status massive/cooldown rules",
+"sim_version": 14,
+"hash": "28c7ed7c1937609b14ee14fda1e0d2e0c4b6cf5c52494d3a1706e9afd39aa8fb"
+}

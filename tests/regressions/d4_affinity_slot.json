@@ -1,0 +1,9 @@
+{
+"seed": 3,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#.......#","#@>.....#","#.......#","#########"]},"loadout":"flarekeeper"},
+"actions": [{"dir":[1,0],"type":"move"},{"type":"descend"}],
+"expect": {"events":[{"t":"descend","to_floor":2},{"focus":false,"offers":["moss_filter","sun_flare+corona","sun_flare+smoulder"],"slots":["affinity","upgrade","wild"],"t":"draft_offer"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "D4 slot 0 is the affinity slot: the flarekeeper kit (sun_flare, seed_bomb, mycelium_dash) has the affinity tag set {sun, fire, growth} - mycelium_dash contributes nothing because Content.AFFINITY_IGNORED_TAGS holds mobility - so the slot draws from the five unowned pool bases carrying one of those tags (solar_lance, moss_filter, root_wall, overgrowth, grow_spike) and lands on moss_filter (sun). Slot 1 is upgrade_or_affinity and resolves to one variant of a held base, sun_flare+corona (floor 2 is even, so Content.variant_for picks the A sibling). Slot 2 is wild and deals sun_flare+smoulder - the OTHER sibling of the same base, which is what makes offer 0 evidence and not luck: the affinity list holds unowned pool BASES only and could never produce a + form at all, and the upgrade slot on this floor could not produce the B one. It is also the D6 universe rule in one line - the universe holds both siblings of a held base while the upgrade slot lists exactly one. The pre-D4 draft on this exact seed and board dealt bramble_coat, pollen_burst and thorn_shield - bark, control, bark, not one tag this kit holds - which is review finding 5.1 in a line: the old roll was kit-blind past do-not-offer-what-you-own. Same seed with the tidewarden loadout is d4_upgrade_slot",
+"sim_version": 14,
+"hash": "e2f4a272be5640ea1bd89eead2c323f4ac529e7e69a4636172619df514261c63"
+}

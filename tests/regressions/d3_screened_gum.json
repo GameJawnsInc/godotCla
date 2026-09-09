@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["########","#.....>#","#.@..t.#","#......#","########"]},"kit":["steam_vent"],"pool":["steam_vent"]},
+"actions": [{"slot":0,"target":[2,1],"type":"ability"},{"type":"end_turn"},{"dir":[1,0],"type":"move"},{"type":"end_turn"},{"dir":[-1,0],"type":"move"},{"type":"end_turn"}],
+"expect": {"events":[{"kind":"smoke","t":"terrain","tile":"(2, 1)"},{"intent":"gum","t":"screened"},{"t":"move","to":"(3, 2)","who":"player"},{"id":"steam_vent","slot":0,"t":"gummed"},{"t":"move","to":"(2, 2)","who":"player"},{"intent":"gum","t":"screened"}],"floor":1,"timeout":true,"turns":3,"won":false},
+"note": "D3 smoke screen, adjacency-based: the tender vents smoke onto (2,1) beside itself and the tar_spitter three tiles east still computes and telegraphs its gum - _screened is read at _execute_intent only, never at _compute_intents, so the telegraph the tender is dodging stays on the board - but the intent is lost at execution ({t: screened, intent: gum}) and no slot is gummed. Stepping one tile east to (3,2) breaks the screen without breaking the range: the smoke is still standing (ttl 1), it is simply no longer the tender's tile or one of its four DIRS neighbours, and the same telegraphed gum lands on slot 0. Stepping back beside it screens the next one again, so what the record pins is the adjacency rule and not the smoke expiring",
+"sim_version": 14,
+"hash": "743ab384c4d716a1d63cc5e46266343297201081cbab6dc20ab81e7d2d171b25"
+}

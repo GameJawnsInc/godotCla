@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#.......#","#@>.....#","#.......#","#########"]},"mutators":["wide_draft"]},
+"actions": [{"dir":[1,0],"type":"move"},{"type":"descend"}],
+"expect": {"events":[{"t":"descend","to_floor":2},{"offers":["overgrowth","solar_lance+noon","seed_bomb+reclaim","mycelium_dash+trail"],"slots":["affinity","upgrade","wild","wild"],"t":"draft_offer"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "C4 wide_draft mutator (draft_offers 4): the first descent draft deals four offers instead of three - the exact list is pinned below. Bump 13 (Block D6) re-pinned the four ids: the roles are affinity/upgrade/wild/wild, one main-rng draw each, and the count is still what this record is for (d4_wide_draft_slots pins the roles). Both wild slots land on upgrade variants here, which is the D6 universe rule in passing: the universe holds BOTH siblings of every held base while the upgrade slot lists exactly one (solar_lance+noon, the even-floor parity pick); the `slots` key pins the roles that rolled the offers, so a change that stops steering offer i by Content.DRAFT_SLOTS fails this record in plain mode",
+"sim_version": 14,
+"hash": "d417fb043ec6cc9c57fa8f38a7ac2a9216286304c4dd6becb3aa1c00256d430a"
+}

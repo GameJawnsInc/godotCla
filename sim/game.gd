@@ -10,9 +10,159 @@ extends RefCounted
 ##   {"type": "descend"}
 ##   {"type": "end_turn"}
 ##   {"type": "draft", "pick": int, "drop": int}  (draft phase only; pick -1 skips, drop when kit is full)
+##   {"type": "use_item", "slot": int}  (free action)
+##   Shrine actions (player standing on map.shrine; shop keys gate each one):
+##   {"type": "buy", "item": "heal"}
+##   {"type": "buy", "item": "ability"}             (kit not full)
+##   {"type": "buy", "item": "graft", "pick": i}    (i indexes shop.grafts; the other offer is discarded)
+##   {"type": "buy", "item": "item"}
+##   {"type": "upcycle", "keep": k}                  (press: two held items -> the + form of item k; shop.press)
+##   {"type": "upcycle_ability", "keep": i, "scrap": j}  (forge: kit[i] -> +, kit[j] scrapped, never mobility; once per floor, shop.forge)
+##   {"type": "reroll"}                              (redraw every stocked ability/grafts/item slot; shop.rerolls < SHOP_REROLL_CAP)
+##
+## Shop snapshot shape: {heal?, press?, forge?: true, ability?: id, grafts?: [id, id?], item?: id,
+## rerolls: n, graft_prices?: [int], reroll_price: int, rerolls_left: int}
+## or {} (Boarded mutator / floor without a shrine). graft_prices, reroll_price
+## and rerolls_left are derived per snapshot and never enter state_hash().
 
 const Content := preload("res://sim/content.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+
+## Single source of truth for replay compatibility: bump whenever a sim change
+## alters replay behaviour (shell run saves, regression records and autopsy
+## dumps all stamp this value). 3: C1b - ash, root cooldown and blocked
+## advance/drag, spore add-stacking, spread fire inheriting the bloom flag.
+## 4: C2 - rider rows on grow_spike(+), sun_flare(+), water_jet+, vine_whip+
+## and seed_bomb+ (Content data only; every cast of those ids replays anew).
+## 5: C3 - the hook dispatcher (_hook) and grafts as data: four rule grafts
+## (ember_sap, undertow, compost, oil_tithe) join the shop stock, so the
+## shop_graft side draw and every hook-carrying run replay anew.
+## 6: C4 - the nine package "+" rows (forgeable and draftable once the base is
+## held) and mutators as data (Content.MUTATORS[m]["config"] read through
+## _mut; no_lance, wide_draft, upgrades_only join the table).
+## 7: Block A - the starting kit comes from Content.LOADOUTS[config.loadout]
+## (a run recorded with a non-default loadout replays with that kit from now
+## on; "tender" is STARTING_KIT so default runs are untouched) and the
+## open_pool mutator row.
+## 8: graft prices as data (Content.GRAFTS[g]["price"], shop_cost("graft", id)):
+## which graft a purse can afford changed, so any log that bought a graft - or
+## skipped one it could not afford - replays differently. snapshot().shop also
+## carries "graft_prices" now; that key is derived, so state_hash() hashes the
+## raw stored shop instead and the hash never sees it.
+## 9: Block D1 - per-ability stat surges and Spore Trail. A cast surges when
+## the tender stands on growth and its "surge" dict carries anything that
+## applies (a cost delta on a cost >= 2 cast, or any stat delta); a stat surge
+## adds the delta to every effect of the cast that carries the key, so
+## grow_spike(+), water_jet(+), sun_flare(+) and seed_bomb+ hit, push and reach
+## differently on growth (and seed_bomb+ / grow_spike(+) / water_jet(+) now
+## consume the tile at cost 1). grow_radius reads its radius key, and
+## mycelium_dash+ plants the departure tile (op plant_origin). Every default
+## pool holds a surged row, so any log that cast one on growth diverges.
+## 10: Block D2 - the shrine reroll ({"type": "reroll"}, Content.SHOP_COSTS
+## ["reroll"] + SHOP_REROLL_STEP per spin, SHOP_REROLL_CAP per floor), legal
+## only under the spinning_shrine mutator (config key shop_reroll) after its
+## measurement held the block (BALANCE.md 2026-09-07e). The stocked shop dict
+## now stores "rerolls": 0, so the hash of every record whose final shop is
+## stocked moves (a boarded or boss-floor shop is {} and does not); no old
+## action becomes illegal and no main-rng draw moved, so every pre-10 log
+## replays to the same outcome and the re-stamp is hash-only. snapshot().shop
+## also carries the derived reroll_price / rerolls_left (0 with the switch off).
+## 11: Block D3 - enemies read terrain. _chase_step is a shortest-path search
+## over integer step costs (1 per tile, plus Content.ENEMY_AVOID_COST for a
+## tile whose terrain kind is in the row's "avoid" list; ties fall to the
+## path with fewer avoided tiles, then to expansion order), byte-identical to
+## the old BFS for a row with no avoid list; seven ENEMIES rows now avoid
+## fire, so any log in which a fire and an avoider met diverges. The smoke
+## screen: a SCREENED_INTENTS intent (drain, gum, drag) from a non-adjacent,
+## non-massive enemy fizzles ({t: "screened", id, intent}) while the tender
+## stands on or beside a TERRAIN row with "screens" (smoke). No main-rng draw
+## moved: the search and the screen never touch the rng.
+## 12: Block D4 - the affinity-slotted draft with focus on skip. Offer i of a
+## descent draft is rolled by the role Content.DRAFT_SLOTS[i] (affinity /
+## upgrade_or_affinity / wild; past the list wild) over the same candidate
+## universe as before, and _draw_draft_offers spends exactly one main-rng draw
+## per slot - a padded empty slot included - instead of the old
+## min(count, candidates) draws from one uniform list. A draft skip arms
+## `focus` (stored, hashed) and the next draft rolls one extra affinity slot.
+## Neither build-steering slot spends itself on an ability that defines no
+## build: the affinity set drops Content.AFFINITY_IGNORED_TAGS and the upgrade
+## slot's list drops a + form whose base carries nothing else (_build_defining
+## - mycelium_dash+ and burrow+, never updraft+, which is ["wind","mobility"]).
+## The universe is untouched, so a wild slot can still offer one.
+## So every log that reached a draft diverges at its first draft_offer: the
+## offers differ, and every downstream draw shifts. `draft_slots` (the role
+## that produced each offer) and `focus` join snapshot() and the hash.
+## 13: Block D6 (evolve forks) - every base "+" ability row is
+## gone. The fifteen base-pool abilities each fork into TWO named variants
+## keyed "<base>+<word>" - variant A is the pre-D6 "+" row renamed (same cost,
+## target, range, effects, riders and surge), variant B is a new fork - so
+## EVERY "solar_lance+"-style id in a stored log names an ability that no
+## longer exists and its cast is an unknown ability. The nine package "+" rows
+## and every ITEMS "+" row are untouched (packages sit behind a one-per-run
+## commitment; the item press is a different system and keeps the plain "+"
+## convention, ends_with("+") included). Beyond the rename: the draft's
+## universe holds both siblings of every held base and its upgrade slot lists
+## one per base picked by Content.variant_for(base, _pending_floor) - a PARITY
+## read, no rng draw, so the one-main-rng-draw-per-slot contract still holds -
+## which moves every draft offer list, so the bump-12 index-pick hazard applies
+## verbatim (a stored pick is an index: a log can replay legally and land on a
+## different ability, so re-record and diff every bot log, not only the ones
+## that stop replaying). The shrine forge action gained a `variant` index into
+## Content.variants_of(base) and legal_actions lists one action per
+## (keep, scrap, variant) triple; a MISSING `variant` is index 0, the variant
+## that reproduces the pre-D6 "+" row, so an old stored forge action forges
+## what it forged then, and an out-of-range index is
+## {t: "illegal", action: "upcycle_ability"} and changes nothing. New effect
+## vocabulary: `pierce` (lance), `pull_line` (op), `center` (aoe_status),
+## `ignite_ttl` (aoe_damage), `kind` and `ttl` (convert_radius) - a default
+## convert_radius now writes through _tile_dict, so a converted enemy-made oil
+## tile carries its "bloom" flag into the growth like every other terrain
+## write (hash-visible, no rule reads it). Content.MILESTONES' won_with
+## ["seed_bomb+"] became ["seed_bomb+tangle"].
+## SIM_VERSION 14 (Block D5, one resonance per element): Content.RESONANCES is
+## a third passive source beside the kit rows and the grafts. A run's kit and
+## graft TAGS are counted (_tag_counts) and a row whose tag reaches its `need`
+## is active (_resonances) for as long as the count holds - both derived on
+## read, never stored, so no new key enters the hash and a resonance cannot
+## desync a replay by itself. ONE row ships: cinder_grip (fire 3, an ignite
+## hook rooting whoever the tile lit under). So a stored log diverges at the
+## FIRST IGNITION of a run that reaches fire 3, and at nothing else: a log
+## that never reaches fire 3 replays byte for byte, no main-rng draw moved
+## (the ten pinned floor-entry rng states in tests/test_economy.gd are
+## byte-identical to bump 13's), and snapshot() gained only the DERIVED key
+## "resonances" (the active ids, for the shell and the bots), which
+## state_hash() erases - so a state whose resonances changed nothing hashes
+## exactly as it did at 13. _graft_stat / _graft_mod became _passive_stat /
+## _passive_mod: same reads, plus the active resonances after the grafts.
+##
+## TWO more rows were authored and cut inside this same uncommitted bump,
+## which is why 14 is a one-row version and not a three-row one:
+## follow_through (displace 2, a collision hook for 1) on the design phase's
+## own pre-registered falsifier, and deep_loam (growth 3, the regen_on_growth
+## stat key's only consumer) on the greed canary it lifted 12.7% -> 18.7%,
+## still 16.0% at the pre-registered lever of need 4 - see the
+## Content.RESONANCES header and BALANCE.md. SIM_VERSION deliberately STAYED
+## at 14 across the second cut: nothing outside this tree ever ran 14, so it
+## is a change inside an uncommitted bump, the precedent the D4 upgrade-slot
+## filter set at 12.
+##
+## The cuts are what make the corpus quiet. Against bump 13 all 93
+## pre-existing records are STAMP-ONLY (sim_version the single differing key,
+## no action, outcome, event-pattern or hash diff) and all 20 bot logs are
+## byte-identical to their bump-13 recordings, re-recorded on their personas
+## rather than merely replayed. The three logs the growth row had moved
+## (det_fanatic_s3, det_magpie_s11, det_optimizer_s42) are exactly the three
+## records that reach growth 3, and each landed back on its bump-13 recording
+## when the row went; c3_undertow is the same story for the displace row
+## (its kit plus undertow is displace 2). The corpus is 96 records with three
+## d5_* demos. Four targeted mutations fail one in plain mode - empty
+## _resonance_rows, _resonances() skipping its need re-check, _tag_counts
+## skipping variant ids, and cinder_grip.need 3 -> 4 - but dropping the
+## resonance loop from _passive_stat fails NONE of them: with no shipped stat
+## or mod row, no replay can observe either passive loop, and that rule is
+## held by the injected _ResProbe rows in tests/test_grammar.gd and
+## tests/test_economy.gd alone.
+const SIM_VERSION := 14
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -35,14 +185,42 @@ var terrain := {}
 var recent_events: Array = []
 var phase := "play"
 var draft_offers: Array = []
+## Block D4: the reported role that produced draft_offers[i] (one of
+## Content.DRAFT_SLOT_REPORTS), cleared with draft_offers.
+var draft_slots: Array = []
+## Block D4: 1 after a draft skip until the next draft is rolled, which then
+## carries one extra affinity ("focus") offer. Stored, hashed, never bloom.
+var focus := 0
 var shop := {}
 var tier := 0
 var mutators: Array = []
+## Effective casts per base ability id (Content.base_id): a cast counts when
+## at least one of its effects fired an outcome or a rider ran. Read by
+## run_summary(); deliberately absent from snapshot() so the hash never sees it.
+var effective_uses: Dictionary = {}
 var draft_pool: Array = []
+var packages: Array = []  # run-scoped tech packages (config "packages"); read-only metadata
+var loadout := "tender"  # starting loadout id (config "loadout"); read-only metadata
 var stoked := 0
 var greened := 0  # corruption cleansed this floor
 var green_need := 0  # dormant-stairs quota (clamped to generated corruption)  # pending extra smog ticks from live smokestacks
 var _fixed_floor := {}  # config "fixed_floor": scripted floor-1 layout (tutorials, tests)
+
+## Per-turn cast context counters (docs/PROGRESSION_REVIEW.md §6.3 C1): reset
+## in _begin_player_turn, copied by clone(). Deliberately NOT part of
+## snapshot() yet so state_hash() stays identical to the pre-grammar sim; a
+## later block exposes them alongside a SIM_VERSION bump.
+var casts_this_turn := 0
+var moved_this_turn := 0
+## Hook dispatcher state (C3). hook_uses: source id -> hook rows run this
+## turn (per-turn caps); tithe_used_this_turn: the oil_cast_discount mod has
+## been spent this turn. Both reset in _begin_player_turn, copied by clone(),
+## NOT in snapshot(). The three underscore fields are per-step (reset in step).
+var hook_uses := {}
+var tithe_used_this_turn := false
+var _hook_depth := 0
+var _hook_runs := 0
+var _hook_capped := false
 
 var _next_id := 1
 var _step_events: Array = []
@@ -58,26 +236,90 @@ func _init(seed_v: int, config: Dictionary = {}) -> void:
 	mutators = config.get("mutators", []).duplicate()
 	_fixed_floor = config.get("fixed_floor", {}).duplicate(true)
 	draft_pool = config.get("pool", Content.DRAFT_POOL).duplicate()
+	packages = config.get("packages", []).duplicate()
+	# loadout (Content.LOADOUTS, Block A): an unknown id warns and plays as
+	# tender; the profile enforces requires, the sim only reads the kit.
+	loadout = String(config.get("loadout", "tender"))
+	if not Content.LOADOUTS.has(loadout):
+		push_warning("Game: unknown loadout id '%s' in config, playing tender" % loadout)
+		loadout = "tender"
 	for pkg in config.get("packages", []):
 		for aid in Content.PACKAGES[pkg]:
 			if not draft_pool.has(aid):
 				draft_pool.append(aid)
+	# open_pool mutator: every package ability joins the draft pool (before
+	# pool_ban so a ban still applies to it).
+	if bool(_mut("open_pool", false)):
+		for pkg in Content.PACKAGES.keys():
+			for aid in Content.PACKAGES[pkg]:
+				if not draft_pool.has(aid):
+					draft_pool.append(aid)
+	# an explicit "kit" (sweeps, fixtures) wins over the loadout's kit
+	var start_kit: Array = config.get("kit", Content.LOADOUTS[loadout]["kit"])
 	player = {
 		"pos": Vector2i.ZERO, "hp": Content.PLAYER_HP, "max_hp": Content.PLAYER_HP,
 		"charge": 0, "bank": 0, "shield": 0,
-		"kit": config.get("kit", Content.STARTING_KIT).duplicate(),
+		"kit": start_kit.duplicate(),
 		"uses": {}, "grafts": [], "gummed": {}, "items": [],
 		"thorns_dmg": 0, "thorns_turns": 0, "anchor_turns": 0,
 	}
-	if mutators.has("brittle"):
-		player["max_hp"] -= 3
+	# mutator config (Content.MUTATORS[m]["config"], read through _mut):
+	# banned ids leave the pool (the shop stock follows it) and, with kit_ban,
+	# the starting kit; max_hp_delta shifts the starting hp. None touch the rng.
+	var banned: Array = _mut("pool_ban", [])
+	if not banned.is_empty():
+		var kept_pool: Array = []
+		for aid in draft_pool:
+			if not banned.has(Content.base_id(String(aid))):
+				kept_pool.append(aid)
+		draft_pool = kept_pool
+		if bool(_mut("kit_ban", false)):
+			var kept_kit: Array = []
+			for aid in player["kit"]:
+				if not banned.has(Content.base_id(String(aid))):
+					kept_kit.append(aid)
+			player["kit"] = kept_kit
+	var hp_delta := int(_mut("max_hp_delta", 0))
+	if hp_delta != 0:
+		player["max_hp"] += hp_delta
 		player["hp"] = player["max_hp"]
+	# sweep hooks: pre-installed grafts (before floor entry so carapace
+	# applies) and a starting bloom balance. Neither touches the main rng.
+	for gid in config.get("grafts", []):
+		if Content.GRAFTS.has(gid):
+			if not player["grafts"].has(gid):
+				player["grafts"].append(gid)
+		else:
+			push_warning("Game: unknown graft id '%s' in config, skipped" % str(gid))
+	bloom = int(config.get("bloom", 0))
 	_enter_floor(1)
 	_begin_player_turn()
 
 
 func _kit_max() -> int:
-	return 3 if mutators.has("kit_of_3") else Content.KIT_MAX
+	return int(_mut("kit_max", Content.KIT_MAX))
+
+
+## The one mutator read: scans the held mutators in order over
+## Content.MUTATORS[m]["config"]. A scalar key returns the first hit, an array
+## key concatenates every hit; `default` when no held mutator carries the key.
+## Unknown mutator ids carry no config and are skipped.
+func _mut(key: String, default):
+	var arr: Array = []
+	var any_arr := false
+	for m in mutators:
+		var cfg: Dictionary = Content.MUTATORS.get(m, {}).get("config", {})
+		if not cfg.has(key):
+			continue
+		var v = cfg[key]
+		if v is Array:
+			any_arr = true
+			arr.append_array(v)
+		else:
+			return v
+	if any_arr:
+		return arr
+	return default
 
 
 ## Floor definition with this run's difficulty-tier modifiers applied.
@@ -97,9 +339,11 @@ func floor_def(n: int) -> Dictionary:
 		if mod.has("extra_enemy") and not fdef.get("boss", false):
 			var kind := String(mod["extra_enemy"])
 			fdef["enemies"][kind] = int(fdef["enemies"].get(kind, 0)) + 1
-	if mutators.has("double_oil"):
-		fdef["oil"] = int(fdef["oil"]) * 2
-	if mutators.has("overtime") and not fdef.get("boss", false):
+	var oil_mult := int(_mut("oil_mult", 1))
+	if oil_mult != 1:
+		fdef["oil"] = int(fdef["oil"]) * oil_mult
+	var extra_common := int(_mut("extra_common_enemy", 0))
+	if extra_common > 0 and not fdef.get("boss", false):
 		var common := ""
 		var common_n := 0
 		for kind in fdef["enemies"]:
@@ -107,7 +351,7 @@ func floor_def(n: int) -> Dictionary:
 				common_n = int(fdef["enemies"][kind])
 				common = kind
 		if common != "":
-			fdef["enemies"][common] = common_n + 1
+			fdef["enemies"][common] = common_n + extra_common
 	var extra_elites := _tier_mod("extra_elites")
 	if extra_elites > 0 and not fdef.get("boss", false):
 		fdef["elites"] = int(fdef.get("elites", 0)) + extra_elites
@@ -123,21 +367,44 @@ func _tier_mod(key: String) -> int:
 	return v
 
 
-func shop_cost(item: String) -> int:
+## Price of one shrine purchase. `id` names the specific offer and matters
+## only for grafts: a graft is priced from its own Content.GRAFTS row
+## ("price"), so a lever costs more than a stat row. Without an id the graft
+## price falls back to the flat SHOP_COSTS entry, which is what callers that
+## just want "the graft price" still get. "reroll" climbs by SHOP_REROLL_STEP
+## per reroll already taken on this floor (shop.rerolls). Prices never touch
+## the rng.
+func shop_cost(item: String, id: String = "") -> int:
 	var cost: int = Content.SHOP_COSTS.get(item, 9999)
 	if item == "graft":
+		if id != "" and Content.GRAFTS.has(id):
+			cost = int(Content.GRAFTS[id].get("price", cost))
 		# permanent power gets dearer the more of it you already own, so
 		# "farm early, buy everything" is a real commitment, not a default
 		cost += player["grafts"].size() * Content.GRAFT_PRICE_STEP
+	elif item == "reroll":
+		# a repeatable sink gets dearer with every spin (Content doc)
+		cost += int(shop.get("rerolls", 0)) * Content.SHOP_REROLL_STEP
 	for i in range(mini(tier, Content.TIERS.size())):
 		cost += int(Content.TIERS[i].get("shop_markup", 0))
 	return cost
+
+
+## Price of every graft on offer, aligned with shop["grafts"]. One place for
+## the sim, the snapshot and any consumer that needs the per-offer prices.
+func graft_prices() -> Array:
+	var out: Array = []
+	for gid in shop.get("grafts", []):
+		out.append(shop_cost("graft", String(gid)))
+	return out
 
 
 # --- public API ---------------------------------------------------------------
 
 func step(action: Dictionary) -> Array:
 	_step_events = []
+	_hook_runs = 0
+	_hook_capped = false
 	if over:
 		_emit({"t": "error", "msg": "game is over"})
 		return _step_events
@@ -166,10 +433,18 @@ func step(action: Dictionary) -> Array:
 			_act_upcycle_ability(action)
 		"buy":
 			_act_buy(action)
+		"reroll":
+			_act_reroll()
 		"end_turn":
 			_resolve_turn()
 		_:
 			_emit({"t": "error", "msg": "unknown action"})
+	# one place covers every bloomless corruption removal (wash, convert,
+	# dredge, enemy-made changes): the gate can never demand more than what
+	# is still standing. Ignition is not one of them - a fire counts as the
+	# ash it will leave, so lighting a slick never shrinks the gate
+	if not over and phase == "play":
+		_reclamp_quota()
 	return _step_events
 
 
@@ -179,7 +454,9 @@ func legal_actions() -> Array:
 		return acts
 	if phase == "draft":
 		for i in draft_offers.size():
-			var is_upgrade: bool = String(draft_offers[i]).ends_with("+")
+			# Block D6: an upgrade id is "<base>+<variant>", so ends_with("+")
+			# is false on one - Content.is_upgrade is the only safe test
+			var is_upgrade: bool = Content.is_upgrade(String(draft_offers[i]))
 			if is_upgrade or player["kit"].size() < _kit_max():
 				acts.append({"type": "draft", "pick": i})
 			else:
@@ -197,15 +474,20 @@ func legal_actions() -> Array:
 				acts.append({"type": "strike", "dir": d})
 	if player["charge"] >= Content.CLEANSE_COST:
 		for d in DIRS:
-			var k := _terrain_kind(player["pos"] + d)
-			if k == "oil" or k == "goo" or k == "rich_goo":
+			if Content.is_corruption(_terrain_kind(player["pos"] + d)):
 				acts.append({"type": "cleanse", "target": player["pos"] + d})
 	for slot in player["kit"].size():
 		if player["gummed"].has(slot):
 			continue
 		var aid: String = player["kit"][slot]
-		if player["charge"] >= ability_cost(aid):
-			for tgt in _ability_targets(aid):
+		var flat := ability_cost(aid)
+		# oil_cast_discount: each target is priced on its own while the
+		# discount is still available this turn (a cheaper oil cast may be
+		# legal on 1 charge when the flat price is not)
+		var tithe: bool = _passive_mod("oil_cast_discount", 0) > 0 and not tithe_used_this_turn
+		for tgt in _ability_targets(aid):
+			var c: int = ability_cost(aid, tgt) if tithe else flat
+			if player["charge"] >= c:
 				acts.append({"type": "ability", "slot": slot, "target": tgt})
 	for i in player["items"].size():
 		acts.append({"type": "use_item", "slot": i})
@@ -216,23 +498,62 @@ func legal_actions() -> Array:
 			acts.append({"type": "buy", "item": "heal"})
 		if shop.has("ability") and bloom >= shop_cost("ability") and player["kit"].size() < _kit_max():
 			acts.append({"type": "buy", "item": "ability"})
-		if shop.has("graft") and bloom >= shop_cost("graft"):
-			acts.append({"type": "buy", "item": "graft"})
+		if shop.has("grafts"):
+			# each offer carries its own price, so a cheap stat graft can be
+			# affordable on a purse the expensive lever is not
+			for i in shop["grafts"].size():
+				if bloom >= shop_cost("graft", String(shop["grafts"][i])):
+					acts.append({"type": "buy", "item": "graft", "pick": i})
 		if shop.has("item") and bloom >= shop_cost("item") and player["items"].size() < Content.ITEM_CAP:
 			acts.append({"type": "buy", "item": "item"})
-		if player["items"].size() == 2 and bloom >= Content.UPCYCLE_ITEM_COST:
+		if shop.get("press", false) and player["items"].size() == 2 and bloom >= shop_cost("press"):
 			for k in 2:
+				# ITEMS keep the plain "+" convention: items are not forked
+				# (Block D6 forks abilities only), so ends_with is right here
 				if not String(player["items"][k]).ends_with("+"):
 					acts.append({"type": "upcycle", "keep": k})
-		if bloom >= Content.UPCYCLE_ABILITY_COST and player["kit"].size() >= 2:
+		if shop.get("forge", false) and bloom >= shop_cost("forge") and player["kit"].size() >= 2:
 			for i in player["kit"].size():
 				var kid := String(player["kit"][i])
-				if not kid.ends_with("+") and Content.ABILITIES.has(kid + "+"):
-					for j in player["kit"].size():
-						if j != i:
-							acts.append({"type": "upcycle_ability", "keep": i, "scrap": j})
+				# Block D6: a base has TWO variants and the forge offers both,
+				# so the action carries a `variant` index into
+				# Content.variants_of - the forge is the path to the sibling
+				# a floor's draft parity cannot deal
+				var kvars: Array = Content.variants_of(kid)
+				if Content.is_upgrade(kid) or kvars.is_empty():
+					continue
+				for j in player["kit"].size():
+					if j != i and not _is_mobility(String(player["kit"][j])):
+						for v in kvars.size():
+							acts.append({"type": "upcycle_ability", "keep": i, "scrap": j, "variant": v})
+		if _reroll_legal():
+			acts.append({"type": "reroll"})
 	acts.append({"type": "end_turn"})
 	return acts
+
+
+## The one piece of ability metadata the sim reads: mobility abilities (and
+## their + forms, which share the base's role) can never be scrapped by the
+## forge.
+func _is_mobility(aid: String) -> bool:
+	return String(Content.ABILITIES.get(aid, {}).get("role", "")) == "mobility"
+
+
+## The shop as a consumer sees it: the live stock plus "graft_prices", the
+## per-offer prices aligned with "grafts", and the reroll counter's price and
+## remaining spins ("reroll_price", "rerolls_left"). Prices are derived, never
+## stored, so the shop dict the sim carries (and clone() copies) stays pure
+## stock; a boarded / shrineless shop stays {}.
+func _shop_snapshot() -> Dictionary:
+	var out: Dictionary = shop.duplicate(true)
+	if shop.has("grafts"):
+		out["graft_prices"] = graft_prices()
+	if not shop.is_empty():
+		out["reroll_price"] = shop_cost("reroll")
+		# 0 spins left when the switch is off: the shell reads "no card"
+		out["rerolls_left"] = maxi(0, Content.SHOP_REROLL_CAP - int(shop.get("rerolls", 0))) \
+			if bool(_mut("shop_reroll", false)) else 0
+	return out
 
 
 func snapshot() -> Dictionary:
@@ -259,6 +580,9 @@ func snapshot() -> Dictionary:
 		"greened": greened, "green_need": green_need,
 		"over": over, "won": won, "death_cause": death_cause,
 		"phase": phase, "draft_offers": draft_offers.duplicate(),
+		"draft_slots": draft_slots.duplicate(), "focus": focus,
+		"pool": draft_pool.duplicate(), "packages": packages.duplicate(), "loadout": loadout,
+		"resonances": _resonances(),
 		"player": {
 			"pos": player["pos"], "hp": player["hp"], "max_hp": player["max_hp"],
 			"charge": player["charge"], "bank": player["bank"], "shield": player["shield"],
@@ -275,14 +599,26 @@ func snapshot() -> Dictionary:
 			"bloomed": map.get("bloomed", []).duplicate(),
 			"restored": map.get("restored", false),
 		},
-		"shop": shop.duplicate(),
+		"shop": _shop_snapshot(),
 		"terrain": terr,
 		"events": recent_events.duplicate(true),
 	}
 
 
+## Stable identity of the STORED game state. Rule: derived snapshot keys never
+## enter the hash - snapshot()["shop"] carries "graft_prices", "reroll_price"
+## and "rerolls_left", which are recomputed per snapshot from the stock, the
+## owned grafts and the tier, so the hash reads the raw stored shop dict
+## instead (shop.rerolls IS stored, so a reroll moves the hash), and
+## "resonances" (Block D5) is a pure function of the kit and the grafts, both
+## already hashed, so it is dropped outright. A hash that moved because a
+## price table or a threshold moved would report a state change that never
+## happened.
 func state_hash() -> String:
-	return str(snapshot()).sha256_text()
+	var view := snapshot()
+	view["shop"] = shop
+	view.erase("resonances")
+	return str(view).sha256_text()
 
 
 ## Deep copy of the whole game, including RNG state. Enables search bots,
@@ -292,11 +628,14 @@ func clone():
 	g.rng.state = rng.state
 	g.tier = tier
 	g.mutators = mutators.duplicate()
+	g.effective_uses = effective_uses.duplicate()
 	g.stoked = stoked
 	g.greened = greened
 	g.green_need = green_need
 	g._fixed_floor = _fixed_floor.duplicate(true)
 	g.draft_pool = draft_pool.duplicate()
+	g.packages = packages.duplicate()
+	g.loadout = loadout
 	g.floor_num = floor_num
 	g.turn = turn
 	g.total_turns = total_turns
@@ -313,7 +652,13 @@ func clone():
 	g.recent_events = recent_events.duplicate(true)
 	g.phase = phase
 	g.draft_offers = draft_offers.duplicate()
+	g.draft_slots = draft_slots.duplicate()
+	g.focus = focus
 	g.shop = shop.duplicate(true)
+	g.casts_this_turn = casts_this_turn
+	g.moved_this_turn = moved_this_turn
+	g.hook_uses = hook_uses.duplicate()
+	g.tithe_used_this_turn = tithe_used_this_turn
 	g._next_id = _next_id
 	g._pending_floor = _pending_floor
 	return g
@@ -346,9 +691,10 @@ func _enter_floor(n: int) -> void:
 		if spec.get("elite", false):
 			e["elite"] = true
 			e["hp"] += Content.ELITE_HP_BONUS
-	shop = {} if mutators.has("boarded") else _stock_shop()
-	if _has_graft("carapace"):
-		player["shield"] = mini(maxi(player["shield"], 2), _shield_cap())
+	shop = _stock_shop() if bool(_mut("shop", true)) else {}
+	var floor_shield := int(_passive_mod("floor_start_shield", 0))
+	if floor_shield > 0:
+		player["shield"] = mini(maxi(player["shield"], floor_shield), _shield_cap())
 	_emit({"t": "floor", "floor": n, "name": fdef["name"]})
 	_compute_intents()
 
@@ -362,30 +708,188 @@ func _side_rng(tag: String) -> RandomNumberGenerator:
 	return r
 
 
+## Shrine stock for the floor just entered. Every draw is a side-stream
+## draw (one generator per slot so list sizes never couple), so the main rng
+## after _enter_floor depends on map generation and the floor-entry intents
+## alone - never on the kit, grafts, pool or bloom the run arrived with
+## (tests/test_economy.gd asserts rng.state equality across configs).
+## "rerolls" counts the shrine rerolls taken on this floor; it is stored
+## stock (clone() copies it, state_hash() sees it), the prices are not.
+## The three slots share one candidate rule each (_shop_ability_candidates,
+## _shop_graft_candidates, _base_item_ids) and one draw helper (_shop_draw)
+## with the reroll, so a reroll is "stock this slot again, minus the offer".
 func _stock_shop() -> Dictionary:
-	var stock := {"heal": true}
+	if map["shrine"] == Vector2i(-1, -1):
+		return {}
+	var stock := {"heal": true, "press": true, "forge": true, "rerolls": 0}
+	var aids := _shop_ability_candidates()
+	if not aids.is_empty():
+		stock["ability"] = _shop_draw(aids, "shop_ability", 1)[0]
+	var gids := _shop_graft_candidates()
+	if not gids.is_empty():
+		# two distinct offers from one generator: pick one, the other is discarded
+		stock["grafts"] = _shop_draw(gids, "shop_graft", 2)
+	stock["item"] = _shop_draw(_base_item_ids(), "shop_item", 1)[0]
+	return stock
+
+
+## Ability card candidates: the draft pool minus anything held as X or X+
+## (owning the + form excludes the base: never X and X+ in one kit).
+func _shop_ability_candidates() -> Array:
 	var aids: Array = []
 	for aid in draft_pool:
-		if not player["kit"].has(aid):
+		if not _kit_holds_base(String(aid)):
 			aids.append(aid)
-	if not aids.is_empty():
-		stock["ability"] = aids[rng.randi_range(0, aids.size() - 1)]
+	return aids
+
+
+## Does the kit hold `base` or ANY upgrade variant of it? Block D6: a base has
+## two variants, so "kit.has(aid) or kit.has(aid + \"+\")" no longer covers the
+## question - fold every kit id onto its base instead. BOTH SIDES are folded:
+## the argument may itself be a variant id (a locked-kit sweep config passes
+## {kit: K, pool: K}, so `pool` holds the very ids the kit holds), and folding
+## only the kit side would let a held variant be offered as a draft card that
+## _act_draft then rejects, and stocked at the shrine as a duplicate.
+func _kit_holds_base(base: String) -> bool:
+	var b := Content.base_id(base)
+	for aid in player["kit"]:
+		if Content.base_id(String(aid)) == b:
+			return true
+	return false
+
+
+## Graft counter candidates: every Content.GRAFTS row not already owned.
+func _shop_graft_candidates() -> Array:
 	var gids: Array = []
 	for gid in Content.GRAFTS:
 		if not player["grafts"].has(gid):
 			gids.append(gid)
-	if not gids.is_empty():
-		stock["graft"] = gids[rng.randi_range(0, gids.size() - 1)]
-	var iids: Array = Content.ITEMS.keys()
-	var srng := _side_rng("shop_item")
-	stock["item"] = iids[srng.randi_range(0, iids.size() - 1)]
-	return stock
+	return gids
+
+
+## Up to `count` distinct picks from `cands` (consumed) through the side
+## generator `tag`: one randi_range per pick, in order, so the floor stock's
+## draws are byte-identical to the pre-reroll sim. Fewer picks when the list
+## runs out; an empty list yields [].
+func _shop_draw(cands: Array, tag: String, count: int) -> Array:
+	var picks: Array = []
+	if cands.is_empty():
+		return picks
+	var r := _side_rng(tag)
+	for _i in count:
+		if cands.is_empty():
+			break
+		var gi := r.randi_range(0, cands.size() - 1)
+		picks.append(cands[gi])
+		cands.remove_at(gi)
+	return picks
+
+
+## `cands` minus every id in `offers`; a reroll excludes the current offer(s)
+## whenever at least one alternative exists.
+static func _without(cands: Array, offers: Array) -> Array:
+	var out: Array = []
+	for c in cands:
+		if not offers.has(c):
+			out.append(c)
+	return out
+
+
+## Reroll legality (Block D2): on the shrine, a stocked shop with at least one
+## re-drawable slot (ability / grafts / item) still on the counter, under the
+## per-floor cap and an affordable price. Bought slots never come back, so a
+## counter with only heal / press / forge left cannot be rerolled.
+func _reroll_legal() -> bool:
+	# the sink is a mutator switch (Content.MUTATORS spinning_shrine ->
+	# shop_reroll); a default run never lists the action
+	if not bool(_mut("shop_reroll", false)):
+		return false
+	if shop.is_empty() or player["pos"] != map["shrine"]:
+		return false
+	if not (shop.has("ability") or shop.has("grafts") or shop.has("item")):
+		return false
+	if int(shop.get("rerolls", 0)) >= Content.SHOP_REROLL_CAP:
+		return false
+	return bloom >= shop_cost("reroll")
+
+
+## Shrine reroll: every still-stocked re-drawable slot is drawn again from
+## the same candidate rule the floor stock used, minus the current offer(s)
+## when an alternative exists (with none the offer stays and the slot is not
+## redrawn), each slot from its own side generator "reroll<n>_<slot>" with n
+## the rerolls already taken. The main rng is never touched, so a search bot
+## with the sim as a forward model sees the redraw before paying - an
+## instrument property (oracle upper bound), documented in BALANCE.md.
+## Costs no charge, like every shrine service. Event: {t: "reroll", n: new
+## count, cost, ability? / grafts? / item?: the slots actually redrawn}.
+## Legal only under the shop_reroll mutator key (_reroll_legal).
+func _act_reroll() -> void:
+	if not _reroll_legal():
+		_emit({"t": "illegal", "action": "reroll"})
+		return
+	var cost := shop_cost("reroll")
+	var n := int(shop.get("rerolls", 0))
+	var ev := {"t": "reroll", "n": n + 1, "cost": cost}
+	if shop.has("ability"):
+		var aids := _without(_shop_ability_candidates(), [shop["ability"]])
+		if not aids.is_empty():
+			shop["ability"] = _shop_draw(aids, "reroll%d_ability" % n, 1)[0]
+			ev["ability"] = shop["ability"]
+	if shop.has("grafts"):
+		var gids := _without(_shop_graft_candidates(), shop["grafts"])
+		if not gids.is_empty():
+			shop["grafts"] = _shop_draw(gids, "reroll%d_graft" % n, 2)
+			ev["grafts"] = shop["grafts"].duplicate()
+	if shop.has("item"):
+		var iids := _without(_base_item_ids(), [shop["item"]])
+		if not iids.is_empty():
+			shop["item"] = _shop_draw(iids, "reroll%d_item" % n, 1)[0]
+			ev["item"] = shop["item"]
+	shop["rerolls"] = n + 1
+	bloom -= cost
+	_emit(ev)
+
+
+## Consumable ids the world hands out (shop, supply pods): base forms only.
+## The + forms exist only through the shrine press.
+func _base_item_ids() -> Array:
+	var out: Array = []
+	for iid in Content.ITEMS:
+		# ITEMS keep the plain "+" convention (not forked by Block D6)
+		if not String(iid).ends_with("+"):
+			out.append(iid)
+	return out
+
+
+## The dormant-stairs quota can never demand more than what is still
+## standing: greened plus the corruption left on the floor (fire included -
+## it counts as the ash it burns to). Bloomless removals (wash, convert,
+## dredge, enemy churn) lower it; neither igniting a slick nor the burnout
+## that follows does, since the tile is corruption the whole way through.
+func _reclamp_quota() -> void:
+	var need: int = mini(green_need, greened + _count_corruption())
+	if need < green_need:
+		var was: int = green_need
+		green_need = need
+		# quota_reclamp: the gate shrank because corruption vanished without a cleanse
+		_emit({"t": "quota_reclamp", "need": need, "was": was})
+		if greened >= green_need:
+			# stairs were dormant a moment ago and the shrunken quota is now met
+			_emit({"t": "stairs_awaken", "tile": map["stairs"]})
 
 
 func _begin_player_turn() -> void:
-	var regen: int = maxi(1, Content.BASE_REGEN - dim) + (1 if _has_graft("solar_core") else 0)
+	# regen_on_growth is the conditional half of the regen key: it only pays
+	# on the turns the tender begins standing on growth
+	var regen: int = maxi(1, Content.BASE_REGEN - dim) + _passive_stat("regen")
+	if _terrain_kind(player["pos"]) == "growth":
+		regen += _passive_stat("regen_on_growth")
 	player["charge"] = player["bank"] + regen
 	player["bank"] = 0
+	casts_this_turn = 0
+	moved_this_turn = 0
+	hook_uses = {}
+	tithe_used_this_turn = false
 	for slot in player["gummed"].keys().duplicate():
 		player["gummed"][slot] -= 1
 		if player["gummed"][slot] <= 0:
@@ -482,12 +986,55 @@ func _compute_intents() -> void:
 			e["intent"] = {"type": "move"}
 
 
-func _apply_status(e: Dictionary, status: String, turns: int) -> void:
+## Stack rule from Content.STATUSES: "max" keeps the longer duration, "add"
+## sums (capped at `cap` when cap > 0). A row with `cooldown` is stagger-style:
+## landing it writes "<status>_cd" = duration + cooldown, and while that field
+## is above zero with the status itself expired the application is refused
+## ({t: "resisted"}). Returns true when the status landed.
+func _apply_status(e: Dictionary, status: String, turns: int) -> bool:
 	if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
 		_emit({"t": "immune", "id": e["id"]})
-		return
-	e["status"][status] = maxi(int(e["status"].get(status, 0)), turns)
+		return false
+	var sdef: Dictionary = Content.STATUSES.get(status, {})
+	var have: int = int(e["status"].get(status, 0))
+	var cooldown: int = int(sdef.get("cooldown", 0))
+	var cd_key := status + "_cd"
+	if cooldown > 0 and have <= 0 and int(e["status"].get(cd_key, 0)) > 0:
+		_emit({"t": "resisted", "id": e["id"], "status": status})
+		return false
+	if String(sdef.get("stack", "max")) == "add":
+		var total: int = have + turns
+		var cap: int = int(sdef.get("cap", 0))
+		e["status"][status] = mini(total, cap) if cap > 0 else total
+	else:
+		e["status"][status] = maxi(have, turns)
+	if cooldown > 0:
+		e["status"][cd_key] = maxi(int(e["status"].get(cd_key, 0)), int(e["status"][status]) + cooldown)
 	_emit({"t": "status", "id": e["id"], "status": status, "turns": turns})
+	return true
+
+
+## Smoke screen (Block D3): true when `itype` is a Content.SCREENED_INTENTS
+## intent, the enemy is not adjacent (you cannot smoke-screen at arm's length),
+## its row lacks the massive trait (bosses see through smoke - the same
+## exemption _apply_status uses), and the tender stands on a TERRAIN kind with
+## "screens" or one lies on any of the four DIRS neighbours. Adjacency-based
+## on purpose: this is not _line_clear and never consults intervening enemies
+## or walls. Read at _execute_intent only, never at _compute_intents, so the
+## telegraph still shows what the tender is dodging. No rng.
+func _screened(e: Dictionary, itype: String) -> bool:
+	if not Content.SCREENED_INTENTS.has(itype):
+		return false
+	if _manhattan(e["pos"], player["pos"]) <= 1:
+		return false
+	if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
+		return false
+	if bool(Content.terrain(_terrain_kind(player["pos"]), "screens", false)):
+		return true
+	for d in DIRS:
+		if bool(Content.terrain(_terrain_kind(player["pos"] + d), "screens", false)):
+			return true
+	return false
 
 
 func _compute_boss_intent(e: Dictionary, edef: Dictionary) -> void:
@@ -556,19 +1103,32 @@ func _stagger(e: Dictionary) -> void:
 	e["status"]["stagger_cd"] = 3
 	e["intent"] = {"type": "idle"}
 	_emit({"t": "staggered", "id": e["id"]})
+	_hook("staggered", {"enemy": e})
 
 
 func _execute_intent(e: Dictionary) -> void:
 	if int(e["status"].get("stagger_cd", 0)) > 0:
 		e["status"]["stagger_cd"] -= 1
-	if int(e["status"].get("stun", 0)) > 0:
-		e["status"]["stun"] -= 1
-		_emit({"t": "stunned", "id": e["id"]})
-		return
+	# status cooldowns (Content.STATUSES cooldown) run down once per action
+	for sname in Content.STATUSES:
+		if int(Content.STATUSES[sname].get("cooldown", 0)) > 0 and int(e["status"].get(sname + "_cd", 0)) > 0:
+			e["status"][sname + "_cd"] -= 1
 	var it: Dictionary = e["intent"]
-	if String(it.get("type", "")) == "move" and int(e["status"].get("root", 0)) > 0:
-		e["status"]["root"] -= 1
-		_emit({"t": "rooted", "id": e["id"]})
+	# Content.STATUSES blocks, in table order: the first status that swallows
+	# this intent ticks down and ends the enemy's turn
+	var itype := String(it.get("type", ""))
+	for sname in Content.STATUSES:
+		if int(e["status"].get(sname, 0)) <= 0:
+			continue
+		var blocks: Array = Content.STATUSES[sname].get("blocks", [])
+		if blocks.has("*") or blocks.has(itype):
+			e["status"][sname] -= 1
+			_emit({"t": String(Content.STATUSES[sname].get("blocked_event", sname)), "id": e["id"]})
+			return
+	# smoke screen (Block D3): the intent was computed and telegraphed, but a
+	# screened one is lost at execution and the enemy's action ends here
+	if _screened(e, itype):
+		_emit({"t": "screened", "id": e["id"], "intent": itype})
 		return
 	match String(it.get("type", "idle")):
 		"fuse":
@@ -593,7 +1153,8 @@ func _execute_intent(e: Dictionary) -> void:
 			for x in range(1, int(map["w"]) - 1):
 				var p := Vector2i(x, row)
 				if _tile(p) == MapGen.T_FLOOR and not terrain.has(p) and _enemy_at(p) == null and p != player["pos"]:
-					terrain[p] = {"kind": "oil"}
+					# enemy-made oil: cleansing it counts for the quota but pays no bloom
+					terrain[p] = {"kind": "oil", "bloom": 0}
 			_emit({"t": "flood", "row": row})
 		"slam":
 			e["cycle"] = int(e.get("cycle", 0)) + 1
@@ -609,8 +1170,9 @@ func _execute_intent(e: Dictionary) -> void:
 		"ignite_all":
 			e["cycle"] = int(e.get("cycle", 0)) + 1
 			for t in terrain.keys().duplicate():
-				if terrain[t]["kind"] == "oil":
-					terrain[t] = {"kind": "fire", "ttl": 2}
+				if Content.terrain(String(terrain[t]["kind"]), "flammable", false):
+					_ignite(t, e["kind"])
+					_hook("ignite", {"tile": t, "by": e["kind"]})
 			_emit({"t": "ignite_all"})
 		"gather":
 			e["cycle"] = int(e.get("cycle", 0)) + 1
@@ -639,7 +1201,7 @@ func _execute_intent(e: Dictionary) -> void:
 				for d in DIRS:
 					var p: Vector2i = e["pos"] + d
 					if _tile(p) == MapGen.T_FLOOR and not terrain.has(p) and _enemy_at(p) == null and p != player["pos"]:
-						terrain[p] = {"kind": "oil"}
+						terrain[p] = {"kind": "oil", "bloom": 0}
 						_emit({"t": "ooze", "id": e["id"], "tile": p})
 						break
 				otimer = int(odef["ooze_cycle"])
@@ -724,7 +1286,7 @@ func _execute_intent(e: Dictionary) -> void:
 				if Content.ENEMIES[e["kind"]]["traits"].has("oil_trail"):
 					var old: Vector2i = e["pos"]
 					if not terrain.has(old) and old != map["stairs"]:
-						terrain[old] = {"kind": "oil"}
+						terrain[old] = {"kind": "oil", "bloom": 0}
 				e["pos"] = dest
 				_enemy_enter_tile(e)
 		"idle":
@@ -732,45 +1294,102 @@ func _execute_intent(e: Dictionary) -> void:
 
 
 func _environment_phase() -> void:
-	var fires: Array = []
+	# hazard tick: every tile whose kind burns whoever stands on it
+	# (Content.TERRAIN tick_dmg_*; fire today), captured first in map order
+	var hazards: Array = []
 	for t in terrain.keys():
-		if terrain[t]["kind"] == "fire":
-			fires.append(t)
-	for t in fires:
-		if player["pos"] == t:
-			_damage_player(1, "fire")
+		var k := String(terrain[t]["kind"])
+		if int(Content.terrain(k, "tick_dmg_player", 0)) > 0 or int(Content.terrain(k, "tick_dmg_enemy", 0)) > 0:
+			hazards.append(t)
+	for t in hazards:
+		var k := _terrain_kind(t)
+		var pdmg := int(Content.terrain(k, "tick_dmg_player", 0))
+		if pdmg > 0 and player["pos"] == t:
+			_damage_player(pdmg, k)
 			if over:
 				return
+		var edmg := int(Content.terrain(k, "tick_dmg_enemy", 0))
 		var e = _enemy_at(t)
-		if e != null:
-			_damage_enemy(e, 1, "fire")
-	var spreads: Array = []
-	for t in fires:
-		for d in DIRS:
-			var p: Vector2i = t + d
-			if _terrain_kind(p) == "oil" and not spreads.has(p):
-				spreads.append(p)
-	for t in fires:
-		if terrain.has(t):
-			terrain[t]["ttl"] -= 1
-			if terrain[t]["ttl"] <= 0:
-				terrain.erase(t)
-	for t in terrain.keys().duplicate():
-		if terrain[t]["kind"] == "roots" or terrain[t]["kind"] == "smoke":
-			terrain[t]["ttl"] -= 1
-			if terrain[t]["ttl"] <= 0:
-				terrain.erase(t)
-	for p in spreads:
-		terrain[p] = {"kind": "fire", "ttl": 2}
-		_emit({"t": "ignite", "tile": p})
+		if edmg > 0 and e != null:
+			_damage_enemy(e, edmg, k + ":" + _fire_by(t))
+	_terrain_react()
+	# status ticks (Content.STATUSES tick_dmg): the status itself is the source
 	for e in enemies.duplicate():
-		if int(e["status"].get("spore", 0)) > 0:
-			e["status"]["spore"] -= 1
-			_damage_enemy(e, 1, "spore")
-	if _terrain_kind(player["pos"]) == "growth" and player["hp"] < player["max_hp"]:
-		var heal_amt: int = 1 + (1 if _has_graft("verdant_pulse") else 0)
+		for sname in Content.STATUSES:
+			var tick := int(Content.STATUSES[sname].get("tick_dmg", 0))
+			if tick > 0 and int(e["status"].get(sname, 0)) > 0:
+				e["status"][sname] -= 1
+				_damage_enemy(e, tick, sname)
+	var heal := int(Content.terrain(_terrain_kind(player["pos"]), "heal", 0))
+	if heal > 0 and player["hp"] < player["max_hp"]:
+		var heal_amt: int = heal + _passive_stat("growth_heal")
 		player["hp"] = mini(player["hp"] + heal_amt, player["max_hp"])
 		_emit({"t": "heal", "amt": heal_amt})
+
+
+## Terrain reactions (Content.REACTIONS), one pass per environment phase:
+## 1) "adjacent" rows are evaluated from every enabled `from` tile in map
+##    order, before any ttl decay; the first source tile to reach a target
+##    signs it ("by"), and no target is claimed twice;
+## 2) every decaying kind (Content.TERRAIN decays) loses one ttl in map order
+##    and an expiring tile becomes its "on_expire" result, or vanishes;
+## 3) the adjacency results are written ({kind, ttl, by}) and each emits the
+##    row's event.
+## Spreads are computed from the fires standing before decay and applied
+## after it. Every new tile goes through _tile_dict, so the replaced tile's
+## "bloom" flag survives: enemy-made oil (bloom 0) burns into bloom-0 fire and
+## bloom-0 ash, and its cleanse still pays nothing.
+func _terrain_react() -> void:
+	var adj_rows: Array = []
+	var expire := {}
+	for row in Content.REACTIONS:
+		if not bool(row.get("enabled", false)):
+			continue
+		if row.has("adjacent"):
+			adj_rows.append(row)
+		elif row.has("on_expire"):
+			expire[String(row["from"])] = row
+	var pending := {}
+	if not adj_rows.is_empty():
+		for t in terrain.keys():
+			var k := String(terrain[t]["kind"])
+			for row in adj_rows:
+				if String(row["from"]) != k:
+					continue
+				for d in DIRS:
+					var p: Vector2i = t + d
+					if _terrain_kind(p) == String(row["adjacent"]) and not pending.has(p):
+						pending[p] = {"row": row, "by": _fire_by(t)}
+	for t in terrain.keys().duplicate():
+		var k := String(terrain[t]["kind"])
+		if not bool(Content.terrain(k, "decays", false)):
+			continue
+		terrain[t]["ttl"] = int(terrain[t].get("ttl", 0)) - 1
+		if terrain[t]["ttl"] <= 0:
+			var erow: Dictionary = expire.get(k, {})
+			var result := String(erow.get("result", ""))
+			if result == "":
+				terrain.erase(t)
+			else:
+				# attribution follows hazards: a decaying result keeps "by"
+				var by := String(terrain[t].get("by", "")) if bool(Content.terrain(result, "decays", false)) else ""
+				terrain[t] = _tile_dict(result, by, terrain[t])
+				var eev := String(erow.get("event", ""))
+				if eev != "":
+					_emit({"t": eev, "tile": t})
+	for p in pending:
+		var row: Dictionary = pending[p]["row"]
+		var result := String(row.get("result", ""))
+		if result == "":
+			terrain.erase(p)
+		else:
+			terrain[p] = _tile_dict(result, String(pending[p]["by"]), terrain.get(p, {}))
+		var ev := String(row.get("event", ""))
+		if ev != "":
+			_emit({"t": ev, "tile": p})
+			# a reaction whose event is a hook kind fires it (fire spread -> ignite)
+			if Content.HOOK_KINDS.has(ev):
+				_hook(ev, {"tile": p, "by": String(pending[p]["by"])})
 
 
 func _tick_smog() -> void:
@@ -822,6 +1441,7 @@ func _act_move(action: Dictionary) -> void:
 		return
 	player["charge"] -= cost
 	player["pos"] = dest
+	moved_this_turn += 1
 	_emit({"t": "move", "who": "player", "to": dest})
 	_player_enter_tile()
 
@@ -850,15 +1470,18 @@ func _act_strike(action: Dictionary) -> void:
 func _act_cleanse(action: Dictionary) -> void:
 	var target: Vector2i = action.get("target", Vector2i(-1, -1))
 	var k := _terrain_kind(target)
-	var legal := _manhattan(target, player["pos"]) == 1 and (k == "oil" or k == "goo" or k == "rich_goo")
+	var legal := _manhattan(target, player["pos"]) == 1 and Content.is_corruption(k)
 	if not legal or player["charge"] < Content.CLEANSE_COST:
 		_emit({"t": "illegal", "action": "cleanse"})
 		return
 	player["charge"] -= Content.CLEANSE_COST
-	# tending leaves life behind: the cleansed tile sprouts growth
+	# tending leaves life behind: the cleansed tile sprouts growth. Mapgen
+	# corruption pays 1 (rich goo more); enemy-made oil carries bloom 0 and
+	# pays nothing (surge included) - it still counts toward the quota.
+	var yield_: int = int(terrain[target].get("bloom", Content.terrain(k, "bloom", 1)))
 	terrain[target] = {"kind": "growth"}
-	var yield_: int = Content.RICH_GOO_BLOOM if k == "rich_goo" else 1
-	bloom += yield_ + (1 if _has_graft("bloom_surge") else 0)
+	if yield_ > 0:
+		bloom += yield_ + _passive_stat("cleanse_bloom")
 	# tending the world buys time, but the sky can only mend so fast per
 	# floor: quota cleanses thin the smog by 2 (funds the gate's detour),
 	# the next few thin it by 1, and beyond that cleansing still pays
@@ -872,7 +1495,9 @@ func _act_cleanse(action: Dictionary) -> void:
 		relief = Content.CLEANSE_SMOG_RELIEF
 	smog = maxi(smog - relief, 0)
 	greened += 1
-	_emit({"t": "cleanse", "tile": target, "bloom": bloom})
+	_emit({"t": "cleanse", "tile": target, "kind": k, "bloom": bloom})
+	_hook("cleanse", {"tile": target, "kind": k})
+	_hook("growth_planted", {"tiles": [target]})
 	if green_need > 0 and greened == green_need:
 		_emit({"t": "stairs_awaken", "tile": map["stairs"]})
 	_check_room_bloom(target)
@@ -902,30 +1527,168 @@ func _act_descend() -> void:
 	player["hp"] = mini(player["hp"] + Content.DESCEND_HEAL, player["max_hp"])
 	_emit({"t": "descend", "to_floor": floor_num + 1})
 	_pending_floor = floor_num + 1
-	draft_offers = _draw_draft_offers(3)
+	# Block D4: an armed focus (the last draft was skipped) adds one affinity
+	# slot to this roll and is spent by the roll, picked or not.
+	var focused: bool = focus == 1
+	var drawn: Dictionary = _draw_draft_offers(int(_mut("draft_offers", 3)))
+	draft_offers = drawn["offers"]
+	draft_slots = drawn["slots"]
+	focus = 0
 	if draft_offers.is_empty():
+		draft_slots = []
 		_enter_floor(_pending_floor)
 		_begin_player_turn()
 	else:
 		phase = "draft"
-		_emit({"t": "draft_offer", "offers": draft_offers.duplicate()})
+		_emit({"t": "draft_offer", "offers": draft_offers.duplicate(),
+			"slots": draft_slots.duplicate(), "focus": focused})
 
 
-func _draw_draft_offers(count: int) -> Array:
-	var candidates: Array = []
-	for aid in draft_pool:
-		if not player["kit"].has(aid) and not player["kit"].has(aid + "+"):
-			candidates.append(aid)
+## Does the tag `t` define a build (Block D4)? The one reading of
+## Content.AFFINITY_IGNORED_TAGS, which means "these tags do not define a
+## build": such a tag says nothing about what a run is building, so no draft
+## slot that cares about the build may be steered by it. Both readers below
+## go through here, so the list has one meaning in one place.
+static func _tag_defines_build(t: String) -> bool:
+	return not Content.AFFINITY_IGNORED_TAGS.has(t)
+
+
+## Does the ability `aid` define a build (Block D4)? True when its row carries
+## any build-defining tag (a + form carries its base's tags). Tags, never
+## role: mycelium_dash and burrow are ["mobility"] and define nothing, while
+## updraft is ["wind", "mobility"] and does - it has an identity beyond
+## moving. Read by the upgrade slot, the mirror of the affinity set's own
+## filter: the slot that MATCHES your build and the slot that DEEPENS it both
+## refuse to spend themselves on an ability that is no part of one.
+static func _build_defining(aid: String) -> bool:
+	for t in Content.ABILITIES.get(Content.base_id(aid), {}).get("tags", []):
+		if _tag_defines_build(t):
+			return true
+	return false
+
+
+## The run's affinity tag set (Block D4): every tag of every held ability (a
+## + form carries its base's tags) and every held graft, minus the tags that
+## do not define a build (_tag_defines_build). Pure table reads; order is
+## first-seen.
+func _affinity_tags() -> Array:
+	var tags: Array = []
+	var rows: Array = []
 	for aid in player["kit"]:
-		var up: String = aid + "+"
-		if Content.ABILITIES.has(up):
-			candidates.append(up)
+		rows.append(Content.ABILITIES.get(aid, {}).get("tags", []))
+	for gid in player["grafts"]:
+		rows.append(Content.GRAFTS.get(gid, {}).get("tags", []))
+	for row in rows:
+		for t in row:
+			if _tag_defines_build(t) and not tags.has(t):
+				tags.append(t)
+	return tags
+
+
+## Rolls a descent draft (Block D4): {offers, slots}. Offer i is rolled by the
+## role Content.DRAFT_SLOTS[i] ("wild" past the list) and an armed focus adds
+## one trailing "affinity" slot reported as "focus". Candidate lists, all
+## over the pre-D4 universe (unowned pool bases, never a base whose X or X+
+## is held, plus the + forms of held bases; under draft_upgrades_only the +
+## forms only, every role alike):
+##   affinity            unowned pool bases sharing a tag with _affinity_tags()
+##   upgrade_or_affinity the + forms of held BUILD-DEFINING bases
+##                       (_build_defining) when any exist, else affinity
+##   wild                the whole universe
+## The upgrade slot's filter is the affinity set's own rule applied to the
+## other half of the universe: a pure-mobility + form deepens no build, so
+## the slot falls through to affinity (and then wild) rather than spend
+## itself on one. It narrows that slot's LIST only - the universe still holds
+## every + form of a held base, so a wild slot can still offer one and the
+## shrine forge (which reads the kit, not this list) still upcycles it; under
+## draft_upgrades_only the + list IS the universe, so it stays unfiltered.
+## An offer already drawn is excluded from every later slot; a slot whose
+## list is then empty falls back to the wild list (reported "wild", except the
+## focus slot, which keeps its "focus" label whatever list it drew from), and
+## when that is empty too the slot yields nothing. The rng contract: EXACTLY one
+## main-rng draw per slot, whatever the kit, grafts or pool hold, so
+## rng.state after the roll depends on the slot count alone. randi_range(lo,
+## lo) is an early return that never advances the generator (a one-candidate
+## slot would then advance differently from a two-candidate one), so the draw
+## is rng.randi() and the index its remainder.
+func _draw_draft_offers(count: int) -> Dictionary:
+	var upgrades_only := bool(_mut("draft_upgrades_only", false))
+	var bases: Array = []
+	if not upgrades_only:
+		for aid in draft_pool:
+			if not _kit_holds_base(String(aid)):
+				bases.append(aid)
+	var upgrades: Array = []
+	var deepenings: Array = []
+	for aid in player["kit"]:
+		var kid := String(aid)
+		if Content.is_upgrade(kid):
+			continue  # already a variant: nothing deeper to draft
+		# Block D6: the universe holds BOTH variants of a held base (a wild
+		# slot may deal either), while the upgrade slot lists exactly ONE -
+		# Content.variant_for(base, floor), a parity read of the floor being
+		# entered. No rng draw: which sibling this slot could deal is a
+		# function of the floor, so the one-draw-per-slot contract below is
+		# untouched and the other sibling stays reachable at the forge.
+		for v in Content.variants_of(kid):
+			if not upgrades.has(v):
+				upgrades.append(v)
+		var pick := Content.variant_for(kid, _pending_floor)
+		if pick != "" and _build_defining(pick) and not deepenings.has(pick):
+			deepenings.append(pick)
+	var universe: Array = bases + upgrades
+	var affine: Array = []
+	var tags: Array = _affinity_tags()
+	for aid in bases:
+		for t in Content.ABILITIES.get(aid, {}).get("tags", []):
+			if tags.has(t):
+				affine.append(aid)
+				break
 	var offers: Array = []
-	while offers.size() < count and not candidates.is_empty():
-		var i := rng.randi_range(0, candidates.size() - 1)
-		offers.append(candidates[i])
-		candidates.remove_at(i)
-	return offers
+	var slots: Array = []
+	var total: int = count + (1 if focus == 1 else 0)
+	for i in total:
+		var role: String = "affinity" if i >= count else (
+			String(Content.DRAFT_SLOTS[i]) if i < Content.DRAFT_SLOTS.size() else "wild")
+		var report: String = "focus" if i >= count else role
+		var cands: Array = []
+		if upgrades_only:
+			cands = _minus(upgrades, offers)
+			if i < count:
+				report = "upgrade"
+		else:
+			match role:
+				"affinity":
+					cands = _minus(affine, offers)
+				"upgrade_or_affinity":
+					cands = _minus(deepenings, offers)
+					report = "upgrade"
+					if cands.is_empty():
+						cands = _minus(affine, offers)
+						report = "affinity"
+				_:
+					cands = _minus(universe, offers)
+					report = "wild"
+		if cands.is_empty():
+			# the wild fallback never renames the focus slot: the skip was spent
+			# on this slot whatever list it ended up drawing from
+			cands = _minus(universe, offers)
+			report = "focus" if i >= count else "wild"
+		var r: int = rng.randi()
+		if cands.is_empty():
+			continue
+		offers.append(cands[r % cands.size()])
+		slots.append(report)
+	return {"offers": offers, "slots": slots}
+
+
+## `list` without the entries of `taken`, order kept.
+static func _minus(list: Array, taken: Array) -> Array:
+	var out: Array = []
+	for x in list:
+		if not taken.has(x):
+			out.append(x)
+	return out
 
 
 func _act_draft(action: Dictionary) -> void:
@@ -935,13 +1698,17 @@ func _act_draft(action: Dictionary) -> void:
 		return
 	if pick >= 0:
 		var aid: String = draft_offers[pick]
-		if aid.ends_with("+"):
-			var slot: int = player["kit"].find(aid.trim_suffix("+"))
+		if Content.is_upgrade(aid):
+			# Block D6: the id is "<base>+<variant>", so the kit slot and the
+			# uses seed come from base_id, never from trim_suffix("+") - which
+			# would hand back the variant id unchanged and find nothing
+			var abase: String = Content.base_id(aid)
+			var slot: int = player["kit"].find(abase)
 			if slot == -1:
 				_emit({"t": "illegal", "action": "draft"})
 				return
 			player["kit"][slot] = aid
-			player["uses"][aid] = int(player["uses"].get(aid.trim_suffix("+"), 0))
+			player["uses"][aid] = int(player["uses"].get(abase, 0))
 			_emit({"t": "draft_upgrade", "id": aid})
 		elif player["kit"].size() >= _kit_max():
 			var drop: int = action.get("drop", -1)
@@ -954,8 +1721,10 @@ func _act_draft(action: Dictionary) -> void:
 			player["kit"].append(aid)
 		_emit({"t": "draft_pick", "id": aid})
 	else:
+		focus = 1
 		_emit({"t": "draft_skip"})
 	draft_offers = []
+	draft_slots = []
 	phase = "play"
 	_enter_floor(_pending_floor)
 	_begin_player_turn()
@@ -978,13 +1747,14 @@ func _act_use_item(action: Dictionary) -> void:
 		"balm_fruit+":
 			player["hp"] = player["max_hp"]
 		"spore_vial":
-			for e in enemies:
-				if _manhattan(e["pos"], player["pos"]) <= 2 and not Content.ENEMIES[e["kind"]]["traits"].has("boss"):
-					e["status"]["stun"] = maxi(int(e["status"].get("stun", 0)), 1)
+			# through _apply_status like any cast: massive (every boss) is immune
+			for e in enemies.duplicate():
+				if _manhattan(e["pos"], player["pos"]) <= 2:
+					_apply_status(e, "stun", 1)
 		"spore_vial+":
-			for e in enemies:
-				if _manhattan(e["pos"], player["pos"]) <= 4 and not Content.ENEMIES[e["kind"]]["traits"].has("boss"):
-					e["status"]["stun"] = maxi(int(e["status"].get("stun", 0)), 2)
+			for e in enemies.duplicate():
+				if _manhattan(e["pos"], player["pos"]) <= 4:
+					_apply_status(e, "stun", 2)
 		"clearair_pod":
 			smog = maxi(smog - 5, 0)
 		"clearair_pod+":
@@ -999,37 +1769,54 @@ func _act_use_item(action: Dictionary) -> void:
 
 
 ## Shrine press: two held consumables become the + form of the kept one.
+## A shrine service like any purchase: priced through shop_cost (tier markup
+## applies) and gated on shop.press, so a Boarded shrine boards it too.
 func _act_upcycle(action: Dictionary) -> void:
 	var keep := int(action.get("keep", -1))
 	var on_shrine: bool = player["pos"] == map["shrine"]
-	if not on_shrine or player["items"].size() != 2 or keep < 0 or keep > 1 \
-			or bloom < Content.UPCYCLE_ITEM_COST or String(player["items"][keep]).ends_with("+"):
+	var cost := shop_cost("press")
+	# ITEMS keep the plain "+" convention: the press is not the Block D6 forge
+	# and item rows are not forked, so ends_with("+") is the right test here
+	if not on_shrine or not shop.get("press", false) or player["items"].size() != 2 or keep < 0 or keep > 1 \
+			or bloom < cost or String(player["items"][keep]).ends_with("+"):
 		_emit({"t": "illegal", "action": "upcycle"})
 		return
-	bloom -= Content.UPCYCLE_ITEM_COST
+	bloom -= cost
 	var plus := String(player["items"][keep]) + "+"
 	player["items"] = [plus]
 	_emit({"t": "upcycle", "id": plus})
 
 
 ## Shrine forge: one kit ability becomes its + form; another is scrapped.
+## Once per floor (the use erases shop.forge), never scraps a mobility ability.
 func _act_upcycle_ability(action: Dictionary) -> void:
 	var keep := int(action.get("keep", -1))
 	var scrap := int(action.get("scrap", -1))
+	# Block D6: which fork to buy, an index into Content.variants_of(base).
+	# A MISSING key is index 0 - the variant that reproduces the pre-D6 "+"
+	# row - so a stored forge action from an old log forges what it forged
+	# then; an out-of-range index is illegal and changes nothing.
+	var variant := int(action.get("variant", 0))
 	var kmax: int = player["kit"].size()
-	var ok: bool = player["pos"] == map["shrine"] and bloom >= Content.UPCYCLE_ABILITY_COST \
+	var cost := shop_cost("forge")
+	var ok: bool = player["pos"] == map["shrine"] and shop.get("forge", false) and bloom >= cost \
 		and keep >= 0 and keep < kmax and scrap >= 0 and scrap < kmax and keep != scrap
+	var kvars: Array = []
 	if ok:
 		var kid := String(player["kit"][keep])
-		ok = not kid.ends_with("+") and Content.ABILITIES.has(kid + "+")
+		kvars = Content.variants_of(kid)
+		ok = not Content.is_upgrade(kid) and variant >= 0 and variant < kvars.size() \
+			and not _is_mobility(String(player["kit"][scrap]))
 	if not ok:
 		_emit({"t": "illegal", "action": "upcycle_ability"})
 		return
-	bloom -= Content.UPCYCLE_ABILITY_COST
+	bloom -= cost
+	shop.erase("forge")
 	var kid2 := String(player["kit"][keep])
+	var vid := String(kvars[variant])
 	_emit({"t": "upcycle_scrap", "id": player["kit"][scrap]})
-	player["kit"][keep] = kid2 + "+"
-	player["uses"][kid2 + "+"] = int(player["uses"].get(kid2, 0))
+	player["kit"][keep] = vid
+	player["uses"][vid] = int(player["uses"].get(kid2, 0))
 	player["kit"].remove_at(scrap)
 	# gummed is keyed by slot: drop the scrapped slot, shift the ones above
 	var ng := {}
@@ -1039,7 +1826,7 @@ func _act_upcycle_ability(action: Dictionary) -> void:
 			continue
 		ng[ki - 1 if ki > scrap else ki] = player["gummed"][k]
 	player["gummed"] = ng
-	_emit({"t": "upcycle_ability", "id": kid2 + "+"})
+	_emit({"t": "upcycle_ability", "id": vid})
 
 
 func _room_of(p: Vector2i) -> int:
@@ -1050,11 +1837,13 @@ func _room_of(p: Vector2i) -> int:
 	return -1
 
 
+## Corruption for counting: the two sites that feed the quota clamp, the
+## floor-restore check and the room bloom read Content.counts_as_corruption,
+## so a burning oil slick still counts as the corruption it will become.
 func _count_corruption() -> int:
 	var cnt := 0
 	for t in terrain.keys():
-		var k := String(terrain[t]["kind"])
-		if k == "oil" or k == "goo" or k == "rich_goo":
+		if Content.counts_as_corruption(String(terrain[t]["kind"])):
 			cnt += 1
 	return cnt
 
@@ -1062,10 +1851,8 @@ func _count_corruption() -> int:
 func _room_has_corruption(ri: int) -> bool:
 	var r: Rect2i = map["rooms"][ri]
 	for t in terrain.keys():
-		if r.has_point(t):
-			var k := String(terrain[t]["kind"])
-			if k == "oil" or k == "goo" or k == "rich_goo":
-				return true
+		if r.has_point(t) and Content.counts_as_corruption(String(terrain[t]["kind"])):
+			return true
 	return false
 
 
@@ -1091,14 +1878,23 @@ func _check_room_bloom(p: Vector2i) -> void:
 			if _manhattan(t3, player["pos"]) < _manhattan(t2, player["pos"]):
 				t2 = t3
 		var srng := _side_rng("supply%d" % ri)
-		var ids: Array = Content.ITEMS.keys()
+		var ids := _base_item_ids()
 		terrain[t2] = {"kind": "supply", "item": ids[srng.randi_range(0, ids.size() - 1)]}
 	_emit({"t": "room_bloom", "room": ri, "bonus": Content.ROOM_BLOOM_BONUS})
 
 
 func _act_buy(action: Dictionary) -> void:
 	var item := String(action.get("item", ""))
-	var cost: int = shop_cost(item)
+	# a graft is priced per offer, so the pick has to be resolved before the
+	# price is known; an out-of-range pick keeps the id-less fallback price
+	# and is rejected by the graft branch below
+	var gid_pick := ""
+	if item == "graft":
+		var offers0: Array = shop.get("grafts", [])
+		var pick0 := int(action.get("pick", -1))
+		if pick0 >= 0 and pick0 < offers0.size():
+			gid_pick = String(offers0[pick0])
+	var cost: int = shop_cost(item, gid_pick)
 	var on_shrine: bool = player["pos"] == map["shrine"]
 	if not on_shrine or bloom < cost:
 		_emit({"t": "illegal", "action": "buy"})
@@ -1113,6 +1909,7 @@ func _act_buy(action: Dictionary) -> void:
 			player["hp"] = mini(player["hp"] + Content.SHOP_HEAL_AMOUNT, player["max_hp"])
 			_emit({"t": "buy", "item": "heal", "hp": player["hp"]})
 		"ability":
+			# a full kit cannot buy: the ability card is simply not for sale
 			if not shop.has("ability") or player["kit"].size() >= _kit_max():
 				_emit({"t": "illegal", "action": "buy"})
 				return
@@ -1122,14 +1919,22 @@ func _act_buy(action: Dictionary) -> void:
 			player["kit"].append(aid)
 			_emit({"t": "buy", "item": "ability", "id": aid})
 		"graft":
-			if not shop.has("graft"):
+			var pick := int(action.get("pick", -1))
+			if not shop.has("grafts") or pick < 0 or pick >= shop["grafts"].size():
 				_emit({"t": "illegal", "action": "buy"})
 				return
 			bloom -= cost
-			var gid: String = shop["graft"]
-			shop.erase("graft")
+			var offers: Array = shop["grafts"]
+			var gid: String = offers[pick]
+			var other := ""
+			for g in offers:
+				if g != gid:
+					other = g
+			# one pick closes the graft counter: the other offer is discarded
+			shop.erase("grafts")
 			player["grafts"].append(gid)
-			_emit({"t": "buy", "item": "graft", "id": gid})
+			# buy/graft with "discarded": the offer left behind ("" when there was one offer)
+			_emit({"t": "buy", "item": "graft", "id": gid, "discarded": other})
 		"item":
 			if not shop.has("item") or player["items"].size() >= Content.ITEM_CAP:
 				_emit({"t": "illegal", "action": "buy"})
@@ -1143,18 +1948,83 @@ func _act_buy(action: Dictionary) -> void:
 			_emit({"t": "illegal", "action": "buy"})
 
 
-func _has_graft(gid: String) -> bool:
-	return player["grafts"].has(gid)
+## Sum of `key` over the "stat" dicts of every held graft (Content.GRAFTS) and
+## every active resonance (Content.RESONANCES, Block D5 - a resonance is a
+## second passive source, not a second system). Keys: bank_cap, shield_cap,
+## regen, regen_on_growth, growth_heal, cleanse_bloom (the closed set
+## tests/test_content.gd lints).
+func _passive_stat(key: String) -> int:
+	var v := 0
+	for gid in player["grafts"]:
+		v += int(Content.GRAFTS[gid].get("stat", {}).get(key, 0))
+	for row in _resonance_rows():
+		v += int((row[1] as Dictionary).get("stat", {}).get(key, 0))
+	return v
+
+
+## The first "mod" value for `key` over the held grafts (held order) and then
+## the active resonances (table order), else `default`. Grafts are scanned
+## first, so a graft mod shadows a resonance mod.
+func _passive_mod(key: String, default):
+	for gid in player["grafts"]:
+		var mod: Dictionary = Content.GRAFTS[gid].get("mod", {})
+		if mod.has(key):
+			return mod[key]
+	for row in _resonance_rows():
+		var rmod: Dictionary = (row[1] as Dictionary).get("mod", {})
+		if rmod.has(key):
+			return rmod[key]
+	return default
+
+
+## Tag counts over the held kit and the held grafts (Block D5). A variant row
+## carries its base's tags verbatim, so no base_id fold is needed - the row is
+## read straight, with a guarded get so an unknown id from a sweep config
+## counts nothing instead of throwing. Derived, recomputed on read, never
+## stored: nothing here enters snapshot() or state_hash().
+func _tag_counts() -> Dictionary:
+	var counts := {}
+	for aid in player["kit"]:
+		for t in Content.ABILITIES.get(aid, {}).get("tags", []):
+			counts[t] = int(counts.get(t, 0)) + 1
+	for gid in player["grafts"]:
+		for t in Content.GRAFTS.get(gid, {}).get("tags", []):
+			counts[t] = int(counts.get(t, 0)) + 1
+	return counts
+
+
+## The active resonance ids in Content.RESONANCES key order: a row resonates
+## while _tag_counts()[row.tag] >= row.need. Derived like the counts, so a
+## draft drop or a forge scrap turns a row off between one step and the next
+## with nothing to unwind.
+func _resonances() -> Array:
+	var counts := _tag_counts()
+	var out: Array = []
+	for rid in Content.RESONANCES:
+		var row: Dictionary = Content.RESONANCES[rid]
+		if int(counts.get(String(row["tag"]), 0)) >= int(row["need"]):
+			out.append(String(rid))
+	return out
+
+
+## The active resonances as [id, row] pairs in table order - the one seam the
+## three readers (_passive_stat, _passive_mod, _hook) share.
+func _resonance_rows() -> Array:
+	var out: Array = []
+	for rid in _resonances():
+		out.append([rid, Content.RESONANCES[rid]])
+	return out
 
 
 func _bank_cap() -> int:
-	if mutators.has("parched"):
-		return 0
-	return Content.BANK_CAP + (2 if _has_graft("deep_cells") else 0)
+	var cap := int(_mut("bank_cap", -1))
+	if cap >= 0:
+		return cap
+	return Content.BANK_CAP + _passive_stat("bank_cap")
 
 
 func _shield_cap() -> int:
-	return Content.SHIELD_CAP + (2 if _has_graft("thick_bark") else 0)
+	return Content.SHIELD_CAP + _passive_stat("shield_cap")
 
 
 func _act_ability(action: Dictionary) -> void:
@@ -1165,28 +2035,178 @@ func _act_ability(action: Dictionary) -> void:
 	var aid: String = player["kit"][slot]
 	var adef: Dictionary = Content.ABILITIES[aid]
 	var target = action.get("target")
-	var cost := ability_cost(aid)
+	var surge_cost := ability_cost(aid)
+	var cost := ability_cost(aid, target)
 	if player["charge"] < cost or not _ability_targets(aid).has(target):
 		_emit({"t": "illegal", "action": "ability", "id": aid})
 		return
-	if cost < int(adef["cost"]):
-		# verdant surge: the cast draws the growth underfoot up into itself
+	# verdant surge (one rule, _surges): standing on growth with a surge dict
+	# that applies draws the tile up into the cast - the cost delta is already
+	# in surge_cost, the stat deltas ride ctx["surge"] into every effect
+	var surge_stats := {}
+	if _surges(adef):
 		terrain.erase(player["pos"])
 		_emit({"t": "verdant", "tile": player["pos"]})
+		surge_stats = _surge_stats(_surge_of(adef))
+	if cost < surge_cost:
+		# oil_cast_discount (oil_tithe): spent on the first oil-aimed cast of the turn
+		tithe_used_this_turn = true
+		_emit({"t": "tithe", "id": aid})
 	player["charge"] -= cost
 	player["uses"][aid] = int(player["uses"].get(aid, 0)) + 1
+	# cast context: what the riders (if / per / bonus / then) may read
+	var ctx := {
+		"aid": aid, "adef": adef, "target": target, "origin": player["pos"],
+		"casts_before": casts_this_turn, "moved": moved_this_turn,
+	}
+	casts_this_turn += 1
 	_emit({"t": "ability", "id": aid, "target": target})
+	if not surge_stats.is_empty():
+		var keys := _surge_applied_keys(adef, surge_stats)
+		if not keys.is_empty():
+			ctx["surge"] = surge_stats
+			_emit({"t": "surge", "id": aid, "keys": keys})
+	var ev_mark := _step_events.size()
+	var fired := false
 	for eff in adef["effects"]:
-		_apply_effect(eff, adef, target)
+		if _outcome_fired(_apply_effect(eff, adef, target, aid, ctx)):
+			fired = true
+	if not fired:
+		# a rider (per / then) that ran also makes the cast count
+		for i in range(ev_mark, _step_events.size()):
+			if String(_step_events[i].get("t", "")) == "rider":
+				fired = true
+				break
+	if fired:
+		var base := Content.base_id(aid)
+		effective_uses[base] = int(effective_uses.get(base, 0)) + 1
 
 
-## Live cost of an ability right now: standing on growth discounts a
-## 2+ cost cast by 1, consuming the tile (verdant surge).
-func ability_cost(aid: String) -> int:
-	var base: int = int(Content.ABILITIES[aid]["cost"])
+## Compact end-of-run record for the meta layer and the runners: what was
+## held, what was cast (raw and effective, folded onto base ids) and how the
+## run ended. Pure read; the sim never consumes it. player.uses keeps the base
+## key AND every variant key an upgrade seeded (both the draft and the forge
+## seed the chosen variant's count from the base's), so uses_by_base is the
+## MAX over the base and all its variants - never the sum. The fold below is
+## already that: every key folds onto base_id and maxi keeps the largest,
+## which is unchanged by Block D6 turning one "+" key into two variant keys.
+func run_summary() -> Dictionary:
+	var uses_by_base := {}
+	for aid in player["uses"]:
+		var b := Content.base_id(String(aid))
+		uses_by_base[b] = maxi(int(uses_by_base.get(b, 0)), int(player["uses"][aid]))
+	return {
+		"won": won, "floor": floor_num, "turns": total_turns,
+		"kit": player["kit"].duplicate(), "grafts": player["grafts"].duplicate(),
+		"uses_by_base": uses_by_base, "effective_uses_by_base": effective_uses.duplicate(),
+		"bloom": bloom, "death_cause": death_cause, "seed": seed_value, "tier": tier,
+		"mutators": mutators.duplicate(), "packages": packages.duplicate(), "loadout": loadout,
+	}
+
+
+## Live cost of an ability right now: standing on growth applies the cost
+## delta of the ability's surge rule (Content.SURGE_DEFAULT unless the row
+## carries its own "surge") to a cost-2+ cast: maxi(1, base + surge.cost).
+## Whether the cast surges at all (and so consumes the tile) is _surges; the
+## stat half of a surge never moves the price. With a `target`, a held
+## oil_cast_discount graft mod (oil_tithe) that is unspent this turn takes its
+## discount off an oil-aimed cast, floored at 1: the resolved target tile is
+## oil, or for "dir" abilities the line holds oil within range. Without a
+## target the discount is never applied.
+func ability_cost(aid: String, target = null) -> int:
+	var adef: Dictionary = Content.ABILITIES[aid]
+	var base: int = int(adef["cost"])
+	var cost := base
 	if base >= 2 and _terrain_kind(player["pos"]) == "growth":
-		return base - 1
-	return base
+		cost = maxi(1, base + _surge_cost_delta(adef))
+	if target != null and cost > 1 and not tithe_used_this_turn:
+		var discount := int(_passive_mod("oil_cast_discount", 0))
+		if discount > 0 and _targets_oil(adef, target):
+			cost = maxi(1, cost - discount)
+	return cost
+
+
+## The surge dict of an ability row: its "surge" key, else Content.SURGE_DEFAULT.
+func _surge_of(adef: Dictionary) -> Dictionary:
+	return adef.get("surge", Content.SURGE_DEFAULT)
+
+
+## The cost half of a surge dict, the one number ability_cost and _surges both
+## read: an explicit dict without a "cost" key is a stat-only surge and moves
+## no price (sun_flare spells its discount out as {cost: -1, radius: 1}); the
+## default {cost: -1} applies only to a row with no dict at all.
+func _surge_cost_delta(adef: Dictionary) -> int:
+	return int(_surge_of(adef).get("cost", 0))
+
+
+## The stat half of a surge dict: every key but "cost", each an int delta that
+## _apply_effect adds to the matching key of every effect of the cast.
+func _surge_stats(surge: Dictionary) -> Dictionary:
+	var stats := {}
+	for k in surge:
+		if String(k) != "cost":
+			stats[String(k)] = int(surge[k])
+	return stats
+
+
+## The one surge rule (Block D1): a cast of `adef` SURGES when the tender
+## stands on growth and the surge dict carries anything that applies to it -
+## a cost delta that lowers a cost >= 2 (maxi(1, base + cost) < base), or any
+## stat key. A surged cast consumes the growth tile (event verdant). A cost-1
+## ability with only the default {cost: -1} therefore never surges and never
+## consumes growth; one with a stat surge does, and gets the stat.
+func _surges(adef: Dictionary) -> bool:
+	if _terrain_kind(player["pos"]) != "growth":
+		return false
+	var base := int(adef["cost"])
+	if base >= 2 and maxi(1, base + _surge_cost_delta(adef)) < base:
+		return true
+	return not _surge_stats(_surge_of(adef)).is_empty()
+
+
+## The surge stat keys that touch at least one effect of the row (top level or
+## inside a then): what the {t: "surge"} event reports. The content lint
+## requires every stat key to touch something, so for a shipped row this is
+## every stat key in row order.
+func _surge_applied_keys(adef: Dictionary, stats: Dictionary) -> Array:
+	var keys: Array = []
+	for k in stats:
+		var found := false
+		for eff in adef["effects"]:
+			if eff.has(k):
+				found = true
+			for sub in eff.get("then", []):
+				if sub.has(k):
+					found = true
+		if found:
+			keys.append(k)
+	return keys
+
+
+## Whether a cast of `adef` at `target` is aimed at oil: "dir" abilities when
+## the line holds oil within range (walls stop the walk, Game._rider_per
+## oil_in_line), every other target shape when the target tile itself is oil.
+func _targets_oil(adef: Dictionary, target) -> bool:
+	if not (target is Vector2i):
+		return false
+	if _is_dir_shape(adef):
+		var ctx := {"adef": adef, "target": target, "origin": player["pos"]}
+		return _rider_per({"count": "oil_in_line"}, ctx) > 0
+	return _terrain_kind(target) == "oil"
+
+
+## Public read-only view of the legal target list for an ability the player
+## could cast from the current position. Pure query: no state or rng change.
+func ability_targets(aid: String) -> Array:
+	return _ability_targets(aid)
+
+
+## Whether `adef` aims by direction: both "dir" and the D6 "dir_enemy" pass a
+## unit vector as the target, so every site that special-cases a direction
+## target reads this rather than one literal.
+static func _is_dir_shape(adef: Dictionary) -> bool:
+	var t := String(adef.get("target", ""))
+	return t == "dir" or t == "dir_enemy"
 
 
 func _ability_targets(aid: String) -> Array:
@@ -1196,6 +2216,23 @@ func _ability_targets(aid: String) -> Array:
 	match String(adef["target"]):
 		"dir":
 			out = DIRS.duplicate()
+		"dir_enemy":
+			# A direction is legal only when its line actually holds an enemy
+			# within range - the walk below is the one `pull_line` performs, so
+			# a legal target is exactly a target the cast would do something to.
+			# Every other "dir" ability writes terrain (a lance clears smog, a
+			# jet washes), so an empty cast still means something; a line-pull
+			# with nobody on the line is a pure no-op, and offering it lets a
+			# persona spend its whole charge budget on nothing.
+			for d in DIRS:
+				var lp: Vector2i = player["pos"]
+				for i in range(rng_):
+					lp += d
+					if _tile(lp) == MapGen.T_WALL:
+						break
+					if _enemy_at(lp) != null:
+						out.append(d)
+						break
 		"tile":
 			for dy in range(-rng_, rng_ + 1):
 				for dx in range(-rng_, rng_ + 1):
@@ -1247,57 +2284,161 @@ func _ability_targets(aid: String) -> Array:
 	return out
 
 
-func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
+## `aid` is the casting ability: every damage, ignition and collision the
+## effect causes is attributed to it (events, autopsy, death tables).
+##
+## Effect grammar (docs/PROGRESSION_REVIEW.md §6.3 C1). Any effect dict may
+## carry three optional rider keys, evaluated by _rider_if / _rider_per only:
+##   "if":    Array of predicate dicts, every key of every dict must hold;
+##            a failed `if` skips the effect (zero outcome, no event)
+##   "per":   {count, radius?, cap, add: {key: n}} - before the op runs, each
+##            add key grows by add[k] * min(count, cap) on a copy of the effect
+##   "bonus": {dmg, if: [...]} - per affected enemy inside aoe_damage, lance,
+##            damage and collision damage; its predicates read the enemy's tile
+##   "then":  Array of effects run once, in order, after the parent when the
+##            parent outcome has any counter > 0 or a non-empty crossed list;
+##            they share the parent's target and see its outcome through
+##            `outcome` / `outcome_crossed` predicates (ctx["parent"]). A then
+##            inside a then is rejected: error event, zero outcome. The
+##            {t: rider, kind: then} event fires once per then-effect whose
+##            own outcome fired, never for one that found nothing to do.
+## On `pull` the bonus rides the lash hit (pull has no collision damage) and
+## its predicates read the enemy's landing tile.
+## Surge stats (Block D1): when ctx carries "surge" ({key: delta}, the stat
+## half of the row's surge dict, set by _act_ability only on a surged cast),
+## every delta is added to the matching key of this effect on a copy, before
+## `per` grows it and before the op runs; then-effects get the same treatment
+## through the ctx they inherit. An effect without the key is untouched.
+## `ctx` is the cast context built by _act_ability: {aid, adef, target, origin,
+## casts_before, moved} plus "surge" on a stat-surged cast and "parent" (the
+## parent outcome) inside a then.
+## Returns the outcome: int counters hit / ignited / pushed / collided /
+## converted / planted / washed / statused, `affected` (ids of enemies the op damaged,
+## displaced or statused), `crossed` (terrain kinds any displaced enemy
+## stepped onto) and `tiles` (tiles the op planted or converted, read by
+## status_target who = "on_planted").
+func _apply_effect(eff: Dictionary, adef: Dictionary, target, aid: String, ctx: Dictionary = {}) -> Dictionary:
+	var out := _zero_outcome()
+	var parent = ctx.get("parent", null)
+	if parent != null and eff.has("then"):
+		_emit({"t": "error", "msg": "nested then in %s" % aid})
+		return out
+	if eff.has("if") and not _rider_if(eff["if"], ctx, parent, null):
+		return out
+	var surge_stats: Dictionary = ctx.get("surge", {})
+	if not surge_stats.is_empty():
+		var surged := eff.duplicate()
+		var touched := false
+		for k in surge_stats:
+			if eff.has(k):
+				surged[k] = int(eff[k]) + int(surge_stats[k])
+				touched = true
+		if touched:
+			eff = surged
+	if eff.has("per"):
+		var per: Dictionary = eff["per"]
+		var n := _rider_per(per, ctx)
+		var cap := int(per.get("cap", 0))
+		if cap > 0:
+			n = mini(n, cap)
+		if n > 0:
+			var added := 0
+			var grown := eff.duplicate()
+			for k in per.get("add", {}):
+				var delta: int = int(per["add"][k]) * n
+				grown[k] = int(eff.get(k, 0)) + delta
+				added += delta
+			if added != 0:
+				eff = grown
+				# rider/per: the scaled add (amt = total added)
+				_emit({"t": "rider", "id": aid, "kind": "per", "amt": added})
 	match String(eff["op"]):
 		"lance":
 			var dmg: int = eff["dmg"] + (int(eff["clear_smog_bonus"]) if dim == 0 else 0)
+			# pierce (Block D6): the beam does not stop on the first body, so
+			# every enemy on the line is hit and every flammable tile BEHIND
+			# them lights - oil a machine is standing in front of is otherwise
+			# unlightable at any price. Walls and blocks_beam smoke still end
+			# the walk, so smoke still blanks a piercing lance. Absent or
+			# false is the pre-D6 beam exactly.
+			var pierce: bool = bool(eff.get("pierce", false))
 			var p: Vector2i = player["pos"]
 			for i in range(int(adef["range"])):
 				p += target
-				if _tile(p) == MapGen.T_WALL or _terrain_kind(p) == "smoke":
+				var k := _terrain_kind(p)
+				if _tile(p) == MapGen.T_WALL or bool(Content.terrain(k, "blocks_beam", false)):
 					break
-				if _terrain_kind(p) == "oil" and bool(eff["ignite"]):
-					terrain[p] = {"kind": "fire", "ttl": 2}
+				if bool(Content.terrain(k, "flammable", false)) and bool(eff["ignite"]):
+					_ignite(p, aid)
 					_emit({"t": "ignite", "tile": p})
+					out["ignited"] += 1
+					_hook("ignite", {"tile": p, "by": aid})
 				var e = _enemy_at(p)
 				if e != null:
-					_damage_enemy(e, dmg, "solar_lance")
-					break
+					if _damage_enemy(e, dmg + _bonus_dmg(eff, ctx, e), aid):
+						out["hit"] += 1
+					_affect(out, e)
+					if not pierce:
+						break
 		"grow_radius":
+			# every floor tile within manhattan eff.radius of the target: 1 is
+			# the plus, 2 the 13-tile diamond a surged seed_bomb+ reaches. The
+			# plus keeps its pre-D1 order (target, then DIRS) because terrain
+			# insertion order is observable - terrain.keys() feeds the growth
+			# target list and the state hash - so a radius-1 cast stays
+			# byte-identical; the outer rings follow dy then dx ascending.
+			# The plus is always drawn, so radius is honoured from 1 up -
+			# tests/test_content.gd rejects a grow_radius row below 1
+			var gr := int(eff["radius"])
 			var tiles_: Array = [target]
 			for d in DIRS:
 				tiles_.append(target + d)
+			for dy in range(-gr, gr + 1):
+				for dx in range(-gr, gr + 1):
+					var md := absi(dx) + absi(dy)
+					if md < 2 or md > gr:
+						continue
+					tiles_.append(target + Vector2i(dx, dy))
 			for t in tiles_:
 				if _tile(t) == MapGen.T_FLOOR and not terrain.has(t):
 					terrain[t] = {"kind": "growth"}
+					out["planted"] += 1
+					out["tiles"].append(t)
 			_emit({"t": "growth", "tile": target})
+			if not out["tiles"].is_empty():
+				_hook("growth_planted", {"tiles": out["tiles"].duplicate()})
 		"pull":
 			var e = _enemy_at(target)
 			if e == null:
-				return
-			# massive enemies cannot be dragged, but the lash still lands -
-			# no ability should be a dead button against bosses
-			if not Content.ENEMIES[e["kind"]]["traits"].has("massive"):
-				var delta: Vector2i = player["pos"] - e["pos"]
-				var dir := Vector2i(signi(delta.x), signi(delta.y))
-				var pulled := 0
-				for i in range(int(eff["dist"])):
-					var nxt: Vector2i = e["pos"] + dir
-					if _manhattan(e["pos"], player["pos"]) <= 1 or not _open(nxt):
-						break
-					e["pos"] = nxt
-					pulled += 1
-					_enemy_enter_tile(e)
-					if not enemies.has(e):
-						return
-				if pulled > 0:
-					_stagger(e)
-			_damage_enemy(e, int(eff["dmg"]), "vine_whip")
+				return out
+			if not _pull_one(out, e, eff, aid, ctx):
+				# pre-D6 behaviour kept exactly: a target that dies mid-drag
+				# ends the effect here, `then` included
+				return out
+		"pull_line":
+			# Block D6 (vine_whip+rake): the pull body against every enemy on
+			# a `dir` line, nearest first. Walk order is the whole order - no
+			# rng. A blocks_beam tile does NOT stop it (a rake, not a beam);
+			# only a wall does. Each enemy reads the live board, so one dragged
+			# adjacent can block the one behind it. Unlike `pull`, an enemy
+			# that dies to entry damage does not end the effect.
+			var lp: Vector2i = player["pos"]
+			var line: Array = []
+			for i in range(int(adef["range"])):
+				lp += target
+				if _tile(lp) == MapGen.T_WALL:
+					break
+				var le = _enemy_at(lp)
+				if le != null:
+					line.append(le)
+			for le in line:
+				if enemies.has(le):
+					_pull_one(out, le, eff, aid, ctx)
 		"wash_push":
-			_wash_dir(target, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]))
+			_merge_wash(out, _wash_dir(target, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]), aid, eff, ctx))
 		"wash_all":
 			for d in DIRS:
-				_wash_dir(d, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]))
+				_merge_wash(out, _wash_dir(d, int(adef["range"]), int(eff["push"]), int(eff["collision_dmg"]), aid, eff, ctx))
 		"push_line":
 			var p: Vector2i = player["pos"]
 			for i in range(int(adef["range"])):
@@ -1309,35 +2450,61 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 					_emit({"t": "smoke_cleared", "tile": p})
 				var e = _enemy_at(p)
 				if e != null:
-					_push_enemy(e, target, int(eff["dist"]), 1)
+					_merge_push(out, _push_enemy(e, target, int(eff["dist"]), 1, aid, eff, ctx))
 					break
 		"push_all":
 			for d in DIRS:
 				var e = _enemy_at(player["pos"] + d)
 				if e != null:
-					_push_enemy(e, d, int(eff["dist"]), 1)
+					_merge_push(out, _push_enemy(e, d, int(eff["dist"]), 1, aid, eff, ctx))
 		"dash_dir":
 			for i in range(int(adef["range"])):
 				var nxt: Vector2i = player["pos"] + target
 				if not _open(nxt):
 					break
 				player["pos"] = nxt
+				moved_this_turn += 1
 				_player_enter_tile()
 				if over:
-					return
+					return out
 			_emit({"t": "dash", "to": player["pos"]})
 		"create_terrain":
 			if _tile(target) == MapGen.T_FLOOR and not terrain.has(target):
 				terrain[target] = {"kind": String(eff["kind"]), "ttl": int(eff["ttl"])}
+				if String(eff["kind"]) == "fire":
+					terrain[target]["by"] = aid
+				out["planted"] += 1
+				out["tiles"].append(target)
 				_emit({"t": "terrain", "kind": eff["kind"], "tile": target})
+				if String(eff["kind"]) == "fire":
+					_hook("ignite", {"tile": target, "by": aid})
 		"clear_smoke":
 			for t in terrain.keys().duplicate():
 				if terrain[t]["kind"] == "smoke" and _manhattan(t, player["pos"]) <= int(eff["radius"]):
 					terrain.erase(t)
 					_emit({"t": "smoke_cleared", "tile": t})
 		"teleport":
+			if target != player["pos"]:
+				moved_this_turn += 1
 			player["pos"] = target
 			_emit({"t": "teleport", "to": target})
+		"plant_origin":
+			# Spore Trail (Block D1): write eff.kind on the tile the cast left
+			# from (ctx.origin) once the tender is gone - floor, no terrain, no
+			# enemy standing there. Counts as planted so on_planted riders,
+			# the growth_planted hook and effective_uses all see it.
+			var o = ctx.get("origin", null)
+			var kind := String(eff["kind"])
+			if o is Vector2i and o != player["pos"] and _tile(o) == MapGen.T_FLOOR \
+					and not terrain.has(o) and _enemy_at(o) == null:
+				terrain[o] = _tile_dict(kind, aid if kind == "fire" else "", {})
+				out["planted"] += 1
+				out["tiles"].append(o)
+				_emit({"t": "terrain", "kind": kind, "tile": o})
+				if kind == "growth":
+					_hook("growth_planted", {"tiles": [o]})
+				elif kind == "fire":
+					_hook("ignite", {"tile": o, "by": aid})
 		"grow_wall":
 			var walled: Array = [target]
 			for d in DIRS:
@@ -1345,6 +2512,8 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 			for t in walled:
 				if _tile(t) == MapGen.T_FLOOR and not terrain.has(t) and _open(t) and t != map["stairs"]:
 					terrain[t] = {"kind": "roots", "ttl": int(eff["ttl"])}
+					out["planted"] += 1
+					out["tiles"].append(t)
 			_emit({"t": "roots", "tile": target})
 		"shield":
 			player["shield"] = mini(player["shield"] + int(eff["amount"]), _shield_cap())
@@ -1363,35 +2532,458 @@ func _apply_effect(eff: Dictionary, adef: Dictionary, target) -> void:
 				dim = maxi(0, dim - int(eff["amount"]))
 				_emit({"t": "undim", "dim": dim})
 		"aoe_status":
+			# center (Block D6): the tile the radius is measured from -
+			# "self" (default) is the tender, "target" the cast tile, so a
+			# cloud can be thrown at a clump instead of only around your head.
+			# Nothing else changes: same list order, same _apply_status rules.
+			var sc: Vector2i = target if String(eff.get("center", "self")) == "target" else player["pos"]
 			for e in enemies.duplicate():
-				if _manhattan(e["pos"], player["pos"]) <= int(eff["radius"]):
-					_apply_status(e, String(eff["status"]), int(eff["turns"]))
+				if _manhattan(e["pos"], sc) <= int(eff["radius"]):
+					if _apply_status(e, String(eff["status"]), int(eff["turns"])):
+						out["statused"] += 1
+						_affect(out, e)
 		"aoe_damage":
+			# ignite_ttl (Block D6): how long the fires THIS effect lights
+			# burn (absent = the TERRAIN row's own ttl). A fire that spreads
+			# from an overridden tile takes the table ttl, so a long burn
+			# never propagates its length.
+			var ittl: int = int(eff.get("ignite_ttl", -1))
 			for t in terrain.keys().duplicate():
-				if bool(eff.get("ignite", false)) and terrain[t]["kind"] == "oil" and _manhattan(t, player["pos"]) <= int(eff["radius"]):
-					terrain[t] = {"kind": "fire", "ttl": 2}
+				if bool(eff.get("ignite", false)) and bool(Content.terrain(String(terrain[t]["kind"]), "flammable", false)) \
+						and _manhattan(t, player["pos"]) <= int(eff["radius"]):
+					_ignite(t, aid, ittl)
 					_emit({"t": "ignite", "tile": t})
+					out["ignited"] += 1
+					_hook("ignite", {"tile": t, "by": aid})
 			for e in enemies.duplicate():
 				if _manhattan(e["pos"], player["pos"]) <= int(eff["radius"]):
-					_damage_enemy(e, int(eff["dmg"]), "sun_flare")
+					if _damage_enemy(e, int(eff["dmg"]) + _bonus_dmg(eff, ctx, e), aid):
+						out["hit"] += 1
+					_affect(out, e)
 		"convert_radius":
+			# kind / ttl (Block D6): what a convertible corruption tile
+			# becomes and, for a decaying kind, how long it lasts. Default
+			# "growth" is the pre-D6 conversion. A BLOCKING kind takes
+			# grow_wall's two guards - _open (never wall a body, or yourself,
+			# in) and the stairs tile (convert_radius had no stairs guard, and
+			# mapgen is not known to keep corruption off it). The write goes
+			# through _tile_dict like every other terrain write, so the
+			# replaced tile's "bloom" flag rides along.
+			var ckind := String(eff.get("kind", "growth"))
+			var cttl: int = int(eff.get("ttl", -1))
+			var cblocks: bool = bool(Content.terrain(ckind, "blocks", false))
 			for dy in range(-int(eff["radius"]), int(eff["radius"]) + 1):
 				for dx in range(-int(eff["radius"]), int(eff["radius"]) + 1):
 					if absi(dx) + absi(dy) > int(eff["radius"]):
 						continue
 					var t: Vector2i = target + Vector2i(dx, dy)
 					var k := _terrain_kind(t)
-					if k == "oil" or k == "goo":
-						terrain[t] = {"kind": "growth"}
+					if bool(Content.terrain(k, "convertible", false)):
+						if cblocks and (not _open(t) or t == map["stairs"]):
+							continue
+						terrain[t] = _tile_dict(ckind, "", terrain.get(t, {}), cttl)
+						out["converted"] += 1
+						out["tiles"].append(t)
 						_emit({"t": "convert", "tile": t})
 		"apply_status":
 			var e = _enemy_at(target)
 			if e != null:
-				_apply_status(e, String(eff["status"]), int(eff["turns"]))
+				if _apply_status(e, String(eff["status"]), int(eff["turns"])):
+					out["statused"] += 1
+					_affect(out, e)
 		"damage":
 			var e = _enemy_at(target)
 			if e != null:
-				_damage_enemy(e, int(eff["dmg"]), "grow_spike")
+				if _damage_enemy(e, int(eff["dmg"]) + _bonus_dmg(eff, ctx, e), aid):
+					out["hit"] += 1
+				_affect(out, e)
+		"status_target":
+			# then-only op: status the parent's affected enemies ("affected",
+			# default) or whoever stands on a tile the parent planted ("on_planted")
+			var par: Dictionary = parent if parent != null else _zero_outcome()
+			var ids: Array = []
+			if String(eff.get("who", "affected")) == "on_planted":
+				for t in par["tiles"]:
+					var e = _enemy_at(t)
+					if e != null:
+						ids.append(e["id"])
+			else:
+				ids = par["affected"].duplicate()
+			for id in ids:
+				var e = _enemy_by_id(int(id))
+				if e != null and _apply_status(e, String(eff["status"]), int(eff["turns"])):
+					out["statused"] += 1
+					_affect(out, e)
+		_:
+			_emit({"t": "error", "msg": "unknown effect op %s" % String(eff["op"])})
+	if eff.has("then") and _outcome_fired(out):
+		for sub in eff["then"]:
+			var c2 := ctx.duplicate()
+			c2["parent"] = out
+			var sub_out := _apply_effect(sub, adef, target, aid, c2)
+			# rider/then counts only a then-effect that changed something: its
+			# `if` held AND its own outcome fired (a then whose op found no
+			# enemy or no tile is not a combo, so the Tally never sees it)
+			if _outcome_fired(sub_out):
+				_emit({"t": "rider", "id": aid, "kind": "then", "amt": 1})
+	return out
+
+
+## The `pull` body against one enemy: drag it up to eff.dist tiles toward the
+## tender (a massive enemy is never dragged, but the lash still lands - no
+## ability should be a dead button against bosses), then the damage. Shared by
+## `pull` (one target) and `pull_line` (every enemy on the line, nearest
+## first). Returns false when the enemy left the board mid-drag (entry damage
+## killed it): out.pushed and `affected` are already set, and `pull` stops
+## there exactly as it did before Block D6 while pull_line moves on.
+func _pull_one(out: Dictionary, e: Dictionary, eff: Dictionary, aid: String, ctx: Dictionary) -> bool:
+	if not Content.ENEMIES[e["kind"]]["traits"].has("massive"):
+		var delta: Vector2i = player["pos"] - e["pos"]
+		var dir := Vector2i(signi(delta.x), signi(delta.y))
+		var pulled := 0
+		for i in range(int(eff["dist"])):
+			var nxt: Vector2i = e["pos"] + dir
+			if _manhattan(e["pos"], player["pos"]) <= 1 or not _open(nxt):
+				break
+			e["pos"] = nxt
+			pulled += 1
+			_cross(out["crossed"], nxt)
+			_enemy_enter_tile(e)
+			if not enemies.has(e):
+				out["pushed"] += 1
+				_affect(out, e)
+				return false
+		if pulled > 0:
+			out["pushed"] += 1
+			_stagger(e)
+	if _damage_enemy(e, int(eff["dmg"]) + _bonus_dmg(eff, ctx, e), aid):
+		out["hit"] += 1
+	_affect(out, e)
+	return true
+
+
+func _zero_outcome() -> Dictionary:
+	return {
+		"hit": 0, "ignited": 0, "pushed": 0, "collided": 0, "converted": 0, "planted": 0, "washed": 0,
+		"statused": 0, "affected": [], "crossed": [], "tiles": [],
+	}
+
+
+## True when any counter is above zero or a displaced enemy crossed terrain -
+## the condition for a "then" list to run.
+func _outcome_fired(out: Dictionary) -> bool:
+	for k in ["hit", "ignited", "pushed", "collided", "converted", "planted", "washed", "statused"]:
+		if int(out[k]) > 0:
+			return true
+	return not out["crossed"].is_empty()
+
+
+func _affect(out: Dictionary, e: Dictionary) -> void:
+	if not out["affected"].has(e["id"]):
+		out["affected"].append(e["id"])
+
+
+func _cross(crossed: Array, p: Vector2i) -> void:
+	var k := _terrain_kind(p)
+	if k != "" and not crossed.has(k):
+		crossed.append(k)
+
+
+func _merge_push(out: Dictionary, res: Dictionary) -> void:
+	if int(res["moved"]) > 0:
+		out["pushed"] += 1
+	out["collided"] += int(res["collided"])
+	for k in res["crossed"]:
+		if not out["crossed"].has(k):
+			out["crossed"].append(k)
+	for id in res["affected"]:
+		if not out["affected"].has(id):
+			out["affected"].append(id)
+
+
+func _merge_wash(out: Dictionary, res: Dictionary) -> void:
+	out["washed"] += int(res["washed"])
+	out["pushed"] += int(res["pushed"])
+	out["collided"] += int(res["collided"])
+	for k in res["crossed"]:
+		if not out["crossed"].has(k):
+			out["crossed"].append(k)
+	for id in res["affected"]:
+		if not out["affected"].has(id):
+			out["affected"].append(id)
+
+
+## The tile a rider predicate means by "target": the enemy's own tile when
+## evaluating a per-enemy bonus; for "dir" abilities the tile of the first
+## enemy the op would reach (walls stop the walk; null when none); otherwise
+## the cast target itself.
+func _rider_target_tile(ctx: Dictionary, enemy):
+	if enemy != null:
+		return enemy["pos"]
+	var adef: Dictionary = ctx.get("adef", {})
+	var target = ctx.get("target", null)
+	if target == null:
+		return null
+	if _is_dir_shape(adef):
+		var p: Vector2i = ctx.get("origin", player["pos"])
+		for i in range(int(adef.get("range", 0))):
+			p += target
+			if _tile(p) == MapGen.T_WALL:
+				return null
+			if _enemy_at(p) != null:
+				return p
+		return null
+	return target
+
+
+## Rider predicates (closed v1 set), AND across dicts and across keys:
+##   target_on: [kinds]        terrain kind at the target tile is one of kinds
+##   target_adjacent: [kinds]  a tile orthogonally adjacent to the target holds one
+##   self_on: kind             terrain kind under the player
+##   dim: n                    exact dim stage
+##   casts_this_turn_min: n    ctx.casts_before >= n
+##   outcome: counter          (then only) parent outcome counter > 0
+##   outcome_crossed: kind     (then only) parent crossed has kind
+## `outcome` is the parent outcome inside a then, null otherwise (so outcome
+## predicates fail outside a then). Unknown keys fail closed.
+func _rider_if(preds: Array, ctx: Dictionary, outcome, enemy) -> bool:
+	for pred in preds:
+		for key in pred:
+			var v = pred[key]
+			match String(key):
+				"target_on":
+					var t = _rider_target_tile(ctx, enemy)
+					if t == null or not (v as Array).has(_terrain_kind(t)):
+						return false
+				"target_adjacent":
+					var t = _rider_target_tile(ctx, enemy)
+					if t == null:
+						return false
+					var found := false
+					for d in DIRS:
+						if (v as Array).has(_terrain_kind(t + d)):
+							found = true
+					if not found:
+						return false
+				"self_on":
+					if _terrain_kind(player["pos"]) != String(v):
+						return false
+				"dim":
+					if dim != int(v):
+						return false
+				"casts_this_turn_min":
+					if int(ctx.get("casts_before", 0)) < int(v):
+						return false
+				"outcome":
+					if outcome == null or int(outcome.get(String(v), 0)) <= 0:
+						return false
+				"outcome_crossed":
+					if outcome == null or not outcome["crossed"].has(String(v)):
+						return false
+				_:
+					return false
+	return true
+
+
+## Rider counts (closed v1 set):
+##   growth_adjacent_target    growth tiles orthogonally adjacent to the target tile
+##   fire_within_self          fire tiles within per.radius of the player
+##   oil_in_line               oil tiles along the dir target up to adef.range (walls stop)
+##   enemies_adjacent_target   enemies orthogonally adjacent to the target tile
+## Unknown counts read as 0.
+func _rider_per(per: Dictionary, ctx: Dictionary) -> int:
+	var n := 0
+	match String(per.get("count", "")):
+		"growth_adjacent_target":
+			var t = _rider_target_tile(ctx, null)
+			if t != null:
+				for d in DIRS:
+					if _terrain_kind(t + d) == "growth":
+						n += 1
+		"fire_within_self":
+			var radius := int(per.get("radius", 1))
+			for t in terrain.keys():
+				if terrain[t]["kind"] == "fire" and _manhattan(t, player["pos"]) <= radius:
+					n += 1
+		"oil_in_line":
+			var adef: Dictionary = ctx.get("adef", {})
+			var target = ctx.get("target", null)
+			if target is Vector2i:
+				var p: Vector2i = ctx.get("origin", player["pos"])
+				for i in range(int(adef.get("range", 0))):
+					p += target
+					if _tile(p) == MapGen.T_WALL:
+						break
+					if _terrain_kind(p) == "oil":
+						n += 1
+		"enemies_adjacent_target":
+			var t = _rider_target_tile(ctx, null)
+			if t != null:
+				for d in DIRS:
+					if _enemy_at(t + d) != null:
+						n += 1
+	return n
+
+
+## Per-enemy bonus damage of an effect ("bonus": {dmg, if}); the predicates
+## read `e`'s tile as the target. Emits the rider event when it adds anything.
+func _bonus_dmg(eff: Dictionary, ctx: Dictionary, e: Dictionary) -> int:
+	if not eff.has("bonus"):
+		return 0
+	var b: Dictionary = eff["bonus"]
+	if b.has("if") and not _rider_if(b["if"], ctx, null, e):
+		return 0
+	var amt := int(b.get("dmg", 0))
+	if amt != 0:
+		_emit({"t": "rider", "id": String(ctx.get("aid", "")), "kind": "bonus", "amt": amt})
+	return amt
+
+
+## Light tile p as fire signed by `by` (an ability id or an enemy kind). The
+## burnt tile's "bloom" flag rides along (enemy-made oil -> bloom-0 fire).
+## `ttl` >= 0 overrides the TERRAIN row's burn length (the Block D6
+## ignite_ttl effect key); -1 (the default, every other caller) takes the row.
+func _ignite(p: Vector2i, by: String, ttl: int = -1) -> void:
+	terrain[p] = _tile_dict("fire", by, terrain.get(p, {}), ttl)
+
+
+## The dict for a `kind` tile written over `old` (the tile it replaces, {} for
+## none): ttl from Content.TERRAIN when the kind decays, "by" when given, and
+## the old tile's "bloom" flag when it carries one - the flag outlives every
+## oil -> fire -> ash transition so the eventual cleanse pays what the oil
+## would have.
+## `ttl_override` >= 0 replaces the table ttl on a decaying kind (Block D6:
+## aoe_damage's ignite_ttl, convert_radius's ttl); -1 takes the table.
+func _tile_dict(kind: String, by: String, old: Dictionary, ttl_override: int = -1) -> Dictionary:
+	var made := {"kind": kind}
+	if bool(Content.terrain(kind, "decays", false)):
+		made["ttl"] = ttl_override if ttl_override >= 0 else int(Content.terrain(kind, "ttl", 0))
+	if by != "":
+		made["by"] = by
+	if old.has("bloom"):
+		made["bloom"] = old["bloom"]
+	return made
+
+
+func _enemy_by_id(id: int):
+	for e in enemies:
+		if e["id"] == id:
+			return e
+	return null
+
+
+# --- hook dispatcher (C3) -----------------------------------------------------
+
+## Synthetic ability row hook effects run under: hook effects are aimed at the
+## hook tile, so every op reads it as a "tile" target of range 1.
+const HOOK_ADEF := {"name": "hook", "cost": 0, "target": "tile", "range": 1, "effects": []}
+## Positional ops only the dispatcher knows: they read the tile / enemy from
+## the hook ctx instead of a cast target.
+const HOOK_OPS := ["damage_at", "status_at", "terrain_at"]
+
+## Dispatch a hook of `kind` (Content.HOOK_KINDS) with its ctx (see the table
+## comment there). Sources are scanned in fixed order: kit slots 0..n (an
+## ABILITIES row may carry "hooks"), then player.grafts in held order, then
+## the active resonances in Content.RESONANCES key order (Block D5); each
+## source row {on, effects, cap_per_turn?, if?} whose `on` matches runs once
+## per dispatch, unless its per-turn cap (hook_uses, per source id) is spent
+## or its `if` predicates (Game._rider_if against the hook tile) fail.
+## Effects reuse _apply_effect with the hook tile as target, plus the three
+## HOOK_OPS. Hooks caused by hook effects nest up to Content.HOOK_DEPTH_MAX and
+## at most Content.HOOK_STEP_CAP rows run per step; beyond either the hook is
+## skipped and {t: hook_capped} is emitted once per step. Every row that runs
+## emits {t: hook, id: source id, on: kind, tile}. Nothing runs once the game
+## is over.
+func _hook(kind: String, ctx: Dictionary) -> void:
+	if over:
+		return
+	var sources: Array = []
+	for aid in player["kit"]:
+		for row in Content.ABILITIES[aid].get("hooks", []):
+			sources.append([String(aid), row])
+	for gid in player["grafts"]:
+		for row in Content.GRAFTS[gid].get("hooks", []):
+			sources.append([String(gid), row])
+	# Block D5: the active resonances are the third source, appended after the
+	# grafts in Content.RESONANCES key order, with the resonance id as the
+	# source id - so cap_per_turn / hook_uses are shared with nothing else.
+	for rpair in _resonance_rows():
+		for row in (rpair[1] as Dictionary).get("hooks", []):
+			sources.append([String(rpair[0]), row])
+	var tile = _hook_tile(kind, ctx)
+	for src in sources:
+		var sid: String = src[0]
+		var row: Dictionary = src[1]
+		if String(row.get("on", "")) != kind:
+			continue
+		var cap := int(row.get("cap_per_turn", 0))
+		if cap > 0 and int(hook_uses.get(sid, 0)) >= cap:
+			continue
+		if _hook_depth >= Content.HOOK_DEPTH_MAX or _hook_runs >= Content.HOOK_STEP_CAP:
+			if not _hook_capped:
+				_hook_capped = true
+				_emit({"t": "hook_capped"})
+			continue
+		var hctx := {
+			"aid": sid, "adef": HOOK_ADEF, "target": tile, "origin": player["pos"],
+			"casts_before": casts_this_turn, "moved": moved_this_turn, "hook": kind,
+		}
+		if row.has("if") and not _rider_if(row["if"], hctx, null, null):
+			continue
+		hook_uses[sid] = int(hook_uses.get(sid, 0)) + 1
+		_hook_runs += 1
+		_emit({"t": "hook", "id": sid, "on": kind, "tile": tile})
+		_hook_depth += 1
+		for eff in row.get("effects", []):
+			if over:
+				break
+			if HOOK_OPS.has(String(eff.get("op", ""))):
+				_hook_effect(eff, sid, tile, ctx)
+			else:
+				_apply_effect(eff, HOOK_ADEF, tile, sid, hctx)
+		_hook_depth -= 1
+
+
+## The tile a hook is "about": ctx.tile when given, the enemy's tile for
+## staggered, the player's for shield_break, the first planted tile for
+## growth_planted; null when nothing applies.
+func _hook_tile(kind: String, ctx: Dictionary):
+	if ctx.has("tile"):
+		return ctx["tile"]
+	if ctx.has("enemy"):
+		return ctx["enemy"]["pos"]
+	if ctx.has("tiles") and not (ctx["tiles"] as Array).is_empty():
+		return ctx["tiles"][0]
+	if kind == "shield_break":
+		return player["pos"]
+	return null
+
+
+## The positional hook ops. damage_at {dmg}: whoever stands on the hook tile
+## (an enemy via _damage_enemy, or the player via _damage_player), src = the
+## source id. status_at {status, turns}: ctx.enemy when the hook carries one
+## (staggered, collision), else the enemy on the tile. terrain_at {kind}: write
+## the kind on the hook tile when it is floor with no terrain and no enemy.
+func _hook_effect(eff: Dictionary, sid: String, tile, ctx: Dictionary) -> void:
+	if tile == null:
+		return
+	match String(eff["op"]):
+		"damage_at":
+			var e = _enemy_at(tile)
+			if e != null:
+				_damage_enemy(e, int(eff["dmg"]), sid)
+			elif player["pos"] == tile:
+				_damage_player(int(eff["dmg"]), sid)
+		"status_at":
+			var e = ctx.get("enemy", null)
+			if e == null:
+				e = _enemy_at(tile)
+			if e != null and enemies.has(e):
+				_apply_status(e, String(eff["status"]), int(eff["turns"]))
+		"terrain_at":
+			if _tile(tile) == MapGen.T_FLOOR and not terrain.has(tile) and _enemy_at(tile) == null:
+				terrain[tile] = _tile_dict(String(eff["kind"]), "", {})
+				_emit({"t": "terrain", "kind": eff["kind"], "tile": tile})
 
 
 # --- entities and damage ------------------------------------------------------
@@ -1407,18 +2999,21 @@ func _spawn(kind: String, pos: Vector2i) -> Dictionary:
 	return e
 
 
-func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
+## Returns true when damage was applied (false: already gone, or the boss
+## core is shielded).
+func _damage_enemy(e: Dictionary, amt: int, src: String) -> bool:
 	if not enemies.has(e):
-		return
+		return false
 	var edef: Dictionary = Content.ENEMIES[e["kind"]]
 	if edef["traits"].has("boss") and e["hp"] <= int(edef.get("gate_hp", 6)) 			and not _growth_adjacent(e["pos"]) and _corruption_adjacent(e["pos"]):
 		_emit({"t": "core_shielded", "id": e["id"]})
-		return
+		return false
 	e["hp"] -= amt
 	_emit({"t": "damage", "who": e["kind"], "id": e["id"], "amt": amt, "src": src})
 	if e["hp"] <= 0:
 		enemies.erase(e)
 		_emit({"t": "death", "who": e["kind"], "id": e["id"]})
+		_hook("kill", {"tile": e["pos"], "enemy_kind": e["kind"], "enemy_id": e["id"]})
 		if e.get("elite", false):
 			bloom += Content.ELITE_BOUNTY
 			_emit({"t": "bounty", "bloom": bloom})
@@ -1426,14 +3021,14 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 			won = true
 			over = true
 			_emit({"t": "win"})
-			return
+			return true
 		if Content.ENEMIES[e["kind"]]["traits"].has("smoke_burst"):
 			var tiles_: Array = [e["pos"]]
 			for d in DIRS:
 				tiles_.append(e["pos"] + d)
 			for t in tiles_:
 				if _tile(t) == MapGen.T_FLOOR and not terrain.has(t):
-					terrain[t] = {"kind": "smoke", "ttl": 3}
+					terrain[t] = {"kind": "smoke", "ttl": int(Content.terrain("smoke", "ttl", 3))}
 			_emit({"t": "smoke_burst", "tile": e["pos"]})
 	elif edef["traits"].has("boss"):
 		if edef["traits"].has("mobile_boss"):
@@ -1444,7 +3039,7 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 				e["phase3_done"] = true
 				_clog_vents(e["pos"])
 				_emit({"t": "boss_phase", "phase": 3})
-			return
+			return true
 		if e["hp"] <= 12 and not e.get("phase2_done", false):
 			e["phase2_done"] = true
 			_emit({"t": "boss_phase", "phase": 2})
@@ -1466,6 +3061,7 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> void:
 				var s := _spawn("sludgeling", p)
 				_emit({"t": "split", "id": e["id"], "child": s["id"]})
 				break
+	return true
 
 
 func _damage_player(amt: int, src: String) -> void:
@@ -1474,6 +3070,8 @@ func _damage_player(amt: int, src: String) -> void:
 		player["shield"] -= absorbed
 		amt -= absorbed
 		_emit({"t": "shield_absorb", "amt": absorbed})
+		if player["shield"] == 0:
+			_hook("shield_break", {"amt": absorbed})
 		if amt <= 0:
 			return
 	player["hp"] -= amt
@@ -1484,31 +3082,52 @@ func _damage_player(amt: int, src: String) -> void:
 		_emit({"t": "player_death", "cause": src})
 
 
-func _push_enemy(e: Dictionary, dir: Vector2i, dist: int, collision_dmg: int) -> void:
+## `src` is the casting ability id; collision damage is signed "collision:<src>".
+## `eff` / `ctx` carry the effect's "bonus" rider into the collision hits.
+## Returns {moved: tiles travelled, collided: enemies that took collision
+## damage, crossed: terrain kinds stepped onto, affected: enemy ids displaced
+## or damaged}.
+func _push_enemy(e: Dictionary, dir: Vector2i, dist: int, collision_dmg: int, src: String, eff: Dictionary = {}, ctx: Dictionary = {}) -> Dictionary:
+	var res := {"moved": 0, "collided": 0, "crossed": [], "affected": []}
 	if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
-		return
-	var moved := 0
+		return res
 	for i in range(dist):
 		var nxt: Vector2i = e["pos"] + dir
 		if not _open(nxt):
 			if collision_dmg > 0:
-				_damage_enemy(e, collision_dmg, "collision")
+				var dmg1: int = collision_dmg + _bonus_dmg(eff, ctx, e)
+				if _damage_enemy(e, dmg1, "collision:" + src):
+					res["collided"] += 1
+					if not res["affected"].has(e["id"]):
+						res["affected"].append(e["id"])
+					_hook("collision", {"enemy": e, "tile": e["pos"], "src": src, "dmg": dmg1})
 				var hit = _enemy_at(nxt)
 				if hit != null:
-					_damage_enemy(hit, collision_dmg, "collision")
-			if moved > 0 and enemies.has(e):
+					var dmg2: int = collision_dmg + _bonus_dmg(eff, ctx, hit)
+					if _damage_enemy(hit, dmg2, "collision:" + src):
+						res["collided"] += 1
+						res["affected"].append(hit["id"])
+						_hook("collision", {"enemy": hit, "tile": hit["pos"], "src": src, "dmg": dmg2})
+			if int(res["moved"]) > 0 and enemies.has(e):
 				_stagger(e)
-			return
+			return res
 		e["pos"] = nxt
-		moved += 1
+		res["moved"] += 1
+		if not res["affected"].has(e["id"]):
+			res["affected"].append(e["id"])
+		_cross(res["crossed"], nxt)
 		_enemy_enter_tile(e)
 		if not enemies.has(e):
-			return
-	if moved > 0:
+			return res
+	if int(res["moved"]) > 0:
 		_stagger(e)
+	return res
 
 
-func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int) -> void:
+## Returns {washed: tiles cleared, pushed: enemies displaced, collided,
+## crossed, affected} (the last three as in _push_enemy).
+func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int, src: String, eff: Dictionary = {}, ctx: Dictionary = {}) -> Dictionary:
+	var res := {"washed": 0, "pushed": 0, "collided": 0, "crossed": [], "affected": []}
 	var line: Array = []
 	var p: Vector2i = player["pos"]
 	for i in range(rng_):
@@ -1518,9 +3137,9 @@ func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int) -> void:
 		line.append(p)
 	var pushed = null
 	for t in line:
-		var k := _terrain_kind(t)
-		if k == "oil" or k == "fire":
+		if bool(Content.terrain(_terrain_kind(t), "washable", false)):
 			terrain.erase(t)
+			res["washed"] += 1
 			_emit({"t": "wash", "tile": t})
 		if pushed == null:
 			var e = _enemy_at(t)
@@ -1528,19 +3147,28 @@ func _wash_dir(dir: Vector2i, rng_: int, push: int, collision_dmg: int) -> void:
 				if Content.ENEMIES[e["kind"]]["traits"].has("massive"):
 					# too heavy to shove; the jet's pressure still hits
 					if collision_dmg > 0:
-						_damage_enemy(e, collision_dmg, "collision")
-					return
+						var dmg3: int = collision_dmg + _bonus_dmg(eff, ctx, e)
+						if _damage_enemy(e, dmg3, "collision:" + src):
+							res["collided"] += 1
+							res["affected"].append(e["id"])
+							_hook("collision", {"enemy": e, "tile": e["pos"], "src": src, "dmg": dmg3})
+					return res
 				pushed = e
 	if pushed != null:
-		_push_enemy(pushed, dir, push, collision_dmg)
+		var pr := _push_enemy(pushed, dir, push, collision_dmg, src, eff, ctx)
+		if int(pr["moved"]) > 0:
+			res["pushed"] += 1
+		res["collided"] += int(pr["collided"])
+		res["crossed"] = pr["crossed"]
+		res["affected"] = pr["affected"]
+	return res
 
 
 func _player_enter_tile() -> void:
 	var k := _terrain_kind(player["pos"])
-	if k == "fire":
-		_damage_player(1, "fire")
-	elif k == "goo" or k == "rich_goo":
-		_damage_player(1, "goo")
+	var dmg := int(Content.terrain(k, "enter_dmg_player", 0))
+	if dmg > 0:
+		_damage_player(dmg, String(Content.terrain(k, "enter_src", k)))
 	elif k == "supply":
 		if player["items"].size() < Content.ITEM_CAP:
 			var iid := String(terrain[player["pos"]].get("item", "balm_fruit"))
@@ -1551,10 +3179,11 @@ func _player_enter_tile() -> void:
 			_emit({"t": "satchel_full"})
 
 
+## Boss-gate shield: a core-shielding kind (Content.TERRAIN shields_core)
+## stands orthogonally adjacent.
 func _corruption_adjacent(p: Vector2i) -> bool:
 	for d in DIRS:
-		var k := _terrain_kind(p + d)
-		if k == "oil" or k == "goo" or k == "rich_goo":
+		if bool(Content.terrain(_terrain_kind(p + d), "shields_core", false)):
 			return true
 	return false
 
@@ -1575,17 +3204,56 @@ func _growth_adjacent(p: Vector2i) -> bool:
 
 
 func _enemy_enter_tile(e: Dictionary) -> void:
-	if Content.ENEMIES[e["kind"]]["traits"].has("igniter") and _terrain_kind(e["pos"]) == "oil":
-		terrain[e["pos"]] = {"kind": "fire", "ttl": 2}
+	var k := _terrain_kind(e["pos"])
+	if Content.ENEMIES[e["kind"]]["traits"].has("igniter") and bool(Content.terrain(k, "flammable", false)):
+		_ignite(e["pos"], e["kind"])
 		_emit({"t": "ignite", "tile": e["pos"]})
-	if _terrain_kind(e["pos"]) == "fire":
-		_damage_enemy(e, 1, "fire")
+		_hook("ignite", {"tile": e["pos"], "by": e["kind"]})
+		k = _terrain_kind(e["pos"])
+	var dmg := int(Content.terrain(k, "enter_dmg_enemy", 0))
+	if dmg > 0:
+		_damage_enemy(e, dmg, k + ":" + _fire_by(e["pos"]))
 
 
+## First step of the cheapest path to any tile at manhattan 1 from the player
+## (Block D3). Shortest-path search over integer costs: entering a tile costs
+## 1, plus Content.ENEMY_AVOID_COST when its terrain kind is in the row's
+## "avoid" list (the tile the enemy stands on is never charged - it is leaving
+## it); passability stays _open(). Bucket queue: buckets[c] holds the nodes
+## reached at cost c in push order, buckets are drained in ascending cost and,
+## within one, entries with fewer avoided tiles first (so at equal cost the
+## path through fewer avoided tiles wins) and otherwise in push order,
+## neighbours pushed in DIRS order; the goal test runs when a node is drained.
+## A node is re-pushed only on a strictly cheaper (cost, avoided) key and its
+## stale entries are skipped. With an empty avoid list every key is (c, 0),
+## nothing is ever re-pushed and the drain order is exactly the old BFS's
+## dequeue order, so the result is byte-identical to the pre-D3 chase
+## (tests/test_grammar.gd keeps that BFS as a reference and asserts it against
+## both entry points). The weighted search costs about 2.4x the BFS and the
+## clone-based bots pay it on every enemy every ply, so it runs only when it
+## can matter: a kind with an empty avoid list, or a board holding no tile of
+## an avoided kind, takes the plain BFS directly (_chase_bfs) - with nothing
+## to avoid the two are step-for-step identical, which is the parity claim.
+## Returns the enemy's own tile when no path exists. Never touches the rng.
 func _chase_step(e: Dictionary) -> Vector2i:
-	# BFS toward a tile adjacent to the player; occupied tiles are impassable.
-	var start: Vector2i = e["pos"]
-	var goal: Vector2i = player["pos"]
+	var avoid: Array = Content.ENEMIES[e["kind"]].get("avoid", [])
+	if avoid.is_empty() or not _terrain_has_any(avoid):
+		return _chase_bfs(e["pos"], player["pos"])
+	return _chase_dijkstra(e["pos"], player["pos"], avoid)
+
+
+## Whether any tile on the board carries one of `kinds` (a scan of the
+## terrain dict, which is a few dozen entries against a few hundred tiles).
+func _terrain_has_any(kinds: Array) -> bool:
+	for t in terrain:
+		if kinds.has(String(terrain[t]["kind"])):
+			return true
+	return false
+
+
+## The pre-D3 chase, verbatim: BFS toward a tile adjacent to the player,
+## neighbours in DIRS order, occupied tiles impassable.
+func _chase_bfs(start: Vector2i, goal: Vector2i) -> Vector2i:
 	var prev := {}
 	prev[start] = start
 	var queue: Array = [start]
@@ -1604,6 +3272,53 @@ func _chase_step(e: Dictionary) -> Vector2i:
 				continue
 			prev[nxt] = cur
 			queue.append(nxt)
+	return start
+
+
+## The weighted chase (the doc above _chase_step): with an empty `avoid` it
+## reproduces _chase_bfs step for step, which the grammar test asserts.
+func _chase_dijkstra(start: Vector2i, goal: Vector2i, avoid: Array) -> Vector2i:
+	var prev := {}
+	prev[start] = start
+	var best := {}  # pos -> [cost, avoided tiles on that path]
+	best[start] = [0, 0]
+	var buckets: Array = [[[start, 0]]]  # cost -> [[pos, avoided], ...] in push order
+	var bucket_max_f: Array = [0]  # cost -> largest "avoided" pushed into that bucket
+	var c := 0
+	while c < buckets.size():
+		var bucket: Array = buckets[c]
+		for f in range(int(bucket_max_f[c]) + 1):
+			for entry in bucket:
+				if int(entry[1]) != f:
+					continue
+				var cur: Vector2i = entry[0]
+				var key: Array = best[cur]
+				if int(key[0]) != c or int(key[1]) != f:
+					continue  # stale: a cheaper key reached this node
+				if _manhattan(cur, goal) == 1:
+					var node := cur
+					while prev[node] != start:
+						node = prev[node]
+					return node
+				for d in DIRS:
+					var nxt: Vector2i = cur + d
+					if not _open(nxt):
+						continue
+					var a := 1 if (not avoid.is_empty() and avoid.has(_terrain_kind(nxt))) else 0
+					var nc: int = c + 1 + Content.ENEMY_AVOID_COST * a
+					var nf: int = f + a
+					if best.has(nxt):
+						var have: Array = best[nxt]
+						if int(have[0]) < nc or (int(have[0]) == nc and int(have[1]) <= nf):
+							continue
+					best[nxt] = [nc, nf]
+					prev[nxt] = cur
+					while buckets.size() <= nc:
+						buckets.append([])
+						bucket_max_f.append(0)
+					buckets[nc].append([nxt, nf])
+					bucket_max_f[nc] = maxi(int(bucket_max_f[nc]), nf)
+		c += 1
 	return start
 
 
@@ -1626,6 +3341,14 @@ func _terrain_kind(p: Vector2i) -> String:
 	return ""
 
 
+## Who lit the fire at p: the casting ability id, the igniting enemy kind,
+## or "env" for a tile that carries no attribution.
+func _fire_by(p: Vector2i) -> String:
+	if terrain.has(p):
+		return String(terrain[p].get("by", "env"))
+	return "env"
+
+
 func _enemy_at(p: Vector2i):
 	for e in enemies:
 		if e["pos"] == p:
@@ -1634,7 +3357,10 @@ func _enemy_at(p: Vector2i):
 
 
 func _open(p: Vector2i) -> bool:
-	return _tile(p) == MapGen.T_FLOOR and _enemy_at(p) == null and p != player["pos"] and _terrain_kind(p) != "roots"
+	if _tile(p) != MapGen.T_FLOOR or _enemy_at(p) != null or p == player["pos"]:
+		return false
+	var k := _terrain_kind(p)
+	return k == "" or not bool(Content.terrain(k, "blocks", false))
 
 
 func _line_clear(a: Vector2i, b: Vector2i) -> bool:
@@ -1642,7 +3368,7 @@ func _line_clear(a: Vector2i, b: Vector2i) -> bool:
 	var dir := Vector2i(signi(delta.x), signi(delta.y))
 	var p := a + dir
 	while p != b:
-		if _tile(p) == MapGen.T_WALL or _enemy_at(p) != null or _terrain_kind(p) == "smoke":
+		if _tile(p) == MapGen.T_WALL or _enemy_at(p) != null or bool(Content.terrain(_terrain_kind(p), "blocks_beam", false)):
 			return false
 		p += dir
 	return true
