@@ -694,68 +694,124 @@ func _man(a: Vector2i, b: Vector2i) -> int:
 ## The owner's report was "text very small on screens, even moreso in the shop
 ## where they are 6 or more options". The cause was _txt_fit: one line, shrunk
 ## to as little as 9px to make a long description fit. _card wraps to two lines
-## now, but that only helps while the descriptions themselves stay short - so
-## this holds every shipped one to a size, at the smallest card the shrine can
-## draw. A new description that blows the budget fails the suite instead of
-## shipping unreadable.
-## Measured on the tree first, per the gate discipline: after the text pass ALL
-## 83 shipped card strings render at the full nominal size on the tightest card
-## the shrine can draw, so the gate is "no shrinking at all" rather than a wish.
-const CARD_MIN_PX := 30      # at 1080x2400, the tightest seven-offer shrine
-const CARD_MIN_RATIO := 1.0   # and never below the size the card asked for
+## now, but that only helps while the descriptions themselves stay short.
+##
+## The FIRST version of this gate measured one card at one viewport and was
+## nearly worthless: it picked the seven-offer shrine because that card is the
+## shortest, but a description's budget is set by WIDTH while the nominal it is
+## compared against is int(h * 0.19), which falls with height - so at n = 7 the
+## two happen to meet and "no shrinking" is free. It also never built a card
+## with the upgrade "+", which is the only thing on the head row that collides,
+## and it measured raw table rows rather than the strings the sheets compose.
+## It passed while 19 of the 39 upgrade cards drew their "+" through the slot
+## badge at 1080x2400 and while the eight-offer shrine drew 29px text.
+##
+## So: every card geometry a sheet can produce (shrine 1..8 offers, draft/drop,
+## forge), across the phone shapes people have, over the composed strings, and
+## the gate is APPARENT size - a fraction of viewport height - because that is
+## what "too small" means on a screen whose pixels are not a fixed size.
+const CARD_VIEWPORTS := [Vector2(540, 1200), Vector2(720, 1280), Vector2(1080, 1920),
+	Vector2(1080, 2400), Vector2(1080, 2640), Vector2(1440, 3200),
+	Vector2(1600, 2560), Vector2(2400, 1080)]
+## Measured on the tree first, per the gate discipline: the worst case is the
+## eight-offer shrine at 0.01167 of viewport height, so this line holds today.
+const CARD_MIN_VH := 0.0115
+const CARD_MAX_LINES := 2
 
 func _check_card_text() -> void:
 	var sh = _bare_shell()
-	var vw := 1080.0
-	var vh := 2400.0
-	# the shrine's worst case: seven cards, which is what squeezes the height
-	var top := vh * 0.16 + vh * 0.05
-	var ch: float = minf(vh * 0.105, maxf(vh * 0.06, (vh * 0.86 - top - vh * 0.02 * 6) / 7.0))
-	var r := Rect2(vw * 0.05, top, vw * 0.9, ch)
-	var worst := 999
-	var worst_id := ""
-	var over := 0
-	var strings: Array = []
+	var rows: Array = []
 	for aid in Content.ABILITY_DESC:
-		strings.append([aid, String(Content.ABILITY_DESC[aid])])
-	# the framing the shrine actually composes, worst case: a graft card carries
-	# its "Permanent" label, the resonance note its tags earn AND the two-offer
-	# tie-break line, so the string the player reads is much longer than the row
+		var d := String(Content.ABILITY_DESC[aid])
+		rows.append([aid, d])
+		# what the draft and drop sheets actually compose (_draft_cards /
+		# _drop_cards append the resonance note), not the bare table row
+		rows.append([aid + " +note", "%s  ·  +fire 3/3 would light Cinder Grip" % d])
+		rows.append([aid + " +breaks", "%s  ·  Cinder Grip out (fire 2/3)" % d])
 	for gid in Content.GRAFTS:
-		strings.append([gid, "Permanent  ·  %s  ·  +fire 2/3 Cinder Grip  ·  take one only"
+		rows.append([gid, "Permanent  ·  %s  ·  +fire 2/3 Cinder Grip  ·  take one only"
 			% Content.GRAFTS[gid]["desc"]])
 	for iid in Content.ITEMS:
-		strings.append([iid, "One use  ·  %s" % Content.ITEMS[iid]["desc"]])
+		rows.append([iid, "One use  ·  %s" % Content.ITEMS[iid]["desc"]])
 	for rid in Content.RESONANCES:
-		strings.append([rid, String(Content.RESONANCES[rid]["desc"])])
-	for row in strings:
-		var L := sh._card_layout(r, "ab_default", "Mycelium Dash", String(row[1]), "", 2)
-		var de: Dictionary = L["desc"]
-		var sz := int(de["size"])
-		if sz < worst:
-			worst = sz
-			worst_id = String(row[0])
-		if sz < CARD_MIN_PX or sz < int(de["nominal"]) * CARD_MIN_RATIO or de["lines"].size() > 2:
-			over += 1
-			if over <= 4:
-				print("  too long for a card: %s (%d px over %d lines, %d chars)" % [
-					row[0], sz, de["lines"].size(), String(row[1]).length()])
-	_check(over == 0, "%d description(s) do not fit a shrine card at 1080x2400" % over)
-	# the head row must not run into the badge or the price, and the last
-	# description line must land inside the card
-	var tight := sh._card_layout(r, "ab_default", "Mycelium Dash",
-		String(Content.ABILITY_DESC["mycelium_dash"]), "AFFINITY", 2)
-	var nm: Dictionary = tight["name"]
-	var nend: float = nm["pos"].x + sh.font.get_string_size(String(nm["text"]),
-		HORIZONTAL_ALIGNMENT_LEFT, -1, int(nm["size"])).x + 2 * float(tight["pips"]["step"])
-	_check(nend <= float(tight["badge"]["pos"].x),
-		"the name and its pips clear the slot badge (%.0f vs %.0f)" % [nend, tight["badge"]["pos"].x])
+		rows.append([rid, String(Content.RESONANCES[rid]["desc"])])
+	var worst := 9.9
+	var worst_at := ""
+	var too_small := 0
+	var too_many := 0
+	var collisions := 0
+	var worst_over := 0.0
+	var worst_col := ""
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		var top: float = vh * 0.16 + vh * 0.05
+		var heights: Array = []
+		# _draw_shop's own arithmetic, for every offer count _shop_cards can emit:
+		# heal + ability + 2 grafts + 2 press + forge + reroll is 8 (the item card
+		# cannot coexist with the press cards), and 8 is a late-career board - the
+		# player with the most to read gets the smallest type
+		for n in range(1, 9):
+			heights.append(minf(vh * 0.105, maxf(vh * 0.06,
+				(vh * 0.86 - top - vh * 0.02 * (n - 1)) / n)))
+		heights.append(vh * 0.105)  # draft and drop
+		heights.append(vh * 0.115)  # the forge's fork sheet
+		for h in heights:
+			var r := Rect2(vw * 0.05, top, vw * 0.9, h)
+			for row in rows:
+				var L := sh._card_layout(r, "ab_default", "Mycelium Dash", String(row[1]), "", 2)
+				var de: Dictionary = L["desc"]
+				var frac: float = float(de["size"]) / vh
+				if de["lines"].size() > CARD_MAX_LINES:
+					too_many += 1
+				if frac < CARD_MIN_VH:
+					too_small += 1
+				if frac < worst:
+					worst = frac
+					worst_at = "%s at %dx%d, card %dpx -> %dpx" % [
+						row[0], int(vw), int(vh), int(h), int(de["size"])]
+			# the head row must clear whatever sits on the card's right edge. The
+			# name is _fit_size'd, so a long one grows until it meets its allowance
+			# and the pips and the "+" are drawn AFTER it - reserve or collide.
+			for aid2 in Content.ABILITIES:
+				var nm := String(Content.ABILITIES[aid2]["name"])
+				var upg: bool = Content.is_upgrade(aid2)
+				for badge in ["UPGRADE", "AFFINITY", "BREAKS", ""]:
+					var L2 := sh._card_layout(r, "ab_default", nm, "x", badge,
+						int(Content.ABILITIES[aid2]["cost"]), 12 if badge == "" else -1, upg)
+					var end_x: float = float(L2["name"]["pos"].x) + sh.font.get_string_size(
+						nm, HORIZONTAL_ALIGNMENT_LEFT, -1, int(L2["name"]["size"])).x
+					if L2.has("up"):
+						end_x = float(L2["up"]["pos"].x) + sh.font.get_string_size(
+							"+", HORIZONTAL_ALIGNMENT_LEFT, -1, int(L2["up"]["size"])).x
+					elif int(L2["pips"]["n"]) > 0:
+						end_x = float(L2["pips"]["pos"].x) \
+							+ (int(L2["pips"]["n"]) - 1) * float(L2["pips"]["step"]) \
+							+ float(L2["pips"]["radius"])
+					var lim: float = r.position.x + r.size.x
+					if L2.has("badge"):
+						lim = float(L2["badge"]["pos"].x)
+					elif L2.has("price"):
+						lim = float(L2["price"]["icon_pos"].x)
+					if end_x > lim:
+						collisions += 1
+						if end_x - lim > worst_over:
+							worst_over = end_x - lim
+							worst_col = "%s + %s at %dx%d card %dpx" % [nm, badge, int(vw), int(vh), int(h)]
+	_check(too_small == 0, "%d card description(s) below %.2f%% of viewport height (worst: %s)" % [
+		too_small, CARD_MIN_VH * 100.0, worst_at])
+	_check(too_many == 0, "%d card description(s) need more than %d lines" % [too_many, CARD_MAX_LINES])
+	_check(collisions == 0, "%d head row(s) overrun the badge or price by up to %.0fpx (worst: %s)" % [
+		collisions, worst_over, worst_col])
+	# and the last description line has to land inside the card
+	var tight := sh._card_layout(Rect2(0, 0, 1080 * 0.9, 2400 * 0.105), "ab_default",
+		"Mycelium Dash", String(Content.ABILITY_DESC["mycelium_dash"]), "AFFINITY", 2)
 	var de2: Dictionary = tight["desc"]
 	var last: float = float(de2["pos"].y) + float(de2["line_h"]) * (de2["lines"].size() - 1)
-	_check(last + float(de2["size"]) * 0.3 <= r.position.y + r.size.y,
+	_check(last + float(de2["size"]) * 0.3 <= 2400 * 0.105,
 		"the last description line lands inside the card")
-	print("card text: %d strings, smallest %d px (%s) on a %d px card" % [
-		strings.size(), worst, worst_id, int(ch)])
+	print("card text: %d strings x %d viewports x 10 card geometries, worst %.4f%% of vh (%s)" % [
+		rows.size(), CARD_VIEWPORTS.size(), worst * 100.0, worst_at])
 	sh.free()
 
 

@@ -376,18 +376,57 @@ The wrap is the point. Descriptions used to be a single `_txt_fit` line, and
 `_fit_size` shrinks a font to as little as 9px to make a long line fit: on a
 1080x2400 phone the worst shrine card rendered its description at **11px**.
 Wrapping alone was not enough — the strings had to come down too, from a
-longest of 144 characters to 81. Both halves are held by
-`tests/test_shell.gd` `_check_card_text`, which lays out every shipped
-ability, graft, item and resonance description on the tightest card a
-seven-offer shrine can draw and fails if any of them has to shrink at all.
-All 84 render at the full nominal size (34px at 1080x2400). A new
-description that blows the budget fails the suite instead of shipping
-unreadable.
+longest of 144 characters to 81.
+
+`tests/test_shell.gd` `_check_card_text` holds both halves, and it is worth
+knowing why it looks the way it does. Its first version measured ONE card at
+ONE viewport — the seven-offer shrine, on the reasoning that the shortest card
+is the tightest. That is wrong: a description's budget is set by WIDTH, while
+the nominal it is compared against is `int(h * 0.19)`, which falls with
+height. At seven offers the two happen to meet, so "nothing shrinks" was free,
+and the gate passed while the eight-offer shrine drew 29px text and 19 of the
+39 upgrade cards drew their `+` straight through the slot badge.
+
+So the gate sweeps every card geometry a sheet can produce — the shrine at
+**1 to 8** offers (heal + ability + 2 grafts + 2 press + forge + reroll; the
+item card cannot coexist with the press cards, so 8 is the ceiling), the draft
+and drop sheets, the forge — across eight viewports from 540x1200 to a
+portrait tablet and one landscape shape, over the strings the sheets
+**compose** rather than the raw table rows. It checks three things:
+
+- apparent size: no description below **1.15% of viewport height**. A fraction,
+  not a pixel count, because pixels are not a fixed size — the measured worst
+  is the eight-offer shrine at 1.167%
+- no description needing more than two lines (`_wrap` never truncates, so this
+  would be a font drop, not lost text)
+- the head row clearing whatever sits on the right edge, **with the upgrade
+  `+` drawn**, against both the badge and the price
+
+That last one is the one that had a live bug. `_fit_size` grows a name until
+it meets its allowance, and the pips and the `+` are drawn *after* it, so the
+allowance has to reserve them. It reserved `pips * h*0.15` and nothing else —
+not the leading gap, not the `+`. Because that tail is sized in card height
+and `h/vw` grows with the aspect ratio, the overrun was absent at 16:9 and
+present from 18:9 up: 19 of 39 upgrade cards at 1080x2400, 30 at 1080x2640,
+by as much as 54px. Restoring the old allowance fails the gate with 1611
+collisions.
 
 `_shop_cards`, `_draft_cards` and `_drop_cards` return those cards as data
 (`[icon, name, desc, tag, ...]`) before anything is drawn, which is how the
 headless test asserts what a sheet offers and how `tests/render_sheet.gd`
 draws the same sheet as an SVG.
+
+Two rules the same pass bought elsewhere. The **hold-tooltip** wraps now too
+(`_draw_tooltip`): it fitted each line to one `_txt_fit` line, so the same
+`ABILITY_DESC` row a card shows at 34px landed there at **25px** — and because
+the lines share one size, the widest dragged the enemy's name and HP down with
+it. And a sheet's trailing button goes through `_sheet_button_y`, which keeps
+it inside the sheet's own panel: a button whose `y` accumulates behind a
+variable card count walks off the bottom, and the drop sheet's BACK (five kit
+cards, the only shape that sheet has) landed **32px below the frame and 52px
+from the screen edge** — inside Android's home-gesture strip, on the one
+control that leaves a sheet the player is forced to resolve. The shrine's
+CLOSE never moved because it is pinned at a constant `vh*0.885`.
 
 ## The descent draft
 

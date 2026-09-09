@@ -1258,13 +1258,39 @@ architecture below is designed to bend rather than block.
   `Content.ABILITY_DESC` row 144 chars -> 81, and the shell's own framing
   with them ("Graft (permanent): " -> "Permanent  ·  ",
   "Consumable: " -> "One use  ·  ", prices out of the name entirely). Both
-  halves are gated: `tests/test_shell.gd` `_check_card_text` lays out every
-  shipped ability, graft, item and resonance description on the tightest card
-  a seven-offer shrine can draw and fails if ANY has to shrink — measured on
-  the tree first, per the gate discipline, and all 84 render at the full
-  nominal 34px, so the line is a property that holds and not a wish. New
-  content that blows the budget fails the suite instead of shipping
-  unreadable.
+  halves are gated by `tests/test_shell.gd` `_check_card_text`, and the FIRST
+  version of that gate is the cautionary tale: it measured one card at one
+  viewport (the seven-offer shrine, on the reasoning that the shortest card is
+  the tightest) and was nearly worthless, because a description's budget is set
+  by WIDTH while the nominal it is compared against is `int(h * 0.19)`, which
+  falls with height — at n=7 the two meet, so "nothing shrinks" is free. It
+  passed while the EIGHT-offer shrine drew 29px and while 19 of the 39 upgrade
+  cards drew their `+` through the slot badge. It now sweeps every geometry a
+  sheet can produce (shrine 1..8 offers, draft/drop, forge) over eight
+  viewports and over the strings the sheets COMPOSE, and checks three things:
+  apparent size as a FRACTION of viewport height (>= 1.15%; pixels are not a
+  fixed size, and the measured worst is the eight-offer shrine at 1.167%), no
+  description over two lines, and the head row clearing the badge or the price
+  WITH the upgrade `+` drawn. That last one caught a live bug: the name
+  allowance reserved `pips * h*0.15` and neither the leading gap nor the `+`,
+  and because the tail is sized in card height while `h/vw` grows with the
+  aspect ratio, the overrun was absent at 16:9 and present from 18:9 up.
+  Restoring the old allowance fails the gate with 1611 collisions.
+- A sheet's trailing button goes through `shell/main.gd` `_sheet_button_y`: a
+  button whose `y` accumulates behind a variable card count walks out of the
+  panel, and the drop sheet's BACK (five kit cards, the only shape that sheet
+  has) landed 32px BELOW the frame and 52px from the screen edge - inside
+  Android's home-gesture strip, on the one control that leaves a sheet the
+  player is FORCED to resolve. The shrine's CLOSE never moved because it is
+  pinned at a constant `vh*0.885`.
+- The hold-tooltip WRAPS (`_draw_tooltip`), for the same reason the cards do:
+  it fitted each line to one `_txt_fit` line, so the ABILITY_DESC row a card
+  shows at 34px landed there at 25px, and because the lines share one size the
+  widest one dragged the enemy's name and HP down with it.
+- `! INCOMING` in the status strip is `_txt_fit` into the gap left by the
+  RIGHT-ALIGNED floor and green readouts, which have to be measured first: it
+  used to start at a fixed x with no width budget and ran ~280px through them
+  at 1080x2400, on the one line that is telling you something is about to hit.
 - CLEANSE reaches a tile BESIDE the tender, and only corruption. Its refusal
   is `shell/main.gd` `_cleanse_hint`, because "no corruption beside you" was
   the only answer and it is a LIE in the two cases that happen: standing ON

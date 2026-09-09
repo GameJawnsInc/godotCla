@@ -7,6 +7,11 @@ extends SceneTree
 ## Run: SHEET=shop SHEET_OUT=/tmp/shop.svg godot --headless --path . \
 ##   --script tests/render_sheet.gd
 ## SHEET=shop|draft|drop  SHEET_W/SHEET_H (default 1080x2400, a phone)
+## CAVEAT: every position and size here comes from the real _card_layout, but
+## the SVG names a web font while the shell draws ThemeDB.fallback_font - so
+## the line BREAKS are the shipped ones and the glyph widths are not. Trust
+## tests/test_shell.gd _check_card_text for whether text fits; trust this for
+## what the sheet looks like.
 ## SHEET_SEED / SHEET_ACTIONS pick the run state; SHEET_BLOOM funds the purse.
 
 const Game := preload("res://sim/game.gd")
@@ -69,6 +74,17 @@ func _draw_card(L: Dictionary, r: Rect2, afford: bool) -> void:
 		ly += float(de["line_h"])
 
 
+func _draw_button(r: Rect2, label: String, size: int, vh: float) -> void:
+	out_svg.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" rx="%.1f" fill="#243424" stroke="#8d9a86" stroke-width="2"/>' % [
+		r.position.x, r.position.y, r.size.x, r.size.y, clampf(r.size.y * 0.22, 8, 22)])
+	out_svg.append(_text(r.get_center().x, r.get_center().y + size * 0.35, label, "#d8e0d4", size)
+		.replace("<text ", '<text text-anchor="middle" '))
+	# the panel frame, so a button that walks out of it is visible in the picture
+	if r.position.y + r.size.y > vh * 0.965:
+		out_svg.append(_text(r.position.x, r.end.y + vh * 0.012,
+			"^ this button is outside the sheet panel", "#e04b3a", int(vh * 0.016)))
+
+
 func _init() -> void:
 	var which := OS.get_environment("SHEET")
 	if which == "":
@@ -109,6 +125,15 @@ func _init() -> void:
 		snap = g.snapshot()
 		title = "DESCENT DRAFT"
 		if which == "drop":
+			# the drop sheet only exists on a FULL kit, which is the only shape it
+			# ever has - and the shape whose trailing button used to walk off the
+			# bottom of the panel
+			while g.player["kit"].size() < Content.KIT_MAX:
+				for cand in Content.DRAFT_POOL:
+					if not g.player["kit"].has(cand):
+						g.player["kit"].append(cand)
+						break
+			snap = g.snapshot()
 			sh.mode = "draft_drop"
 			sh.mode_pick = 0
 			cards = sh._drop_cards(snap)
@@ -136,18 +161,30 @@ func _init() -> void:
 			_draw_card(sh._card_layout(r, String(c[0]), String(c[1]), String(c[2]), "", int(c[5]), price),
 				r, bloom >= price)
 			y += bh + gap
+		_draw_button(Rect2(vw * 0.25, vh * 0.885, vw * 0.5, vh * 0.07), "CLOSE", int(vh * 0.026), vh)
 	else:
 		out_svg.append(_text(vw * 0.06, y, "Take one down with you:", "#d8e0d4", int(vh * 0.024)))
 		y += vh * 0.038
+		# _draw_draft's own spacing: the ELEMENTS strip costs vh*0.028 when it is
+		# drawn and vh*0.017 when it is not, and the drop sheet never draws it
 		var rl := sh._resonance_line(snap)
-		if rl != "":
+		if rl != "" and which != "drop":
 			out_svg.append(_text(vw * 0.06, y, "ELEMENTS  %s" % rl, "#97a29a", int(vh * 0.019)))
-		y += vh * 0.028
+			y += vh * 0.028
+		else:
+			y += vh * 0.017
+		if which == "drop":
+			out_svg.append(_text(vw * 0.06, y, "Kit full - tap what to DROP:", "#e04b3a", int(vh * 0.024)))
+			y += vh * 0.05
 		for c in cards:
 			var r2 := Rect2(vw * 0.05, y, vw * 0.9, bh)
 			_draw_card(sh._card_layout(r2, String(c[0]), String(c[1]), String(c[2]),
 				String(c[4]), int(c[5]), -1, bool(c[6])), r2, true)
 			y += bh + vh * 0.02
+		y += vh * 0.02 if which == "drop" else vh * 0.015
+		var blabel := "BACK" if which == "drop" else "skip - +1 affinity offer next draft"
+		_draw_button(Rect2(vw * 0.25, sh._sheet_button_y(y, bh * 0.65, vh), vw * 0.5, bh * 0.65),
+			blabel, int(bh * 0.24), vh)
 	out_svg.append("</svg>")
 	var doc := "\n".join(PackedStringArray(out_svg))
 	var f := FileAccess.open(out, FileAccess.WRITE)

@@ -2302,18 +2302,26 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	if snap["smog"] >= choke:
 		var pulse := 0.45 + 0.35 * sin(Time.get_ticks_msec() / 180.0)
 		draw_rect(Rect2(mx - 2, y2 - 2, mw + 4, mh + 4), Color(0.88, 0.29, 0.23, pulse), false, 2.0)
-	if _threat_tiles(snap).has(pl["pos"]):
-		_txt(Vector2(mx + mw + vw * 0.03, y2 + mh), "! INCOMING", COL_RED, int(vh * 0.021))
+	# the floor and green readouts are RIGHT-aligned, so they have to be measured
+	# before "! INCOMING" is drawn - it used to start at a fixed x with no width
+	# budget at all and ran straight through them (~280px of overlap at
+	# 1080x2400, on the one line that is telling you something is about to hit)
 	var fl := "floor %d/7" % snap["floor"]
 	var fsz := int(vh * 0.02)
 	var fw := font.get_string_size(fl, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x
 	_txt(Vector2(vw - fw - vw * 0.025, y2 + mh), fl, COL_GOLD, fsz)
+	var right_edge := vw - fw - vw * 0.045
 	if int(snap["green_need"]) > 0:
 		var gl := "green %d/%d" % [snap["greened"], snap["green_need"]]
 		var done: bool = int(snap["greened"]) >= int(snap["green_need"])
 		var gw := font.get_string_size(gl, HORIZONTAL_ALIGNMENT_LEFT, -1, int(vh * 0.016)).x
 		_txt(Vector2(vw - fw - gw - vw * 0.055, y2 + mh), gl,
 			Color(0.6, 0.85, 0.55) if not done else COL_DIM_TEXT, int(vh * 0.016))
+		right_edge = vw - fw - gw - vw * 0.075
+	if _threat_tiles(snap).has(pl["pos"]):
+		var ix := mx + mw + vw * 0.02
+		_txt_fit(Vector2(ix, y2 + mh), "! INCOMING", COL_RED, int(vh * 0.021),
+			maxf(right_edge - ix, vw * 0.06))
 	_status_end = pad + row_h * 1.35 + mh + vh * 0.022
 	# Block D5: the elements strip, drawn under the config line - a lit tag in
 	# caps, a tag still short of its threshold in lower case with its count.
@@ -2849,15 +2857,24 @@ func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
 
 
 func _draw_tooltip(vw: float, vh: float) -> void:
+	# WRAP, don't shrink. Fitting each line to one _txt_fit line put the same
+	# ABILITY_DESC row a card shows at 34px into this box at 25px - and because
+	# the lines share one size, the widest one dragged the enemy's name and HP
+	# down with it. Two lines per tooltip line, at the size the box asked for.
 	var fsz := int(vh * 0.021)
+	var rows: Array = []
 	for line in tooltip:
-		fsz = _fit_size(line, fsz, vw * 0.9)
+		var w := _wrap(String(line), fsz, vw * 0.86, 2)
+		fsz = mini(fsz, int(w["size"]))
+	for i in tooltip.size():
+		for l in _wrap(String(tooltip[i]), fsz, vw * 0.86, 2)["lines"]:
+			rows.append([String(l), i])
 	var bw := 0.0
-	for line in tooltip:
-		bw = maxf(bw, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x)
+	for row in rows:
+		bw = maxf(bw, font.get_string_size(String(row[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x)
 	bw += vw * 0.04
 	var lh := fsz * 1.5
-	var bh := tooltip.size() * lh + vh * 0.018
+	var bh := rows.size() * lh + vh * 0.018
 	var anchor := Vector2(vw / 2.0, vh * 0.3)
 	if tooltip_tile != Vector2i(-1, -1):
 		var r := _tile_rect(tooltip_tile)
@@ -2869,9 +2886,21 @@ func _draw_tooltip(vw: float, vh: float) -> void:
 	draw_rect(Rect2(bx, by, bw, bh), Color(0.03, 0.05, 0.04, 0.97))
 	draw_rect(Rect2(bx, by, bw, bh), COL_GOLD, false, 1.5)
 	var y := by + lh * 0.85
-	for i in tooltip.size():
-		_txt(Vector2(bx + vw * 0.02, y), tooltip[i], COL_TEXT if i == 0 else COL_DIM_TEXT, fsz)
+	for row in rows:
+		_txt(Vector2(bx + vw * 0.02, y), String(row[0]),
+			COL_TEXT if int(row[1]) == 0 else COL_DIM_TEXT, fsz)
 		y += lh
+
+
+## Keep a sheet's trailing button inside the sheet's own panel. A button whose
+## y accumulates behind a variable number of cards walks off the bottom: the
+## drop sheet's BACK (five kit cards, which is the only shape that sheet has)
+## landed 32px below the frame and 52px from the screen edge at 1080x2400 -
+## inside Android's home-gesture strip, on the one control that leaves a sheet
+## the player is FORCED to resolve. The shrine's CLOSE never moved because it
+## is pinned at a constant vh*0.885; these are pinned to the same floor.
+func _sheet_button_y(y: float, h: float, vh: float) -> float:
+	return minf(y, vh * 0.955 - h)
 
 
 func _sheet(vw: float, vh: float, title: String) -> float:
@@ -2982,7 +3011,19 @@ func _card_layout(r: Rect2, icon: String, name_: String, desc: String,
 		out["price"] = {"text": ps, "pos": Vector2(right, base_y), "size": psz,
 			"icon_pos": ipos, "icon_size": psz}
 		right -= h * 0.1
-	var nsz := _fit_size(name_, int(h * 0.28), maxf(right - name_x - pips * h * 0.15, h * 0.6))
+	# reserve what the head row draws AFTER the name - the gap, the pips and the
+	# upgrade "+" - before fitting the name into what is left. Reserving only
+	# "pips * h*0.15" (and flooring the allowance at h*0.6) let _fit_size grow a
+	# long name right up to the badge and then drew the "+" past it: 19 of the 39
+	# upgrade cards collided at 1080x2400 and 30 at 1080x2640, none at 16:9,
+	# because the tail is sized in h and h/vw grows with the aspect ratio
+	var plus_sz := int(h * 0.28)
+	var tail := 0.0
+	if pips > 0 or up:
+		tail = h * 0.13 + pips * h * 0.14
+		if up:
+			tail += h * 0.02 + font.get_string_size("+", HORIZONTAL_ALIGNMENT_LEFT, -1, plus_sz).x
+	var nsz := _fit_size(name_, int(h * 0.28), maxf(right - name_x - tail, h * 0.2))
 	out["name"] = {"text": name_, "pos": Vector2(name_x, base_y), "size": nsz}
 	# cost pips: the same dots, in the same gold, as the ability bar draws under
 	# every slot - the number is never spelled out twice
@@ -2992,7 +3033,7 @@ func _card_layout(r: Rect2, icon: String, name_: String, desc: String,
 	# the same gold "+" the ability bar puts on a grown slot, so the word
 	# "upgrade" never has to be spelled out on a card that is short of width
 	if up:
-		out["up"] = {"pos": Vector2(px + pips * h * 0.14 + h * 0.02, base_y), "size": int(h * 0.28)}
+		out["up"] = {"pos": Vector2(px + pips * h * 0.14 + h * 0.02, base_y), "size": plus_sz}
 	var wrapped := _wrap(desc, int(h * 0.19), r.size.x - pad * 2.0, 2)
 	var dlines: Array = wrapped["lines"]
 	var dsz: int = int(wrapped["size"])
@@ -3180,7 +3221,8 @@ func _draw_forge_variants(vw: float, vh: float) -> void:
 			_ability_desc(vid), "forgevar:%d" % vi, vh, "", int(adef["cost"]), -1, true, true)
 		y += bh + vh * 0.02
 	y += vh * 0.015
-	_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.6), "BACK", "forge_back", int(bh * 0.24))
+	_button(Rect2(vw * 0.25, _sheet_button_y(y, bh * 0.6, vh), vw * 0.5, bh * 0.6),
+		"BACK", "forge_back", int(bh * 0.24))
 
 
 func _draw_logsheet(vw: float, vh: float) -> void:
@@ -3240,7 +3282,7 @@ func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 				String(c[3]), vh, String(c[4]), int(c[5]), -1, true, bool(c[6]))
 			y += bh + vh * 0.02
 		y += vh * 0.015
-		_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.65),
+		_button(Rect2(vw * 0.25, _sheet_button_y(y, bh * 0.65, vh), vw * 0.5, bh * 0.65),
 			"skip again - +1 affinity next draft" if spent
 				else "skip - +1 affinity offer next draft",
 			"skip_draft", int(bh * 0.24))
@@ -3251,7 +3293,8 @@ func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 				String(c[3]), vh, String(c[4]), int(c[5]), -1, true, bool(c[6]))
 			y += bh + vh * 0.02
 		y += vh * 0.02
-		_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.65), "BACK", "draft_back", int(bh * 0.26))
+		_button(Rect2(vw * 0.25, _sheet_button_y(y, bh * 0.65, vh), vw * 0.5, bh * 0.65),
+			"BACK", "draft_back", int(bh * 0.26))
 
 
 func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
