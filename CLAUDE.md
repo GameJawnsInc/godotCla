@@ -133,7 +133,10 @@ architecture below is designed to bend rather than block.
   - `godot --headless --path . --script tests/test_meta.gd` — career unlocks, profile io,
     mutator invariants, package pools
   - `godot --headless --path . --script tests/test_shell.gd` — shell smoke test
-    (the shell reads the sim, so a sim change can break it)
+    (the shell reads the sim, so a sim change can break it), plus the two
+    player-facing gates: `_check_card_text` holds every shipped description
+    to a readable size on the tightest shrine card, and `_check_cleanse_hint`
+    holds CLEANSE's refusal to the truth
 - Bots live in one registry, `bots/roster.gd` (`Roster.names()/make(name, seed)`);
   every runner resolves persona names through it, and an unknown name fails
   loudly. `deeproot_rollout` is deeproot with rollout drafting (a separate
@@ -1235,8 +1238,43 @@ architecture below is designed to bend rather than block.
 - Human shell (`shell/`): SVG-sprite Godot scene over the sim — see
   `docs/SHELL.md` for controls. `tests/test_shell.gd` smoke-tests it
   headless; `tests/render_frame.gd` renders any game state as a standalone
-  SVG screenshot (the agent's way to see the shell). Sprites are hand-written
+  SVG screenshot and `tests/render_sheet.gd` does the same for a shrine or
+  draft SHEET (`SHEET=shop|draft|drop`), which is where the reading happens —
+  both are the agent's way to see the shell. Sprites are hand-written
   SVG strings in `shell/svg_art.gd`. The sim must never depend on the shell.
+- Every choice card — shrine, draft, drop, forge — is ONE function
+  (`shell/main.gd` `_card`) over ONE layout dict (`_card_layout`), and the
+  three card lists (`_shop_cards` / `_draft_cards` / `_drop_cards`) are data
+  before anything is drawn, so the headless test asserts what a sheet offers
+  and `tests/render_sheet.gd` draws the same dict as SVG. A card is: name on
+  the head row, charge cost as the ability bar's own gold PIPS (never also
+  spelled out), a gold `+` for an upgrade, EITHER a slot badge or a bloom
+  price on the right edge (red when the purse cannot meet it), and the
+  description across the card's full width WRAPPED onto two lines. The wrap
+  is the fix for a real report: a description was one `_txt_fit` line and
+  `_fit_size` shrinks to 9px to make a long line fit, so the worst shrine
+  card rendered its description at ELEVEN PIXELS on a 1080x2400 phone.
+  Wrapping alone was not enough - the strings came down too, longest
+  `Content.ABILITY_DESC` row 144 chars -> 81, and the shell's own framing
+  with them ("Graft (permanent): " -> "Permanent  ·  ",
+  "Consumable: " -> "One use  ·  ", prices out of the name entirely). Both
+  halves are gated: `tests/test_shell.gd` `_check_card_text` lays out every
+  shipped ability, graft, item and resonance description on the tightest card
+  a seven-offer shrine can draw and fails if ANY has to shrink — measured on
+  the tree first, per the gate discipline, and all 84 render at the full
+  nominal 34px, so the line is a property that holds and not a wish. New
+  content that blows the budget fails the suite instead of shipping
+  unreadable.
+- CLEANSE reaches a tile BESIDE the tender, and only corruption. Its refusal
+  is `shell/main.gd` `_cleanse_hint`, because "no corruption beside you" was
+  the only answer and it is a LIE in the two cases that happen: standing ON
+  the slick, and a slick the tender's own lance set alight (fire is not
+  corruption until it burns down to ash, which IS). Both read as a soft lock
+  from the player's seat - the tutorial's last cleanse step allows no ability,
+  so a player told there is nothing there has nothing left to try. Reported
+  by the owner as "wasn't able to clean up the second oil spill".
+  `tests/test_shell.gd` `_check_cleanse_hint` drives all three refusals and
+  then checks the ash the burning one promises really does open the aim.
 - Going back is ONE function (`shell/main.gd` `_back(quit_at_root)`), and it is
   the only place in the shell that implements "back". Android's Back button
   reaches it through `_notification(NOTIFICATION_WM_GO_BACK_REQUEST)` (with
@@ -1263,6 +1301,12 @@ architecture below is designed to bend rather than block.
   `_check_aim_cancel` / `_check_modal_dpad` drive the notification itself and
   assert an adjacent enemy's HP, the tender's position, the charge and the turn
   counter are all untouched.
+- The tutorial floor (`shell/tutorial.gd` ROOM) puts its second slick OFF the
+  golem's row on purpose: the guide teaches lancing down that row two steps
+  before it asks for a cleanse, the lance ignites oil, and a burning tile is
+  not corruption - so CLEANSE refuses the step's own target until the fire
+  burns out. The last cleanse step says "the last of it", never "the last
+  oil", because by then the tile can be ash.
 - The career profile is written ATOMICALLY (`meta/profile.gd` `save`: temp file,
   then rename) because it is saved exactly when a run ends, and a phone can
   take the app away mid-write; `load_from` accepts only a Dictionary (a JSON

@@ -20,6 +20,14 @@ script. To change the tutorial, edit that one file — and note that
 sim or content change that breaks the script fails the suite instead of
 shipping a broken tutorial.
 
+Two things in that room are the way they are because of the cleanse steps.
+The second slick sits **off the golem's row**: the guide teaches lancing
+down that row two steps earlier, the lance ignites oil, and a burning tile
+is not corruption — so CLEANSE refuses it until it burns down to ash, which
+is the step's own instruction turned into a dead end. And the last cleanse
+step says "the last of it" rather than "the last oil", because by then the
+tile may be ash.
+
 A thin Godot scene over the sim (style guide §1/§4): it draws `snapshot()`
 with runtime-rasterized SVG sprites and forwards input as `step()` actions.
 The sim has no idea it exists.
@@ -81,6 +89,24 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
 - CLEANSE / DESCEND / HELP buttons bottom-right
 - tap shop cards at a shrine, draft options between floors
 - after a run: tap anywhere for the next seed
+
+## Why CLEANSE refused
+
+`CLEANSE` reaches a tile **beside** you, and only corruption. Its refusal
+used to be "no corruption beside you" in every case, which is a lie in the
+two that actually happen — and both read as a dead end, because a player
+standing next to the thing the game just told them to clean is out of ideas.
+`shell/main.gd` `_cleanse_hint` names the real reason:
+
+| what is true | what it says |
+| --- | --- |
+| you are standing on the slick | `you're standing on it - step off first` |
+| the slick is on fire | `still burning - wait for the ash` |
+| nothing corrupt within reach | `no corruption beside you` |
+
+Fire is not corruption; ash is. `tests/test_shell.gd` `_check_cleanse_hint`
+drives all three and then checks that the ash the second one promises really
+does open the aim.
 
 ## The Back button
 
@@ -234,6 +260,21 @@ FRAME_SEED=3 FRAME_BOT=deeproot FRAME_ACTIONS=215 FRAME_OUT=/tmp/frame.svg \
 `FRAME_ASH=<n>` stamps n ash tiles beside the player before rendering, so
 the burnt-oil tile can be seen without waiting for a fire to expire.
 
+`tests/render_sheet.gd` does the same for the **sheets**, which is where the
+reading happens — a shrine deals up to seven offers at once:
+
+```
+SHEET=shop SHEET_OUT=/tmp/shop.svg godot --headless --path . \
+  --script tests/render_sheet.gd
+```
+
+`SHEET=shop|draft|drop`, `SHEET_W`/`SHEET_H` (default 1080x2400, a phone),
+`SHEET_SEED`/`SHEET_BLOOM`. It renders `shell/main.gd`'s own `_card_layout`
+dict rather than a second copy of the layout, and it prints the smallest
+description size on the sheet — the number the card gate below is about.
+SVG only: Godot's own rasterizer drops `<text>`, so a PNG from here would be
+the layout with every word missing.
+
 `tests/test_shell.gd` is the shell's headless smoke test (sprite
 rasterization, input handlers driving the sim, the whole tutorial script,
 the shrine sheet's choice sinks, run restore, log retention and import),
@@ -288,14 +329,15 @@ The same readout appears on the three sheets where the count can move:
 
 - **the descent draft** - the strip is repeated under the sheet head, and any
   card that touches a resonating element carries a clause of its own:
-  `+fire 3/3 - lights Cinder Grip` for the card that crosses the threshold,
+  `+fire 3/3 lights Cinder Grip` for the card that crosses the threshold,
   `+fire 2/3 Cinder Grip` for progress toward one, and nothing at all for a
   card of an element already lit. On a FULL kit the same card reads
-  `+fire 3/3 - would light Cinder Grip`: the draft is a swap and the drop is
+  `+fire 3/3 would light Cinder Grip`: the draft is a swap and the drop is
   not chosen yet, so the offer sheet cannot promise the light
 - **the drop sheet** (a full kit) - a card whose loss would put a lit element
   out is badged **BREAKS** and says which:
-  `BREAKS Cinder Grip (fire 2/3)`. This sheet knows BOTH halves of the swap,
+  `Cinder Grip out (fire 2/3)` (the badge carries the word, so the note does
+  not repeat it). This sheet knows BOTH halves of the swap,
   so the count is netted against the card being taken: dropping one fire card
   to take another leaves the count where it was and is not badged. The
   strip itself is left off that sheet - it is the taller of the two (five kit
@@ -307,6 +349,45 @@ The same readout appears on the three sheets where the count can move:
 
 The game-over sheet names what the run ended up resonating
 (`resonating: Cinder Grip`), and the intro card says the rule in one line.
+
+## Choice cards
+
+Every offer the game asks you to pick between — a shrine's seven, a draft's
+three or four, the forge's two, the drop sheet's five — is drawn by one
+function, `shell/main.gd` `_card`, over one layout dict, `_card_layout`. A
+card is:
+
+```
+ [icon]  Sun Flare  ●●   +            AFFINITY   <- or a bloom price
+         2 dmg within 2, +1 in fire, ignites oil
+         · Growth: -1 cost, +1 radius
+```
+
+- the **name** is the head row, at `0.28` of the card height
+- the **charge cost** is pips, the same gold dots the ability bar draws under
+  every slot, so the number is never also spelled out in words
+- a **`+`** in gold marks an upgrade, again matching the bar
+- the right edge carries EITHER the draft's slot label (AFFINITY / UPGRADE /
+  WILD / FOCUS / BREAKS) OR the shrine's price beside the bloom sprite, drawn
+  **red when your purse cannot meet it** — never both
+- the **description** gets the card's full width and wraps onto two lines
+
+The wrap is the point. Descriptions used to be a single `_txt_fit` line, and
+`_fit_size` shrinks a font to as little as 9px to make a long line fit: on a
+1080x2400 phone the worst shrine card rendered its description at **11px**.
+Wrapping alone was not enough — the strings had to come down too, from a
+longest of 144 characters to 81. Both halves are held by
+`tests/test_shell.gd` `_check_card_text`, which lays out every shipped
+ability, graft, item and resonance description on the tightest card a
+seven-offer shrine can draw and fails if any of them has to shrink at all.
+All 84 render at the full nominal size (34px at 1080x2400). A new
+description that blows the budget fails the suite instead of shipping
+unreadable.
+
+`_shop_cards`, `_draft_cards` and `_drop_cards` return those cards as data
+(`[icon, name, desc, tag, ...]`) before anything is drawn, which is how the
+headless test asserts what a sheet offers and how `tests/render_sheet.gd`
+draws the same sheet as an SVG.
 
 ## The descent draft
 

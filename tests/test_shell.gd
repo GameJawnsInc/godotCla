@@ -177,7 +177,7 @@ func _init() -> void:
 	shell3._ability_press(2)  # mycelium_dash: the mobility slot is never scrap
 	_check(shell3.game.player["kit"].size() == ksz and shell3.mode == "up_scrap",
 		"the forge refuses to scrap the mobility ability")
-	_check(shell3.flash == "cannot scrap your mobility ability", "...and says why")
+	_check(shell3.flash == "can't scrap your mobility ability", "...and says why")
 	shell3._ability_press(1)
 	# Block D6: solar_lance is a FORKED base, so the sim lists one forge action
 	# per (keep, scrap, variant) triple and the scrap tap opens the fork sheet
@@ -304,13 +304,19 @@ func _init() -> void:
 	for i in offers.size():
 		var gid := String(offers[i])
 		var want_price: int = shop1.game.shop_cost("graft", gid)
-		var want_title := "%s  -  %d bloom" % [Content.GRAFTS[gid]["name"], want_price]
-		var got_title := ""
+		# the price is a card FIELD now, not words inside the name: the sheet
+		# draws it as a number beside the bloom sprite, so a seven-offer shrine
+		# spends its width on what each offer does instead of on "  -  N bloom"
+		var got_name := ""
+		var got_price := -1
 		for c in gcards:
 			if String(c[3]) == "buy:graft:%d" % i:
-				got_title = String(c[1])
-		_check(int(gprices[i]) == want_price and got_title == want_title,
-			"graft card %d shows its own price (want %s, got %s)" % [i, want_title, got_title])
+				got_name = String(c[1])
+				got_price = int(c[4])
+		_check(int(gprices[i]) == want_price and got_price == want_price
+				and got_name == String(Content.GRAFTS[gid]["name"]),
+			"graft card %d shows its own price (want %s at %d, got %s at %d)" % [
+				i, Content.GRAFTS[gid]["name"], want_price, got_name, got_price])
 	print("shrine cards: %s at %s bloom" % [str(offers), str(gprices)])
 	var want := String(offers[1]) if offers.size() > 1 else ""
 	shop1._tap("buy:graft:1")
@@ -390,9 +396,9 @@ func _init() -> void:
 	var evsh = _bare_shell()
 	evsh.game = Game.new(1, {})
 	_check(evsh._ev_text({"t": "damage", "who": "player", "amt": 2, "src": "fire:solar_lance"})
-		== "You take 2 damage (fire)", "a qualified damage source reads as the bare source")
+		== "You take 2 dmg (fire)", "a qualified damage source reads as the bare source")
 	_check(evsh._ev_text({"t": "damage", "who": "player", "amt": 1, "src": "goo"})
-		== "You take 1 damage (goo)", "an unqualified source is untouched")
+		== "You take 1 dmg (goo)", "an unqualified source is untouched")
 	_check(evsh._ev_text({"t": "damage", "who": "drill_bot", "amt": 3}) == "Drill Bot takes 3",
 		"enemy damage lines never show a source")
 	_check(evsh._ev_text({"t": "buy", "item": "graft", "id": "bloom_surge", "discarded": "carapace"})
@@ -594,8 +600,11 @@ func _init() -> void:
 	# the threshold holds a sibling - the shape a forge or a locked kit makes.
 	rs.game = Game.new(1, {"kit": ["solar_lance", "solar_lance+noon", "sun_flare", "seed_bomb", "mycelium_dash"]})
 	var dsnap: Dictionary = rs.game.snapshot()
-	_check(rs._resonance_note(dsnap, rs._ability_tags("solar_lance"), true, []).contains("BREAKS"),
-		"dropping a fire card for an off-element pick breaks Cinder Grip")
+	# the word BREAKS lives on the card BADGE now (_drop_cards sets it from this
+	# same note), so the note itself names the row and the count and nothing twice
+	_check(rs._resonance_note(dsnap, rs._ability_tags("solar_lance"), true, []) == "Cinder Grip out (fire 2/3)",
+		"dropping a fire card for an off-element pick breaks Cinder Grip: %s" % rs._resonance_note(
+			dsnap, rs._ability_tags("solar_lance"), true, []))
 	_check(rs._resonance_note(dsnap, rs._ability_tags("solar_lance"), true,
 			rs._ability_tags("sun_flare+smoulder")) == "",
 		"...and does not when the card being taken carries the same tag: %s" % rs._resonance_note(
@@ -604,7 +613,7 @@ func _init() -> void:
 	rs.game = Game.new(1, {"kit": ["solar_lance", "sun_flare", "seed_bomb", "overgrowth", "mycelium_dash"]})
 	var osnap: Dictionary = rs.game.snapshot()
 	_check(rs._resonance_note(osnap, rs._ability_tags("solar_lance+pierce"), false, [], true).contains("would light")
-			and rs._resonance_note(osnap, rs._ability_tags("solar_lance+pierce"), false).contains("- lights"),
+			and rs._resonance_note(osnap, rs._ability_tags("solar_lance+pierce"), false).contains("lights"),
 		"a threshold-crossing offer says 'would light' while a drop is still owed: %s" % rs._resonance_note(
 			osnap, rs._ability_tags("solar_lance+pierce"), false, [], true))
 	print("d5 shell: %s" % rs._resonance_line(fsnap))
@@ -616,6 +625,8 @@ func _init() -> void:
 	_check_back()
 	_check_aim_cancel()
 	_check_modal_dpad()
+	_check_cleanse_hint()
+	_check_card_text()
 	_check_tier_clamp()
 
 	shell.free()
@@ -636,6 +647,116 @@ func _bare_shell():
 	sh.screen = "game"
 	sh.mode = "normal"
 	return sh
+
+
+## --- CLEANSE tells the truth about why it refused ----------------------------
+## "no corruption beside you" was the only refusal, and it is a lie in the two
+## cases that happen: standing ON the slick (cleanse reaches a neighbour, never
+## the tile underfoot) and a slick your own lance set alight (fire is not
+## corruption until it burns down to ash). The tutorial's last cleanse step
+## allows no ability, so a player told there is nothing there has nothing left
+## to try - which is what a soft lock feels like from the outside.
+func _check_cleanse_hint() -> void:
+	var sh = _bare_shell()
+	sh.game = Game.new(4242, {"bloom": 5})
+	var g = sh.game
+	var p: Vector2i = g.player["pos"]
+	for t in g.terrain.keys().duplicate():
+		if Content.is_corruption(String(g.terrain[t]["kind"])) and _man(t, p) <= 2:
+			g.terrain.erase(t)
+	# a) nothing anywhere near: the plain answer, unchanged
+	sh._tap("cleanse")
+	_check(sh.mode != "cleanse" and sh.flash == "no corruption beside you",
+		"CLEANSE with nothing beside you says so (got %s)" % sh.flash)
+	# b) standing ON it - the case that reads as a dead end
+	g.terrain[p] = {"kind": "oil"}
+	sh._tap("cleanse")
+	_check(sh.mode != "cleanse" and sh.flash.contains("standing on it"),
+		"CLEANSE while standing on the slick says to step off (got %s)" % sh.flash)
+	# c) the slick is burning - the state the tutorial's own lance step makes
+	g.terrain.erase(p)
+	g.terrain[p + Vector2i(1, 0)] = {"kind": "fire", "ttl": 2}
+	sh._tap("cleanse")
+	_check(sh.mode != "cleanse" and sh.flash.contains("ash"),
+		"CLEANSE beside a burning slick names the ash to wait for (got %s)" % sh.flash)
+	# d) and the ash it leaves really is cleansable, which is what (c) promises
+	g.terrain[p + Vector2i(1, 0)] = {"kind": "ash"}
+	sh._tap("cleanse")
+	_check(sh.mode == "cleanse", "CLEANSE opens on the ash the fire left")
+	sh.free()
+
+
+func _man(a: Vector2i, b: Vector2i) -> int:
+	return absi(a.x - b.x) + absi(a.y - b.y)
+
+
+## --- card text stays readable on a phone -------------------------------------
+## The owner's report was "text very small on screens, even moreso in the shop
+## where they are 6 or more options". The cause was _txt_fit: one line, shrunk
+## to as little as 9px to make a long description fit. _card wraps to two lines
+## now, but that only helps while the descriptions themselves stay short - so
+## this holds every shipped one to a size, at the smallest card the shrine can
+## draw. A new description that blows the budget fails the suite instead of
+## shipping unreadable.
+## Measured on the tree first, per the gate discipline: after the text pass ALL
+## 83 shipped card strings render at the full nominal size on the tightest card
+## the shrine can draw, so the gate is "no shrinking at all" rather than a wish.
+const CARD_MIN_PX := 30      # at 1080x2400, the tightest seven-offer shrine
+const CARD_MIN_RATIO := 1.0   # and never below the size the card asked for
+
+func _check_card_text() -> void:
+	var sh = _bare_shell()
+	var vw := 1080.0
+	var vh := 2400.0
+	# the shrine's worst case: seven cards, which is what squeezes the height
+	var top := vh * 0.16 + vh * 0.05
+	var ch: float = minf(vh * 0.105, maxf(vh * 0.06, (vh * 0.86 - top - vh * 0.02 * 6) / 7.0))
+	var r := Rect2(vw * 0.05, top, vw * 0.9, ch)
+	var worst := 999
+	var worst_id := ""
+	var over := 0
+	var strings: Array = []
+	for aid in Content.ABILITY_DESC:
+		strings.append([aid, String(Content.ABILITY_DESC[aid])])
+	# the framing the shrine actually composes, worst case: a graft card carries
+	# its "Permanent" label, the resonance note its tags earn AND the two-offer
+	# tie-break line, so the string the player reads is much longer than the row
+	for gid in Content.GRAFTS:
+		strings.append([gid, "Permanent  ·  %s  ·  +fire 2/3 Cinder Grip  ·  take one only"
+			% Content.GRAFTS[gid]["desc"]])
+	for iid in Content.ITEMS:
+		strings.append([iid, "One use  ·  %s" % Content.ITEMS[iid]["desc"]])
+	for rid in Content.RESONANCES:
+		strings.append([rid, String(Content.RESONANCES[rid]["desc"])])
+	for row in strings:
+		var L := sh._card_layout(r, "ab_default", "Mycelium Dash", String(row[1]), "", 2)
+		var de: Dictionary = L["desc"]
+		var sz := int(de["size"])
+		if sz < worst:
+			worst = sz
+			worst_id = String(row[0])
+		if sz < CARD_MIN_PX or sz < int(de["nominal"]) * CARD_MIN_RATIO or de["lines"].size() > 2:
+			over += 1
+			if over <= 4:
+				print("  too long for a card: %s (%d px over %d lines, %d chars)" % [
+					row[0], sz, de["lines"].size(), String(row[1]).length()])
+	_check(over == 0, "%d description(s) do not fit a shrine card at 1080x2400" % over)
+	# the head row must not run into the badge or the price, and the last
+	# description line must land inside the card
+	var tight := sh._card_layout(r, "ab_default", "Mycelium Dash",
+		String(Content.ABILITY_DESC["mycelium_dash"]), "AFFINITY", 2)
+	var nm: Dictionary = tight["name"]
+	var nend: float = nm["pos"].x + sh.font.get_string_size(String(nm["text"]),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, int(nm["size"])).x + 2 * float(tight["pips"]["step"])
+	_check(nend <= float(tight["badge"]["pos"].x),
+		"the name and its pips clear the slot badge (%.0f vs %.0f)" % [nend, tight["badge"]["pos"].x])
+	var de2: Dictionary = tight["desc"]
+	var last: float = float(de2["pos"].y) + float(de2["line_h"]) * (de2["lines"].size() - 1)
+	_check(last + float(de2["size"]) * 0.3 <= r.position.y + r.size.y,
+		"the last description line lands inside the card")
+	print("card text: %d strings, smallest %d px (%s) on a %d px card" % [
+		strings.size(), worst, worst_id, int(ch)])
+	sh.free()
 
 
 ## --- the Back button ---------------------------------------------------------

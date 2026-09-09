@@ -63,30 +63,30 @@ const BIOME_PAL := {
 ## sprite id, display name, one-line blurb — legend sheet and hold-tooltips
 const LEGEND := [
 	["player", "You, the Tender", "descend, cleanse, survive"],
-	["stairs", "Stairs", "the way down - your goal each floor"],
-	["shrine", "Shrine", "stand here to open the shop"],
-	["vent", "Vent", "vents reinforcements as the smog rises"],
-	["supply", "Supply pod", "walk over it to stock your satchel (2 slots)"],
-	["oil", "Oil", "corruption - cleanse it (adjacent) for bloom; burns"],
-	["goo", "Goo", "corruption - cleansing yields bloom"],
-	["rich_goo", "Rich goo", "corruption - cleanses for extra bloom"],
-	["ash", "Ash", "burnt oil - still corruption, cleanse it for bloom; it never shields the boss core"],
-	["growth", "Growth", "heals 1 HP per turn while you stand on it"],
-	["fire", "Fire", "burns whoever stands in it; burns out into ash"],
-	["smoke", "Smoke", "blocks solar lances; on or beside you it screens tar, drain and grapple"],
+	["stairs", "Stairs", "the way down"],
+	["shrine", "Shrine", "stand here to shop"],
+	["vent", "Vent", "releases enemies as the smog rises"],
+	["supply", "Supply pod", "step on it to stock your satchel (2 slots)"],
+	["oil", "Oil", "corruption - cleanse from beside it for bloom. Burns"],
+	["goo", "Goo", "corruption - cleanse for bloom. Hurts to step in"],
+	["rich_goo", "Rich goo", "corruption - cleanse for extra bloom. Hurts to step in"],
+	["ash", "Ash", "corruption from burnt oil - cleanse for bloom. Never shields the core"],
+	["growth", "Growth", "stand on it: heal 1 HP a turn"],
+	["fire", "Fire", "burns whoever stands in it. Leaves ash"],
+	["smoke", "Smoke", "blocks beams. Screens tar/drain/grapple from 2+ tiles away"],
 	["roots", "Roots", "blocks enemies for a while"],
-	["drill_bot", "Drill Bot", "melee - telegraphs its strike a turn ahead"],
+	["drill_bot", "Drill Bot", "melee - shows its strike a turn ahead"],
 	["oil_sludge", "Oil Sludge", "slow, leaves oil, splits when killed"],
 	["sludgeling", "Sludgeling", "weak spawn"],
-	["leech_drone", "Leech Drone", "drains your banked charge from range"],
-	["tar_spitter", "Tar Spitter", "gums up one of your abilities"],
-	["coal_golem", "Coal Golem", "SPIKED (melee hurts you back); bursts into smoke"],
-	["welded_hulk", "Welded Hulk", "two drill bots ASSIMILATED; spiked and heavy"],
+	["leech_drone", "Leech Drone", "drains banked charge from range"],
+	["tar_spitter", "Tar Spitter", "gums one of your abilities"],
+	["coal_golem", "Coal Golem", "SPIKED: melee costs you 1 HP. Bursts into smoke"],
+	["welded_hulk", "Welded Hulk", "two drill bots welded - spiked and heavy"],
 	["extractor_engine", "Extractor", "summons sludgelings - kill it first"],
-	["rust_hound", "Rust Hound", "fast - moves twice; SPIKED"],
+	["rust_hound", "Rust Hound", "SPIKED - moves twice"],
 	["cinder_mite", "Cinder Mite", "ignites oil"],
-	["pump_jack", "Pump Jack", "pumps out fresh oil"],
-	["smokestack", "Smokestack", "makes the smog clock tick faster"],
+	["pump_jack", "Pump Jack", "pumps fresh oil"],
+	["smokestack", "Smokestack", "speeds up the smog clock"],
 	["magnet_crane", "Magnet Crane", "drags you toward it every turn"],
 	["furnace_core", "Furnace Core", "floor 7 boss"],
 	["overseer", "The Overseer", "floor 7 boss"],
@@ -857,7 +857,7 @@ func _show_tooltip(pos: Vector2) -> void:
 			var islot := int(String(hsp["tag"]).get_slice(":", 1))
 			if islot < game.player["items"].size():
 				var idef: Dictionary = Content.ITEMS[game.player["items"][islot]]
-				tooltip = ["%s - tap to use (free action)" % idef["name"], idef["desc"]]
+				tooltip = ["%s - tap to use (no turn)" % idef["name"], idef["desc"]]
 				tooltip_tile = Vector2i(-1, -1)
 				queue_redraw()
 				return
@@ -866,9 +866,12 @@ func _show_tooltip(pos: Vector2) -> void:
 			var aid: String = game.player["kit"][slot]
 			var adef: Dictionary = Content.ABILITIES[aid]
 			var tc: int = game.ability_cost(aid)
-			var thdr := "%s - costs %d charge" % [adef["name"], tc]
-			if tc < int(adef["cost"]):
-				thdr += " (verdant surge!)"
+			var thdr := "%s - %d charge" % [adef["name"], tc]
+			# Game._surges, not a cost comparison: since Block D1 a surge may be a
+			# STAT bump with no discount (Grow Spike +1 dmg, Water Jet +1 push) and
+			# it still spends the tile - the old test said nothing about those
+			if game._surges(adef):
+				thdr += "  ·  surges, spends the tile"
 			tooltip = [thdr, _ability_desc(aid)]
 			tooltip_tile = Vector2i(-1, -1)
 			queue_redraw()
@@ -884,11 +887,11 @@ func _show_tooltip(pos: Vector2) -> void:
 			lines.append("%s - hp %d%s" % [_ename(e["kind"]), e["hp"], "  ELITE" if e.get("elite", false) else ""])
 			lines.append(_intent_words(e))
 			if e["traits"].has("spiked") or e.get("elite", false):
-				lines.append("SPIKED - striking it in melee costs you 1 HP")
+				lines.append("SPIKED - melee costs you 1 HP")
 			# what the row refuses to walk through, straight off the data
 			var avoid: Array = Content.ENEMIES.get(e["kind"], {}).get("avoid", [])
 			if not avoid.is_empty():
-				lines.append("avoids: %s - it walks around, unless the way round is far" % ", ".join(avoid))
+				lines.append("avoids: %s - detours, unless the way round is long" % ", ".join(avoid))
 			if not row.is_empty():
 				lines.append(row[2])
 	if lines.is_empty() and snap["player"]["pos"] == t:
@@ -1028,7 +1031,7 @@ func _dir_input(d: Vector2i) -> void:
 			# next to it, for a charge and a turn, out of a choice the player
 			# was still in. Same rule as a tile aim: reaching for a direction
 			# in a modal state means "get me out of this", and it is free.
-			_flash("the forge has the screen - finish the choice or step back")
+			_flash("finish the forge choice, or step back")
 		_:
 			_move_or_strike(d)
 
@@ -1055,7 +1058,25 @@ func _cleanse_at(target: Vector2i) -> void:
 				_act(a)
 				return
 	else:
-		_flash("aim at corruption right next to you")
+		_flash(_cleanse_hint())
+
+
+## Why CLEANSE just refused. "no corruption beside you" was the only answer,
+## and it is a lie in the two cases that actually happen: the tender STANDING on
+## the slick (cleanse reaches a neighbour, never the tile underfoot) and a slick
+## the tender's own lance set alight (fire is not corruption until it burns down
+## to ash). Both read as a dead end - the tutorial's last cleanse step allows no
+## ability, so a player told there is nothing there has nothing left to try.
+func _cleanse_hint() -> String:
+	if game == null:
+		return "no corruption beside you"
+	var here := String(game.terrain.get(game.player["pos"], {}).get("kind", ""))
+	if Content.is_corruption(here):
+		return "you're standing on it - step off first"
+	for d in DIRS4.values():
+		if String(game.terrain.get(game.player["pos"] + d, {}).get("kind", "")) == "fire":
+			return "still burning - wait for the ash"
+	return "no corruption beside you"
 
 
 func _move_or_strike(d: Vector2i) -> void:
@@ -1164,7 +1185,7 @@ func _ability_press(slot: int) -> void:
 				can_keep = true
 				break
 		if not can_keep:
-			_flash("that one cannot be forged further")
+			_flash("that one can't be forged further")
 			return
 		mode_pick = slot
 		mode = "up_scrap"
@@ -1172,7 +1193,7 @@ func _ability_press(slot: int) -> void:
 		return
 	if mode == "up_scrap":
 		if slot == mode_pick:
-			_flash("pick a DIFFERENT ability to scrap")
+			_flash("pick a DIFFERENT one to scrap")
 			return
 		# Block D6: the sim lists one forge action per (keep, scrap, VARIANT)
 		# triple, so a forked base offers two. One match acts at once (a package
@@ -1188,7 +1209,7 @@ func _ability_press(slot: int) -> void:
 			queue_redraw()
 			return
 		if _is_mobility(String(game.player["kit"][slot])):
-			_flash("cannot scrap your mobility ability")
+			_flash("can't scrap your mobility ability")
 		else:
 			_flash("can't scrap that")
 		return
@@ -1206,7 +1227,7 @@ func _ability_press(slot: int) -> void:
 		mode_slot = slot
 		# the flash names the way OUT as well as the way in: on a phone there
 		# is no ESC key, so the cancel has to be written on the screen
-		_flash("AIM %s - D-pad or tap beside you  ·  tap the slot to cancel" % Content.ABILITIES[aid]["name"])
+		_flash("AIM %s: D-pad or tap beside you  ·  slot cancels" % Content.ABILITIES[aid]["name"])
 	elif acts.size() == 1:
 		_act(acts[0])
 	else:
@@ -1215,7 +1236,7 @@ func _ability_press(slot: int) -> void:
 		mode_targets = []
 		for a in acts:
 			mode_targets.append(a["target"])
-		_flash("AIM %s - tap a green tile  ·  D-pad or the slot cancels" % Content.ABILITIES[aid]["name"])
+		_flash("AIM %s: tap a green tile  ·  D-pad or slot cancels" % Content.ABILITIES[aid]["name"])
 	queue_redraw()
 
 
@@ -1323,7 +1344,7 @@ func _tap(tag: String) -> void:
 				picked = true
 				break
 		if not picked:
-			_flash("the forge cooled")
+			_flash("the forge is cold")
 			mode = "normal"
 			queue_redraw()
 	elif tag == "forge_back":
@@ -1356,7 +1377,7 @@ func _tap(tag: String) -> void:
 			mode = "cleanse"
 			queue_redraw()
 		else:
-			_flash("no corruption beside you")
+			_flash(_cleanse_hint())
 	elif tag == "descend":
 		if not _legal_of("descend").is_empty():
 			_act({"type": "descend"})
@@ -1573,7 +1594,7 @@ func _ev_text(ev: Dictionary) -> String:
 				# defensive: qualified sources ("fire:solar_lance") read as "fire"
 				var src := String(ev.get("src", "?"))
 				var ci := src.find(":")
-				return "You take %d damage (%s)" % [ev["amt"], src.substr(0, ci) if ci >= 0 else src]
+				return "You take %d dmg (%s)" % [ev["amt"], src.substr(0, ci) if ci >= 0 else src]
 			return "%s takes %d" % [_ename(ev["who"]), ev["amt"]]
 		"death":
 			return "%s destroyed" % _ename(ev["who"])
@@ -1584,7 +1605,7 @@ func _ev_text(ev: Dictionary) -> String:
 		"cleanse":
 			return "Cleansed +bloom - the air thins"
 		"room_bloom":
-			return "The room BLOOMS  +%d bloom, a supply pod drops" % ev.get("bonus", 2)
+			return "Room BLOOMS - +%d bloom and a supply pod" % ev.get("bonus", 2)
 		"item_pickup":
 			return "Picked up %s" % Content.ITEMS[ev["id"]]["name"]
 		"item_use":
@@ -1592,17 +1613,17 @@ func _ev_text(ev: Dictionary) -> String:
 		"satchel_full":
 			return "Satchel full (2 slots)"
 		"stairs_dormant":
-			return "The stairs are dormant - green the floor (%d/%d)" % [ev.get("have", 0), ev.get("need", 0)]
+			return "Stairs dormant - green the floor (%d/%d)" % [ev.get("have", 0), ev.get("need", 0)]
 		"stairs_awaken":
 			return "The floor greens - THE STAIRS AWAKEN"
 		"quota_reclamp":
-			return "Corruption burned away - the gate needs only %d" % ev.get("need", 0)
+			return "Corruption burned away - gate now needs %d" % ev.get("need", 0)
 		"seal_burst":
-			return "An overgrown vent chokes - spawn absorbed"
+			return "Overgrown vent chokes - spawn absorbed"
 		"floor_restored":
-			return "FLOOR RESTORED - the skies clear (+%d bloom)" % ev.get("bonus", 5)
+			return "FLOOR RESTORED - skies clear (+%d bloom)" % ev.get("bonus", 5)
 		"verdant":
-			return "Verdant surge - the growth fuels your cast (-1)"
+			return "Verdant surge - the growth feeds your cast"
 		"assimilate":
 			return "The machines WELD into a hulk"
 		"upcycle":
@@ -1623,7 +1644,7 @@ func _ev_text(ev: Dictionary) -> String:
 			return "%s's %s is lost in the smoke" % [
 				_ename_by_id(ev.get("id", -1)), _screen_word(String(ev.get("intent", "")))]
 		"drain":
-			return "Leech drone drains %d banked charge" % ev["amt"]
+			return "Drone drains %d banked charge" % ev["amt"]
 		"drag":
 			return "You are dragged"
 		"stoke":
@@ -1633,9 +1654,9 @@ func _ev_text(ev: Dictionary) -> String:
 		"vents_clogged":
 			return "The boss clogs the vents with goo"
 		"core_shielded":
-			return "Core shielded - cleanse the corruption beside it"
+			return "Core shielded - cleanse the corruption round it"
 		"dredge":
-			return "The Dredge devours %d growth and heals" % ev["tiles"]
+			return "The Dredge eats %d growth and heals" % ev["tiles"]
 		"summon":
 			return "The extractor summons a sludgeling"
 		"split":
@@ -1652,11 +1673,11 @@ func _ev_text(ev: Dictionary) -> String:
 				return "Bought %s (discarded %s)" % [what, _shop_name("graft", String(ev["discarded"]))]
 			return "Bought %s" % what
 		"reroll":
-			return "Rerolled the counter (-%d bloom)" % int(ev.get("cost", 0))
+			return "Rerolled (-%d bloom)" % int(ev.get("cost", 0))
 		"draft_upgrade":
 			return "Upgraded to %s" % str(ev["id"])
 		"draft_skip":
-			return "Took nothing - the next draft adds a focus offer"
+			return "Skipped - next draft adds a focus offer"
 		"shield":
 			return "Shield up (%d)" % ev["total"]
 		"thorns":
@@ -1664,17 +1685,17 @@ func _ev_text(ev: Dictionary) -> String:
 		"anchor":
 			return "Anchored - drags can't move you"
 		"undim":
-			return "Air clears a little - regen recovers"
+			return "Air clears - regen recovers"
 		"immune":
-			return "The boss shrugs off the status"
+			return "The boss shrugs it off"
 		"stunned":
 			return "Enemy stunned"
 		"staggered":
-			return "Staggered - it loses its wind-up"
+			return "Staggered - wind-up lost"
 		"rooted":
 			return "Enemy rooted in place"
 		"resisted":
-			return "Still shaking off the last root - the snare slides off"
+			return "Root cooldown - the snare slides off"
 		"ash":
 			return "The fire burns down to ash"
 		"floor":
@@ -1700,7 +1721,7 @@ func _intent_words(e: Dictionary) -> String:
 		"gum":
 			return "will gum an ability"
 		"fuse":
-			return "WELDING with a neighbour - kill or shove one to stop it"
+			return "WELDING - kill or shove one of the pair"
 		"summon":
 			return "summons in %d" % it["in"]
 		"ooze":
@@ -1817,6 +1838,33 @@ func _txt_fit(pos: Vector2, s: String, color: Color, size: int, max_w: float) ->
 
 func _txt_c_fit(cx: float, ypos: float, s: String, color: Color, size: int, max_w: float) -> void:
 	_txt_c(cx, ypos, s, color, _fit_size(s, size, max_w))
+
+
+## Greedy word wrap into at most `lines` lines of `max_w`, shrinking the font
+## only when wrapping alone cannot do it. Returns {lines, size} so the caller
+## draws at the size that actually fitted. _txt_fit is the one-line version and
+## goes all the way down to 9px, which is what made a long card description
+## unreadable on a phone; tests/test_shell.gd _check_card_text holds every
+## shipped description to a size this can wrap without shrinking much.
+func _wrap(s: String, size: int, max_w: float, lines: int) -> Dictionary:
+	var words := s.split(" ", false)
+	while size > 9:
+		var out: Array = []
+		var cur := ""
+		for w in words:
+			var test: String = String(w) if cur == "" else cur + " " + String(w)
+			if font.get_string_size(test, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x <= max_w:
+				cur = test
+			else:
+				if cur != "":
+					out.append(cur)
+				cur = String(w)
+		if cur != "":
+			out.append(cur)
+		if out.size() <= lines:
+			return {"lines": out, "size": size}
+		size -= 1
+	return {"lines": [s], "size": size}
 
 
 ## Top inset so notches / punch-hole cameras don't cover the status strip.
@@ -2003,9 +2051,9 @@ func _draw_menu(vw: float, vh: float) -> void:
 			_button(Rect2(bx, y, bw, bh), String(row[0]), String(row[1]), int(bh * 0.38),
 				COL_GOLD if bool(row[2]) else COL_DIM_TEXT)
 		y += bh + gap
-	var career := "seed mode: %s" % seed_mode
+	var career := "%s seed" % seed_mode
 	if int(profile.runs) > 0:
-		career += "  ·  runs %d · wins %d · best floor %d" % [profile.runs, profile.wins, profile.best_floor]
+		career += "  ·  runs %d · wins %d · best %d" % [profile.runs, profile.wins, profile.best_floor]
 	_txt_c_fit(vw / 2.0, vh * 0.972, career, COL_DIM_TEXT, int(vh * 0.016), vw * 0.92)
 
 
@@ -2015,9 +2063,9 @@ func _draw_settings(vw: float, vh: float) -> void:
 	var bw := vw * 0.88
 	var bh := vh * 0.08
 	var names := {300: "short", 420: "normal", 650: "long"}
-	_button(Rect2(vw * 0.06, y, bw, bh), "Hold-to-inspect delay:  %s" % names.get(hold_ms, "normal"), "set:hold", int(bh * 0.3))
+	_button(Rect2(vw * 0.06, y, bw, bh), "Hold delay:  %s" % names.get(hold_ms, "normal"), "set:hold", int(bh * 0.3))
 	y += bh + vh * 0.025
-	_button(Rect2(vw * 0.06, y, bw, bh), "Run seed:  %s" % ("random every run" if seed_mode == "random" else "daily (same for everyone)"), "set:seed", int(bh * 0.28))
+	_button(Rect2(vw * 0.06, y, bw, bh), "Run seed:  %s" % ("random every run" if seed_mode == "random" else "daily (same for all)"), "set:seed", int(bh * 0.28))
 	y += bh + vh * 0.025
 	_button(Rect2(vw * 0.06, y, bw, bh), "Intro tips:  %s" % intro_mode, "set:intro", int(bh * 0.3))
 	y += bh + vh * 0.025
@@ -2025,8 +2073,13 @@ func _draw_settings(vw: float, vh: float) -> void:
 	y += bh + vh * 0.025
 	_button(Rect2(vw * 0.06, y, bw, bh), "Music:  %s" % ("on" if music_on else "off"), "set:music", int(bh * 0.3))
 	y += bh + vh * 0.03
-	_txt_fit(Vector2(vw * 0.06, y + vh * 0.02),
-		"finished runs: %s" % ProjectSettings.globalize_path(runs_dir),
+	# the globalized path is absolute, so the whole line used to shrink to the
+	# 9px _fit_size floor whatever the label said - the tail is the useful half
+	var rp := ProjectSettings.globalize_path(runs_dir)
+	var rparts := rp.split("/", false)
+	if rparts.size() > 2:
+		rp = ".../%s/%s" % [rparts[rparts.size() - 2], rparts[rparts.size() - 1]]
+	_txt_fit(Vector2(vw * 0.06, y + vh * 0.02), "runs saved to %s" % rp,
 		COL_DIM_TEXT, int(vh * 0.018), bw)
 	y += vh * 0.05
 	_button(Rect2(vw * 0.06, y, bw, bh), "BACK", "close", int(bh * 0.34))
@@ -2164,11 +2217,11 @@ func _resonance_note(snap: Dictionary, tags: Array, losing: bool,
 			n += 1 if losing else -1
 		if losing:
 			if bool(r["active"]) and n < need:
-				parts.append("BREAKS %s (%s %d/%d)" % [r["name"], tag, n, need])
+				parts.append("%s out (%s %d/%d)" % [r["name"], tag, n, need])
 		elif bool(r["active"]):
 			continue  # already lit; a fourth fire card buys nothing
 		elif n >= need:
-			parts.append("+%s %d/%d - %s %s" % [
+			parts.append("+%s %d/%d %s %s" % [
 				tag, n, need, "would light" if unresolved_swap else "lights", r["name"]])
 		else:
 			parts.append("+%s %d/%d %s" % [tag, n, need, r["name"]])
@@ -2650,7 +2703,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		_txt_c(vw / 2.0 + 2, scy + 2, nm, Color(0, 0, 0, 0.6 * sa), nsz)
 		_txt_c(vw / 2.0, scy, nm, Color(COL_GOLD, sa), nsz)
 		_txt_c(vw / 2.0, scy + vh * 0.028, "floor %d of 7" % snap["floor"], Color(COL_CREAM, sa * 0.85), int(vh * 0.018))
-		_txt_c(vw / 2.0, scy + vh * 0.052, "green %d tiles to wake the stairs" % snap["green_need"],
+		_txt_c(vw / 2.0, scy + vh * 0.052, "cleanse %d to wake the stairs" % snap["green_need"],
 			Color(0.6, 0.85, 0.55, sa * 0.9), int(vh * 0.016))
 
 	# event banners (stairs awaken, floor restored)
@@ -2713,16 +2766,16 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 		# sheet carries its own BACK. Android's Back button walks the same
 		# steps (_back), one level per press.
 		"up_keep":
-			msg = "FORGE: tap the ability to grow  ·  SHRINE SHOP backs out"
+			msg = "Tap the ability to grow  ·  SHRINE SHOP backs out"
 			col = COL_GOLD
 		"up_scrap":
-			msg = "Now tap the ability to SCRAP for parts  ·  SHRINE SHOP backs out"
+			msg = "Tap the one to SCRAP  ·  SHRINE SHOP backs out"
 			col = COL_GOLD
 		"up_variant":
-			msg = "Choose which way it grows  ·  BACK returns to the scrap tap"
+			msg = "Which way does it grow?  ·  BACK to redo the scrap"
 			col = COL_GOLD
 		"cleanse":
-			msg = "CLEANSE: tap corruption beside you (or D-pad)"
+			msg = "Tap corruption beside you (or D-pad)"
 			col = COL_TARGET
 		"target_dir":
 			msg = flash
@@ -2737,12 +2790,12 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 			elif screen == "tutorial":
 				msg = ""
 			elif snap["floor"] == 7:
-				msg = "Objective: DESTROY THE BOSS  (tap here for the log)"
+				msg = "DESTROY THE BOSS  ·  tap for log"
 			elif int(snap["greened"]) < int(snap["green_need"]):
-				msg = "Objective: green the floor (%d/%d cleansed) - stairs dormant" % [snap["greened"], snap["green_need"]]
+				msg = "Stairs dormant - cleanse %d/%d to green the floor" % [snap["greened"], snap["green_need"]]
 				col = Color(0.6, 0.85, 0.55)
 			else:
-				msg = "Objective: reach the gold-ringed stairs  (tap for log)"
+				msg = "Reach the gold-ringed stairs  ·  tap for log"
 	_txt_fit(Vector2(vw * 0.025, y), msg, col, int(vh * 0.022), vw * 0.95)
 	_hot(Rect2(0, vh * Z_AB_END, vw, vh * (Z_CTX_END - Z_AB_END)), "log")
 
@@ -2852,33 +2905,110 @@ func _ability_desc(aid: String) -> String:
 	return Content.ABILITY_DESC.get(aid, Content.ABILITY_DESC.get(Content.base_id(aid), ""))
 
 
-## A choice card: icon, title with cost, and the effect explained inline -
-## the whole card is the tap target, so no extra info taps needed. `badge` is
-## an optional short word drawn gold on the title line's right edge (the draft
-## uses it for the slot a card was rolled from); it shortens the title's own
-## width so the two can never overlap.
-func _card(r: Rect2, icon: String, title: String, desc: String, tag: String, vh: float, badge: String = "") -> void:
+## A choice card: icon and name on the head row, the effect WRAPPED underneath
+## across the card's full width. The description used to be one _txt_fit line,
+## and _fit_size shrinks to 9px to make a long line fit - on a phone shop of
+## seven offers that is unreadable, which is the whole reason for the wrap.
+## The head row carries the numbers as glyphs rather than words: `pips` is a
+## charge cost drawn as the dots the ability bar already uses for it, and the
+## right edge carries EITHER `badge` (the draft's slot label) or `price` (the
+## shrine's bloom cost beside the bloom sprite), never both.
+func _card(r: Rect2, icon: String, name_: String, desc: String, tag: String, vh: float,
+		badge: String = "", pips: int = 0, price: int = -1, afford: bool = true,
+		up: bool = false) -> void:
 	_box(r, _sb_card)
-	var isz := int(r.size.y * 0.62)
-	var tx := Art.tex(icon, isz)
-	var text_x := r.position.x + r.size.y * 0.28
-	if tx != null:
-		draw_texture(tx, r.position + Vector2(r.size.y * 0.19, (r.size.y - isz) / 2.0))
-		text_x = r.position.x + r.size.y * 1.05
-	var max_w := r.position.x + r.size.x - text_x - vh * 0.01
-	if badge != "":
-		var bsz := _fit_size(badge, int(r.size.y * 0.2), r.size.x * 0.4)
-		var bw := font.get_string_size(badge, HORIZONTAL_ALIGNMENT_LEFT, -1, bsz).x
-		_txt(Vector2(r.position.x + r.size.x - bw - vh * 0.012, r.position.y + r.size.y * 0.38),
-			badge, COL_GOLD, bsz)
-		max_w = maxf(max_w - bw - vh * 0.024, vh * 0.05)
-	_txt_fit(Vector2(text_x, r.position.y + r.size.y * 0.42), title, COL_TEXT, int(r.size.y * 0.27), max_w)
-	_txt_fit(Vector2(text_x, r.position.y + r.size.y * 0.76), desc, COL_DIM_TEXT, int(r.size.y * 0.2), max_w)
+	var L := _card_layout(r, icon, name_, desc, badge, pips, price, up)
+	var ic: Dictionary = L["icon"]
+	if ic["size"] > 0:
+		var tx := Art.tex(String(ic["id"]), int(ic["size"]))
+		if tx != null:
+			draw_texture(tx, ic["pos"])
+	var nm: Dictionary = L["name"]
+	_txt(nm["pos"], String(nm["text"]), COL_TEXT, int(nm["size"]))
+	var pp: Dictionary = L["pips"]
+	for c in int(pp["n"]):
+		draw_circle(Vector2(float(pp["pos"].x) + c * float(pp["step"]), float(pp["pos"].y)),
+			float(pp["radius"]), COL_GOLD)
+	if L.has("up"):
+		_txt(L["up"]["pos"], "+", COL_GOLD, int(L["up"]["size"]))
+	if L.has("badge"):
+		_txt(L["badge"]["pos"], String(L["badge"]["text"]), COL_GOLD, int(L["badge"]["size"]))
+	if L.has("price"):
+		var pr: Dictionary = L["price"]
+		var ptx := Art.tex("ic_bloom", int(pr["icon_size"]))
+		if ptx != null:
+			draw_texture(ptx, pr["icon_pos"], Color(1, 1, 1, 1.0 if afford else 0.45))
+		_txt(pr["pos"], String(pr["text"]), COL_GOLD if afford else COL_RED, int(pr["size"]))
+	var de: Dictionary = L["desc"]
+	var ly: float = float(de["pos"].y)
+	for line in de["lines"]:
+		_txt(Vector2(float(de["pos"].x), ly), String(line), COL_DIM_TEXT, int(de["size"]))
+		ly += float(de["line_h"])
 	_hot(r, tag)
 
 
-## The shrine sheet as data: one [icon, title, desc, tag] row per offer, in
-## sheet order. Split out of the drawing so the headless test can assert what
+## Where every piece of a card lands, as data - the shell draws this dict and
+## nothing else, so tests/test_shell.gd can assert on the SIZE a description
+## ends up at (the owner's "text very small on screens") without a display, and
+## tests/render_sheet.gd can draw the same dict as an SVG screenshot. Two
+## renderers, one layout: sim/game.gd earns its ASCII view the same way.
+func _card_layout(r: Rect2, icon: String, name_: String, desc: String,
+		badge: String = "", pips: int = 0, price: int = -1, up: bool = false) -> Dictionary:
+	var h := r.size.y
+	var pad := h * 0.09
+	var isz := int(h * 0.40) if Art.ART.has(icon) else 0
+	var name_x := r.position.x + pad
+	if isz > 0:
+		name_x += isz + h * 0.14
+	var right := r.position.x + r.size.x - pad
+	var base_y := r.position.y + h * 0.35
+	var out := {
+		"icon": {"id": icon, "pos": r.position + Vector2(pad, h * 0.05), "size": isz},
+	}
+	if badge != "":
+		var bsz := _fit_size(badge, int(h * 0.22), r.size.x * 0.36)
+		right -= font.get_string_size(badge, HORIZONTAL_ALIGNMENT_LEFT, -1, bsz).x
+		out["badge"] = {"text": badge, "pos": Vector2(right, base_y), "size": bsz}
+		right -= h * 0.1
+	elif price >= 0:
+		# a price you cannot meet is drawn red, so a thin purse reads off the
+		# card instead of off a refusal after the tap
+		var psz := int(h * 0.26)
+		right -= psz
+		var ipos := Vector2(right, base_y - psz * 0.82)
+		right -= h * 0.04
+		var ps := str(price)
+		right -= font.get_string_size(ps, HORIZONTAL_ALIGNMENT_LEFT, -1, psz).x
+		out["price"] = {"text": ps, "pos": Vector2(right, base_y), "size": psz,
+			"icon_pos": ipos, "icon_size": psz}
+		right -= h * 0.1
+	var nsz := _fit_size(name_, int(h * 0.28), maxf(right - name_x - pips * h * 0.15, h * 0.6))
+	out["name"] = {"text": name_, "pos": Vector2(name_x, base_y), "size": nsz}
+	# cost pips: the same dots, in the same gold, as the ability bar draws under
+	# every slot - the number is never spelled out twice
+	var px := name_x + font.get_string_size(name_, HORIZONTAL_ALIGNMENT_LEFT, -1, nsz).x + h * 0.13
+	out["pips"] = {"n": pips, "pos": Vector2(px, base_y - h * 0.09),
+		"step": h * 0.14, "radius": h * 0.045}
+	# the same gold "+" the ability bar puts on a grown slot, so the word
+	# "upgrade" never has to be spelled out on a card that is short of width
+	if up:
+		out["up"] = {"pos": Vector2(px + pips * h * 0.14 + h * 0.02, base_y), "size": int(h * 0.28)}
+	var wrapped := _wrap(desc, int(h * 0.19), r.size.x - pad * 2.0, 2)
+	var dlines: Array = wrapped["lines"]
+	var dsz: int = int(wrapped["size"])
+	var lh := float(dsz) * 1.2
+	out["desc"] = {
+		"lines": dlines, "size": dsz, "line_h": lh, "nominal": int(h * 0.19),
+		"pos": Vector2(r.position.x + pad,
+			r.position.y + h * 0.47 + (h * 0.47 - lh * dlines.size()) / 2.0 + float(dsz)),
+	}
+	return out
+
+
+## The shrine sheet as data: one [icon, name, desc, tag, price, pips] row per
+## offer, in sheet order. The price is a number the card draws beside the bloom
+## sprite, not words inside the name - a seven-offer shrine has no width to
+## spend on "  -  4 bloom" seven times. Split out of the drawing so the headless test can assert what
 ## a shrine offers (and what it stops offering). Every row's tag resolves
 ## through game.legal_actions() when tapped - the shell never hand-builds a
 ## purchase the sim would reject.
@@ -2887,14 +3017,14 @@ func _shop_cards(snap: Dictionary) -> Array:
 	var pl: Dictionary = snap["player"]
 	var cards: Array = []
 	if shop.get("heal", false):
-		cards.append(["ic_hp", "Heal  -  %d bloom" % game.shop_cost("heal"),
-			"Restore 4 HP (up to your maximum)", "buy:heal"])
+		cards.append(["ic_hp", "Heal", "+4 HP, up to your max",
+			"buy:heal", game.shop_cost("heal"), 0])
 	if shop.has("ability"):
 		var aid: String = shop["ability"]
 		var icon := _ability_icon(aid)
 		var adesc := _ability_desc(aid)
-		cards.append([icon, "%s  -  %d bloom" % [Content.ABILITIES[aid]["name"], game.shop_cost("ability")],
-			adesc, "buy:ability"])
+		cards.append([icon, String(Content.ABILITIES[aid]["name"]), adesc, "buy:ability",
+			game.shop_cost("ability"), int(Content.ABILITIES[aid]["cost"])])
 	var offers: Array = shop.get("grafts", [])
 	# every graft is priced from its own Content.GRAFTS row, so the two offers
 	# rarely cost the same: the sim publishes the per-offer prices as
@@ -2903,7 +3033,7 @@ func _shop_cards(snap: Dictionary) -> Array:
 	for i in offers.size():
 		var gid: String = offers[i]
 		var gcost: int = int(gprices[i]) if i < gprices.size() else game.shop_cost("graft", gid)
-		var gdesc: String = "Graft (permanent): %s" % Content.GRAFTS[gid]["desc"]
+		var gdesc: String = "Permanent  ·  %s" % Content.GRAFTS[gid]["desc"]
 		# a graft carries tags too, so a shrine purchase is the other way an
 		# element is crossed (Block D5) - undertow takes a hydraulics kit from
 		# displace 1 to displace 2 with no kit change at all
@@ -2911,13 +3041,13 @@ func _shop_cards(snap: Dictionary) -> Array:
 		if gnote != "":
 			gdesc += "  ·  %s" % gnote
 		if offers.size() > 1:
-			gdesc += "  ·  take one, the other is lost"
-		cards.append(["shrine", "%s  -  %d bloom" % [Content.GRAFTS[gid]["name"], gcost],
-			gdesc, "buy:graft:%d" % i])
+			gdesc += "  ·  take one only"
+		cards.append(["shrine", String(Content.GRAFTS[gid]["name"]), gdesc,
+			"buy:graft:%d" % i, gcost, 0])
 	if shop.has("item") and pl["items"].size() < Content.ITEM_CAP:
 		var iid: String = shop["item"]
-		cards.append(["it_" + iid, "%s  -  %d bloom" % [Content.ITEMS[iid]["name"], game.shop_cost("item")],
-			"Consumable: %s" % Content.ITEMS[iid]["desc"], "buy:item"])
+		cards.append(["it_" + iid, String(Content.ITEMS[iid]["name"]),
+			"One use  ·  %s" % Content.ITEMS[iid]["desc"], "buy:item", game.shop_cost("item"), 0])
 	# the two shrine services come straight out of legal_actions(): a boarded
 	# shrine, a forge already spent this floor or a thin purse yields nothing,
 	# and the card list follows without repeating a single sim rule
@@ -2928,14 +3058,15 @@ func _shop_cards(snap: Dictionary) -> Array:
 			continue
 		var kid := String(pits[k])
 		var mat := String(pits[1 - k])
-		cards.append(["it_" + kid, "Press %s  -  %d bloom" % [Content.ITEMS[kid]["name"], game.shop_cost("press")],
-			# kid + "+" is an ITEM id: the press is not forked, so Content.ITEMS
-			# keeps the plain "+" convention (Block D6 forked abilities only)
-			"Press %s into it: makes %s" % [Content.ITEMS[mat]["name"], Content.ITEMS[kid + "+"]["name"]],
-			"upcycle:%d" % k])
+		# kid + "+" is an ITEM id: the press is not forked, so Content.ITEMS
+		# keeps the plain "+" convention (Block D6 forked abilities only)
+		cards.append(["it_" + kid, "Press " + String(Content.ITEMS[kid]["name"]),
+			"Spend your %s to make %s" % [Content.ITEMS[mat]["name"], Content.ITEMS[kid + "+"]["name"]],
+			"upcycle:%d" % k, game.shop_cost("press"), 0])
 	if not _legal_of("upcycle_ability").is_empty():
-		cards.append(["ab_default", "Forge an ability  -  %d bloom" % game.shop_cost("forge"),
-			"One kit ability grows into one of its two named variants; scrap another (never mobility) - once per floor", "forge"])
+		cards.append(["ab_default", "Forge an ability",
+			"Grow one ability, scrap another. Once per floor",
+			"forge", game.shop_cost("forge"), 0])
 	# the repeatable sink: the card shows while a re-drawable slot is stocked
 	# (a bought-out counter can never be redrawn) and prices itself from the
 	# derived snapshot keys - the price climbs with every spin
@@ -2945,19 +3076,63 @@ func _shop_cards(snap: Dictionary) -> Array:
 	var rspun := int(shop.get("rerolls", 0))
 	if (shop.has("ability") or shop.has("grafts") or shop.has("item")) and (rleft > 0 or rspun > 0):
 		var rprice := int(shop.get("reroll_price", 0))
-		var rdesc := "Redraw the ability, graft and item cards - the offers you see now are lost"
+		var rdesc := "Redraws the ability, graft and item offers  ·  %d spin%s left" % [
+			rleft, "" if rleft == 1 else "s"]
 		if rleft <= 0:
-			rdesc = "The shrine has no more spins this floor"
+			rdesc = "No spins left this floor"
 		elif snap["bloom"] < rprice:
-			rdesc = "Not enough bloom for another spin"
-		cards.append(["ic_bloom", "Reroll (%d)  -  %d left" % [rprice, rleft], rdesc, "reroll"])
+			rdesc = "Not enough bloom to spin"
+		cards.append(["ic_bloom", "Reroll", rdesc, "reroll", rprice, 0])
+	return cards
+
+
+## The draft sheet as data: one [icon, name, desc, tag, badge, pips, upgrade]
+## row per offer, in sheet order - the same split _shop_cards makes, so the
+## headless test and tests/render_sheet.gd read the sheet without drawing it.
+func _draft_cards(snap: Dictionary) -> Array:
+	var slots: Array = snap.get("draft_slots", [])
+	var cards: Array = []
+	for i in snap["draft_offers"].size():
+		var aid: String = snap["draft_offers"][i]
+		var adef: Dictionary = Content.ABILITIES[aid]
+		var role := String(slots[i]) if i < slots.size() else ""
+		# Block D5: what this card does to an element, straight off the resonance
+		# table - the card is where a threshold is crossed, so it is where the
+		# count has to be legible
+		var cdesc := _ability_desc(aid)
+		var note := _resonance_note(snap, _ability_tags(aid), false, [],
+			snap["player"]["kit"].size() >= Content.KIT_MAX)
+		if note != "":
+			cdesc = "%s  ·  %s" % [cdesc, note]
+		cards.append([_ability_icon(aid), String(adef["name"]), cdesc, "draft:%d" % i,
+			String(DRAFT_SLOT_LABEL.get(role, "")), int(adef["cost"]), Content.is_upgrade(aid)])
+	return cards
+
+
+## The same, for the drop sheet a full kit forces.
+func _drop_cards(snap: Dictionary) -> Array:
+	var cards: Array = []
+	var offers_d: Array = snap.get("draft_offers", [])
+	var taking: Array = _ability_tags(String(offers_d[mode_pick])) \
+		if mode_pick >= 0 and mode_pick < offers_d.size() else []
+	for i in snap["player"]["kit"].size():
+		var kid: String = snap["player"]["kit"][i]
+		# Block D5: dropping a card can put a lit element OUT, and that is the
+		# one consequence of a drop the kit list cannot otherwise show
+		var ddesc := _ability_desc(kid)
+		var dnote := _resonance_note(snap, _ability_tags(kid), true, taking)
+		if dnote != "":
+			ddesc = "%s  ·  %s" % [ddesc, dnote]
+		cards.append([_ability_icon(kid), String(Content.ABILITIES[kid]["name"]), ddesc,
+			"drop:%d" % i, "BREAKS" if dnote != "" else "",
+			int(Content.ABILITIES[kid]["cost"]), Content.is_upgrade(kid)])
 	return cards
 
 
 func _draw_shop(snap: Dictionary, vw: float, vh: float) -> void:
 	hotspots.clear()
 	var y := _sheet(vw, vh, "SHRINE SHOP")
-	_txt(Vector2(vw * 0.06, y), "your bloom: %d" % snap["bloom"], COL_GOLD, int(vh * 0.026))
+	_txt(Vector2(vw * 0.06, y), "bloom  %d" % snap["bloom"], COL_GOLD, int(vh * 0.026))
 	y += vh * 0.05
 	var cards := _shop_cards(snap)
 	var bot := vh * 0.86  # the CLOSE button lives below this
@@ -2966,10 +3141,12 @@ func _draw_shop(snap: Dictionary, vw: float, vh: float) -> void:
 	if not cards.is_empty():
 		ch = minf(ch, maxf(vh * 0.06, (bot - y - gap * (cards.size() - 1)) / cards.size()))
 	for c in cards:
-		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), String(c[0]), String(c[1]), String(c[2]), String(c[3]), vh)
+		var cprice := int(c[4])
+		_card(Rect2(vw * 0.05, y, vw * 0.9, ch), String(c[0]), String(c[1]), String(c[2]),
+			String(c[3]), vh, "", int(c[5]), cprice, int(snap["bloom"]) >= cprice)
 		y += ch + gap
 	if cards.is_empty():
-		_txt(Vector2(vw * 0.06, y + vh * 0.04), "The shrine is boarded up.", COL_DIM_TEXT, int(vh * 0.024))
+		_txt(Vector2(vw * 0.06, y + vh * 0.04), "Boarded up - nothing for sale.", COL_DIM_TEXT, int(vh * 0.024))
 	_button(Rect2(vw * 0.25, vh * 0.885, vw * 0.5, vh * 0.07), "CLOSE", "close", int(vh * 0.026))
 
 
@@ -2986,7 +3163,7 @@ func _draw_forge_variants(vw: float, vh: float) -> void:
 	var acts := _forge_actions(mode_pick, mode_scrap)
 	var kid := String(kit[mode_pick]) if mode_pick >= 0 and mode_pick < kit.size() else ""
 	var sid := String(kit[mode_scrap]) if mode_scrap >= 0 and mode_scrap < kit.size() else ""
-	_txt_fit(Vector2(vw * 0.06, y), "Scrapping %s to grow %s - choose one:" % [
+	_txt_fit(Vector2(vw * 0.06, y), "Scrap %s, grow %s. Pick one:" % [
 		Content.ABILITIES.get(sid, {}).get("name", sid),
 		Content.ABILITIES.get(kid, {}).get("name", kid)],
 		COL_TEXT, int(vh * 0.024), vw * 0.88)
@@ -2999,9 +3176,8 @@ func _draw_forge_variants(vw: float, vh: float) -> void:
 			continue
 		var vid := String(variants[vi])
 		var adef: Dictionary = Content.ABILITIES[vid]
-		_card(Rect2(vw * 0.05, y, vw * 0.9, bh), _ability_icon(vid),
-			"%s  -  %d charge" % [adef["name"], adef["cost"]],
-			_ability_desc(vid), "forgevar:%d" % vi, vh)
+		_card(Rect2(vw * 0.05, y, vw * 0.9, bh), _ability_icon(vid), String(adef["name"]),
+			_ability_desc(vid), "forgevar:%d" % vi, vh, "", int(adef["cost"]), -1, true, true)
 		y += bh + vh * 0.02
 	y += vh * 0.015
 	_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.6), "BACK", "forge_back", int(bh * 0.24))
@@ -3036,13 +3212,13 @@ func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 	var spent: bool = focused or _draft_focus_spent
 	# the head names the labels the sheet actually carries: Upgrades Only deals
 	# nothing but UPGRADE cards, and pointing at AFFINITY there would be a lie
-	var head := "Choose one to take down with you:"
+	var head := "Take one down with you:"
 	if focused:
-		head = "Your skip bought the FOCUS card - one extra offer for your build:"
+		head = "Your skip bought the FOCUS offer:"
 	elif spent:
-		head = "Your skip found nothing left to focus on - no extra offer here:"
+		head = "Nothing left to focus on - no extra offer:"
 	elif slots.has("affinity"):
-		head = "Choose one to take down with you - AFFINITY cards match your build:"
+		head = "Take one down with you. AFFINITY matches your build:"
 	_txt_fit(Vector2(vw * 0.06, y), head, COL_TEXT, int(vh * 0.024), vw * 0.88); y += vh * 0.038
 	# the run's elements, so the counts a card moves are on the same sheet as
 	# the cards (Block D5). Nothing is drawn - and the head keeps exactly its
@@ -3059,48 +3235,20 @@ func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 		y += vh * 0.017
 	var bh := vh * 0.105
 	if mode != "draft_drop":
-		for i in snap["draft_offers"].size():
-			var aid: String = snap["draft_offers"][i]
-			var adef: Dictionary = Content.ABILITIES[aid]
-			var icon := _ability_icon(aid)
-			var role := String(slots[i]) if i < slots.size() else ""
-			# the badge already says UPGRADE when the slot was the upgrade one;
-			# a "+" card off a wild slot still needs the word in its title
-			var up := "  (upgrade)" if Content.is_upgrade(aid) and role != "upgrade" else ""
-			# Block D5: what this card does to an element, straight off the
-			# resonance table - the card is where a threshold is crossed, so
-			# it is where the count has to be legible
-			var cdesc := _ability_desc(aid)
-			var note := _resonance_note(snap, _ability_tags(aid), false, [],
-				snap["player"]["kit"].size() >= Content.KIT_MAX)
-			if note != "":
-				cdesc = "%s   ·   %s" % [cdesc, note]
-			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), icon,
-				"%s  —  %d charge%s" % [adef["name"], adef["cost"], up],
-				cdesc, "draft:%d" % i, vh, String(DRAFT_SLOT_LABEL.get(role, "")))
+		for c in _draft_cards(snap):
+			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), String(c[0]), String(c[1]), String(c[2]),
+				String(c[3]), vh, String(c[4]), int(c[5]), -1, true, bool(c[6]))
 			y += bh + vh * 0.02
 		y += vh * 0.015
 		_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.65),
-			"skip - focus armed again: +1 affinity offer" if spent
-				else "skip - next draft: +1 affinity offer",
+			"skip again - +1 affinity next draft" if spent
+				else "skip - +1 affinity offer next draft",
 			"skip_draft", int(bh * 0.24))
 	else:
-		_txt_fit(Vector2(vw * 0.06, y), "Kit is full - tap what to DROP for it:", COL_RED, int(vh * 0.024), vw * 0.88); y += vh * 0.05
-		for i in snap["player"]["kit"].size():
-			var kid: String = snap["player"]["kit"][i]
-			var kicon := _ability_icon(kid)
-			# Block D5: dropping a card can put a lit element OUT, and that is
-			# the one consequence of a drop the kit list cannot otherwise show
-			var ddesc := _ability_desc(kid)
-			var offers_d: Array = snap.get("draft_offers", [])
-			var taking: Array = _ability_tags(String(offers_d[mode_pick])) \
-				if mode_pick >= 0 and mode_pick < offers_d.size() else []
-			var dnote := _resonance_note(snap, _ability_tags(kid), true, taking)
-			if dnote != "":
-				ddesc = "%s   ·   %s" % [ddesc, dnote]
-			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), kicon,
-				Content.ABILITIES[kid]["name"], ddesc, "drop:%d" % i, vh,
-				"BREAKS" if dnote != "" else "")
+		_txt_fit(Vector2(vw * 0.06, y), "Kit full - tap what to DROP:", COL_RED, int(vh * 0.024), vw * 0.88); y += vh * 0.05
+		for c in _drop_cards(snap):
+			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), String(c[0]), String(c[1]), String(c[2]),
+				String(c[3]), vh, String(c[4]), int(c[5]), -1, true, bool(c[6]))
 			y += bh + vh * 0.02
 		y += vh * 0.02
 		_button(Rect2(vw * 0.25, y, vw * 0.5, bh * 0.65), "BACK", "draft_back", int(bh * 0.26))
@@ -3179,26 +3327,26 @@ func _draw_intro(vw: float, vh: float) -> void:
 		["The combine poisoned the world. You are a Tender.", COL_TEXT],
 		["Descend all 7 floors and shut down the Furnace.", COL_TEXT],
 		["", COL_TEXT],
-		["MOVE with the D-pad, or tap a tile next to you.", COL_TEXT],
+		["MOVE with the D-pad, or tap a tile beside you.", COL_TEXT],
 		["Move into an enemy to attack it.", COL_TEXT],
-		["RED tiles are incoming damage. Stay off them.", COL_TEXT],
+		["RED tiles are incoming damage. Stay off.", COL_TEXT],
 		["The GOLD-RINGED stairs are the way down.", COL_TEXT],
 		["", COL_TEXT],
-		["Move fast: smog rises every turn, and deep smog kills.", COL_GOLD],
+		["Smog rises every turn. Deep smog kills - move fast.", COL_GOLD],
 		["", COL_TEXT],
-		["CLEANSE oil and goo: earn bloom AND thin the smog.", COL_TEXT],
-		["Shrines offer TWO grafts at their own prices - take one, the other is lost.", COL_TEXT],
-		["Cleanse a WHOLE room and it blooms: bonus + a supply pod.", COL_TEXT],
-		["The stairs are DORMANT until you green the floor's quota.", COL_GOLD],
-		["Cast FROM growth: it fuels the ability (-1 charge, tile spent).", COL_TEXT],
-		["SPIKED enemies (golems, elites) hurt to punch - use abilities.", COL_TEXT],
-		["Shrines UPCYCLE: press 2 items into one, forge an ability into one of its two variants.", COL_TEXT],
-		["Swarming drill bots WELD into hulks - break the pair up first.", COL_RED],
-		["Green growth heals you while you stand on it.", COL_TEXT],
+		["CLEANSE oil and goo: bloom AND thinner smog.", COL_TEXT],
+		["Shrines offer TWO grafts at their own prices - take one only.", COL_TEXT],
+		["Cleanse a WHOLE room: bonus bloom and a supply pod.", COL_TEXT],
+		["The stairs stay DORMANT until you green the floor.", COL_GOLD],
+		["Cast FROM growth: it surges the ability, and the tile is spent.", COL_TEXT],
+		["Punching SPIKED enemies costs you 1 HP. Use abilities.", COL_TEXT],
+		["Shrines UPCYCLE: press 2 items into 1, forge an ability into a variant.", COL_TEXT],
+		["Drill bots in pairs WELD into hulks - split them up.", COL_RED],
+		["Growth heals you while you stand on it.", COL_TEXT],
 		# the intro is exactly as long as the screen: this line took the blank
 		# that used to sit above the HOLD line rather than adding a 22nd row
-		["ELEMENTS: enough cards of one element and it RESONATES, all run.", COL_GOLD],
-		["HOLD your finger on anything to see what it is.", COL_GOLD],
+		["ELEMENTS: enough cards of one and it RESONATES all run.", COL_GOLD],
+		["HOLD anything to see what it is.", COL_GOLD],
 	]:
 		if pair[0] != "":
 			_txt_fit(Vector2(x, y), pair[0], pair[1], int(vh * 0.0235), vw * 0.88)
