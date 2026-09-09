@@ -1236,7 +1236,19 @@ const TERRAIN := {
 ## `result` ("" = removed; the result inherits the "bloom" flag, and "by"
 ## only when it decays itself) and emits `event` when one is named. "on_wash"
 ## is reserved (a wash over `from`); no consumer reads it yet. Disabled rows
-## are design intent kept as data.
+## are design intent kept as data, and the two the progression review raised as
+## design tensions were SETTLED by the owner on 2026-09-08 (§6.6) - do not
+## enable either as a balance change:
+##   `roots_burn` (fire x growth) is off on THEME. The tender restores a
+##   poisoned floor and growth IS the restoration, so burning your own growth
+##   as a primary strategy runs against what the game is about. That it also
+##   taxes gardener-pyro mixes (the dash network, the vent seal, the boss-gate
+##   quota) is now the second reason, not the first - so a balance argument is
+##   not grounds to re-open it.
+##   `smoke_smother` (smoke x fire) is off only because nothing NEEDS it. It is
+##   a dormant row rather than a closed door, and a mechanic that wanted it
+##   could revive it.
+## `damp` is neither of those: it is the unbuilt `on_wash` consumer above.
 const REACTIONS := [
 	{"id": "fire_spreads", "from": "fire", "adjacent": "oil", "result": "fire", "event": "ignite", "enabled": true},
 	{"id": "fire_burns_out", "from": "fire", "on_expire": true, "result": "ash", "event": "ash", "enabled": true},

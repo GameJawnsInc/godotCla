@@ -1241,17 +1241,22 @@ none of it is a queued feature:
    Growth resonates when a key exists that pays on an ACT (a cast, a plant, a
    cleanse); every closed `PASSIVE_STAT` / `PASSIVE_MOD` key today is
    survivability, charge or bloom.
-2. **6.6 is two design tensions reserved to the owner, both still open.** The
-   turtle remains a designed canary with no win condition and whether a
-   `bark_burst` finisher should exist is an owner decision, not a content fix;
-   the `fire x growth` and `smoke x fire` reaction rows stay disabled data. D5
-   walked up to the first of those and stopped: `bark` was refused a resonance
-   partly because every payoff the closed vocabulary offers it is
-   survivability (`shield_cap`, `floor_start_shield`, and the `shield` /
-   `thorns` ops that `HOOK_FORBIDDEN_OPS` blocks as the documented stall
-   vector), and the one non-defensive payoff anyone has named for it is that
-   same `bark_burst`. A content block may not settle 6.6 by shipping it inside
-   a resonance.
+2. **6.6 was two design tensions reserved to the owner; both were ANSWERED on
+   2026-09-08 and 6.6 now records the decisions.** No `bark_burst`: the turtle
+   stays a designed canary with no win condition. Both disabled reaction rows
+   stay disabled - `roots_burn` (fire x growth) on THEME, because burning your
+   own growth as a primary strategy runs against what the game is about, and
+   `smoke_smother` (smoke x fire) merely because nothing needs it. D5 had
+   walked up to the first of those and stopped, which turned out to be the
+   right call: `bark` was refused a resonance partly because every payoff the
+   closed vocabulary offers it is survivability (`shield_cap`,
+   `floor_start_shield`, and the `shield` / `thorns` ops that
+   `HOOK_FORBIDDEN_OPS` blocks as the documented stall vector), and the one
+   non-defensive payoff anyone had named for it was that same `bark_burst`.
+   With the decision taken, bark's emptiness is settled design rather than a
+   gap: a bark payoff would need a NEW shape that is not defence, and none has
+   been proposed. A content block still may not settle 6.6 by shipping
+   something inside a resonance.
 3. **7.7 carries two runner questions no lens ever considered**, and they are
    the only genuinely un-scoped proposals left in the review: `measure_bosses`
    still has no per-boss-BY-KIT reading (the `BOSS_KIT` axis exists; the
@@ -2371,13 +2376,40 @@ without `seed_bomb` and a separate `player['mobility']` field (breaks every
 kit-slot consumer); redefining fanatic's pyro without lance (add `ember`
 beside it instead).
 
-### 6.6 Two design tensions, stated rather than resolved
+### 6.6 Two design tensions - RESOLVED by the owner (2026-09-08)
 
-Turtle remains a designed canary with no win condition; a `bark_burst`
-finisher would reverse a documented stance and should be a deliberate
-decision, not a content fix. Fire x growth and smoke x fire stay disabled
-toggles because they tax gardener-pyro mixes (the vent seal, the dash
-network, the boss-gate growth) in ways the designer may or may not want.
+Both were raised as owner decisions rather than content fixes, and both are
+now answered. They are settled design, not open questions: a later block may
+cite them, and may not quietly reverse them.
+
+**1. The turtle stays an anti-pattern. Leave as is.** No `bark_burst`
+finisher. Pure-defence play keeps its 2/100 fanatic floor and keeps its job as
+the clock's canary - if turtle win rates ever rise sharply, the clock has
+broken (2026-08-08). The consequence for content is the one D5 already
+observed and must stay true: `bark` has more carriers than `fire` (four base
+abilities, two grafts) and still cannot be given a payoff, because every one
+the closed vocabulary offers it is survivability. That is not a gap waiting to
+be filled. A bark payoff needs a NEW shape that is not defence, and the
+absence of one is the reason bark ships nothing - not an oversight.
+
+**2. Both disabled reaction rows stay disabled, for two different reasons.**
+
+`roots_burn` (fire x growth) is refused on THEME, which is a stronger and more
+durable reason than the balance one this section used to give. Burning your
+own growth as a primary strategy runs against what the game is about: the
+tender restores a poisoned floor, and growth is the restoration. The earlier
+argument - that it taxes gardener-pyro mixes through the dash network, the
+vent seal and the boss-gate quota - remains true and is now the second reason
+rather than the first. Do not re-open this one on a balance argument; the
+balance argument was never what was load-bearing.
+
+`smoke_smother` (smoke x fire) is refused more weakly: it is simply not
+NEEDED. Nothing in the game asks for it, so it stays off by default rather
+than by principle. Unlike `roots_burn` it could be revisited if a mechanic
+ever wanted it - it is a dormant row, not a closed door.
+
+The distinction between those two matters and is the point of writing them
+down separately: one is a theme boundary, the other is an unused idea.
 
 ---
 

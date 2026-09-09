@@ -8846,7 +8846,12 @@ pinned optimizer floor-entry rng states are unmoved by the content AND by the
 - Elites are tanky bounty-carriers (+2 hp, +0 dmg, +4 bloom). The +1 dmg
   variant measurably overshot (optimizer ~17% at 30 seeds).
 - Turtle is a designed anti-pattern (see 2026-08-08 thorns entry); fanatic
-  tracks it as a canary metric.
+  tracks it as a canary metric. **Confirmed by the owner on 2026-09-08**
+  (`docs/PROGRESSION_REVIEW.md` §6.6): no `bark_burst` finisher, the turtle
+  keeps its 2/100 floor and keeps its job. A sharp RISE in turtle wins is
+  still the signal that the clock has broken - the canary only works while
+  nothing is quietly propping the build up, so read it after any change to
+  shields, thorns, regen or smog.
 - Deeproot logs occasional timeouts (2/30): the searcher can still judge
   stalling safest. Revisit if it grows.
 - Magpie deaths cluster on floor 2 (harvest greed vs first real roster) -
@@ -9411,3 +9416,47 @@ pinned optimizer floor-entry rng states are unmoved by the content AND by the
   that no CI run reproduces. Any block whose content is loadout-shaped - a
   resonance is, by construction - has to run them by hand or it has not been
   measured.
+
+## 2026-09-08b - the two 6.6 design tensions, answered
+
+No measurement in this entry: it records two owner decisions so that a later
+block cites them instead of re-opening them. Both were raised by the
+progression review as tensions reserved to the owner, and `docs/PROGRESSION_REVIEW.md`
+§6.6 now carries them as settled design.
+
+**The turtle stays an anti-pattern.** No `bark_burst` finisher. Pure-defence
+play keeps the 2/100 fanatic floor it has held for months and keeps its job as
+the clock's canary: a sharp rise in turtle wins means the clock has broken
+(2026-08-08). The measurement consequence is that the canary only reads true
+while nothing props the build up, so the turtle column is worth reading after
+any change to shields, thorns, regen or smog - not only after a bark change.
+
+The content consequence, already visible in D5: `bark` has more carriers than
+`fire` - four base abilities (`root_wall`, `thorn_shield`, `bramble_coat`,
+`anchor_roots`) and two grafts (`thick_bark`, `carapace`) - and still ships no
+resonance, because every payoff the closed vocabulary offers it is
+survivability, and the `shield` / `thorns` ops are in `HOOK_FORBIDDEN_OPS` as
+the documented stall vector. That is now settled design rather than a gap in
+the tables. A bark payoff would need a NEW shape that is not defence; none has
+been proposed, and inventing one to fill the hole is not a content fix.
+
+**Both disabled reaction rows stay disabled, for two different reasons**, and
+the difference is the reason they are written down separately.
+
+`roots_burn` (fire x growth) is off on THEME. The tender restores a poisoned
+floor and growth IS the restoration, so burning your own growth as a primary
+strategy runs against what the game is about. The balance argument the review
+gave - that it taxes gardener-pyro mixes through the dash network, the vent
+seal and the boss-gate quota - is still true and is now the SECOND reason. A
+balance argument is therefore not grounds to re-open it, which is the point of
+recording the ordering.
+
+`smoke_smother` (smoke x fire) is off only because nothing needs it. It is a
+dormant row, not a closed door, and a mechanic that wanted it could revive it.
+
+Worth flagging for whoever revisits the first one: D5 shipped `cinder_grip` at
+fire 3, and fire's only carriers are `solar_lance`, `sun_flare`, `ember_sap`
+and `oil_tithe`. A run that reaches fire 3 is already close to mono-fire, so
+if `roots_burn` were ever enabled that row is where the pressure would land
+first. `damp` is unaffected by either decision - it is the unbuilt `on_wash`
+consumer, not a design tension.
