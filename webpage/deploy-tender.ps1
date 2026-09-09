@@ -5,7 +5,7 @@
 # resumable-upload approach); only the export preset and remote path differ.
 #
 # Usage:
-#   .\deploy-tender.ps1                            # deploy whatever's in build/web
+#   .\deploy-tender.ps1                            # deploy whatever's in ../../exports/tender_web
 #   .\deploy-tender.ps1 -Export                    # re-export from Godot first, then deploy
 #   .\deploy-tender.ps1 -ExportPath C:\my\folder   # custom path
 
@@ -13,7 +13,7 @@ param(
     [switch]$Export,
     [string]$GodotExe    = "C:\gd\Godot_v4.7-stable_win64_console.exe",
     [string]$ProjectPath = (Resolve-Path "$PSScriptRoot\..").Path,
-    [string]$ExportPath  = (Join-Path (Resolve-Path "$PSScriptRoot\..").Path "build\web"),
+    [string]$ExportPath  = (Join-Path (Resolve-Path "$PSScriptRoot\..\..").Path "exports\tender_web"),
     [string]$SshHost     = "mygame",
     [string]$RemotePath  = "/var/www/jawnston/tender"
 )
@@ -95,18 +95,27 @@ function Send-FileResumable {
 
 # --- Optional: re-export from Godot before deploying ---
 if ($Export) {
-    # Editor open during headless export = file lock collisions. Fail fast with a
-    # clear message instead of leaving a half-baked export folder.
+    # JawnRPG's script hard-fails when the editor is open, because that project
+    # has GDExtension DLLs the editor keeps locked. TENDER has none
+    # (extensions_support=false), and the export now lands outside the project
+    # tree, so an open editor can neither lock a DLL nor re-import our own
+    # output. Warn rather than block - a hard stop here was a false blocker.
     $running = @(Get-Process godot* -ErrorAction SilentlyContinue)
     if ($running.Count -gt 0) {
         $names = ($running | ForEach-Object { "$($_.ProcessName) PID $($_.Id)" }) -join ', '
-        Write-Host "Godot editor is running ($names) - close it before -Export." -ForegroundColor Red
-        exit 1
+        Write-Host "Note: Godot is running ($names). Exporting anyway - no GDExtensions to lock." -ForegroundColor DarkYellow
     }
     if (-not (Test-Path $GodotExe)) {
         Write-Host "Godot executable not found: $GodotExe" -ForegroundColor Red
         exit 1
     }
+    # Godot refuses to export into a folder that doesn't exist ("Target folder
+    # does not exist or is inaccessible") rather than creating it, and the path
+    # is outside the repo so a fresh clone never has it.
+    if (-not (Test-Path $ExportPath)) {
+        New-Item -ItemType Directory -Force -Path $ExportPath | Out-Null
+    }
+
     Write-Host "[Export] Running Godot CLI export of 'Web' preset..." -ForegroundColor Yellow
     & $GodotExe --headless --path $ProjectPath --export-release "Web"
     if ($LASTEXITCODE -ne 0) {
