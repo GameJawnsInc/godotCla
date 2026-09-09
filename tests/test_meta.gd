@@ -220,6 +220,12 @@ func _init() -> void:
 	_check_daily_config()
 	_check_loadout_winnable()
 
+	# 7) profile io that has to survive a phone: a file that is not a profile,
+	# a tier from a build with more tiers, and a save that is interrupted
+	_check_bad_profile_files()
+	_check_tier_clamp()
+	_check_atomic_save()
+
 	if failures == 0:
 		print("meta: OK")
 	quit(1 if failures > 0 else 0)
@@ -761,3 +767,105 @@ func _oil_count(g) -> int:
 		if g.terrain[t]["kind"] == "oil":
 			n += 1
 	return n
+
+
+# --- 7) profile io a phone can break ------------------------------------------
+
+## A saved profile is a file on a device the player controls, so it can be
+## anything: truncated by a kill, replaced by a sync client, or simply a
+## different app's JSON. None of that may cost more than the career.
+##
+## load_from guarded `data == null` (unparseable) but not "parsed into
+## something that is not a profile": a JSON ARRAY reached data.get("runs", 0),
+## which is a hard error on an Array - load_from returned null, the shell
+## assigned that null to `profile`, and the app could not boot at all until
+## the player cleared its data. Every one of these must hand back a USABLE
+## fresh career instead.
+func _check_bad_profile_files() -> void:
+	var path := "user://test_profile_bad.json"
+	# two of these fixtures are not JSON at all, so Godot's own parser prints an
+	# error for each while this passes - that noise is the test working
+	print("load_from: 8 fixtures, two of which the JSON parser rejects out loud")
+	for body in ["[1, 2, 3]", "[]", "\"a string\"", "42", "true", "", "{not json", "null"]:
+		var f := FileAccess.open(path, FileAccess.WRITE)
+		f.store_string(body)
+		f.close()
+		var p = Profile.load_from(path)
+		if p == null:
+			_fail("load_from(%s) returned null - the shell cannot boot on that" % body)
+			continue
+		_expect(p.runs, 0, "load_from(%s) hands back a fresh career" % body)
+		_expect(p.unlocked_tier, 0, "load_from(%s) unlocks nothing" % body)
+		_expect(p.available_loadouts(), ["tender"], "load_from(%s) can still fill the menu" % body)
+		_expect(p.game_config(0, [], "tender", "").get("loadout", ""), "tender",
+			"load_from(%s) can still start a run" % body)
+	DirAccess.remove_absolute(path)
+	print("load_from survives a file that is not a profile: OK")
+
+
+## unlocked_tier is an INDEX into Content.TIERS, and the one unlock load_from
+## has no table to filter against. A profile written by a build with more
+## tiers (or kept while TIERS shrank) used to come back verbatim; the shell
+## then clamped its DIFFICULTY row to that number and read Content.TIERS[99],
+## which throws and leaves the menu with no rows at all - no PLAY, no QUIT.
+func _check_tier_clamp() -> void:
+	var path := "user://test_profile_tier.json"
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(JSON.stringify({"runs": 4, "wins": 2, "unlocked_tier": 99}))
+	f.close()
+	var p = Profile.load_from(path)
+	_expect(p.unlocked_tier, Content.TIERS.size(), "load_from clamps a tier past the end of the table")
+	_expect(p.runs, 4, "...and keeps the rest of the career")
+	_expect(int(p.game_config(99).get("tier", -1)), Content.TIERS.size(),
+		"...so the run config it builds names a tier that exists")
+	DirAccess.remove_absolute(path)
+	print("unlocked_tier clamps to Content.TIERS: OK")
+
+
+## The career is saved exactly when a run ends - the moment a phone is most
+## likely to take the app away - and the write used to be open(WRITE) +
+## store_string + close straight onto the live file: an interrupted save
+## replaced a whole career with half a file, silently and with no notice.
+## The write is atomic now (temp file, then rename), which this pins from the
+## inside: `to_dict()` runs while the save is in flight, so a probe that reads
+## the target back from there sees exactly what a kill at that instant would
+## leave behind. Under the old write that is an EMPTY file.
+func _check_atomic_save() -> void:
+	var path := "user://test_profile_atomic.json"
+	var good = Profile.new()
+	good.runs = 7
+	good.wins = 3
+	good.best_floor = 5
+	good.save(path)
+	var whole := FileAccess.get_file_as_string(path)
+	_expect(whole.length() > 0, true, "the good career is on disk")
+	var probe = _SaveProbe.new()
+	probe.probe_path = path
+	probe.runs = 99
+	probe.save(path)
+	_expect(probe.seen_mid_save, whole, "a save in flight has not touched the career it replaces")
+	_expect(FileAccess.file_exists(path + ".tmp"), false, "the temp file is renamed away, never left behind")
+	_expect(Profile.load_from(path).runs, 99, "...and the finished save does replace it")
+	# what an interrupted save actually leaves on the device: a partial temp
+	# file beside a whole profile. The career loads from the whole one.
+	var tf := FileAccess.open(path + ".tmp", FileAccess.WRITE)
+	tf.store_string(whole.substr(0, maxi(1, whole.length() / 3)))  # a half-written save
+	tf.close()
+	_expect(Profile.load_from(path).runs, 99, "a half-written temp file beside the profile costs nothing")
+	good.save(path)
+	_expect(Profile.load_from(path).runs, 7, "the next save goes through over the stray temp")
+	_expect(FileAccess.file_exists(path + ".tmp"), false, "...and leaves nothing behind either")
+	DirAccess.remove_absolute(path)
+	print("profile save is atomic: OK")
+
+
+## A profile that reads the file it is replacing back at the exact moment
+## save() is serialising it. `to_dict()` is called from inside save(), so
+## `seen_mid_save` is what a kill mid-save would leave on disk.
+class _SaveProbe extends Profile:
+	var probe_path := ""
+	var seen_mid_save := "<never serialised>"
+
+	func to_dict() -> Dictionary:
+		seen_mid_save = FileAccess.get_file_as_string(probe_path)
+		return super()

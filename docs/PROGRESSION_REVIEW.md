@@ -1162,12 +1162,17 @@ readings are in BALANCE.md 2026-09-08 and beside the table in
 vocabulary, not for reach*, and *growth waits for a payoff that pays on an act
 rather than on a turn spent in place, because a rate over turns is a greed
 subsidy at every threshold*. Carried forward from earlier blocks and
-unchanged: the **mutator picker** has no shell surface (6.1's last piece; the
-three C4 mutators and the two D-block mutators have data, descs and invariants
-but no menu), and the two unlock-layer consumers `unlocked_grafts` and the
-`MILESTONES` seam it would need still have nothing to consume. Open items this
-block did not touch: `solar_core` remains the largest graft effect on record and
-unpriced against its own measurement; `quota_reclamp` has still never fired in a
+unchanged: **`unlocked_grafts` is dead at BOTH ends** - no `Content.MILESTONES`
+row carries a `graft` kind, so nothing writes the bucket, and `game_config`
+returns no `grafts` key, so nothing reads it; the dispatch arm and its test
+fixture are the only things keeping it alive. (Corrected 2026-09-09: this
+paragraph previously also said the **mutator picker** has no shell surface.
+It does - `shell/main.gd` draws a `MUTATOR:` row and cycles it, landed in
+a223f93, and all 11 mutators have an unlock. And it said `solar_core` was
+"unpriced against its own measurement"; it has been priced at 8 since bump 8,
+and what actually remains there is the OWNER question of whether it should
+become the conditional `regen_on_growth` variant - which D5's `deep_loam` cut
+is new evidence against.) Open items this block did not touch: `quota_reclamp` has still never fired in a
 bot run; `hook_capped` has still never fired in play; and **the press and the
 forge remain dead sinks** - `upcycles 0/0` for every persona in every run in
 this entry, which now also means the fork *choice*, the visible half of this
@@ -1176,6 +1181,23 @@ check and the two forge demos. New to the open list: a single 3-card draft can
 spend two of its cards on the two siblings of one base (~10-12% of rolls by
 direct probe), which is legal, follows from `universe = bases + upgrades`, and
 is pinned by no demo.
+
+**Added 2026-09-09, found by a ship-readiness audit rather than by a block:**
+7.6's **golden-hash test and its Android hash readout were never built and
+were never listed as open** - they simply vanished from the status paragraphs.
+`grep -rln golden tests/*.gd` and `grep -n state_hash shell/*.gd` both return
+nothing. This matters because the daily challenge is advertised as the same
+run for everyone: its seed is `hash(date_string)` while every shop and pod
+draw is `hash([seed, floor, tag])`, and nothing in the tree checks that those
+agree across platforms. Solo play is unaffected - only the daily's "same run
+for everyone" claim rests on it. Ship-relevant, not ship-blocking.
+
+Also on the open list and never tracked: review defect 4 (`fuse` erases the
+partner with no death event, so the elite bounty is never paid) and defect 6
+(a draft drop writes the new ability into the kit slot in place, carrying a
+live `gummed` onto it - the forge path shifts it correctly, the draft path
+does not). Both are small and neither is player-visible enough to block a
+build.
 
 **Bump 14 (2026-09-08) implemented the LAST item in the 6.4 roadmap, and it
 shipped as ONE element.** "One resonance per element" is
@@ -1269,11 +1291,10 @@ none of it is a queued feature:
    and the tag counts under it), so an enemy row that resists or is weak to a
    damage family would meet a build the sim can already name.
 
-Carried forward from earlier blocks and untouched by D5: the **mutator picker**
-has no shell surface; `unlocked_grafts` and the `MILESTONES` seam it would need
-still have nothing to consume; `solar_core` remains the largest graft effect on
-record and unpriced against its own measurement; `quota_reclamp` has still
-never fired in a bot run; **`hook_capped` has still never fired in play** (D5
+Carried forward from earlier blocks and untouched by D5: `unlocked_grafts` is
+dead at BOTH ends (no `MILESTONES` row has a `graft` kind, so nothing writes
+it, and `game_config` returns no `grafts` key, so nothing reads it);
+`quota_reclamp` has still never fired in a bot run; **`hook_capped` has still never fired in play** (D5
 predicted the cut displace row would produce the first firing through a
 collision kill-chain into `compost`, so cutting it left that counter at zero);
 and the **press and the forge remain dead sinks** at `upcycles 0/0` for every

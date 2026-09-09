@@ -955,8 +955,12 @@ architecture below is designed to bend rather than block.
   (cumulative effective casts) and `grafts_owned_at_win: n`. A row's `kind`
   dispatches explicitly to `unlocked_packages` / `unlocked_mutators` /
   `unlocked_loadouts` / `unlocked_grafts` (Block A gave `unlocked_loadouts` a
-  consumer — `game_config` / `available_loadouts`; `unlocked_grafts` still has
-  none); an unknown kind is a `push_error` and is skipped. `load_from` filters every
+  consumer — `game_config` / `available_loadouts`; `unlocked_grafts` is dead at
+  BOTH ends and has been since it was written — no shipped `MILESTONES` row
+  carries a `graft` kind, so nothing ever writes the bucket, and `game_config`
+  returns no `grafts` key, so nothing reads it; the dispatch arm and one test
+  fixture are all that keep it alive, and the sim's `grafts` config key it
+  would feed is used only by sweeps); an unknown kind is a `push_error` and is skipped. `load_from` filters every
   stored id against `Content`, so renamed content cannot brick a profile.
   Daily runs go through `record_daily(summary)` into `daily_best[str(seed)]`
   and never touch the career.
@@ -1233,5 +1237,38 @@ architecture below is designed to bend rather than block.
   headless; `tests/render_frame.gd` renders any game state as a standalone
   SVG screenshot (the agent's way to see the shell). Sprites are hand-written
   SVG strings in `shell/svg_art.gd`. The sim must never depend on the shell.
+- Going back is ONE function (`shell/main.gd` `_back(quit_at_root)`), and it is
+  the only place in the shell that implements "back". Android's Back button
+  reaches it through `_notification(NOTIFICATION_WM_GO_BACK_REQUEST)` (with
+  `application/config/quit_on_go_back=false` in `project.godot`, or the OS
+  quits the app before the shell is asked - and note `project.godot` takes `;`
+  comments, NOT `#`, which are silently swallowed along with the line after
+  them), ESC reaches it from `_key`, and the sheets' own BACK/CLOSE tags
+  reach the same tap tags it calls. It goes UP ONE LEVEL per press - tooltip,
+  then sheet, then the forge's three taps one at a time, then an aim, then the
+  room camera, then the menu - and only the MENU quits, only for Back
+  (`quit_at_root`), never for ESC. Aims are cancelled through `_cancel_aim`,
+  which the Back button, a D-pad press in a tile aim and a second tap on the
+  aiming slot all share: entering an aim costs nothing, so leaving one costs
+  nothing. Two rules the same principle bought elsewhere: the tooltip arm of
+  `_back` drops `_held` as well as the text, because `_process` re-raises a
+  tooltip while the press that made it is still down - clearing only the text
+  let the next frame put it back and every later Back be eaten by it in turn,
+  so Back did NOTHING while a finger rested on the map; and `_dir_input` has
+  an arm for the forge's three modal steps (`up_keep`/`up_scrap`/`up_variant`),
+  because the two selection steps draw no sheet, so the D-pad is on screen
+  beside the SHRINE SHOP button the context line names and falling through to
+  `_move_or_strike` there struck whatever stood next to the tender and dropped
+  the forge for a charge and a turn. `tests/test_shell.gd` `_check_back` /
+  `_check_aim_cancel` / `_check_modal_dpad` drive the notification itself and
+  assert an adjacent enemy's HP, the tender's position, the charge and the turn
+  counter are all untouched.
+- The career profile is written ATOMICALLY (`meta/profile.gd` `save`: temp file,
+  then rename) because it is saved exactly when a run ends, and a phone can
+  take the app away mid-write; `load_from` accepts only a Dictionary (a JSON
+  array used to return null out of it, and the shell cannot boot on a null
+  profile) and clamps `unlocked_tier` to `Content.TIERS.size()`, the one unlock
+  with no Content table to filter against - the shell bounds it a second time
+  in `_max_tier()`, because an out-of-range tier read empties the whole menu.
 - Workflow: no PRs; commit on `claude/godot-setup-q6hk6p` and merge/push
   straight to `main`.

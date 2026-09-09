@@ -613,6 +613,11 @@ func _init() -> void:
 		rs._run_save = null
 	rs.free()
 
+	_check_back()
+	_check_aim_cancel()
+	_check_modal_dpad()
+	_check_tier_clamp()
+
 	shell.free()
 	shell2.free()
 	print("FAILURES: %d" % fails if fails > 0 else "shell smoke: OK")
@@ -631,6 +636,296 @@ func _bare_shell():
 	sh.screen = "game"
 	sh.mode = "normal"
 	return sh
+
+
+## --- the Back button ---------------------------------------------------------
+## Android's Back button (and gesture) used to KILL the app from any screen:
+## application/config/quit_on_go_back defaults to true and nothing in the
+## project handled NOTIFICATION_WM_GO_BACK_REQUEST. It is now one level up per
+## press, through the single handler ESC also uses (shell/main.gd _back), so
+## these drive the notification itself - the wiring is half of what is pinned.
+func _check_back() -> void:
+	# without the project.godot line the OS quits before the shell is asked
+	_check(bool(ProjectSettings.get_setting("application/config/quit_on_go_back", true)) == false,
+		"project.godot leaves the Back button to the shell")
+	var bk = _bare_shell()
+	bk.game = Game.new(4242, {"bloom": 30})
+	# every sheet and overlay closes back to the map, and stays in the run
+	for m in ["shop", "log", "help", "intro"]:
+		bk.mode = m
+		_back(bk)
+		_check(bk.mode == "normal" and bk.screen == "game",
+			"Back closes the %s sheet back to the map (mode %s)" % [m, bk.mode])
+	# a held tooltip is over everything, so it goes first and nothing else moves
+	bk.mode = "normal"
+	bk.tooltip = ["Drill Bot - hp 3"]
+	_check(bk._back(true) == "tooltip" and bk.tooltip.is_empty() and bk.screen == "game",
+		"Back drops a held tooltip before anything else")
+	# ...and it must STAY dropped. _process re-raises a tooltip for as long as
+	# the press that raised it is still down and hold_ms has passed, so a Back
+	# that cleared only the text was undone on the very next frame - and every
+	# Back after it was eaten by the same tooltip in turn, so the button did
+	# nothing at all while a finger rested on the map. _back drops the hold too.
+	bk._ts = 40.0
+	bk._mox = 0.0
+	bk._moy = 0.0
+	bk._vx0 = 0
+	bk._vy0 = 0
+	bk._vx1 = 999
+	bk._vy1 = 999
+	var bp: Vector2i = bk.game.player["pos"]
+	bk._press_pos = Vector2(bp.x * 40.0 + 20.0, bp.y * 40.0 + 20.0)
+	bk._show_tooltip(bk._press_pos)
+	_check(not bk.tooltip.is_empty(), "a hold on the tender really raises a tooltip")
+	bk._held = true
+	bk._press_ms = Time.get_ticks_msec() - 5000  # the hold fired long ago
+	_check(bk._back(true) == "tooltip", "Back drops the held tooltip")
+	bk._process(0.1)
+	_check(bk.tooltip.is_empty() and not bk._held,
+		"...and the next frame does not put it straight back (%s)" % str(bk.tooltip))
+	_check(bk._back(true) != "tooltip", "...so the next Back is not eaten by it too")
+	bk.screen = "game"
+	# the room camera is a view state, so Back zooms out before it leaves
+	bk.zoom_room = true
+	_check(bk._back(true) == "zoom" and not bk.zoom_room and bk.screen == "game",
+		"Back leaves the room camera before it leaves the run")
+	# the draft's drop sheet returns to the offer cards, having picked nothing
+	bk.mode = "draft_drop"
+	bk.mode_pick = 1
+	var kit_b: Array = bk.game.player["kit"].duplicate()
+	_back(bk)
+	_check(bk.mode == "normal" and bk.game.player["kit"] == kit_b,
+		"Back on the drop sheet returns to the offer cards without dropping")
+	# the forge is a three-tap choice, so Back walks it back one tap at a time
+	# and lands on the shrine sheet the forge card was tapped from
+	bk.game.player["pos"] = bk.game.map["shrine"]
+	bk._tap("shop")
+	bk._tap("forge")
+	bk._ability_press(0)
+	bk._ability_press(1)
+	_check(bk.mode == "up_variant", "the forge reaches its fork sheet (%s)" % bk.mode)
+	_back(bk)
+	_check(bk.mode == "up_scrap", "Back on the fork sheet returns to the scrap tap (%s)" % bk.mode)
+	_back(bk)
+	_check(bk.mode == "up_keep" and bk.mode_pick == -1,
+		"Back on the scrap tap returns to the keep tap (%s)" % bk.mode)
+	_back(bk)
+	_check(bk.mode == "shop", "Back on the keep tap returns to the shrine sheet (%s)" % bk.mode)
+	_check(bk.game.player["kit"] == kit_b and bk.game.shop.has("forge"),
+		"...with the kit untouched and the forge still on offer")
+	# the descent draft is the sim's phase, not a shell sheet: it cannot be
+	# closed, so Back leaves for the menu (the run save carries the draft)
+	bk.mode = "normal"
+	bk.game.phase = "draft"
+	_check(bk._back(true) == "menu" and bk.screen == "menu" and bk.game.phase == "draft",
+		"Back in the descent draft leaves for the menu with the draft still pending")
+	bk.screen = "game"
+	bk.game.phase = "play"
+	# normal play, the game-over sheet and the tutorial all go up to the menu
+	_check(bk._back(true) == "menu" and bk.screen == "menu", "Back in normal play goes to the menu")
+	bk.screen = "game"
+	bk.game.over = true
+	_check(bk._back(true) == "menu" and bk.screen == "menu", "Back on the over sheet goes to the menu")
+	bk.screen = "tutorial"
+	bk.game = Game.new(1, Tutorial.game_config())
+	_check(bk._back(true) == "menu" and bk.screen == "menu", "Back in the tutorial goes to the menu")
+	# the menu is the root: ONLY here does Back quit, and only for Back - ESC
+	# on a desktop has never quit from the menu and still does not
+	bk._tap("settings")
+	_check(bk.mode == "settings", "the settings sheet opens")
+	_check(bk._back(true) == "settings" and bk.mode == "normal" and bk.screen == "menu",
+		"Back closes the settings sheet instead of quitting")
+	_check(bk._back(false) == "root" and bk.screen == "menu", "ESC at the menu does not quit")
+	_check(bk._back(true) == "quit", "Back at the menu is the one press that quits")
+	# ESC is the same handler, so its gaps close with it: it used to page the
+	# legend forward for ever and to do nothing at all on the over sheet
+	bk.screen = "game"
+	bk.game = Game.new(4242, {})
+	bk.mode = "help"
+	bk.help_page = 0
+	bk._key(KEY_ESCAPE)
+	_check(bk.mode == "normal", "ESC closes the legend instead of paging it (%s)" % bk.mode)
+	bk.game.over = true
+	bk._key(KEY_ESCAPE)
+	_check(bk.screen == "menu", "ESC on the over sheet goes to the menu")
+	bk.free()
+
+
+## --- cancelling an aim --------------------------------------------------------
+## A tile aim had NO free cancel on a touchscreen: tapping your own tile did
+## nothing, CLEANSE flashed, END TURN cost a turn, and a D-pad press fell
+## through to _move_or_strike - it MOVED you, and struck whatever stood beside
+## you. Three ways out now, all free: the Back button, a D-pad press, and a
+## second tap on the slot you armed. Every check below asserts the enemy's HP,
+## the tender's position, the charge and the turn counter are all untouched.
+func _check_aim_cancel() -> void:
+	for way in ["back", "dpad", "dpad_button", "slot", "esc"]:
+		var sh = _bare_shell()
+		sh.game = Game.new(4242, {})
+		var g = sh.game
+		g.player["charge"] = 5
+		var d := _open_dir(g)
+		var en: Dictionary = _park_enemy(g, g.player["pos"] + d)
+		sh._ability_press(1)  # seed_bomb: a TILE ability, so this is a tile aim
+		_check(sh.mode == "target_tile", "%s: the tile ability arms a tile aim (%s)" % [way, sh.mode])
+		_check(sh.flash.contains("cancel"), "%s: the aim flash names the cancel (%s)" % [way, sh.flash])
+		var pos0: Vector2i = g.player["pos"]
+		var hp0: int = int(en["hp"])
+		var ch0: int = int(g.player["charge"])
+		var tn0: int = g.total_turns
+		match way:
+			"back": sh._notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+			"dpad": sh._dir_input(d)
+			"dpad_button": sh._tap("dir:" + _dir_tag(d))
+			"slot": sh._ability_press(1)
+			"esc": sh._key(KEY_ESCAPE)
+		# still IN the run: a cancel that dropped the player out to the menu
+		# would leave mode "normal" too, and that is not a cancel
+		_check(sh.mode == "normal" and sh.screen == "game",
+			"%s cancels a tile aim and stays in the run (%s / %s)" % [way, sh.mode, sh.screen])
+		_check(g.player["pos"] == pos0, "%s does not move the tender" % way)
+		_check(int(en["hp"]) == hp0, "%s does not strike the enemy beside you (%d -> %d)" % [way, hp0, int(en["hp"])])
+		_check(int(g.player["charge"]) == ch0 and g.total_turns == tn0,
+			"%s costs no charge and no turn" % way)
+		# the same three ways out of a DIRECTION aim, where a D-pad press is
+		# the aim itself: there the slot tap and Back are what cancel
+		sh._ability_press(0)  # solar_lance: a direction ability
+		_check(sh.mode == "target_dir", "%s: the dir ability arms a dir aim (%s)" % [way, sh.mode])
+		if way == "dpad" or way == "dpad_button":
+			sh._ability_press(0)
+		elif way == "back":
+			sh._notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+		elif way == "esc":
+			sh._key(KEY_ESCAPE)
+		else:
+			sh._ability_press(0)
+		_check(sh.mode == "normal" and sh.screen == "game" and g.player["pos"] == pos0
+				and int(en["hp"]) == hp0 and g.total_turns == tn0,
+			"%s cancels a direction aim for free too" % way)
+		sh.free()
+	# tapping a DIFFERENT slot still switches the aim - the toggle is the slot
+	# you armed, not any slot
+	var sw = _bare_shell()
+	sw.game = Game.new(4242, {})
+	sw.game.player["charge"] = 5
+	sw._ability_press(1)
+	sw._ability_press(0)
+	_check(sw.mode == "target_dir" and sw.mode_slot == 0,
+		"tapping another slot re-aims instead of cancelling (%s %d)" % [sw.mode, sw.mode_slot])
+	sw.free()
+
+
+## --- a direction in a modal state ---------------------------------------------
+## The forge is a three-tap modal choice, and its two SELECTION steps draw no
+## sheet - so the D-pad and the arrow keys are still live right beside the
+## SHRINE SHOP button the context line points at. Falling through to
+## _move_or_strike there moved the tender, struck whatever stood next to it,
+## spent a charge and dropped the forge, all out of a choice the player was
+## still making. Same rule as a tile aim: a direction in a modal state means
+## "get me out of this", and it is free. The forge is left standing, so the
+## choice can simply be finished.
+func _check_modal_dpad() -> void:
+	for step in ["up_keep", "up_scrap", "up_variant"]:
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var sh = _bare_shell()
+			sh.game = Game.new(4242, {"bloom": 30})
+			var g = sh.game
+			g.player["pos"] = g.map["shrine"]
+			g.player["charge"] = 5
+			sh._tap("shop")
+			sh._tap("forge")
+			if step != "up_keep":
+				sh._ability_press(0)
+			if step == "up_variant":
+				sh._ability_press(1)
+			if sh.mode != step:
+				sh.free()
+				continue
+			var en: Dictionary = _park_enemy(g, g.player["pos"] + d)
+			var pos0: Vector2i = g.player["pos"]
+			var hp0: int = int(en["hp"])
+			var ch0: int = int(g.player["charge"])
+			var tn0: int = g.total_turns
+			var kit0: Array = g.player["kit"].duplicate()
+			# both routes a real player has: the arrow key and the D-pad button
+			# (the button is on screen because these steps draw no sheet)
+			sh._key({Vector2i(1, 0): KEY_RIGHT, Vector2i(-1, 0): KEY_LEFT,
+				Vector2i(0, 1): KEY_DOWN, Vector2i(0, -1): KEY_UP}[d])
+			sh._tap("dir:" + _dir_tag(d))
+			_check(g.player["pos"] == pos0 and int(en["hp"]) == hp0
+					and int(g.player["charge"]) == ch0 and g.total_turns == tn0,
+				"%s: a %s D-pad press moves nothing and costs nothing (%s %d %d %d)"
+					% [step, _dir_tag(d), str(g.player["pos"]), int(en["hp"]),
+						int(g.player["charge"]), g.total_turns])
+			_check(sh.mode == step and g.player["kit"] == kit0,
+				"%s: ...and the forge choice is still standing (%s)" % [step, sh.mode])
+			sh.free()
+
+
+## --- the difficulty row's second bound ----------------------------------------
+## unlocked_tier is an INDEX into Content.TIERS and the one unlock load_from
+## cannot filter against a table. A profile carrying a tier past the table's
+## end used to clamp sel_tier to that number and then read Content.TIERS[99]
+## in _menu_rows, which threw and returned ZERO rows - a menu with no PLAY and
+## no QUIT, on a build that cannot be recovered from without clearing data.
+func _check_tier_clamp() -> void:
+	var tc = _bare_shell()
+	tc.screen = "menu"
+	tc.profile = Profile.new()
+	tc.profile.unlocked_tier = 99  # a save from a build with more tiers
+	tc.sel_tier = 99
+	tc._clamp_selection()
+	_check(tc.sel_tier <= Content.TIERS.size(), "an over-range tier clamps to the table (%d)" % tc.sel_tier)
+	var rows := _rows(tc)
+	_check(rows.has("PLAY") and rows.has("QUIT"), "...and the menu still offers PLAY and QUIT (%s)" % str(rows))
+	var named := false
+	for r in rows:
+		if String(r).begins_with("DIFFICULTY"):
+			named = true
+	_check(named, "...and names the difficulty row it clamped to (%s)" % str(rows))
+	# the cycler cannot walk back out of the table either
+	for i in Content.TIERS.size() + 3:
+		tc._tap("set:tier")
+		_check(tc.sel_tier <= Content.TIERS.size(), "the DIFFICULTY cycler stays in the table (%d)" % tc.sel_tier)
+	tc.free()
+
+
+## Drive the Android Back button the way the OS does.
+func _back(sh) -> void:
+	sh._notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+
+
+## A direction with open floor next to the tender, so an enemy can be parked
+## there and a D-pad press in that direction would really move or strike.
+func _open_dir(g) -> Vector2i:
+	var m: Dictionary = g.map
+	var pp: Vector2i = g.player["pos"]
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var t: Vector2i = pp + d
+		if t.x >= 0 and t.y >= 0 and t.x < int(m["w"]) and t.y < int(m["h"]) \
+				and int(m["tiles"][t.y * int(m["w"]) + t.x]) == 1:
+			return d
+	return Vector2i(1, 0)
+
+
+## Move one enemy onto `p` and every other one off the board, so the only
+## thing a stray strike could hit is the one whose HP is being watched.
+func _park_enemy(g, p: Vector2i) -> Dictionary:
+	for e in g.enemies:
+		e["pos"] = Vector2i(-9, -9)
+	var en: Dictionary = g.enemies[0]
+	en["pos"] = p
+	return en
+
+
+func _dir_tag(d: Vector2i) -> String:
+	if d == Vector2i(1, 0):
+		return "right"
+	if d == Vector2i(-1, 0):
+		return "left"
+	if d == Vector2i(0, 1):
+		return "down"
+	return "up"
 
 
 ## The title screen's row labels, in menu order.

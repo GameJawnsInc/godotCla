@@ -342,10 +342,37 @@ static func _sorted(d: Dictionary) -> Dictionary:
 	return out
 
 
+## Write the career. ATOMICALLY: the career is saved exactly when a run ends,
+## which on a phone is exactly when the OS is most likely to take the app away,
+## and a truncated write used to replace a good profile with half a file -
+## silently resetting the career, with no notice (the RUN save has one; this
+## has none, because there is nothing left to say it about).
+##
+## So the JSON goes to a temp file beside the target and is renamed over it
+## only once it is complete and closed. A rename is atomic on the platforms
+## this ships to, so an interrupted save leaves the OLD profile whole; the
+## worst case is a stray .tmp, which the next save overwrites. Nothing here
+## opens `path` for writing at all.
 func save(path: String) -> void:
-	var f := FileAccess.open(path, FileAccess.WRITE)
-	f.store_string(JSON.stringify(to_dict()))
+	var text := JSON.stringify(to_dict())
+	var tmp := path + ".tmp"
+	var f := FileAccess.open(tmp, FileAccess.WRITE)
+	if f == null:
+		push_error("profile: cannot open %s (%d) - career not saved" % [tmp, FileAccess.get_open_error()])
+		return
+	f.store_string(text)
+	f.flush()
+	var err := f.get_error()
 	f.close()
+	if err != OK:
+		# a short write (a full disk is the realistic one) never gets to
+		# stand in for the career that is still on disk
+		DirAccess.remove_absolute(tmp)
+		push_error("profile: write failed (%d) - the saved career is untouched" % err)
+		return
+	if DirAccess.rename_absolute(tmp, path) != OK:
+		DirAccess.remove_absolute(tmp)
+		push_error("profile: cannot replace %s - the saved career is untouched" % path)
 
 
 static func load_from(path: String):  # -> Profile (or fresh if missing)
@@ -353,15 +380,27 @@ static func load_from(path: String):  # -> Profile (or fresh if missing)
 	if not FileAccess.file_exists(path):
 		return profile
 	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return profile
 	var data = JSON.parse_string(f.get_as_text())
 	f.close()
-	if data == null:
+	# A profile that cannot be read may cost the player their career; it must
+	# never cost them the app. Reading `.get(...)` off anything but a Dictionary
+	# is a hard error that returns null out of here, and the shell assigns that
+	# null to `profile` - after which the game cannot boot at all until the
+	# player clears app data. JSON.parse_string hands back null for garbage,
+	# and a plain Array / float / String for valid JSON that simply is not a
+	# profile, so the test is "is it a Dictionary", not "is it null".
+	if not (data is Dictionary):
 		return profile
 	profile.runs = int(data.get("runs", 0))
 	profile.wins = int(data.get("wins", 0))
 	profile.tier_wins = int(data.get("tier_wins", 0))
 	profile.best_floor = int(data.get("best_floor", 0))
-	profile.unlocked_tier = int(data.get("unlocked_tier", 0))
+	# the one unlock with no Content table to filter against: it is an INDEX
+	# into Content.TIERS, so a profile written by a build with more tiers (or
+	# kept while TIERS shrank) would hand the menu a tier that cannot be named
+	profile.unlocked_tier = clampi(int(data.get("unlocked_tier", 0)), 0, Content.TIERS.size())
 	# renamed or removed content must never brick a saved career: every stored
 	# id is filtered against the tables that exist right now.
 	profile.unlocked_packages = _known_ids(data.get("unlocked_packages", []), Content.PACKAGES)

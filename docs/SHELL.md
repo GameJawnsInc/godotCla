@@ -48,7 +48,7 @@ scene.
 | R (shop sheet open) | reroll the shrine counter (Spinning Shrine mutator only) — outside the sheet R still restarts the seed |
 | 1–5 / 0 (draft sheet) | take that offer / skip the draft — a skip arms one extra affinity offer on the next descent |
 | SPACE / ENTER | end turn |
-| ESC | cancel targeting |
+| ESC | back: close a sheet, cancel an aim, or leave the run for the menu (see *The Back button*) |
 | R | restart the same seed |
 | N | next seed |
 
@@ -75,9 +75,34 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
   and exactly what it will do next turn
 - tap a kit line to cast — aim with the D-pad / adjacent tap for
   directional abilities, or tap a highlighted tile for tile abilities
+- **cancelling an aim is free**: tap the same kit line again, press any
+  D-pad arrow, or press Back. None of them move you, strike anything, or
+  cost a turn, and the aim line on screen says so
 - CLEANSE / DESCEND / HELP buttons bottom-right
 - tap shop cards at a shrine, draft options between floors
 - after a run: tap anywhere for the next seed
+
+## The Back button
+
+Android's Back button and back gesture mean **up one level**, never "quit"
+— `application/config/quit_on_go_back` is off and the shell handles
+`NOTIFICATION_WM_GO_BACK_REQUEST` itself. `ESC` is the same handler
+(`shell/main.gd` `_back`), so the keyboard and the touchscreen can never
+disagree about what back means:
+
+| where you are | what Back does |
+|---|---|
+| a held tooltip | drops the tooltip (and the hold with it, so it stays gone) |
+| any sheet — legend, log, intro, shrine, settings | closes it, back to the map |
+| the forge's keep / scrap / fork step | one step back, ending on the shrine sheet |
+| the draft's drop sheet | back to the offer cards, nothing dropped |
+| aiming an ability | cancels the aim — free, no turn, no strike |
+| the room camera (zoom) | back out to the whole floor |
+| normal play, the descent draft, the game-over sheet, the tutorial | the menu |
+| the menu | quits (the root; `ESC` here does nothing) |
+
+Leaving a live run for the menu costs nothing: every action is already on
+disk and RESUME replays it byte-exact (*Run persistence* below).
 
 ## Setting up a run
 
@@ -144,16 +169,57 @@ views (`tests/autopsy.gd`, `tests/playtest.gd`) print.
 
 ## Building the APK
 
-`export_presets.cfg` holds an Android preset (arm64, non-gradle). With
-export templates, a JDK, zipalign, and an apksigner on the SDK path:
+`export_presets.cfg` holds an Android preset (arm64-v8a, non-gradle,
+`com.gamejawns.tender`). `build/` is gitignored and absent, so:
 
 ```
+mkdir -p build
 godot --headless --path . --export-debug "Android" build/tender.apk
 ```
 
-This container builds it with GitHub-sourced pieces only: Temurin JDK 17,
-lzhiyong/android-sdk-tools (zipalign), and an `apksigner` shim over
-patrickfav/uber-apk-signer for signing — no Google SDK download needed.
+Measured on a fresh container: **29.2 MB, signed v2+v3, zipalign verified,
+about 20 seconds.**
+
+### What Godot 4.7.1 actually requires
+
+Read off the export's own error output and `platform/android/export/
+export_plugin.cpp`, not inferred — an earlier version of this section listed
+two things that are not needed and omitted the one that is.
+
+| Requirement | Note |
+|---|---|
+| `~/.local/share/godot/export_templates/4.7.1.stable/android_debug.apk` | `--export-debug` needs the debug template ALONE; validation passes on either |
+| `<sdk>/platform-tools/adb` — must exist and execute | a hard validation blocker, and `dl.google.com` is 403 here. A stub script satisfies it: Godot only checks existence and runs it for device polling |
+| `<sdk>/build-tools/<ver>/apksigner` — `--version` must exit 0 | pick a version dir in `[28, 36]`; `36.0.0` matches `DEFAULT_TARGET_SDK_VERSION` and silences a warning |
+| a JDK | the system JDK 21 is fine; `editor_settings-4.7.tres` already points at it |
+| the debug keystore | `~/.local/share/godot/keystores/debug.keystore`, alias `androiddebugkey` |
+
+**`zipalign` is NOT a requirement** — Godot never invokes it on the
+non-gradle path (`-Pperform_zipalign=` is a Gradle property), and
+uber-apk-signer's jar bundles its own Linux zipalign anyway. **A specific
+Temurin JDK is not a requirement** either.
+
+### Getting the pieces without the 1.22 GB pack
+
+`android_debug.apk` is the FIRST member of the export-template `.tpz`, so a
+byte-range fetch of the first 125,820,716 bytes and one raw-inflate gets it
+(127,243,229 bytes out) instead of the whole 1.22 GB release asset:
+
+```
+curl -sSL -r 0-125820715 -o /tmp/dbg.bin \
+  https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_export_templates.tpz
+# then strip the 30+name+extra local header and zlib.decompressobj(-15) the rest
+```
+
+Signing goes through an `apksigner` shim over patrickfav/uber-apk-signer.
+The real `com.android.apksigner.ApkSignerTool` is NOT in that jar, so the
+shim has to translate — Godot calls `apksigner --version`, then
+`sign --verbose --ks <KS> --ks-pass pass:<PW> --ks-key-alias <ALIAS> <APK>`
+(in place, no `--out`), then `verify --verbose <APK>`.
+
+None of this is installed by `.claude/hooks/session-start.sh`, which fetches
+only the Godot binary — so every fresh session starts unable to build until
+the template is re-fetched.
 
 ## Screenshots without a display
 
@@ -301,8 +367,13 @@ or item card is still shown with its price and flashes when tapped:
   forge is a **three-tap** choice: tap what to keep, tap what to scrap, then
   pick which of the two named variants that ability grows into off a card
   sheet that shows both in full (a package ability has only one upgrade and
-  forges straight away on the second tap; `ESC` backs out of any step, and
-  the sheet's BACK button returns to the scrap tap). The forge is the way to
+  forges straight away on the second tap; Back — or `ESC` — steps back one
+  tap at a time, fork sheet to scrap tap to keep tap to the shrine sheet,
+  and the fork sheet's own BACK button does the same. On a touchscreen the
+  SHRINE SHOP button stays on screen through both selection taps and is the
+  same free way out - and because it is, the D-pad next to it is inert
+  through all three steps: an arrow says "the forge has the screen" instead
+  of walking you off the shrine for a charge and a turn). The forge is the way to
   reach the sibling the current floor's draft cannot deal - the descent draft
   offers only one variant per base, alternating by floor.
 - **reroll** (only under the Spinning Shrine mutator; a default run's sheet

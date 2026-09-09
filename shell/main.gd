@@ -236,13 +236,25 @@ func _roll_seed() -> void:
 ## unlock when content is renamed. Called on boot, on every menu draw and
 ## before a run starts, so an impossible selection can never reach the sim.
 func _clamp_selection() -> void:
-	sel_tier = clampi(sel_tier, 0, int(profile.unlocked_tier))
+	sel_tier = clampi(sel_tier, 0, _max_tier())
 	if not profile.available_loadouts().has(sel_loadout):
 		sel_loadout = "tender"
 	if not profile.unlocked_packages.has(sel_package):
 		sel_package = ""
 	if not profile.unlocked_mutators.has(sel_mutator):
 		sel_mutator = ""
+
+
+## The highest difficulty the DIFFICULTY row may show. The career gate is
+## profile.unlocked_tier, but that number is the one unlock load_from cannot
+## filter against Content, and a profile written by a build with more tiers
+## (or kept while Content.TIERS shrank) hands back a tier that is not in the
+## table: _menu_rows reads Content.TIERS[sel_tier - 1] for the row's name, and
+## an out-of-range read there empties the whole menu - no PLAY, no QUIT. So
+## the table's own size is the second bound, at the one place that picks the
+## number rather than at every place that reads it.
+func _max_tier() -> int:
+	return mini(int(profile.unlocked_tier), Content.TIERS.size())
 
 
 ## The config PLAY starts a run with: the menu's own choices through the
@@ -666,6 +678,113 @@ func _legal_of(kind: String) -> Array:
 
 # --- input --------------------------------------------------------------------
 
+## Android's Back button and back gesture. project.godot sets
+## application/config/quit_on_go_back to false - without it the OS kills the
+## app on the first Back press, from any screen - so the whole rule lives here,
+## and it is the SAME rule ESC follows: one step up one level. Nothing else in
+## the shell may implement "back"; a second copy would drift from this one.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		_back(true)  # the menu is the root, and Android's root gesture quits
+
+
+## Go UP one level, and return the level that was left (the return value is
+## how a headless test can pin the root case without quitting the runner).
+## Every modal state the shell can be in has exactly one way out and it is
+## this function: ESC, the Back button and the sheets' own BACK/CLOSE buttons
+## all end up here or in the tap tag it calls, so the touch build and the
+## keyboard build can never disagree about what "back" means.
+##
+## `quit_at_root` is the one place the two callers differ. Back at the MENU is
+## the root of the app and Android's convention is to leave it (the run, if
+## any, is saved per action and RESUME restores it byte-exact), while ESC on a
+## desktop has never quit from the menu and still does not.
+func _back(quit_at_root: bool = false) -> String:
+	# a held tooltip is drawn over everything, so it is what Back closes first
+	if not tooltip.is_empty():
+		tooltip = []
+		tooltip_tile = Vector2i(-1, -1)
+		# ...and the HOLD that raised it goes with it. _process re-shows a
+		# tooltip for as long as _held is true and hold_ms has passed, so
+		# clearing only the text let the very next frame put the same tooltip
+		# back - and every Back after that was eaten by it in turn, for as
+		# long as the finger (or the mouse button) stayed down. Dropping the
+		# hold here is also what stops the eventual release from counting as a
+		# tap: _unhandled_input only calls _click for a press SHORTER than
+		# hold_ms, and this one is already longer.
+		_held = false
+		queue_redraw()
+		return "tooltip"
+	if screen == "menu":
+		if mode == "settings":
+			mode = "normal"
+			queue_redraw()
+			return "settings"
+		if quit_at_root:
+			_tap("quit")  # is_inside_tree-guarded, so a test can call it
+			return "quit"
+		return "root"
+	if game == null or game.over or (screen == "tutorial" and tut_done):
+		# the end-of-run sheet and the tutorial's last card are read-only: the
+		# run is already recorded and archived, so there is nothing to lose
+		_tap("menu")
+		return "menu"
+	var was := mode
+	match was:
+		"up_variant":
+			_tap("forge_back")  # the fork sheet's own BACK: return to the scrap tap
+			return was
+		"up_scrap":
+			mode = "up_keep"  # one tap back up the forge's three-tap choice
+			mode_pick = -1
+			flash = ""
+			queue_redraw()
+			return was
+		"up_keep":
+			# the forge was entered off the shrine sheet, so that is where
+			# backing out of it lands - free, and the kit is untouched
+			mode = "normal"
+			flash = ""
+			_tap("shop")
+			queue_redraw()
+			return was
+		"draft_drop":
+			_tap("draft_back")  # back to the offer cards, nothing picked
+			return was
+		"target_dir", "target_tile", "cleanse":
+			_cancel_aim()
+			return was
+		"shop", "log", "help", "intro", "settings":
+			mode = "normal"
+			flash = ""
+			queue_redraw()
+			return was
+	# mode is "normal" from here: no sheet is up
+	if game.phase == "draft":
+		# the draft is the sim's own phase, not a shell sheet - only a pick or
+		# a skip closes it - so Back leaves for the menu; the run save carries
+		# the pending draft and RESUME comes back to this same sheet
+		_tap("menu")
+		return "menu"
+	if zoom_room:
+		zoom_room = false  # back out to the whole-floor camera first
+		queue_redraw()
+		return "zoom"
+	_tap("menu")
+	return "menu"
+
+
+## Drop a targeting mode without spending anything. Entering an aim costs
+## nothing, so leaving one must cost nothing either: ESC, the Back button, a
+## D-pad press and a second tap on the aiming slot all land here.
+func _cancel_aim() -> void:
+	mode = "normal"
+	mode_targets = []
+	mode_slot = -1
+	flash = ""
+	queue_redraw()
+
+
 func _unhandled_input(ev: InputEvent) -> void:
 	if ev is InputEventKey and ev.pressed and not ev.echo:
 		_key(ev.keycode)
@@ -804,6 +923,12 @@ func _dir_from_key(k: int) -> Vector2i:
 
 
 func _key(k: int) -> void:
+	# ESC is the keyboard's Back, and it is the SAME handler the Android Back
+	# button uses (KEY_BACK is here too: some devices deliver the hardware
+	# button as a key event rather than as the window notification).
+	if k == KEY_ESCAPE or k == KEY_BACK:
+		_back(k == KEY_BACK)
+		return
 	if screen == "menu":
 		if mode == "settings":
 			mode = "normal"
@@ -847,15 +972,6 @@ func _key(k: int) -> void:
 			seed_v += 1
 			_new_game()
 		return
-	if k == KEY_ESCAPE:
-		if mode == "normal":
-			_tap("menu")
-		else:
-			mode = "normal"
-			mode_targets = []
-			flash = ""
-			queue_redraw()
-		return
 	if k == KEY_L:
 		mode = "help"
 		help_page = 0
@@ -894,8 +1010,25 @@ func _dir_input(d: Vector2i) -> void:
 	match mode:
 		"target_dir":
 			_try_ability_target(mode_slot, d)
+		"target_tile":
+			# a tile aim cannot be aimed with a direction, and falling through
+			# to _move_or_strike here MOVED the tender - and struck whatever
+			# stood beside it - out of a mode the player was still in, with no
+			# free way back on a touchscreen. Reaching for a direction means
+			# "get me out of this": cancel, free, no turn, no strike.
+			_cancel_aim()
+			_flash("aim cancelled")
 		"cleanse":
 			_cleanse_at(game.player["pos"] + d)
+		"up_keep", "up_scrap", "up_variant":
+			# the forge's three taps are a modal choice, and the two selection
+			# steps draw no sheet - so the D-pad is still on screen right
+			# beside the SHRINE SHOP button the context line points at, and
+			# falling through here MOVED the tender and struck whatever stood
+			# next to it, for a charge and a turn, out of a choice the player
+			# was still in. Same rule as a tile aim: reaching for a direction
+			# in a modal state means "get me out of this", and it is free.
+			_flash("the forge has the screen - finish the choice or step back")
 		_:
 			_move_or_strike(d)
 
@@ -1012,10 +1145,17 @@ func _forge_actions(keep: int, scrap: int) -> Array:
 func _ability_press(slot: int) -> void:
 	if slot >= game.player["kit"].size():
 		return
+	# toggle: tapping the slot you are already aiming with puts the aim down.
+	# No new button, and it is where the finger already is - the aim was armed
+	# from this same slot. Tapping a DIFFERENT slot still switches aim.
+	if (mode == "target_dir" or mode == "target_tile") and mode_slot == slot:
+		_cancel_aim()
+		_flash("aim cancelled")
+		return
 	if mode == "up_variant":
 		# the forge's fork sheet owns the screen: keep and scrap are already
 		# chosen, so a kit tap here would silently cast instead
-		_flash("pick which way it grows, or ESC")
+		_flash("pick which way it grows, or BACK")
 		return
 	if mode == "up_keep":
 		var can_keep := false
@@ -1064,7 +1204,9 @@ func _ability_press(slot: int) -> void:
 	if ttype == "dir" or ttype == "enemy_line":
 		mode = "target_dir"
 		mode_slot = slot
-		_flash("AIM %s: D-pad or tap beside you" % Content.ABILITIES[aid]["name"])
+		# the flash names the way OUT as well as the way in: on a phone there
+		# is no ESC key, so the cancel has to be written on the screen
+		_flash("AIM %s - D-pad or tap beside you  ·  tap the slot to cancel" % Content.ABILITIES[aid]["name"])
 	elif acts.size() == 1:
 		_act(acts[0])
 	else:
@@ -1073,7 +1215,7 @@ func _ability_press(slot: int) -> void:
 		mode_targets = []
 		for a in acts:
 			mode_targets.append(a["target"])
-		_flash("AIM %s: tap a green tile" % Content.ABILITIES[aid]["name"])
+		_flash("AIM %s - tap a green tile  ·  D-pad or the slot cancels" % Content.ABILITIES[aid]["name"])
 	queue_redraw()
 
 
@@ -1276,7 +1418,7 @@ func _tap(tag: String) -> void:
 				music_on = not music_on
 				audio.set_music(music_on)
 			"tier":
-				sel_tier = (sel_tier + 1) % (int(profile.unlocked_tier) + 1)
+				sel_tier = (sel_tier + 1) % (_max_tier() + 1)
 			"loadout":
 				sel_loadout = String(_cycle(profile.available_loadouts(), sel_loadout))
 			"package":
@@ -2565,14 +2707,19 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 	var msg := ""
 	var col := COL_DIM_TEXT
 	match mode:
+		# a touch build has no ESC key, so these name what a FINGER can tap:
+		# the SHRINE SHOP button is still drawn beside the D-pad through both
+		# selection steps (it is free, and it changes nothing), and the fork
+		# sheet carries its own BACK. Android's Back button walks the same
+		# steps (_back), one level per press.
 		"up_keep":
-			msg = "FORGE: tap the ability to upgrade to + (ESC cancels)"
+			msg = "FORGE: tap the ability to grow  ·  SHRINE SHOP backs out"
 			col = COL_GOLD
 		"up_scrap":
-			msg = "Now tap the ability to SCRAP for parts (ESC cancels)"
+			msg = "Now tap the ability to SCRAP for parts  ·  SHRINE SHOP backs out"
 			col = COL_GOLD
 		"up_variant":
-			msg = "Choose which way it grows (ESC cancels)"
+			msg = "Choose which way it grows  ·  BACK returns to the scrap tap"
 			col = COL_GOLD
 		"cleanse":
 			msg = "CLEANSE: tap corruption beside you (or D-pad)"
