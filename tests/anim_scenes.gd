@@ -215,7 +215,7 @@ const BASIC := ["move", "strike", "strike_spiked", "kill", "cleanse", "item", "h
 const EXTRA := ["x:pack", "x:shielded", "x:fuse_attack", "x:ignite_hooks", "x:top_row", "x:haul",
 	"x:slam_thorns", "x:kill_stunned", "x:ironheart", "x:balm_capped", "x:spore_tick", "x:updraft_open",
 	"x:gust_free", "x:rake_fire", "x:jet_undertow", "x:tide_grafts", "x:drift_far", "x:tangle_surged",
-	"x:reclaim_oil", "x:prism_fizzle", "x:burrow_long", "x:vent_open"]
+	"x:reclaim_oil", "x:prism_fizzle", "x:burrow_long", "x:vent_open", "x:haul_goo"]
 
 
 static func _cast(g, target) -> Dictionary:
@@ -277,6 +277,11 @@ static func extra_scene(nm: String) -> Dictionary:
 			_poke(g, 1, {"type": "gum", "slot": 1})
 			_poke(g, 2, {"type": "drain", "amount": 2})
 			g.player["bank"] = 3
+		"x:haul_goo":
+			# the haul drops the tender on goo between its two drags: the goo's
+			# bite must stay with the crane, and so must the second drag
+			g = _game(OPEN, k3, [{"kind": "magnet_crane", "pos": Vector2i(7, 4)}], {Vector2i(5, 4): "goo"})
+			_poke(g, 0, {"type": "drag", "times": 2})
 		"x:slam_thorns":
 			g = _game(OPEN, k3, [{"kind": "overseer", "pos": Vector2i(6, 4)}])
 			_poke(g, 0, {"type": "slam", "tile": Vector2i(4, 4), "dmg": 3})

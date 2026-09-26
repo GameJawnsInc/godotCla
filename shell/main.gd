@@ -180,6 +180,9 @@ var _vy1 := 999
 var _reel: Dictionary = {}
 var _reel_ms := -99999
 var anim_mode := "full"  # full | quick | off (Animations setting)
+## Set while an input's SECOND step runs (an out-of-charge tap ends the turn,
+## then moves): its reel is chained after the first instead of replacing it.
+var _chain_next := false
 ## A fixed clock (ms) for tests/capture_anim.gd filmstrips; -1 = the real one.
 var clock_override := -1
 ## A caption tests/capture_anim.gd stamps on the map (frame time); "" = none.
@@ -274,7 +277,16 @@ func _run_config() -> Dictionary:
 	return profile.game_config(sel_tier, muts, sel_loadout, sel_package)
 
 
+## A new Game object never inherits the last one's reel: a finished reel's
+## poses (a dead tender, a tile the last run moved to) would draw over it.
+func _reset_reel() -> void:
+	_reel = {}
+	_reel_ms = -99999
+	_chain_next = false
+
+
 func _new_game() -> void:
+	_reset_reel()
 	_clamp_selection()
 	var cfg: Dictionary = _run_config()
 	run_tier = int(cfg.get("tier", 0))
@@ -301,6 +313,7 @@ func _new_game() -> void:
 
 
 func _start_tutorial() -> void:
+	_reset_reel()
 	screen = "tutorial"
 	game = Game.new(1, Tutorial.game_config())
 	_draft_focus_spent = false
@@ -318,6 +331,7 @@ func _start_tutorial() -> void:
 ## replay the recorded actions. Determinism makes this byte-exact; a version
 ## mismatch or finished run just clears the save.
 func _load_run() -> void:
+	_reset_reel()
 	var f := FileAccess.open(RUN_SAVE_PATH, FileAccess.READ)
 	if f == null:
 		return
@@ -572,6 +586,15 @@ func _start_reel(pre: Dictionary, a: Dictionary, evs: Array, prev_floor: int) ->
 		_spawn_banners(evs, [])
 		return
 	var ort := _reel_t()
+	if _chain_next and Anim.playing(_reel, ort):
+		var first_len := int(_reel.get("len", 0))
+		var nr := Anim.plan(pre, a, evs, game.snapshot(), float(Anim.SPEEDS.get(anim_mode, 1.0)))
+		_reel = Anim.chain(_reel, nr)
+		var bt: Array = []
+		for t in nr.get("ev_t", []):
+			bt.append(int(t) + first_len - int(ort))
+		_spawn_banners(evs, bt)
+		return
 	var carry: Array = []
 	if Anim.playing(_reel, ort):
 		for cl in _reel["clips"]:
@@ -586,6 +609,18 @@ func _start_reel(pre: Dictionary, a: Dictionary, evs: Array, prev_floor: int) ->
 			_reel["len"] = maxi(int(_reel["len"]), int(c2["t0"]) + int(c2["dur"]))
 	_reel_ms = _now()
 	_spawn_banners(evs, _reel.get("ev_t", []))
+
+
+## The game-over sheet waits for the killing blow to play out. Until it is up,
+## "tap anywhere for a new run" is not live: a tap (or key) during the reel
+## finishes the reel instead, so a double tap can never skip the sheet and
+## the unlock notices on it. Returns true when it swallowed the input.
+func _skip_death_reel() -> bool:
+	if not Anim.playing(_reel, _reel_t()):
+		return false
+	_reel_ms = _now() - int(_reel.get("len", 0)) - 50
+	queue_redraw()
+	return true
 
 
 ## The clock every animation reads. clock_override pins it for filmstrips.
@@ -625,6 +660,14 @@ func _tut_cleared(cond) -> bool:
 				return false
 		return true
 	return game.enemies.is_empty()
+
+
+## The second step of one input: its reel plays after the step before it
+## (the enemy turn an out-of-charge tap ended) instead of cutting it off.
+func _act_chained(a: Dictionary) -> void:
+	_chain_next = true
+	_act(a)
+	_chain_next = false
 
 
 func _legal_of(kind: String) -> Array:
@@ -928,6 +971,8 @@ func _key(k: int) -> void:
 		queue_redraw()
 		return
 	if game.over:
+		if _skip_death_reel():
+			return
 		if k == KEY_R:
 			_new_game()
 		elif k == KEY_N:
@@ -1014,7 +1059,7 @@ func _cleanse_at(target: Vector2i) -> void:
 			return
 		for a in _legal_of("cleanse"):
 			if a["target"] == target:
-				_act(a)
+				_act_chained(a)
 				return
 	else:
 		_flash(_cleanse_hint())
@@ -1061,14 +1106,18 @@ func _move_or_strike(d: Vector2i) -> void:
 		_act({"type": "end_turn"})
 		if game.over:
 			return
+		var then: Dictionary = {}
 		for a in _legal_of("strike"):
 			if a["dir"] == d:
-				_act(a)
-				return
-		for a in _legal_of("move"):
-			if a["dir"] == d:
-				_act(a)
-				return
+				then = a
+				break
+		if then.is_empty():
+			for a in _legal_of("move"):
+				if a["dir"] == d:
+					then = a
+					break
+		if not then.is_empty():
+			_act_chained(then)
 		return
 	_flash("blocked")
 
@@ -1242,6 +1291,8 @@ func _click(pos: Vector2) -> void:
 		queue_redraw()
 		return
 	if game.over:
+		if _skip_death_reel():
+			return
 		if screen == "tutorial":
 			_tap("menu")
 		else:
@@ -2416,7 +2467,10 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	if not zoom_room:
 		_moy = zone_y  # anchored under the status strip; slack below feeds the log
 	var rt := _reel_t()
-	var amp := Anim.shake_at(_reel, rt)
+	# a finished reel is history: its last poses (a wilted tender, a path's
+	# end) must never override the live board
+	var rl: Dictionary = _reel if Anim.playing(_reel, rt) else {}
+	var amp := Anim.shake_at(rl, rt)
 	if amp > 0.0:
 		_mox += sin(float(_now()) * 0.09) * amp
 		_moy += cos(float(_now()) * 0.115) * amp
@@ -2572,11 +2626,11 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 					Color(0.91, 0.45, 0.16, wa), 3.0)
 
 	var V := _anim_view()
-	Paint.paint(self, _reel, rt, "ground", V)
+	Paint.paint(self, rl, rt, "ground", V)
 
 	var now := float(_now())
 	for e in snap["enemies"]:
-		var ps := Anim.pose(_reel, e["id"], rt, Vector2(e["pos"]))
+		var ps := Anim.pose(rl, e["id"], rt, Vector2(e["pos"]))
 		if not ps["visible"] or not _vis(Vector2i((ps["pos"] as Vector2).round())):
 			continue
 		var r := _draw_body(String(e["kind"]), ps, _idle_of(String(e["kind"]), int(e["id"]), now))
@@ -2588,7 +2642,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 				draw_circle(r.get_center() + Vector2(cos(sang), sin(sang)) * _ts * 0.44, _ts * 0.045, Color(0.75, 0.78, 0.8))
 		var edef: Dictionary = Content.ENEMIES[e["kind"]]
 		var maxhp: int = int(edef["hp"]) + (Content.ELITE_HP_BONUS if e.get("elite", false) else 0)
-		var shp := Anim.hp_shown(_reel, e["id"], rt, int(e["hp"]))
+		var shp := Anim.hp_shown(rl, e["id"], rt, int(e["hp"]))
 		if shp < maxhp or edef["traits"].has("boss"):
 			var frac: float = clampf(float(shp) / maxf(1.0, float(maxhp)), 0.0, 1.0)
 			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2(_ts - 4, 3)), Color(0, 0, 0, 0.6))
@@ -2596,12 +2650,12 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		if not (e["status"] as Dictionary).is_empty() and anim_mode != "off":
 			Paint.status_overlay(self, V, r.get_center(), e["status"], now, e["id"])
 	# the fallen: drawn from where they fell until their death plays out
-	for g in _reel.get("ghosts", []):
-		var gs := Anim.pose(_reel, g["id"], rt, Vector2(g["pos"]))
+	for g in rl.get("ghosts", []):
+		var gs := Anim.pose(rl, g["id"], rt, Vector2(g["pos"]))
 		if gs["visible"] and _vis(g["pos"]):
 			_draw_body(String(g["kind"]), gs, {"lift": 0.0, "sx": 1.0, "sy": 1.0, "rot": 0.0, "dx": 0.0})
 
-	var pps := Anim.pose(_reel, "player", rt, Vector2(snap["player"]["pos"]))
+	var pps := Anim.pose(rl, "player", rt, Vector2(snap["player"]["pos"]))
 	var pr := _tile_rect_f(pps["pos"])
 	if pps["visible"]:
 		draw_rect(_tile_rect_f(pps["pos"]).grow(1), Color(0.56, 0.86, 0.42, 0.85 * float(pps["alpha"])), false, 2.0)
@@ -2653,7 +2707,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			draw_circle(Vector2(fx2, fy2), _ts * 0.028, Color(0.98, 0.92, 0.6, 0.85 * glow))
 
 	# the step's effects that play over the creatures: beams, clouds, numbers
-	Paint.paint(self, _reel, rt, "air", V)
+	Paint.paint(self, rl, rt, "air", V)
 	if capture_label != "":
 		_txt(Vector2(_mox + _vx0 * _ts + 6, _moy + _vy0 * _ts + _ts * 0.4), capture_label, COL_GOLD, int(_ts * 0.3))
 

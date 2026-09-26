@@ -45,6 +45,8 @@ const ENV_TYPES := ["smog_dim", "choke", "seal_burst", "reinforcement", "vents_c
 const FOLLOW_TYPES := ["death", "split", "bounty", "smoke_burst", "boss_phase", "win", "hook",
 	"hook_capped", "status", "resisted", "immune", "staggered", "core_shielded", "player_death",
 	"rider", "stairs_awaken", "floor_restored", "room_bloom", "quota_reclamp"]
+## Events after which a tile-entry event still belongs to the hauling machine.
+const HAUL_FOLLOW := ["drag", "item_pickup", "satchel_full", "damage"]
 ## Intents that swing at the tender: one blow each per phase.
 const DAMAGING_INTENTS := ["attack", "slam", "quake"]
 ## Pseudo-intents fx_enemy handles for an enemy whose intent never ran.
@@ -94,6 +96,7 @@ static func plan(pre: Dictionary, action: Dictionary, events: Array, post: Dicti
 		if (tt == "undim" or tt == "smog_dim") and events[i].has("dim"):
 			dims.append([int(c["times"][i]), int(events[i]["dim"])])
 	reel["dim"] = {"pre": int(pre.get("dim", 0)), "at": dims}
+	_land_all(c)
 	reel["len"] = _length(reel)
 	if speed != 1.0:
 		_scale(reel, speed)
@@ -460,6 +463,13 @@ static func _plan_enemy_phase(c: Dictionary) -> int:
 	return t_env + 200
 
 
+static func _is_machine_kind(ens: Array, kind: String) -> bool:
+	for e in ens:
+		if String(e["kind"]) == kind:
+			return true
+	return false
+
+
 static func _is_blocked_event(tt: String) -> bool:
 	for sname in Content.STATUSES:
 		if String(Content.STATUSES[sname].get("blocked_event", sname)) == tt:
@@ -509,6 +519,13 @@ static func _attribute(c: Dictionary, ens: Array) -> Dictionary:
 ## it reduced) belongs to the same machine as the damage after it.
 static func _owner_of(c: Dictionary, ev: Dictionary, tt: String, ens: Array, idx: Dictionary,
 		cursor: int, prev: int, last_by_id: Dictionary, blown: Dictionary, prev_t: String) -> int:
+	# a haul drops the tender onto a tile, and what that tile does to it (goo,
+	# fire, a supply pickup) comes between one drag and the next: it belongs
+	# to the machine hauling, never to the environment phase
+	if prev >= 0 and HAUL_FOLLOW.has(prev_t) and String(ens[prev]["intent"].get("type", "")) == "drag":
+		if tt == "item_pickup" or tt == "satchel_full" \
+				or (tt == "damage" and String(ev.get("who", "")) == "player" and not _is_machine_kind(ens, String(ev.get("src", "")))):
+			return prev
 	if ENV_TYPES.has(tt):
 		return -2
 	var id = ev.get("id", null)
@@ -893,6 +910,29 @@ static func _reveals(c: Dictionary, t_end: int) -> void:
 			sw[p]["t"] = t_end
 
 
+## The backstop behind every builder: a creature whose last drawn position is
+## not the tile the post snapshot holds is walked there after its last
+## segment, so no reel can ever leave a body drawn off its sim tile.
+static func _land_all(c: Dictionary) -> void:
+	var tracks: Dictionary = c["reel"]["tracks"]
+	var goals := {"player": Vector2(c["p1"])}
+	for id in c["post_en"]:
+		goals[id] = Vector2(c["post_en"][id]["pos"])
+	for key in goals:
+		if not tracks.has(key):
+			continue
+		var last = null
+		var end := 0
+		for s in tracks[key]:
+			if String(s["kind"]) == "path":
+				var s_end := int(s["t0"]) + int(s["dur"])
+				if s_end >= end:
+					end = s_end
+					last = (s["pts"] as Array)[(s["pts"] as Array).size() - 1]
+		if last != null and (last as Vector2).distance_to(goals[key]) > 0.01:
+			tracks[key].append({"kind": "path", "t0": end, "dur": 120, "pts": [last, goals[key]], "hop": 0.0})
+
+
 static func _length(reel: Dictionary) -> int:
 	var n := 0
 	for cl in reel["clips"]:
@@ -955,6 +995,59 @@ static func _scale(reel: Dictionary, k: float) -> void:
 	for d in reel.get("dim", {}).get("at", []):
 		d[0] = int(float(d[0]) * k)
 	reel["len"] = _length(reel)
+
+
+## Two reels back to back: `b` is a step taken by the same input right after
+## `a` (an out-of-charge tap ends the turn, then moves), offset to start when
+## `a` ends and merged in. b's pre board is a's post board, so every
+## creature's segments simply continue; a tile both steps changed shows a's
+## old kind until a's flip and b's final kind after it.
+static func chain(a: Dictionary, b: Dictionary) -> Dictionary:
+	if a.is_empty():
+		return b
+	if b.is_empty():
+		return a
+	var off := int(a.get("len", 0))
+	var out: Dictionary = a.duplicate(true)
+	for cl in b["clips"]:
+		var c2: Dictionary = cl.duplicate(true)
+		c2["t0"] = int(c2["t0"]) + off
+		out["clips"].append(c2)
+	for key in b["tracks"]:
+		if not out["tracks"].has(key):
+			out["tracks"][key] = []
+		for s in b["tracks"][key]:
+			var s2: Dictionary = s.duplicate(true)
+			s2["t0"] = int(s2["t0"]) + off
+			out["tracks"][key].append(s2)
+	for g in b["ghosts"]:
+		var g2: Dictionary = g.duplicate(true)
+		g2["t_die"] = int(g2["t_die"]) + off
+		out["ghosts"].append(g2)
+	for id in b["spawns"]:
+		out["spawns"][id] = int(b["spawns"][id]) + off
+	for s in b["shakes"]:
+		out["shakes"].append({"t0": int(s["t0"]) + off, "mag": s["mag"]})
+	for p in b["tswap"]:
+		var sb: Dictionary = b["tswap"][p]
+		if out["tswap"].has(p):
+			out["tswap"][p]["post"] = sb["post"]
+		else:
+			out["tswap"][p] = {"pre": sb["pre"], "post": sb["post"], "t": int(sb.get("t", 0)) + off}
+	for key in b.get("hp", {}):
+		if not out["hp"].has(key):
+			out["hp"][key] = []
+		for h in b["hp"][key]:
+			out["hp"][key].append([int(h[0]) + off, h[1]])
+	for t in b.get("ev_t", []):
+		out["ev_t"].append(int(t) + off)
+	if out.get("dim", {}).is_empty():
+		out["dim"] = b.get("dim", {}).duplicate(true)
+	else:
+		for d in b.get("dim", {}).get("at", []):
+			out["dim"]["at"].append([int(d[0]) + off, d[1]])
+	out["len"] = _length(out)
+	return out
 
 
 # --- playback --------------------------------------------------------------------

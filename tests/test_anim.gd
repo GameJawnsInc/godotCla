@@ -33,6 +33,7 @@ const ContentLint := preload("res://tests/test_content.gd")
 const Shell := preload("res://shell/main.gd")
 const Game := preload("res://sim/game.gd")
 const Roster := preload("res://bots/roster.gd")
+const Tutorial := preload("res://shell/tutorial.gd")
 
 ## Reel budgets (ms). Numbers keep their reading time at every speed, so the
 ## quick budget is the full one scaled plus a float's life.
@@ -372,7 +373,57 @@ func _check_shell() -> void:
 	_check(sh._reel.get("tracks", {}).is_empty(), "animations off: the tender does not slide")
 	sh._tap("set:anim")
 	_check(sh.anim_mode == "full", "animations: off -> full")
+	# the setting persists: a fresh shell reads it back
+	sh.anim_mode = "quick"
+	sh._save_settings()
+	var sh2 = Shell.new()
+	sh2._load_settings()
+	_check(sh2.anim_mode == "quick", "the animation setting is saved and read back")
+	sh2.free()
+	sh.anim_mode = "full"
+	# an out-of-charge tap ends the turn and then moves: ONE input, so the
+	# enemy turn's reel plays first and the move is chained after it
+	var mv: Dictionary = Scenes.intent_scene("move")
+	sh.game = mv["game"]
+	sh.game.player["charge"] = 0
+	sh.clock_override = 70000
+	sh._move_or_strike(Vector2i(0, -1))
+	var tr: Dictionary = sh._reel.get("tracks", {})
+	var moved_enemy := false
+	for key in tr:
+		if not (key is String):
+			moved_enemy = true
+	_check(moved_enemy and tr.has("player"), "an out-of-charge move chains the enemy turn's reel and the move (%s)" % str(tr.keys()))
+	_check(Anim.pos_at(sh._reel, "player", float(sh._reel["len"]) + 1.0, Vector2(sh.game.player["pos"])) == Vector2(sh.game.player["pos"]),
+		"the chained reel lands the tender")
+	# the killing blow: the sheet waits for it, a tap during it only finishes
+	# it, and the next game never inherits it
+	var dth: Dictionary = Scenes.basic_scene("death")
+	sh.game = dth["game"]
+	sh._game_is_run = false
+	sh.clock_override = 80000
+	sh._act(dth["action"])
+	_check(sh.game.over and Anim.playing(sh._reel, sh._reel_t()), "the death reel plays")
+	var dead_game = sh.game
+	sh._click(Vector2(5, 5))
+	_check(sh.game == dead_game and not Anim.playing(sh._reel, sh._reel_t()),
+		"a tap during the death reel finishes it and does not start a new run")
+	sh._new_game()
+	_check(sh._reel.is_empty(), "a new game starts with no reel")
+	_check(Anim.pose(sh._reel, "player", sh._reel_t(), Vector2(sh.game.player["pos"]))["visible"], "the new run's tender is visible")
 	# a descent has no reel: the floor fade is the animation
+	var ff: Dictionary = Tutorial.room_config("#######\n#.@>..#\n#.....#\n#######", Scenes.FDEF)
+	var dg = Game.new(7, {"kit": ["solar_lance"], "fixed_floor": ff})
+	dg.greened = maxi(dg.green_need, 0)
+	dg.player["pos"] = dg.map["stairs"]
+	sh.game = dg
+	sh.clock_override = 90000
+	sh._act({"type": "descend"})
+	_check(int(sh._reel.get("len", 0)) == 0, "descending onto the draft plays no reel")
+	if dg.phase == "draft":
+		sh._act({"type": "draft", "pick": -1})  # the floor changes on the draft
+	_check(dg.floor_num == 2 and sh._reel.is_empty() and sh._floor_fade_ms == 90000,
+		"a descent plays the floor fade, not a reel (floor %d)" % dg.floor_num)
 	sh.anim_mode = keep_mode
 	sh._save_settings()
 	sh.clock_override = -1
@@ -449,6 +500,18 @@ func _soak_one(tag: String, reel: Dictionary, pre: Dictionary, post: Dictionary,
 ## belongs to the machine that swung it. (fx_enemy re-claims blows in stream
 ## order too, which would hide a director regression in the reel itself.)
 func _check_attribution() -> void:
+	# a haul over goo: the goo bite between the two drags stays with the crane
+	var hs: Dictionary = Scenes.extra_scene("x:haul_goo")
+	var hg = hs["game"]
+	var hpre: Dictionary = hg.snapshot()
+	var hevs: Array = hg.step(hs["action"])
+	var hc := Anim.ctx(hpre, hs["action"], hevs, hg.snapshot(), Anim.empty_reel())
+	var hown: Dictionary = Anim._attribute(hc, hpre["enemies"])
+	var drags := 0
+	for i in hown.get(0, []):
+		if String(hevs[i].get("t", "")) == "drag":
+			drags += 1
+	_check(drags == 2, "x:haul_goo: both drags belong to the crane, the goo between them too (%d)" % drags)
 	for nm in ["x:pack", "x:shielded"]:
 		var sc: Dictionary = Scenes.extra_scene(nm)
 		var g = sc["game"]
