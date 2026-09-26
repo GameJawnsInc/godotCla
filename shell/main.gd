@@ -1767,6 +1767,8 @@ func _terrain_view(snap: Dictionary, rt: float) -> Dictionary:
 	var out := {}
 	for t in snap["terrain"].keys():
 		out[t] = String(snap["terrain"][t]["kind"])
+	if not Anim.playing(_reel, rt):
+		return out
 	for t in _reel.get("tswap", {}):
 		var k = Anim.terrain_at(_reel, t, rt)
 		if k == null:

@@ -135,7 +135,7 @@ static func enemy_at(snap: Dictionary, p: Vector2i) -> Variant:
 
 static func enemy_by_id(snap: Dictionary, id) -> Variant:
 	for e in snap["enemies"]:
-		if e["id"] == id:
+		if same_id(e["id"], id):
 			return e
 	return null
 
@@ -349,7 +349,7 @@ static func cast_hits(c: Dictionary, id = null) -> Array:
 		var src := String(ev.get("src", ""))
 		if src != aid and src != "collision:" + aid:
 			continue
-		if id != null and ev.get("id") != id:
+		if id != null and not same_id(ev.get("id"), id):
 			continue
 		out.append(i)
 	return out
@@ -365,6 +365,13 @@ static func surged(eff: Dictionary, surge: Dictionary) -> Dictionary:
 		if eff.has(k) and not (String(k) == "cost"):
 			out[k] = int(eff[k]) + int(surge[k])
 	return out
+
+
+## Event ids are ints for enemies but Strings for abilities, grafts and items
+## (a `hook`, `gummed`, `item_pickup` event), and GDScript refuses == between
+## an int and a String - so every id comparison goes through this.
+static func same_id(a, b) -> bool:
+	return typeof(a) == typeof(b) and a == b
 
 
 static func dir_of(a: Vector2i, b: Vector2i) -> Vector2:

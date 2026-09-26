@@ -162,7 +162,7 @@ static func _plan_strike(c: Dictionary) -> int:
 				L.claim(c, j, L.T_STRIKE_HIT + 20, -d)  # spikes bite back
 				L.clip(c, {"kind": "spark", "t0": L.T_STRIKE_HIT + 10, "dur": 220, "at": tgt,
 					"col": Color("c3c8ce"), "n": 6})
-			elif ev.get("id") == e["id"]:
+			elif L.same_id(ev.get("id"), e["id"]):
 				L.claim(c, j, L.T_STRIKE_HIT, d)
 		break
 	for i in L.unclaimed(c):
@@ -632,6 +632,10 @@ static func _length(reel: Dictionary) -> int:
 			n = maxi(n, int(s["t0"]) + int(s["dur"]))
 	for s in reel["shakes"]:
 		n = maxi(n, int(s["t0"]) + 320)
+	# a tile flip is part of the reel: playback must still be running when
+	# the last one lands, or the board would sit on its pre-step look
+	for p in reel["tswap"]:
+		n = maxi(n, int(reel["tswap"][p].get("t", 0)) + 1)
 	return n
 
 

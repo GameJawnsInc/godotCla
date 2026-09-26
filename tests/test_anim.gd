@@ -15,6 +15,11 @@ extends SceneTree
 ##      points of its life with finite coordinates, and every pose is sane
 ##   4. the shell plays a reel on each step, cycles and persists the setting,
 ##      and holds the HP a blow has not reached yet
+##   5. a soak over real bot-played runs (ANIM_SOAK_SEEDS, default 4 seeds x
+##      2 personas): every step's reel lands every creature, hides the dead,
+##      flips its tiles, paints finite geometry and fits the budget - the
+##      enemy-phase event attribution meets whole packs, bosses and deaths
+##      it was never staged for
 ## Run: godot --headless --path . --script tests/test_anim.gd
 ## To SEE the animations: tests/capture_anim.gd (needs xvfb-run).
 
@@ -26,6 +31,8 @@ const Scenes := preload("res://tests/anim_scenes.gd")
 const Content := preload("res://sim/content.gd")
 const ContentLint := preload("res://tests/test_content.gd")
 const Shell := preload("res://shell/main.gd")
+const Game := preload("res://sim/game.gd")
+const Roster := preload("res://bots/roster.gd")
 
 ## Reel budgets (ms). Numbers keep their reading time at every speed, so the
 ## quick budget is the full one scaled plus a float's life.
@@ -35,6 +42,25 @@ const SEG_KINDS := ["path", "squash", "lunge", "recoil", "tint", "flash", "cast"
 
 var fails := 0
 var checks := 0
+var errs: ErrCount
+
+
+## Counts every engine/script error raised while the suite runs: a GDScript
+## runtime error aborts only the function it happens in, so without this a
+## builder that dies halfway through a reel would still let the suite pass.
+class ErrCount:
+	extends Logger
+	var n := 0
+	var first: Array = []
+
+	func _log_error(function: String, file: String, line: int, code: String, rationale: String,
+			editor_notify: bool, error_type: int, script_backtraces: Array[ScriptBacktrace]) -> void:
+		n += 1
+		if first.size() < 5:
+			first.append("%s:%d %s %s" % [file, line, code, rationale])
+
+	func _log_message(message: String, error: bool) -> void:
+		pass
 
 
 class RecCanvas:
@@ -93,6 +119,8 @@ func _check(ok: bool, what: String) -> void:
 
 
 func _init() -> void:
+	errs = ErrCount.new()
+	OS.add_logger(errs)
 	_check_coverage()
 	var n := 0
 	for sc in Scenes.all_scenes():
@@ -100,6 +128,8 @@ func _init() -> void:
 		n += 1
 	_check_idle()
 	_check_shell()
+	_check_soak()
+	_check(errs.n == 0, "no engine or script errors while planning and painting (%d: %s)" % [errs.n, str(errs.first)])
 	print("anim: %d scenes, %d checks" % [n, checks])
 	if fails > 0:
 		print("anim: %d FAILED" % fails)
@@ -331,3 +361,68 @@ func _check_shell() -> void:
 	sh._save_settings()
 	sh.clock_override = -1
 	sh.free()
+
+
+## --- 5. soak: real runs ----------------------------------------------------------
+func _check_soak() -> void:
+	var seeds := 4
+	if OS.get_environment("ANIM_SOAK_SEEDS") != "":
+		seeds = int(OS.get_environment("ANIM_SOAK_SEEDS"))
+	var steps := 0
+	var worst := 0
+	var worst_at := ""
+	var V := {"ts": 40.0, "ox": 0.0, "oy": 0.0, "font": ThemeDB.fallback_font, "now": 0.0}
+	var before := fails
+	for persona in ["optimizer", "wanderer"]:
+		for sd in range(1, seeds + 1):
+			var g = Game.new(sd)
+			var bot = Roster.make(persona, sd)
+			if bot.has_method("set_sim"):
+				bot.set_sim(g)
+			for n in 400:
+				if g.over:
+					break
+				var pre: Dictionary = g.snapshot()
+				var a: Dictionary = bot.choose_action(pre, g.legal_actions())
+				var evs: Array = g.step(a)
+				var post: Dictionary = g.snapshot()
+				var reel := Anim.plan(pre, a, evs, post)
+				steps += 1
+				var tag := "%s s%d step %d (%s)" % [persona, sd, n, String(a.get("type", ""))]
+				var ln := int(reel["len"])
+				if ln > worst:
+					worst = ln
+					worst_at = tag
+				_soak_one(tag, reel, pre, post, V)
+				if fails - before > 20:
+					print("soak: stopping early after 20 failures")
+					return
+	print("soak: %d real steps, longest reel %d ms (%s)" % [steps, worst, worst_at])
+	_check(worst <= MAX_LEN_FULL, "soak: every real reel fits the budget (worst %d ms at %s)" % [worst, worst_at])
+
+
+func _soak_one(tag: String, reel: Dictionary, pre: Dictionary, post: Dictionary, V: Dictionary) -> void:
+	if reel["clips"].is_empty() and reel["tracks"].is_empty():
+		return
+	var end_t := float(reel["len"]) + 1.0
+	for e in post["enemies"]:
+		var cur := Vector2(e["pos"])
+		if Anim.pos_at(reel, e["id"], end_t, cur) != cur or not Anim.pose(reel, e["id"], end_t, cur)["visible"]:
+			_check(false, "soak %s: enemy %d ends on its post tile, visible" % [tag, e["id"]])
+	var pp := Vector2(post["player"]["pos"])
+	if Anim.pos_at(reel, "player", end_t, pp) != pp:
+		_check(false, "soak %s: the tender ends on its post tile" % tag)
+	var alive := {}
+	for e in post["enemies"]:
+		alive[e["id"]] = true
+	for gh in reel["ghosts"]:
+		if alive.has(gh["id"]) or Anim.pose(reel, gh["id"], end_t, Vector2(gh["pos"]))["visible"]:
+			_check(false, "soak %s: ghost %d is really gone and vanishes" % [tag, gh["id"]])
+	for p in reel["tswap"]:
+		if String(Anim.terrain_at(reel, p, end_t)) != L.tkind(post, p):
+			_check(false, "soak %s: tile %s ends as the post kind" % [tag, str(p)])
+	for cl in reel["clips"]:
+		var cv := RecCanvas.new()
+		Paint.paint_clip(cv, cl, 0.5, V)
+		if cv.bad > 0 or not Paint.known(String(cl["kind"])):
+			_check(false, "soak %s: clip '%s' paints finite geometry" % [tag, cl["kind"]])
