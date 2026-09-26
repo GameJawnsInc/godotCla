@@ -16,6 +16,7 @@ extends SceneTree
 ##   CAPTURE_COLS=<n>         strip columns (default 4)
 ##   CAPTURE_SCALE=<f>        frame scale in the strip (default 0.75)
 ##   CAPTURE_SPEED=full|quick (default full)
+##   CAPTURE_BANNERS=1        keep the full-map banners (default: suppressed)
 ## Prints one line per strip: name, reel length, frame times, path.
 
 const Scenes := preload("res://tests/anim_scenes.gd")
@@ -112,6 +113,8 @@ func _capture(sc: Dictionary, out_dir: String) -> bool:
 	shell._floor_fade_ms = -99999  # no floor-name splash over the scene
 	shell._banner_ms = -99999
 	shell._act(sc["action"])
+	if _env("CAPTURE_BANNERS", "0") != "1":
+		shell._banner = []  # a banner over the map hides the verb being judged
 	var reel: Dictionary = shell._reel
 	var total := int(reel.get("len", 0)) + 80
 	var step := maxi(30, int(ceil(float(total) / float(maxi(1, frames - 1)))))

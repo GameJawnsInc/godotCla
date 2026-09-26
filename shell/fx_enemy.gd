@@ -230,7 +230,8 @@ static func _say(c: Dictionary, i: int, t: int, text: String, col: Color) -> voi
 		ends.append(0)
 	ends[row] = t + WORD_MS
 	c["_en_rows"] = ends
-	L.clip(c, {"kind": "en_word", "t0": t, "dur": WORD_MS, "at": _ppos(c), "row": row, "text": text, "col": col})
+	L.clip(c, {"kind": "en_word", "t0": t, "dur": WORD_MS, "at": _ppos(c), "row": row, "text": text, "col": col,
+		"read": true})
 
 
 static func _row(e: Dictionary) -> Dictionary:

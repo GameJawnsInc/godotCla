@@ -566,10 +566,10 @@ func _play_events(evs: Array) -> void:
 ## previous reel that are still in the air keep flying - a fast player never
 ## loses the damage they just dealt.
 func _start_reel(pre: Dictionary, a: Dictionary, evs: Array, prev_floor: int) -> void:
-	_spawn_banners(evs)
 	if game.floor_num != prev_floor:
 		_reel = {}
 		_floor_fade_ms = _now()
+		_spawn_banners(evs, [])
 		return
 	var ort := _reel_t()
 	var carry: Array = []
@@ -585,6 +585,7 @@ func _start_reel(pre: Dictionary, a: Dictionary, evs: Array, prev_floor: int) ->
 		for c2 in carry:
 			_reel["len"] = maxi(int(_reel["len"]), int(c2["t0"]) + int(c2["dur"]))
 	_reel_ms = _now()
+	_spawn_banners(evs, _reel.get("ev_t", []))
 
 
 ## The clock every animation reads. clock_override pins it for filmstrips.
@@ -598,15 +599,20 @@ func _reel_t() -> float:
 
 
 ## Full-map banners for the moments that change the floor's state.
-func _spawn_banners(evs: Array) -> void:
-	for ev in evs:
+## A banner waits for its event's moment in the reel (`ev_t`, from
+## shell/anim.gd), so FLOOR RESTORED rises after the cleanse that earned it
+## instead of covering the scrub.
+func _spawn_banners(evs: Array, ev_t: Array) -> void:
+	for i in evs.size():
+		var ev: Dictionary = evs[i]
+		var at := _now() + (int(ev_t[i]) if i < ev_t.size() else 0)
 		match String(ev.get("t", "")):
 			"stairs_awaken":
 				_banner = ["THE STAIRS AWAKEN"]
-				_banner_ms = _now()
+				_banner_ms = at
 			"floor_restored":
 				_banner = ["FLOOR RESTORED", "the skies clear"]
-				_banner_ms = _now()
+				_banner_ms = at
 
 
 ## Tutorial until_dead condition: `true` waits for an empty floor, a String
@@ -2588,7 +2594,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2(_ts - 4, 3)), Color(0, 0, 0, 0.6))
 			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2((_ts - 4) * frac, 3)), COL_RED)
 		if not (e["status"] as Dictionary).is_empty() and anim_mode != "off":
-			Paint.status_overlay(self, V, r.get_center(), e["status"], now)
+			Paint.status_overlay(self, V, r.get_center(), e["status"], now, e["id"])
 	# the fallen: drawn from where they fell until their death plays out
 	for g in _reel.get("ghosts", []):
 		var gs := Anim.pose(_reel, g["id"], rt, Vector2(g["pos"]))
@@ -2598,14 +2604,14 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	var pps := Anim.pose(_reel, "player", rt, Vector2(snap["player"]["pos"]))
 	var pr := _tile_rect_f(pps["pos"])
 	if pps["visible"]:
-		draw_rect(_tile_rect_f(pps["pos"]).grow(1), Color(0.56, 0.86, 0.42, 0.85), false, 2.0)
+		draw_rect(_tile_rect_f(pps["pos"]).grow(1), Color(0.56, 0.86, 0.42, 0.85 * float(pps["alpha"])), false, 2.0)
 		var pidle := Anim.idle("player", 0.0, now) if anim_mode != "off" \
 			else {"lift": 0.02, "sx": 1.0, "sy": 1.0, "rot": 0.0, "dx": 0.0}
 		pr = _draw_body("player", pps, pidle)
 		Paint.buff_overlay(self, V, pr.get_center(), snap["player"], now)
 
 	# ambient haze drifts across the world once the skies dim
-	var dimlvl: int = int(snap["dim"])
+	var dimlvl: int = Anim.dim_shown(_reel, rt, int(snap["dim"]))
 	if dimlvl > 0:
 		var hz := Rect2(_mox + _vx0 * _ts, _moy + _vy0 * _ts,
 			(_vx1 - _vx0 + 1) * _ts, (_vy1 - _vy0 + 1) * _ts)
@@ -2637,7 +2643,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			draw_circle(wingc + Vector2(-_ts * 0.055 * flap, 0), _ts * 0.045, bcol2)
 			draw_circle(wingc + Vector2(_ts * 0.055 * flap, 0), _ts * 0.045, bcol2)
 	# and fireflies drift once the skies dim - life glowing against the smog
-	if int(snap["dim"]) >= 1 and not game.over:
+	if dimlvl >= 1 and not game.over:
 		for i in 6:
 			var fph := float(i) * 1.31
 			var fx2 := _mox + (float(_vx0) + (0.5 + 0.46 * sin(lts * 0.17 + fph * 2.3)) * float(_vx1 - _vx0)) * _ts

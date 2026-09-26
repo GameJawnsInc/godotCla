@@ -68,15 +68,17 @@ const TERRAIN_COL := {
 	"rich_goo": Color("e8c840"), "ash": Color("75726b"),
 }
 
-## Idle loop per enemy: derived from traits, with a per-kind override for rows
-## whose traits say nothing about how they move. A new enemy row with none of
-## these falls back to "bob" - it breathes, it never stands frozen.
+## Idle loop per enemy: derived from traits, never from the kind id (the same
+## rule the verb builders follow). IDLE_BY_KIND is the escape hatch for a row
+## whose traits say nothing about how it moves; it is empty on purpose. A row
+## with none of these traits falls back to "bob" - it breathes, it never
+## stands frozen.
 const IDLE_BY_TRAIT := [
 	["boss", "heave"], ["drains", "hover"], ["fast", "pant"], ["oil_trail", "ooze"],
 	["splits", "ooze"], ["summons", "chug"], ["oozes", "chug"], ["stokes", "chug"],
 	["igniter", "skitter"], ["drags", "sway"], ["gums", "gulp"], ["spiked", "lumber"],
 ]
-const IDLE_BY_KIND := {"sludgeling": "ooze"}
+const IDLE_BY_KIND := {}
 
 
 # --- palettes -----------------------------------------------------------------

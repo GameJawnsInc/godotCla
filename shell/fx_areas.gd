@@ -191,7 +191,7 @@ static func _gated_off(c: Dictionary) -> bool:
 static func _died_already(c: Dictionary, id) -> bool:
 	var evs: Array = c["events"]
 	for i in range(1, evs.size()):
-		if String(evs[i].get("t", "")) == "death" and evs[i].get("id") == id and L.claimed(c, i - 1):
+		if String(evs[i].get("t", "")) == "death" and L.same_id(evs[i].get("id"), id) and L.claimed(c, i - 1):
 			return true
 	return false
 
@@ -401,7 +401,7 @@ static func _tide(c: Dictionary) -> int:
 		# a rider's status (a pinning tide) takes the body the moment ITS wave
 		# pins it, not when the last of the four runs out
 		for i in L.unclaimed(c, ["status", "resisted", "immune"]):
-			if c["events"][i].get("id") == e["id"]:
+			if L.same_id(c["events"][i].get("id"), e["id"]):
 				L.claim(c, i, te - 90)
 	return t_end
 

@@ -662,13 +662,19 @@ static func status_pop(cv, V: Dictionary, c: Vector2, status: String, k: float) 
 
 ## Persistent loop over an enemy while a status holds (between steps): stun
 ## stars orbit the head, roots bind the feet, spores drift up off the body.
-static func status_overlay(cv, V: Dictionary, c: Vector2, status: Dictionary, now: float) -> void:
+## `who` (the enemy id) matches the step's pending changes to this creature;
+## without it they are matched by position.
+static func status_overlay(cv, V: Dictionary, c: Vector2, status: Dictionary, now: float, who = null) -> void:
 	var st := status
 	if not _hold.is_empty():
 		var q := _tile_of(V, c)
 		var copied := false
 		for h in _hold:
-			if h["who"] is String or (h["pos"] as Vector2).distance_to(q) > 0.7:
+			if h["who"] is String:
+				continue
+			if who != null and not L.same_id(h["who"], who):
+				continue
+			if who == null and (h["pos"] as Vector2).distance_to(q) > 0.7:
 				continue
 			if not copied:
 				st = status.duplicate()

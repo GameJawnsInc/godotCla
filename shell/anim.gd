@@ -45,6 +45,8 @@ const ENV_TYPES := ["smog_dim", "choke", "seal_burst", "reinforcement", "vents_c
 const FOLLOW_TYPES := ["death", "split", "bounty", "smoke_burst", "boss_phase", "win", "hook",
 	"hook_capped", "status", "resisted", "immune", "staggered", "core_shielded", "player_death",
 	"rider", "stairs_awaken", "floor_restored", "room_bloom", "quota_reclamp"]
+## Intents that swing at the tender: one blow each per phase.
+const DAMAGING_INTENTS := ["attack", "slam", "quake"]
 ## Pseudo-intents fx_enemy handles for an enemy whose intent never ran.
 const BLOCKED_VERB := "blocked"
 const SCREENED_VERB := "screened"
@@ -53,7 +55,8 @@ const SCREENED_VERB := "screened"
 # --- planning ------------------------------------------------------------------
 
 static func empty_reel() -> Dictionary:
-	return {"clips": [], "tracks": {}, "ghosts": [], "spawns": {}, "shakes": [], "tswap": {}, "hp": {}, "len": 0}
+	return {"clips": [], "tracks": {}, "ghosts": [], "spawns": {}, "shakes": [], "tswap": {}, "hp": {},
+		"ev_t": [], "dim": {}, "len": 0}
 
 
 static func plan(pre: Dictionary, action: Dictionary, events: Array, post: Dictionary, speed: float = 1.0) -> Dictionary:
@@ -82,6 +85,15 @@ static func plan(pre: Dictionary, action: Dictionary, events: Array, post: Dicti
 	_feedback(c, t_end)
 	_ghosts_and_spawns(c, t_end)
 	_reveals(c, t_end)
+	# when each event lands (the shell holds its banners for them) and when
+	# the skies change (a moss filter parts the haze as its beam lands)
+	reel["ev_t"] = (c["times"] as Array).duplicate()
+	var dims: Array = []
+	for i in events.size():
+		var tt := String(events[i].get("t", ""))
+		if (tt == "undim" or tt == "smog_dim") and events[i].has("dim"):
+			dims.append([int(c["times"][i]), int(events[i]["dim"])])
+	reel["dim"] = {"pre": int(pre.get("dim", 0)), "at": dims}
 	reel["len"] = _length(reel)
 	if speed != 1.0:
 		_scale(reel, speed)
@@ -468,12 +480,14 @@ static func _attribute(c: Dictionary, ens: Array) -> Dictionary:
 	var env := false
 	var prev := -1
 	var last_by_id := {}
+	var blown := {}  # machines whose one blow of the phase has landed
+	var prev_t := ""
 	for i in evs.size():
 		var ev: Dictionary = evs[i]
 		var tt := String(ev.get("t", ""))
 		var o := -1
 		if not env:
-			o = _owner_of(c, ev, tt, ens, idx, cursor, prev, last_by_id)
+			o = _owner_of(c, ev, tt, ens, idx, cursor, prev, last_by_id, blown, prev_t)
 			if o == -2:
 				env = true
 				o = -1
@@ -485,23 +499,42 @@ static func _attribute(c: Dictionary, ens: Array) -> Dictionary:
 			if ev.has("id") and idx.has(ev["id"]):
 				last_by_id[ev["id"]] = o
 		prev = o
+		prev_t = tt
 	return out
 
 
+## Each machine lands at most one blow a phase, so a pack of one kind is
+## credited bite by bite in list order (`blown`), and the part of a blow the
+## shield soaked up (an id-less shield_absorb, emitted just before the damage
+## it reduced) belongs to the same machine as the damage after it.
 static func _owner_of(c: Dictionary, ev: Dictionary, tt: String, ens: Array, idx: Dictionary,
-		cursor: int, prev: int, last_by_id: Dictionary) -> int:
+		cursor: int, prev: int, last_by_id: Dictionary, blown: Dictionary, prev_t: String) -> int:
 	if ENV_TYPES.has(tt):
 		return -2
 	var id = ev.get("id", null)
 	var mine: bool = id != null and not (id is String) and idx.has(id) and int(idx[id]) >= cursor
 	match tt:
+		"shield_absorb":
+			for k in range(cursor, ens.size()):
+				if not blown.has(k) and DAMAGING_INTENTS.has(String(ens[k]["intent"].get("type", ""))):
+					blown[k] = true
+					return k
+			return prev
 		"damage":
 			var src := String(ev.get("src", ""))
 			if String(ev.get("who", "")) == "player":
+				if prev_t == "shield_absorb" and prev >= 0 and String(ens[prev]["kind"]) == src:
+					return prev  # the rest of the blow the shield soaked
+				var first := -1
 				for k in range(cursor, ens.size()):
-					if String(ens[k]["kind"]) == src:
+					if String(ens[k]["kind"]) != src:
+						continue
+					if first < 0:
+						first = k
+					if not blown.has(k):
+						blown[k] = true
 						return k
-				return -2  # fire, goo, smog: the world, not a machine
+				return first if first >= 0 else -2  # fire, goo, smog: the world
 			if not mine:
 				return -2 if (id != null and idx.has(id)) else prev
 			if src == "thorns":
@@ -890,14 +923,17 @@ static func _scale(reel: Dictionary, k: float) -> void:
 		reel["spawns"] = {}
 		reel["shakes"] = []
 		reel["hp"] = {}
+		reel["dim"] = {}
+		for i in reel["ev_t"].size():
+			reel["ev_t"][i] = 0
 		for p in reel["tswap"]:
 			reel["tswap"][p]["t"] = 0
 		reel["len"] = L.T_FLOAT if not keep.is_empty() else 0
 		return
 	for cl in reel["clips"]:
 		cl["t0"] = int(float(cl["t0"]) * k)
-		# numbers keep their reading time
-		if String(cl["kind"]) != "float":
+		# numbers and words keep their reading time
+		if String(cl["kind"]) != "float" and not bool(cl.get("read", false)):
 			cl["dur"] = maxi(1, int(float(cl["dur"]) * k))
 	for key in reel["tracks"]:
 		for s in reel["tracks"][key]:
@@ -914,6 +950,10 @@ static func _scale(reel: Dictionary, k: float) -> void:
 			h[0] = int(float(h[0]) * k)
 	for p in reel["tswap"]:
 		reel["tswap"][p]["t"] = int(float(reel["tswap"][p]["t"]) * k)
+	for i in reel["ev_t"].size():
+		reel["ev_t"][i] = int(float(reel["ev_t"][i]) * k)
+	for d in reel.get("dim", {}).get("at", []):
+		d[0] = int(float(d[0]) * k)
 	reel["len"] = _length(reel)
 
 
@@ -1153,6 +1193,19 @@ static func hp_shown(reel: Dictionary, key, t: float, hp_now: int) -> int:
 		if float(h[0]) > t:
 			hp -= int(h[1])
 	return hp
+
+
+## The dim stage to SHOW at reel time t: the pre-step stage until an undim or
+## smog_dim event lands, so the haze parts when the sunbeam reaches it.
+static func dim_shown(reel: Dictionary, t: float, dim_now: int) -> int:
+	var d: Dictionary = reel.get("dim", {})
+	if d.is_empty() or not playing(reel, t):
+		return dim_now
+	var shown := int(d.get("pre", dim_now))
+	for e in d.get("at", []):
+		if float(e[0]) <= t:
+			shown = int(e[1])
+	return shown
 
 
 ## True while any part of the reel is still playing at time t.

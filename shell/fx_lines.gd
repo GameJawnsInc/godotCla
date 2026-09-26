@@ -243,7 +243,7 @@ static func _entry_times(c: Dictionary, id, pts: Array, t0: int, per: int) -> Di
 	for i in L.unclaimed(c, ["damage"]):
 		var ev: Dictionary = c["events"][i]
 		var src := String(ev.get("src", ""))
-		if ev.get("id") != id or not src.contains(":") or src.begins_with("collision:"):
+		if not L.same_id(ev.get("id"), id) or not src.contains(":") or src.begins_with("collision:"):
 			continue
 		var kind := src.get_slice(":", 0)
 		for j in range(j0, pts.size()):
@@ -259,7 +259,7 @@ static func _entry_times(c: Dictionary, id, pts: Array, t0: int, per: int) -> Di
 static func _cast_lands(c: Dictionary, id) -> bool:
 	for i in L.unclaimed(c, ["damage"]):
 		var ev: Dictionary = c["events"][i]
-		if ev.get("id") == id and String(ev.get("src", "")) == String(c["aid"]):
+		if L.same_id(ev.get("id"), id) and String(ev.get("src", "")) == String(c["aid"]):
 			return true
 	return false
 
@@ -328,7 +328,7 @@ static func _reel_in(c: Dictionary, e: Dictionary, from: Vector2i, land: Vector2
 	var entry := _entry_times(c, e["id"], path, t_drag, SHOVE_MS)
 	for i in L.unclaimed(c, ["damage", "status", "hook", "staggered"]):
 		var ev: Dictionary = c["events"][i]
-		if ev.get("id") != e["id"]:
+		if not L.same_id(ev.get("id"), e["id"]):
 			continue
 		var src := String(ev.get("src", ""))
 		if String(ev["t"]) == "staggered":
@@ -616,12 +616,12 @@ static func _shove_ex(c: Dictionary, e: Dictionary, d: Vector2i, dist: int, t_hi
 			# the shoved body and whatever it slammed into
 			if _near_land(c, ev, e, land):
 				L.claim(c, i, t_stop, dv)
-				if ev.get("id") == e["id"] and style.is_empty():
+				if L.same_id(ev.get("id"), e["id"]) and style.is_empty():
 					L.clip(c, {"kind": "spark", "t0": t_stop, "dur": 260, "at": land + d,
 						"col": Color("e6edd8"), "n": 7})
-		elif String(ev["t"]) == "damage" and ev.get("id") == e["id"] and src.contains(":"):
+		elif String(ev["t"]) == "damage" and L.same_id(ev.get("id"), e["id"]) and src.contains(":"):
 			L.claim(c, i, int(entry.get(i, t_hit + slide / 2)), dv)
-		elif String(ev["t"]) == "staggered" and ev.get("id") == e["id"]:
+		elif String(ev["t"]) == "staggered" and L.same_id(ev.get("id"), e["id"]):
 			# the stagger (and the hooks it sets off) lands when the body does
 			L.claim(c, i, t_stop)
 		elif String(ev["t"]) == "hook" and ev.get("tile") == land:
@@ -640,7 +640,7 @@ static func _shove_ex(c: Dictionary, e: Dictionary, d: Vector2i, dist: int, t_hi
 
 
 static func _near_land(c: Dictionary, ev: Dictionary, e: Dictionary, land: Vector2i) -> bool:
-	if ev.get("id") == e["id"]:
+	if L.same_id(ev.get("id"), e["id"]):
 		return true
 	return c["pre_en"].has(ev.get("id")) and L.man(c["pre_en"][ev["id"]]["pos"], land) <= 1
 
