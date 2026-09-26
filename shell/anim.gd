@@ -140,7 +140,7 @@ static func _plan_move(c: Dictionary) -> int:
 		L.seg(c, "player", {"kind": "squash", "t0": 0, "dur": 90})
 		L.move(c, "player", [mv[0], mv[1]], hop0, L.T_MOVE, 0.2)
 		L.seg(c, "player", {"kind": "squash", "t0": land - 25, "dur": 130})
-		L.clip(c, {"kind": "dust", "t0": land - 15, "dur": 320, "at": mv[1], "dir": L.dir_of(mv[0], mv[1]),
+		L.clip(c, {"kind": "land_dust", "t0": land - 15, "dur": 320, "at": mv[1], "dir": L.dir_of(mv[0], mv[1]),
 			"layer": "ground"})
 	for i in L.unclaimed(c, ["move"]):
 		L.claim(c, i, 0)
@@ -218,13 +218,13 @@ static func _plan_item(c: Dictionary) -> int:
 			continue
 		L.claim(c, i, 0)
 		var hits: Array = []
-		var far := 1
+		var far := 1.0
 		for j in evs.size():
 			if String(evs[j].get("t", "")) == "status" and not L.claimed(c, j):
 				var pe = c["pre_en"].get(evs[j].get("id"))
 				if pe != null:
 					hits.append(j)
-					far = maxi(far, L.man(p0, pe["pos"]))
+					far = maxf(far, Vector2(p0).distance_to(Vector2(pe["pos"])))
 		var dhp := int(post_p.get("hp", 0)) - int(pre_p.get("hp", 0))
 		var dmax := int(post_p.get("max_hp", 0)) - int(pre_p.get("max_hp", 0))
 		var dch := int(post_p.get("charge", 0)) - int(pre_p.get("charge", 0))
@@ -240,32 +240,45 @@ static func _plan_item(c: Dictionary) -> int:
 		elif dsmog < 0:
 			col = Color("d6f1fb")
 		var burst := not hits.is_empty() or dsmog < 0
-		var dur := 600
-		var t_use := 315 if burst else 510
+		# the painter's beats: a shatter breaks 0.52-0.58 into the clip, a
+		# swallowed item has sunk into the tender 0.85 in
+		var dur := 600 if burst else 540
+		var t_use := int(dur * 0.53) if burst else int(dur * 0.85)
 		L.seg(c, "player", {"kind": "cast", "t0": 0, "dur": 260, "col": col})
 		L.clip(c, {"kind": "item", "t0": 0, "dur": dur, "at": p0, "id": String(evs[i].get("id", "")),
 			"use": "shatter" if burst else "consume", "col": col})
+		# what the item gave the tender is said in one stack over its head
+		# (Ironheart heals, raises max HP and shields in the same breath)
+		var said := [0]
+		var say := func(t: int, text: String, fcol: Color) -> void:
+			L.clip(c, {"kind": "float", "t0": t + int(said[0]) * L.FLOAT_STACK, "dur": L.T_FLOAT, "at": Vector2(p0),
+				"text": text, "col": fcol, "n": int(said[0])})
+			said[0] = int(said[0]) + 1
 		if not hits.is_empty():
-			# the cloud rolls out from overhead; each creature is caught as it arrives
-			var reach := float(far) + 0.5
-			L.clip(c, {"kind": "ring", "t0": t_use, "dur": 400, "at": p0, "r0": 0.4, "r1": reach,
+			# the cloud rolls out from overhead and each creature is caught the
+			# moment the front reaches it: the ring eases out, r = r0 + (r1 - r0)
+			# * (1 - (1 - k)^2), so k at a creature's distance is 1 - sqrt(1 - x)
+			var r0 := 0.4
+			var reach := far + 0.5
+			var ring_ms := 420
+			L.clip(c, {"kind": "ring", "t0": t_use, "dur": ring_ms, "at": p0, "r0": r0, "r1": reach,
 				"col": col, "w": 0.09, "layer": "ground"})
 			for j in hits:
 				var pe = c["pre_en"].get(evs[j].get("id"))
-				var dist := float(L.man(p0, pe["pos"]))
-				var t_hit := t_use + 60 + int(300.0 * clampf(dist / reach, 0.0, 1.0))
-				L.clip(c, {"kind": "motes", "t0": t_use - 20, "dur": t_hit - t_use + 120, "from": p0,
+				var x := clampf((Vector2(p0).distance_to(Vector2(pe["pos"])) - r0) / (reach - r0), 0.0, 1.0)
+				var t_hit := t_use + int(float(ring_ms) * (1.0 - sqrt(1.0 - x)))
+				# a stream of motes rides out with it: the first lands with the stun
+				var m0 := t_use - 20
+				L.clip(c, {"kind": "motes", "t0": m0, "dur": maxi(120, int(float(t_hit - m0) / 0.65)), "from": p0,
 					"to": pe["pos"], "col": col, "n": 4})
 				L.claim(c, j, t_hit)
 		if dsmog < 0:
 			L.clip(c, {"kind": "ring", "t0": t_use, "dur": 520, "at": p0, "r0": 0.4, "r1": 3.5,
 				"col": col, "w": 0.1, "layer": "air"})
-			L.clip(c, {"kind": "float", "t0": t_use + 40, "dur": L.T_FLOAT, "at": Vector2(p0),
-				"text": "%d smog" % dsmog, "col": col})
+			say.call(t_use + 40, "%d smog" % dsmog, col)
 		if dhp > 0:
 			_hp_change(c["reel"], "player", t_use, dhp)
-			L.clip(c, {"kind": "float", "t0": t_use, "dur": L.T_FLOAT, "at": Vector2(p0),
-				"text": "+%d" % dhp, "col": Color("8fdc6a")})
+			say.call(t_use, "+%d" % dhp, Color("8fdc6a"))
 			L.clip(c, {"kind": "motes", "t0": t_use - 80, "dur": 640, "from": p0, "to": p0,
 				"col": Color("8fdc6a"), "n": 7, "rise": true})
 			L.clip(c, {"kind": "ring", "t0": t_use, "dur": 360, "at": p0, "r0": 0.2, "r1": 0.75,
@@ -273,18 +286,15 @@ static func _plan_item(c: Dictionary) -> int:
 			L.seg(c, "player", {"kind": "cast", "t0": t_use - 40, "dur": 300, "col": Color("8fdc6a")})
 			L.seg(c, "player", {"kind": "tint", "t0": t_use, "dur": 360, "col": Color(0.82, 1.0, 0.62)})
 		if dmax > 0:
-			L.clip(c, {"kind": "float", "t0": t_use + 140, "dur": L.T_FLOAT, "at": Vector2(p0) + Vector2(0, -0.2),
-				"text": "+%d max" % dmax, "col": Color("8fdc6a"), "n": 1})
+			say.call(t_use, "+%d max" % dmax, Color("8fdc6a"))
 		if dch > 0:
 			L.clip(c, {"kind": "motes", "t0": t_use - 60, "dur": 560, "from": p0, "to": p0,
 				"col": Color("f7c948"), "n": 6, "rise": true})
-			L.clip(c, {"kind": "float", "t0": t_use, "dur": L.T_FLOAT, "at": Vector2(p0),
-				"text": "+%d charge" % dch, "col": Color("f7c948")})
+			say.call(t_use, "+%d charge" % dch, Color("f7c948"))
 		if dsh > 0:
 			L.clip(c, {"kind": "buff_pop", "t0": t_use, "dur": 300, "at": p0, "buff": "shield",
 				"who": "player", "pre": int(pre_p.get("shield", 0))})
-			L.clip(c, {"kind": "float", "t0": t_use + 40, "dur": L.T_FLOAT, "at": Vector2(p0),
-				"text": "shield %d" % int(post_p.get("shield", 0)), "col": Color("7fb6d9")})
+			say.call(t_use + 40, "shield %d" % int(post_p.get("shield", 0)), Color("7fb6d9"))
 		t_end = maxi(t_end, t_use + 160)
 	for i in L.unclaimed(c):
 		L.claim(c, i, 240)
@@ -530,7 +540,6 @@ static func _owner_of(c: Dictionary, ev: Dictionary, tt: String, ens: Array, idx
 static func _feedback(c: Dictionary, t_end: int) -> void:
 	var evs: Array = c["events"]
 	var reel: Dictionary = c["reel"]
-	var stack := {}  # victim key -> floats already queued (they fan out in time)
 	# an unclaimed event that FOLLOWS from the one before it (a death after the
 	# killing blow, a status a hook landed, the bounty) happens right after it;
 	# anything else unclaimed happens when the step's main motion ends
@@ -541,33 +550,81 @@ static func _feedback(c: Dictionary, t_end: int) -> void:
 			L.claim(c, i, int(c["times"][i - 1]) + 30)
 		else:
 			L.claim(c, i, t_end)
+	# Numbers and words on one body stack: one that lands while the last is
+	# still fresh waits a beat and fans out beside it (a shield that blocks
+	# half a blow says "blocked" AND "-1"); one that lands later starts fresh,
+	# exactly when its own blow does. Keyed by "player", an enemy id or a tile.
+	var stack := {}
+	# A number rises into the tile above its body; when someone stands there
+	# it would sit on THEIR feet and read as their damage, so it stays low,
+	# on its own body, instead.
+	var taken := {}
+	for e in c["post"]["enemies"]:
+		taken[e["pos"]] = true
+	for id in c["pre_en"]:
+		if not c["post_en"].has(id):
+			taken[c["pre_en"][id]["pos"]] = true
+	var say := func(key, t: int, at: Vector2, text: String, col: Color) -> void:
+		var st: Array = stack.get(key, [-100000, -1])
+		var t0: int = maxi(t, int(st[0]) + L.FLOAT_STACK)
+		var n: int = int(st[1]) + 1 if t0 - int(st[0]) < int(L.T_FLOAT * 0.5) else 0
+		stack[key] = [t0, n]
+		var above := Vector2i(at.round()) + Vector2i(0, -1)
+		var low: bool = taken.has(above) or Vector2i(_pos_at(c, "player", t0).round()) == above
+		L.clip(c, {"kind": "float", "t0": t0, "dur": L.T_FLOAT, "at": at, "text": text, "n": n, "col": col,
+			"low": low})
 	var last_hit := {}  # victim key -> direction of its latest blow (a death tips away from it)
 	var pl0: Dictionary = c["pre"]["player"]
-	# the tender's buffs as the stream changes them, so each overlay change
-	# can hold its old value until the change lands (shell/anim_paint.gd)
+	# the tender's buffs and HP as the stream changes them, so each overlay
+	# change can hold its old value until it lands (shell/anim_paint.gd), and a
+	# heal the cap cut short never shows the bar dipping before it climbs
 	var shield_run := int(pl0.get("shield", 0))
+	var hp_run := int(pl0.get("hp", 0))
+	var hp_max := int(c["post"]["player"].get("max_hp", pl0.get("max_hp", 0)))
+	# every enemy status as the stream changes it (Content.STATUSES stack
+	# rules), so a second pop of one status holds the FIRST pop's value, not
+	# the pre-step one
+	var st_run := {}
 	var own_cleanse := String(c["action"].get("type", "")) == "cleanse"
+	var restored := false
 	for i in evs.size():
 		var ev: Dictionary = evs[i]
 		var t: int = int(c["times"][i])
+		var et := String(ev.get("t", ""))
+		var pre_st := 0
+		if et == "status":
+			var sk := "%s|%s" % [str(ev.get("id")), String(ev.get("status", ""))]
+			var pe0 = c["pre_en"].get(ev.get("id"))
+			pre_st = int(st_run.get(sk, 0 if pe0 == null else int(pe0.get("status", {}).get(String(ev.get("status", "")), 0))))
+			var sdef: Dictionary = Content.STATUSES.get(String(ev.get("status", "")), {})
+			var turns := int(ev.get("turns", 0))
+			if String(sdef.get("stack", "max")) == "add":
+				var cap := int(sdef.get("cap", 0))
+				st_run[sk] = mini(pre_st + turns, cap) if cap > 0 else pre_st + turns
+			else:
+				st_run[sk] = maxi(pre_st, turns)
 		if c["quiet"][i]:
-			match String(ev.get("t", "")):
+			match et:
 				"shield":
 					shield_run = int(ev.get("total", shield_run))
 				"shield_absorb":
 					shield_run -= int(ev.get("amt", 0))
+				"damage":
+					if String(ev.get("who", "")) == "player":
+						hp_run -= int(ev.get("amt", 0))
+				"heal":
+					hp_run = mini(hp_max, hp_run + int(ev.get("amt", 0)))
 			continue
-		match String(ev.get("t", "")):
+		match et:
 			"damage":
 				var mine := String(ev.get("who", "")) == "player"
 				var key = "player" if mine else ev.get("id")
 				var amt := int(ev.get("amt", 0))
 				_hp_change(reel, key, t, -amt)
+				if mine:
+					hp_run -= amt
 				var at := _pos_at(c, key, t)
-				var nq := int(stack.get(key, 0))
-				stack[key] = nq + 1
-				L.clip(c, {"kind": "float", "t0": t + nq * L.FLOAT_STACK, "dur": L.T_FLOAT, "at": at,
-					"text": "-%d" % amt, "n": nq, "col": Color("ff5a45") if mine else Color("fff6e0")})
+				say.call(key, t, at, "-%d" % amt, Color("ff5a45") if mine else Color("fff6e0"))
 				var d = c["dirs"][i]
 				if d == null:
 					d = L.dir_of(c["p0"] if not mine else Vector2i(at.round()), Vector2i(at.round()))
@@ -580,20 +637,23 @@ static func _feedback(c: Dictionary, t_end: int) -> void:
 					"col": Color("ffd0c4") if mine else Color.WHITE})
 				if mine:
 					reel["shakes"].append({"t0": t, "mag": 2.0 + minf(float(amt) * 1.2, 6.0)})
-					L.seg(c, "player", {"kind": "tint", "t0": t, "dur": 320, "col": Color(1.0, 0.22, 0.18)})
+					# white first (the recoil), then a hurt RED that holds and
+					# snaps back rather than fading through orange
+					L.seg(c, "player", {"kind": "tint", "t0": t, "dur": 380, "col": Color(1.0, 0.16, 0.14), "hold": 0.5})
 			"shield_absorb":
 				var sp := _pos_at(c, "player", t)
-				L.clip(c, {"kind": "float", "t0": t, "dur": L.T_FLOAT, "at": sp,
-					"text": "blocked", "col": Color("a8d4ee")})
+				say.call("player", t, sp, "blocked", Color("a8d4ee"))
 				L.clip(c, {"kind": "buff_pop", "t0": t, "dur": 360, "at": sp, "buff": "shield", "break": true,
 					"who": "player", "pre": shield_run})
 				shield_run -= int(ev.get("amt", 0))
 			"heal":
-				var amt := int(ev.get("amt", 0))
-				_hp_change(reel, "player", t, amt)
+				# what the bar really gains: a heal is capped at max HP
+				var gain := clampi(int(ev.get("amt", 0)), 0, maxi(0, hp_max - hp_run))
+				hp_run += gain
+				_hp_change(reel, "player", t, gain)
 				var hp := _pos_at(c, "player", t)
-				L.clip(c, {"kind": "float", "t0": t, "dur": L.T_FLOAT, "at": hp,
-					"text": "+%d" % amt, "col": Color("8fdc6a")})
+				if gain > 0:
+					say.call("player", t, hp, "+%d" % gain, Color("8fdc6a"))
 				L.clip(c, {"kind": "motes", "t0": maxi(0, t - 80), "dur": 640, "from": Vector2i(hp.round()), "to": Vector2i(hp.round()),
 					"col": Color("8fdc6a"), "n": 7, "rise": true})
 				L.clip(c, {"kind": "ring", "t0": t, "dur": 360, "at": hp, "r0": 0.2, "r1": 0.75,
@@ -602,23 +662,20 @@ static func _feedback(c: Dictionary, t_end: int) -> void:
 				L.seg(c, "player", {"kind": "tint", "t0": t, "dur": 360, "col": Color(0.82, 1.0, 0.62)})
 			"shield":
 				var sp := _pos_at(c, "player", t)
-				L.clip(c, {"kind": "float", "t0": t + 60, "dur": L.T_FLOAT, "at": sp,
-					"text": "shield %d" % int(ev.get("total", 0)), "col": Color("a8d4ee")})
+				say.call("player", t + 60, sp, "shield %d" % int(ev.get("total", 0)), Color("a8d4ee"))
 				L.clip(c, {"kind": "buff_pop", "t0": t, "dur": 300, "at": sp, "buff": "shield",
 					"who": "player", "pre": shield_run})
 				shield_run = int(ev.get("total", shield_run))
 			"thorns", "anchor":
-				var bk := String(ev.get("t", ""))
-				L.clip(c, {"kind": "buff_pop", "t0": t, "dur": 300, "at": _pos_at(c, "player", t), "buff": bk,
-					"who": "player", "pre": int(pl0.get(bk + "_turns", 0))})
+				L.clip(c, {"kind": "buff_pop", "t0": t, "dur": 300, "at": _pos_at(c, "player", t), "buff": et,
+					"who": "player", "pre": int(pl0.get(et + "_turns", 0))})
 			"cleanse":
 				var cp: Vector2i = ev["tile"]
 				if not own_cleanse:
 					L.clip(c, {"kind": "burst", "t0": t, "dur": 600, "at": cp, "col": Color("e8c840")})
 				L.clip(c, {"kind": "tile_pop", "t0": t, "dur": 340, "at": cp, "layer": "ground",
 					"col": L.TERRAIN_COL.get(L.tkind(c["post"], cp), Color("6cc95c"))})
-				L.clip(c, {"kind": "float", "t0": t + 20, "dur": L.T_FLOAT, "at": Vector2(cp),
-					"text": "+%d" % int(ev.get("bloom", 1)), "col": Color("f7d85a")})
+				say.call(cp, t + 20, Vector2(cp), "+%d" % int(ev.get("bloom", 1)), Color("f7d85a"))
 			"death":
 				var dk = ev.get("id")
 				var dd = last_hit.get(dk, Vector2.ZERO)
@@ -634,30 +691,47 @@ static func _feedback(c: Dictionary, t_end: int) -> void:
 					"at": _pos_at(c, "player", t), "n": 12})
 			"status":
 				var sid = ev.get("id")
-				var st := String(ev.get("status", ""))
-				var pre_e = c["pre_en"].get(sid)
-				var pre_n := 0
-				if pre_e != null:
-					pre_n = int(pre_e.get("status", {}).get(st, 0))
 				L.clip(c, {"kind": "status_pop", "t0": t, "dur": L.T_STATUS, "at": _pos_at(c, sid, t),
-					"status": st, "who": sid, "pre": pre_n})
+					"status": String(ev.get("status", "")), "who": sid, "pre": pre_st})
 			"resisted", "immune":
-				L.clip(c, {"kind": "float", "t0": t, "dur": L.T_FLOAT, "at": _pos_at(c, ev.get("id"), t),
-					"text": String(ev.get("t", "")), "col": Color("c4ccc6")})
+				var rid = ev.get("id")
+				say.call(rid, t, _pos_at(c, rid, t), et, Color("c4ccc6"))
 			"room_bloom":
+				# the room answers the tender: petals thrown round it, and the
+				# bonus said ABOVE the tender's own numbers (the cleanse's +1 sits
+				# on the tile beside it)
 				var bp := _pos_at(c, "player", t)
 				L.clip(c, {"kind": "burst", "t0": t, "dur": 700, "at": bp, "col": Color(0.93, 0.66, 0.80)})
-				L.clip(c, {"kind": "float", "t0": t + 120, "dur": L.T_FLOAT, "at": bp,
-					"text": "BLOOM +%d" % int(ev.get("bonus", 2)), "col": Color("f7d85a"), "n": 1})
+				# the pod the room drops (a new tile that carries an item) springs
+				# up with the bloom instead of appearing when the step ends, and
+				# the bonus is said over it - the room's reward in one place
+				var said_at := bp + Vector2(0, -0.55)
+				var sw_all: Dictionary = reel["tswap"]
+				for p in sw_all:
+					var td = c["post"]["terrain"].get(p)
+					if String(sw_all[p]["pre"]) == "" and not sw_all[p].has("t") and td is Dictionary and td.has("item"):
+						L.reveal(c, p, t + 200)
+						L.clip(c, {"kind": "tile_pop", "t0": t + 200, "dur": 380, "at": p, "col": Color("f7d85a"),
+							"layer": "ground"})
+						L.clip(c, {"kind": "spark", "t0": t + 200, "dur": 320, "at": p, "col": Color("f7d85a"), "n": 6})
+						said_at = Vector2(p)
+						break
+				say.call("bloom", t + 200, said_at, "BLOOM +%d" % int(ev.get("bonus", 2)), Color("f7d85a"))
 			"bounty":
-				L.clip(c, {"kind": "float", "t0": t + 80, "dur": L.T_FLOAT, "at": _pos_at(c, "player", t),
-					"text": "+%d bloom" % int(ev.get("bloom", 0)), "col": Color("f7d85a")})
+				say.call("player", t + 80, _pos_at(c, "player", t), "+%d bloom" % int(ev.get("bloom", 0)), Color("f7d85a"))
 			"stairs_awaken":
 				if ev.get("tile") is Vector2i and (ev["tile"] as Vector2i).x >= 0:
 					L.clip(c, {"kind": "burst", "t0": t, "dur": 700, "at": ev["tile"], "col": Color("e8c840")})
 			"floor_restored":
-				L.clip(c, {"kind": "burst", "t0": t + 60, "dur": 700, "at": _pos_at(c, "player", t),
-					"col": Color(0.6, 0.9, 0.5)})
+				# the whole floor turns: a wave of green rolls out from the tender
+				# along the ground (not a second burst stacked on the room's)
+				if not restored:
+					restored = true
+					var fp := _pos_at(c, "player", t)
+					L.clip(c, {"kind": "ring", "t0": t + 60, "dur": 640, "at": fp, "r0": 0.6, "r1": 4.5,
+						"col": Color(0.66, 0.93, 0.52), "w": 0.11, "layer": "ground"})
+					L.clip(c, {"kind": "ring", "t0": t + 180, "dur": 600, "at": fp, "r0": 0.5, "r1": 3.4,
+						"col": Color(0.82, 0.97, 0.7), "w": 0.06, "layer": "ground"})
 			"ignite":
 				L.clip(c, {"kind": "flare", "t0": t, "dur": 420, "at": ev["tile"], "col": Color("ef933a")})
 			"wash":
@@ -673,22 +747,53 @@ static func _feedback(c: Dictionary, t_end: int) -> void:
 					L.clip(c, {"kind": "spark", "t0": t, "dur": 340, "at": ev["tile"],
 						"col": Color("ef933a"), "n": 6})
 			"tithe":
-				L.clip(c, {"kind": "float", "t0": t, "dur": L.T_FLOAT, "at": _pos_at(c, "player", t),
-					"text": "tithe", "col": Color("f7d85a")})
+				say.call("player", t, _pos_at(c, "player", t), "tithe", Color("f7d85a"))
 			"gummed":
-				L.clip(c, {"kind": "float", "t0": t + 40, "dur": L.T_FLOAT, "at": _pos_at(c, "player", t),
-					"text": "gummed", "col": Color("d9b54a")})
+				say.call("player", t + 40, _pos_at(c, "player", t), "gummed", Color("d9b54a"))
 			"drain":
-				L.clip(c, {"kind": "float", "t0": t + 60, "dur": L.T_FLOAT, "at": _pos_at(c, "player", t),
-					"text": "-%d charge" % int(ev.get("amt", 0)), "col": Color("f7c948")})
+				say.call("player", t + 60, _pos_at(c, "player", t), "-%d charge" % int(ev.get("amt", 0)), Color("f7c948"))
 			"anchored":
-				L.clip(c, {"kind": "float", "t0": t, "dur": L.T_FLOAT, "at": _pos_at(c, "player", t),
-					"text": "anchored", "col": Color("dcb880")})
+				say.call("player", t, _pos_at(c, "player", t), "anchored", Color("dcb880"))
 			"item_pickup":
 				L.clip(c, {"kind": "item", "t0": t, "dur": 520, "at": c["p1"], "id": String(ev.get("id", "")),
 					"use": "pickup"})
 			"boss_phase", "ignite_all", "flood", "smoke_burst", "assimilate":
 				reel["shakes"].append({"t0": t, "mag": L.SHAKE_BIG})
+	# A status that runs out during the step (a stun spent on the struggle it
+	# caused, spores that ticked their last, a stunned machine killed) is
+	# already gone from the post board, so the overlay - which draws the post
+	# board - would drop it at t = 0, before the struggle it explains. A hold
+	# clip keeps drawing it until the moment it is spent.
+	for id in c["pre_en"]:
+		var pe: Dictionary = c["pre_en"][id]
+		var post_e = c["post_en"].get(id)
+		var keep := {}
+		var until := -1
+		for st in pe.get("status", {}):
+			if not Content.STATUSES.has(st) or int(pe["status"][st]) <= 0:
+				continue
+			if post_e != null and int(post_e.get("status", {}).get(st, 0)) > 0:
+				continue
+			var spent := -1
+			var blocked_ev := String(Content.STATUSES[st].get("blocked_event", st))
+			for i in evs.size():
+				var ev: Dictionary = evs[i]
+				if not L.same_id(ev.get("id"), id):
+					continue
+				var et := String(ev.get("t", ""))
+				if et == blocked_ev:
+					spent = maxi(spent, int(c["times"][i]) + 380)
+				elif et == "damage" and String(ev.get("src", "")) == st:
+					spent = maxi(spent, int(c["times"][i]) + 160)
+				elif et == "death":
+					spent = maxi(spent, int(c["times"][i]) + 30)
+			if spent < 0:
+				spent = t_end
+			keep[st] = int(pe["status"][st])
+			until = maxi(until, spent)
+		if not keep.is_empty() and until > 0:
+			L.clip(c, {"kind": "status_hold", "t0": 0, "dur": until, "at": Vector2(pe["pos"]), "who": id,
+				"status": keep, "layer": "air"})
 
 
 static func _hp_change(reel: Dictionary, key, t: int, delta: int) -> void:
@@ -948,10 +1053,22 @@ static func pose(reel: Dictionary, key, t: float, cur: Vector2) -> Dictionary:
 				# a strongly coloured tint is laid OVER the body (a multiply alone
 				# turns a red hurt brown on a green tender); a dull one darkens
 				var sat := maxf(col.r, maxf(col.g, col.b)) - minf(col.r, minf(col.g, col.b))
-				out["tint"] = col.lerp(Color(1, 1, 1), maxf(k, sat))
-				var wa := 0.9 * sat * (1.0 - _ease_io((k - 0.2) / 0.8))
-				if wa > (out["wash"] as Color).a:
-					out["wash"] = Color(col.r, col.g, col.b, wa)
+				if s.has("hold"):
+					# a HURT: the body is pulled toward the colour (the multiply
+					# kills the green under a red) and the colour laid over it at
+					# full strength until `hold`, then it snaps back in a few
+					# frames - a slow fade of red over green reads orange, then
+					# olive, for a quarter of a second
+					var env := 1.0 - _ease_io((k - float(s["hold"])) / 0.22)
+					out["tint"] = (out["tint"] as Color) * Color(1, 1, 1).lerp(col, 0.6 * env)
+					var wh := 0.86 * sat * env
+					if wh > (out["wash"] as Color).a:
+						out["wash"] = Color(col.r, col.g, col.b, wh)
+				else:
+					out["tint"] = col.lerp(Color(1, 1, 1), maxf(k, sat))
+					var wa := 0.9 * sat * (1.0 - _ease_io((k - 0.2) / 0.8))
+					if wa > (out["wash"] as Color).a:
+						out["wash"] = Color(col.r, col.g, col.b, wa)
 			"flash":
 				out["flash"] = maxf(out["flash"], 1.0 if k < 0.3 else 1.0 - (k - 0.3) / 0.7)
 			"cast":

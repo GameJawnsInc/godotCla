@@ -1829,7 +1829,7 @@ func _draw_body(id: String, ps: Dictionary, idl: Dictionary) -> Rect2:
 	var fl := clampf(float(ps["flash"]), 0.0, 1.0)
 	var sil: Texture2D = null
 	if tx != null and (aura.a > 0.02 or wash.a > 0.02 or fl > 0.02):
-		sil = Paint.silhouette(tx)
+		sil = Paint.silhouette(id, int(_ts))
 	if aura.a > 0.02:
 		# the wind-up: a soft halo, and the body's own outline lit in the colour
 		var mid := feet + Vector2(0, -_ts * 0.46 * sy)

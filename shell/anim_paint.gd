@@ -30,7 +30,7 @@ const FxEnemy := preload("res://shell/fx_enemy.gd")
 const FAMILIES := [FxLines, FxAreas, FxSelf, FxEnemy]
 const CORE_KINDS := ["float", "burst", "puff", "ring", "spark", "status_pop", "slash", "scrub",
 	"motes", "item", "cast_ring", "surge", "flare", "splash", "tile_pop", "portal",
-	"impact", "dust", "petals", "buff_pop"]
+	"impact", "land_dust", "petals", "buff_pop", "status_hold"]
 
 ## Outline ink: near-black with a green cast, so light shapes and numbers keep
 ## an edge on the dark green floor.
@@ -50,11 +50,18 @@ const OUTLINE_DIRS := [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, 
 	Vector2(0.7, 0.7), Vector2(-0.7, 0.7), Vector2(0.7, -0.7), Vector2(-0.7, -0.7)]
 ## Tender buff -> the snapshot's player key that holds it.
 const BUFF_KEYS := {"shield": "shield", "thorns": "thorns_turns", "anchor": "anchor_turns"}
+## How far into its pop (0..1) a status HANDS OFF to the persistent overlay:
+## until then the pop draws the status and the overlay keeps the old value.
+## Stun stars burst and settle onto the exact orbit the overlay keeps, so
+## they hand off once settled; roots and spores cross-fade. A buff (and any
+## status not listed) lands when its ring grabs, a fifth of the way in.
+const HANDOFF := {"stun": 0.55, "root": 0.45, "spore": 0.35}
+const HANDOFF_DEFAULT := 0.2
 
 ## Changes the current reel has not landed yet: [{who, key, pre, pos, t0}].
 ## Rebuilt by every ground pass; read by the overlays that follow it.
 static var _hold: Array = []
-## White silhouettes of creature sprites, by texture instance id.
+## White silhouettes of creature sprites, by "id@size" (see silhouette()).
 static var _sil := {}
 
 
@@ -85,6 +92,13 @@ static func paint(cv, reel: Dictionary, rt: float, layer: String, V: Dictionary)
 			continue
 		if V.has("vis") and cl.has("at") and not (V["vis"] as Callable).call(Vector2i(Vector2(cl["at"]).round())):
 			continue
+		if String(cl["kind"]) == "status_hold":
+			# a status spent this step, drawn where its creature is now, and
+			# dissolving over its last beat instead of blinking out
+			var hp := _track_pos(reel, cl.get("who"), rt, Vector2(cl["at"]))
+			_overlay(cv, V, D.px(V, hp), cl.get("status", {}), float(V.get("now", 0.0)),
+				1.0 - D.win(age, dur - 140.0, dur))
+			continue
 		paint_clip(cv, cl, age / dur, V)
 
 
@@ -106,8 +120,10 @@ static func paint_clip(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			var e := D.ease_out(k)
 			var a := D.tail(k, 0.4)
 			if k < 0.22:
+				# the flash at its heart stays small and soft: a burst is often
+				# centred on the tender, who must stay readable through it
 				var f := 1.0 - k / 0.22
-				D.glow(cv, c, t * (0.3 + 0.25 * (1.0 - f)), D.ca(col.lerp(Color.WHITE, 0.55), 0.6 * f))
+				D.glow(cv, c, t * (0.2 + 0.22 * (1.0 - f)), D.ca(col.lerp(Color.WHITE, 0.55), 0.42 * f))
 			D.ring(cv, c, t * (0.18 + 0.55 * e), D.ca(col, 0.8 * (1.0 - k)), t * 0.06 * (1.0 - k))
 			for i in 8:
 				var ang := TAU * (float(i) + 0.4 * D.h01(i + 3)) / 8.0 - 0.3
@@ -218,19 +234,25 @@ static func paint_clip(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 				D.leaf(cv, q, ang + PI * 0.5, t * 0.22, D.ca(LEAF_DARK, 0.8 * la))
 				D.leaf(cv, q, ang + PI * 0.5, t * 0.16, D.ca(LEAF_HI.lerp(LEAF, 0.4), la))
 		"flare":
-			# a tile catching fire: three tongues leap up out of a hot glow
+			# a tile catching fire: tongues of flame leap up out of a hot glow,
+			# lick and sway, and sink back into the tile's own fire
 			var c := D.px(V, cl["at"])
 			var col: Color = cl.get("col", Color("ef933a"))
-			var up := D.ease_out(D.win(k, 0.0, 0.28))
-			var a := D.tail(k, 0.3)
-			D.glow(cv, c, t * (0.3 + 0.35 * up), D.ca(col, 0.65 * a))
+			var up := D.ease_out(D.win(k, 0.0, 0.25))
+			var down := 1.0 - 0.55 * D.ease_in(D.win(k, 0.45, 1.0))
+			var a := D.tail(k, 0.4)
+			D.glow(cv, c + Vector2(0, t * 0.1), t * (0.3 + 0.3 * up), D.ca(col, 0.55 * a))
 			for i in 3:
-				var x := (float(i) - 1.0) * t * 0.18
-				var h := t * (0.25 + 0.7 * up * (1.0 - 0.3 * absf(float(i) - 1.0)))
-				var base := c + Vector2(x, t * 0.3)
-				var tip := c + Vector2(x * 0.5 + sin(k * 9.0 + float(i)) * t * 0.05, t * 0.3 - h)
-				D.spike(cv, base, tip, t * 0.26, D.ca(Color("b8441e"), a))
-				D.spike(cv, base, base.lerp(tip, 0.85), t * 0.17, D.ca(Color("fdf0a8") if i == 1 else col, a))
+				var side := float(i) - 1.0
+				var base := c + Vector2(side * t * 0.19, t * 0.34)
+				var h := t * (0.3 + 0.62 * up * down * (1.0 - 0.32 * absf(side)))
+				var w := t * (0.3 - 0.06 * absf(side))
+				var sway := sin(k * 13.0 + float(i) * 2.1) * t * 0.07 + side * t * 0.05
+				_flame(cv, base, h, w, sway, D.ca(Color("b8441e"), a))
+				_flame(cv, base + Vector2(0, -t * 0.02), h * 0.8, w * 0.66, sway * 0.8, D.ca(col, a))
+				if i == 1:
+					_flame(cv, base + Vector2(0, -t * 0.03), h * 0.5, w * 0.36, sway * 0.6,
+						D.ca(Color("fdf0a8"), a))
 		"splash":
 			# water lands: droplets arc out and fall, a bright ring spreads
 			var c := D.px(V, cl["at"])
@@ -281,7 +303,7 @@ static func paint_clip(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 				D.spike(cv, c + dv * t * 0.05, c + dv * ln, t * (0.09 if i % 2 == 0 else 0.06) * (1.0 - 0.6 * k),
 					D.ca(col, a))
 			D.twinkle(cv, c, t * 0.3 * (1.0 - e), D.ca(Color.WHITE, a))
-		"dust":
+		"land_dust":
 			# a landing kicks up a little dust behind the feet
 			var c := D.px(V, cl["at"]) + Vector2(0, t * 0.36)
 			var d: Vector2 = cl.get("dir", Vector2.ZERO)
@@ -297,6 +319,10 @@ static func paint_clip(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			_petals(cv, cl, k, V)
 		"buff_pop":
 			_buff_pop(cv, cl, k, V)
+		"status_hold":
+			# (paint() draws it where the creature is now; this is the static form)
+			_overlay(cv, V, D.px(V, cl["at"]), cl.get("status", {}), float(V.get("now", 0.0)),
+				1.0 - D.win(k, 0.8, 1.0))
 
 
 # --- clip painters ----------------------------------------------------------------
@@ -314,8 +340,15 @@ static func _float(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	if n > 0:
 		p += Vector2((0.26 if n % 2 == 1 else -0.26) * t, -0.16 * t * float(n))
 	var rise := D.ease_out(D.win(k, 0.0, 0.45))
+	# over the head, rising into the tile above - or, when someone stands in
+	# that tile (`low`, set by the director), on the body's own chest, so the
+	# number is never read as the neighbour's
 	var y := p.y - t * (0.4 + 0.24 * rise + 0.08 * k)
-	var pop := 1.0 + 0.55 * (1.0 - D.ease_out(D.win(k, 0.0, 0.13)))
+	if bool(cl.get("low", false)):
+		y = p.y - t * (0.08 + 0.18 * rise + 0.04 * k)
+	# a number slams in; a word (blocked, BLOOM +2, +3 charge) only nudges -
+	# half again its size, a word is two tiles wide and would cover the board
+	var pop := 1.0 + (0.55 if big else 0.18) * (1.0 - D.ease_out(D.win(k, 0.0, 0.13)))
 	var mag := 1.0
 	if big:
 		mag = clampf(0.9 + 0.12 * float(absi(s.to_int())), 1.0, 1.45)
@@ -583,12 +616,19 @@ static func status_pop(cv, V: Dictionary, c: Vector2, status: String, k: float) 
 		"stun":
 			if k < 0.3:
 				D.twinkle(cv, c + Vector2(0, -t * 0.42), t * 0.3 * D.pulse(D.win(k, 0.05, 0.3)), D.ca(Color.WHITE, 0.95))
-			var out := 1.0 - D.ease_out(D.win(k, 0.12, 0.55))
-			for i in 3:
-				var ang := TAU * float(i) / 3.0 + k * 7.0
-				var rad := t * (0.3 + 0.25 * out)
-				var q := c + Vector2(cos(ang) * rad, -t * 0.46 + sin(ang) * rad * 0.28)
-				_star5(cv, q, t * (0.11 + 0.08 * out) * grab, D.ca(col, a), ang)
+			# three stars burst off the head, wide and big and whirling, and
+			# settle ONTO the orbit the overlay keeps (same clock, same angles,
+			# sizes and depth), where the overlay takes them over at HANDOFF
+			var ho := float(HANDOFF["stun"])
+			if k < ho:
+				var out := 1.0 - D.ease_out(D.win(k, 0.1, ho))
+				var s := float(V.get("now", 0.0)) / 1000.0
+				for i in 3:
+					var ang := TAU * float(i) / 3.0 + s * 2.6 + 2.4 * out
+					var depth := 0.5 + 0.5 * sin(ang)
+					var q := c + Vector2(cos(ang) * t * (0.3 + 0.26 * out), -t * 0.46 + sin(ang) * t * (0.085 + 0.2 * out))
+					var sz := t * (0.075 + 0.035 * depth) * (1.0 + 0.9 * out) * grab
+					_star5(cv, q, sz, D.ca(col, lerpf(0.55 + 0.45 * depth, 1.0, out)), s * 3.0 + float(i) + 3.0 * out)
 		"root":
 			# roots break the ground and whip up round the legs (never over the
 			# face: the overlay's binding takes over as they settle)
@@ -634,6 +674,14 @@ static func status_overlay(cv, V: Dictionary, c: Vector2, status: Dictionary, no
 				st = status.duplicate()
 				copied = true
 			st[h["key"]] = h["pre"]
+	_overlay(cv, V, c, st, now)
+
+
+## The overlay itself, for exactly the statuses given (the status_hold clip
+## draws a status the step spent through this, with no hold applied).
+static func _overlay(cv, V: Dictionary, c: Vector2, st: Dictionary, now: float, fa: float = 1.0) -> void:
+	if fa <= 0.01:
+		return
 	var t := D.ts(V)
 	var s := now / 1000.0
 	if int(st.get("stun", 0)) > 0:
@@ -642,19 +690,19 @@ static func status_overlay(cv, V: Dictionary, c: Vector2, status: Dictionary, no
 			var ang := TAU * float(i) / 3.0 + s * 2.6
 			var depth := 0.5 + 0.5 * sin(ang)  # 0 behind the head, 1 in front
 			var q := c + Vector2(cos(ang) * t * 0.3, -t * 0.46 + sin(ang) * t * 0.085)
-			_star5(cv, q, t * (0.075 + 0.035 * depth), D.ca(col, 0.55 + 0.45 * depth), s * 3.0 + float(i))
+			_star5(cv, q, t * (0.075 + 0.035 * depth), D.ca(col, (0.55 + 0.45 * depth) * fa), s * 3.0 + float(i))
 	if int(st.get("root", 0)) > 0:
 		var feet := c + Vector2(0, t * 0.4)
 		cv.draw_set_transform(feet, 0.0, Vector2(1.0, 0.34))
-		D.ring(cv, Vector2.ZERO, t * 0.33, D.ca(BARK_DARK, 0.9), t * 0.11)
-		D.ring(cv, Vector2.ZERO, t * 0.33, D.ca(BARK, 0.95), t * 0.055)
+		D.ring(cv, Vector2.ZERO, t * 0.33, D.ca(BARK_DARK, 0.9 * fa), t * 0.11)
+		D.ring(cv, Vector2.ZERO, t * 0.33, D.ca(BARK, 0.95 * fa), t * 0.055)
 		cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		for i in 3:
 			var x := (float(i) - 1.0) * t * 0.24
 			var base := feet + Vector2(x, t * 0.02)
 			var tip := base + Vector2(-x * 0.35, -t * (0.3 + 0.03 * sin(s * 2.0 + float(i))))
-			D.wavy(cv, base, tip, t * 0.05, 1.0, float(i) * 2.0, D.ca(BARK_DARK, 0.95), t * 0.09, 6)
-			D.wavy(cv, base, tip, t * 0.05, 1.0, float(i) * 2.0, D.ca(BARK.lerp(BARK_LIGHT, 0.3), 0.95), t * 0.045, 6)
+			D.wavy(cv, base, tip, t * 0.05, 1.0, float(i) * 2.0, D.ca(BARK_DARK, 0.95 * fa), t * 0.09, 6)
+			D.wavy(cv, base, tip, t * 0.05, 1.0, float(i) * 2.0, D.ca(BARK.lerp(BARK_LIGHT, 0.3), 0.95 * fa), t * 0.045, 6)
 	var spores := int(st.get("spore", 0))
 	if spores > 0:
 		var sc := L.status_col("spore")
@@ -663,9 +711,12 @@ static func status_overlay(cv, V: Dictionary, c: Vector2, status: Dictionary, no
 			var ph := fposmod(s / 2.2 + D.h01(i * 17 + 3), 1.0)
 			var x := (D.h01(i * 5 + 1) - 0.5) * t * 0.7 + sin(ph * 5.0 + float(i)) * t * 0.06
 			var q := c + Vector2(x, t * 0.2 - t * 0.6 * ph)
-			var al := D.pulse(ph)
-			cv.draw_circle(q, t * 0.07, D.ca(sc, 0.3 * al))
-			cv.draw_circle(q, t * 0.035, D.ca(sc.lerp(Color.WHITE, 0.35), 0.95 * al))
+			var al := D.pulse(ph) * fa
+			# a little puffball with a dark rim, so a violet speck still reads
+			# against the grey machines and the dark floor
+			cv.draw_circle(q, t * 0.085, D.ca(sc, 0.22 * al))
+			cv.draw_circle(q, t * 0.052, D.ca(INK, 0.55 * al))
+			cv.draw_circle(q, t * 0.04, D.ca(sc.lerp(Color.WHITE, 0.3), 0.95 * al))
 
 
 ## Persistent loop over the tender for its active buffs: blue-glazed bark
@@ -730,6 +781,29 @@ static func _star5(cv, p: Vector2, r: float, col: Color, rot: float) -> void:
 	cv.draw_colored_polygon(pts, col)
 
 
+## A tongue of flame standing on `base`: a rounded bottom `w` wide that
+## tapers to a tip `h` above, the tip swung `sway` px sideways (more of the
+## sway the higher up), so a few of them read as fire and not as spikes.
+static func _flame(cv, base: Vector2, h: float, w: float, sway: float, col: Color) -> void:
+	if h < 2.0 or w < 1.5 or col.a <= 0.01:
+		return
+	var pts := PackedVector2Array()
+	var n := 7
+	for i in n + 1:
+		var u := float(i) / float(n)
+		var hw := w * 0.5 * pow(1.0 - u, 0.75) * (0.8 + 0.35 * sin(u * PI))
+		pts.append(base + Vector2(sway * u * u + hw, -h * u))
+	for i in range(n - 1, -1, -1):
+		var u := float(i) / float(n)
+		var hw := w * 0.5 * pow(1.0 - u, 0.75) * (0.8 + 0.35 * sin(u * PI))
+		pts.append(base + Vector2(sway * u * u - hw, -h * u))
+	# the rounded foot
+	pts.append(base + Vector2(-w * 0.28, w * 0.2))
+	pts.append(base + Vector2(0, w * 0.3))
+	pts.append(base + Vector2(w * 0.28, w * 0.2))
+	cv.draw_colored_polygon(pts, col)
+
+
 ## A curved band: the ring between radii r0 and r1 from angle a0 to a1.
 static func _band(cv, c: Vector2, r0: float, r1: float, a0: float, a1: float, col: Color) -> void:
 	if col.a <= 0.01 or r1 - r0 < 0.5 or a1 - a0 < 0.02:
@@ -752,8 +826,9 @@ static func _tile_of(V: Dictionary, c: Vector2) -> Vector2:
 
 
 ## The status/buff changes the reel at time rt has not landed yet. A change
-## lands a fifth of the way into its pop (when the ring grabs); until then the
-## overlay keeps showing the value from before the step (`pre`).
+## reaches the overlay at its pop's HANDOFF (a buff when its ring grabs, a
+## fifth of the way in; stun stars once they have settled into the orbit);
+## until then the overlay keeps showing the value from before the step (`pre`).
 static func _holds(reel: Dictionary, rt: float) -> Array:
 	var out: Array = []
 	if reel.is_empty() or rt > float(reel.get("len", 0)) + 40.0:
@@ -765,10 +840,11 @@ static func _holds(reel: Dictionary, rt: float) -> Array:
 		if not cl.has("who"):
 			continue
 		var t0 := float(cl["t0"])
-		if rt >= t0 + float(cl["dur"]) * 0.2:
+		var key := String(cl.get("status", cl.get("buff", "")))
+		var ho := float(HANDOFF.get(key, HANDOFF_DEFAULT)) if kind == "status_pop" else HANDOFF_DEFAULT
+		if rt >= t0 + float(cl["dur"]) * ho:
 			continue
 		var who = cl["who"]
-		var key := String(cl.get("status", cl.get("buff", "")))
 		var pos := Vector2(cl["at"])
 		if not (who is String):
 			pos = _track_pos(reel, who, rt, pos)
@@ -812,24 +888,25 @@ static func _track_pos(reel: Dictionary, key, t: float, cur: Vector2) -> Vector2
 	return cur if base == null else base
 
 
-## A white copy of a creature sprite (same alpha), cached per texture. Drawn
-## over the sprite it turns the body white-hot (a hit flash) or washes it one
-## colour (a hurt tint, a cast's glow): a modulate above 1 whitens only as far
-## as each pixel's own brightness allows, so the dark outlines and eyes stayed
-## green through the old flash.
-static func silhouette(tx: Texture2D) -> Texture2D:
-	if tx == null:
-		return null
-	var key := tx.get_instance_id()
+## A white copy of a creature sprite (same alpha), cached per sprite and size.
+## Drawn over the sprite it turns the body white-hot (a hit flash) or washes
+## it one colour (a hurt tint, a cast's glow): a modulate above 1 whitens only
+## as far as each pixel's own brightness allows, so the dark outlines and eyes
+## stayed green through the old flash. It is rasterised from the same SVG at
+## the same scale as svg_art.gd tex(), on the CPU: reading the sprite back
+## off its texture would be a GPU readback, which the compatibility renderer
+## (the phone and web builds) does slowly or not at all.
+static func silhouette(id: String, size: int) -> Texture2D:
+	var key := "%s@%d" % [id, size]
 	if _sil.has(key):
 		return _sil[key]
-	var img: Image = tx.get_image()
-	if img == null or img.is_empty():
+	if not Art.ART.has(id) or size < 1:
 		_sil[key] = null
 		return null
-	if img.is_compressed():
-		img.decompress()
-	img.clear_mipmaps()
+	var img := Image.new()
+	if img.load_svg_from_string(Art.ART[id], float(size) / 32.0) != OK or img.is_empty():
+		_sil[key] = null
+		return null
 	img.convert(Image.FORMAT_RGBA8)
 	var data := img.get_data()
 	for i in range(0, data.size(), 4):
