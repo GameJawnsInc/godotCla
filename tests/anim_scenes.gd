@@ -48,13 +48,17 @@ const OPEN := """
 const FDEF := {"smog_spawn": [999], "smog_spawn_every": 0, "smog_dim": [900, 950], "smog_choke": 999, "green_need": 2}
 
 
-static func _game(room: String, kit: Array, extra_enemies: Array = [], extra_terrain: Dictionary = {}):
+static func _game(room: String, kit: Array, extra_enemies: Array = [], extra_terrain: Dictionary = {},
+		grafts: Array = []):
 	var ff: Dictionary = Tutorial.room_config(room, FDEF)
 	for spec in extra_enemies:
 		ff["gen"]["enemies"].append(spec)
 	for p in extra_terrain:
 		ff["gen"]["terrain"][p] = {"kind": extra_terrain[p]}
-	var g = Game.new(7, {"kit": kit.duplicate(), "fixed_floor": ff})
+	var cfg := {"kit": kit.duplicate(), "fixed_floor": ff}
+	if not grafts.is_empty():
+		cfg["grafts"] = grafts.duplicate()
+	var g = Game.new(7, cfg)
 	# staged: a tender who survives the scene and can afford any cast
 	g.player["max_hp"] = 30
 	g.player["hp"] = 30
@@ -203,6 +207,138 @@ static func basic_scene(which: String) -> Dictionary:
 const BASIC := ["move", "strike", "strike_spiked", "kill", "cleanse", "item", "heal_item", "surge", "death"]
 
 
+## Edge cases the per-family reviews found bugs in, kept as scenes so the
+## suite keeps covering them: packs and shields (blow attribution), graft
+## hooks firing mid-verb (claims and int/String ids), a fused partner with a
+## telegraph of its own, a crane haul followed by machines aiming at the
+## tender, thrown and surged areas, bodies dragged across fire.
+const EXTRA := ["x:pack", "x:shielded", "x:fuse_attack", "x:ignite_hooks", "x:top_row", "x:haul",
+	"x:slam_thorns", "x:kill_stunned", "x:ironheart", "x:balm_capped", "x:spore_tick", "x:updraft_open",
+	"x:gust_free", "x:rake_fire", "x:jet_undertow", "x:tide_grafts", "x:drift_far", "x:tangle_surged",
+	"x:reclaim_oil", "x:prism_fizzle", "x:burrow_long", "x:vent_open"]
+
+
+static func _cast(g, target) -> Dictionary:
+	return {"type": "ability", "slot": 0, "target": target}
+
+
+## Slot 0's most eventful legal cast (as ability_scene picks it).
+static func _best(g) -> Variant:
+	var best = null
+	var best_score := -1
+	for a in g.legal_actions():
+		if String(a.get("type", "")) == "ability" and int(a.get("slot", -1)) == 0:
+			var sc := _score(g, a)
+			if sc > best_score:
+				best_score = sc
+				best = a
+	return best
+
+
+static func _poke(g, j: int, intent: Dictionary) -> void:
+	g.enemies[j]["intent"] = intent.duplicate(true)
+
+
+static func extra_scene(nm: String) -> Dictionary:
+	var g = null
+	var a = {"type": "end_turn"}
+	var k3 := ["solar_lance", "seed_bomb", "mycelium_dash"]
+	match nm:
+		"x:pack":
+			g = _game(OPEN, k3, [{"kind": "drill_bot", "pos": Vector2i(5, 4)}, {"kind": "drill_bot", "pos": Vector2i(3, 4)},
+				{"kind": "rust_hound", "pos": Vector2i(4, 5)}])
+		"x:shielded":
+			g = _game(OPEN, k3, [{"kind": "drill_bot", "pos": Vector2i(5, 4)}, {"kind": "drill_bot", "pos": Vector2i(3, 4)}])
+			g.player["shield"] = 3
+		"x:fuse_attack":
+			# the welder is listed first; its partner stands beside the tender
+			# with an attack of its own telegraphed
+			g = _game(OPEN, k3, [{"kind": "drill_bot", "pos": Vector2i(6, 4)}, {"kind": "drill_bot", "pos": Vector2i(5, 4)},
+				{"kind": "sludgeling", "pos": Vector2i(1, 7)}])
+		"x:ignite_hooks":
+			g = _game(OPEN, ["solar_lance", "sun_flare", "seed_bomb"],
+				[{"kind": "furnace_core", "pos": Vector2i(8, 2)}, {"kind": "sludgeling", "pos": Vector2i(2, 2)},
+					{"kind": "drill_bot", "pos": Vector2i(6, 6)}],
+				{Vector2i(2, 2): "oil", Vector2i(6, 6): "oil", Vector2i(3, 6): "oil", Vector2i(7, 3): "oil"},
+				["oil_tithe", "ember_sap"])
+			_poke(g, 0, {"type": "ignite_all"})
+		"x:top_row":
+			g = _game(OPEN, k3, [{"kind": "smokestack", "pos": Vector2i(3, 1)}, {"kind": "pump_jack", "pos": Vector2i(6, 1)},
+				{"kind": "extractor_engine", "pos": Vector2i(8, 1)}])
+			_poke(g, 0, {"type": "stoke", "in": 1})
+			_poke(g, 1, {"type": "ooze", "in": 1})
+			_poke(g, 2, {"type": "summon", "in": 1})
+			for j in 3:
+				g.enemies[j]["timer"] = 1
+		"x:haul":
+			g = _game(OPEN, k3, [{"kind": "magnet_crane", "pos": Vector2i(7, 4)}, {"kind": "tar_spitter", "pos": Vector2i(6, 1)},
+				{"kind": "leech_drone", "pos": Vector2i(6, 6)}, {"kind": "drill_bot", "pos": Vector2i(2, 6)}])
+			_poke(g, 0, {"type": "drag", "times": 2})
+			_poke(g, 1, {"type": "gum", "slot": 1})
+			_poke(g, 2, {"type": "drain", "amount": 2})
+			g.player["bank"] = 3
+		"x:slam_thorns":
+			g = _game(OPEN, k3, [{"kind": "overseer", "pos": Vector2i(6, 4)}])
+			_poke(g, 0, {"type": "slam", "tile": Vector2i(4, 4), "dmg": 3})
+			g.player["thorns_turns"] = 3
+			g.player["thorns_dmg"] = 2
+		"x:kill_stunned":
+			g = _game(OPEN, k3, [{"kind": "sludgeling", "pos": Vector2i(5, 4)}])
+			g.enemies[0]["status"] = {"stun": 2}
+			a = {"type": "strike", "dir": Vector2i(1, 0)}
+		"x:ironheart":
+			g = _game(OPEN, k3)
+			g.player["items"] = ["iron_seed+"]
+			a = {"type": "use_item", "slot": 0}
+		"x:balm_capped":
+			g = _game(OPEN, k3)
+			g.player["hp"] = 29
+			g.player["items"] = ["balm_fruit"]
+			a = {"type": "use_item", "slot": 0}
+		"x:spore_tick":
+			g = _game(OPEN, k3, [{"kind": "drill_bot", "pos": Vector2i(8, 7)}])
+			g.enemies[0]["status"] = {"spore": 1}
+		"x:updraft_open":
+			g = _game(OPEN, ["updraft+"])
+			a = _cast(g, Vector2i(1, 0))
+		"x:gust_free":
+			g = _game(OPEN, ["gust"], [{"kind": "drill_bot", "pos": Vector2i(6, 4)}], {Vector2i(5, 4): "smoke"})
+			a = _cast(g, Vector2i(1, 0))
+		"x:rake_fire":
+			g = _game(OPEN, ["vine_whip+rake"], [{"kind": "sludgeling", "pos": Vector2i(6, 4)},
+				{"kind": "drill_bot", "pos": Vector2i(7, 4)}], {Vector2i(5, 4): "fire"})
+			a = _cast(g, Vector2i(1, 0))
+		"x:jet_undertow":
+			g = _game(ARENA, ["water_jet+sluice"], [], {}, ["undertow"])
+			a = _best(g)
+		"x:tide_grafts":
+			g = _game(ARENA, ["tide"], [], {}, ["undertow", "compost"])
+			a = _cast(g, Vector2i(4, 4))
+		"x:drift_far":
+			g = _game(ARENA, ["pollen_burst+drift"])
+			a = _cast(g, Vector2i(6, 3))
+		"x:tangle_surged":
+			g = _game(ARENA, ["seed_bomb+tangle"])
+			g.player["pos"] = Vector2i(4, 5)
+			a = _cast(g, Vector2i(5, 3))
+		"x:reclaim_oil":
+			g = _game(ARENA, ["seed_bomb+reclaim"])
+			a = _cast(g, Vector2i(5, 4))
+		"x:prism_fizzle":
+			g = _game(ARENA, ["moss_filter+prism"])
+			g.dim = 2
+			a = _cast(g, Vector2i(4, 4))
+		"x:burrow_long":
+			g = _game(OPEN, ["burrow+"])
+			a = _cast(g, Vector2i(6, 6))
+		"x:vent_open":
+			g = _game(OPEN, ["steam_vent"])
+			a = _cast(g, Vector2i(6, 3))
+	if g == null:
+		return {}
+	return {"name": nm, "game": g, "action": a}
+
+
 static func all_scenes() -> Array:
 	var out: Array = []
 	for w in BASIC:
@@ -211,4 +347,6 @@ static func all_scenes() -> Array:
 		out.append(ability_scene(aid))
 	for v in INTENT_SCENES:
 		out.append(intent_scene(v))
+	for nm in EXTRA:
+		out.append(extra_scene(nm))
 	return out

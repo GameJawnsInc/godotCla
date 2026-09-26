@@ -127,6 +127,7 @@ func _init() -> void:
 		_check_scene(sc)
 		n += 1
 	_check_idle()
+	_check_attribution()
 	_check_shell()
 	_check_soak()
 	_check(errs.n == 0, "no engine or script errors while planning and painting (%d: %s)" % [errs.n, str(errs.first)])
@@ -426,3 +427,31 @@ func _soak_one(tag: String, reel: Dictionary, pre: Dictionary, post: Dictionary,
 		Paint.paint_clip(cv, cl, 0.5, V)
 		if cv.bad > 0 or not Paint.known(String(cl["kind"])):
 			_check(false, "soak %s: clip '%s' paints finite geometry" % [tag, cl["kind"]])
+
+
+## The enemy phase credits each machine ONE blow: in a pack of one kind the
+## first bite must not swallow the others', and a blow the shield soaked
+## belongs to the machine that swung it. (fx_enemy re-claims blows in stream
+## order too, which would hide a director regression in the reel itself.)
+func _check_attribution() -> void:
+	for nm in ["x:pack", "x:shielded"]:
+		var sc: Dictionary = Scenes.extra_scene(nm)
+		var g = sc["game"]
+		var pre: Dictionary = g.snapshot()
+		var evs: Array = g.step(sc["action"])
+		var post: Dictionary = g.snapshot()
+		var c := Anim.ctx(pre, sc["action"], evs, post, Anim.empty_reel())
+		var owners: Dictionary = Anim._attribute(c, pre["enemies"])
+		var swung := 0
+		for k in pre["enemies"].size():
+			if String(pre["enemies"][k]["intent"].get("type", "")) != "attack":
+				continue
+			swung += 1
+			var blows := 0
+			for i in owners.get(k, []):
+				var tt := String(evs[i].get("t", ""))
+				if tt == "shield_absorb" or (tt == "damage" and String(evs[i].get("who", "")) == "player"):
+					if tt == "shield_absorb" or i == 0 or String(evs[i - 1].get("t", "")) != "shield_absorb":
+						blows += 1
+			_check(blows == 1, "%s: machine %d is credited exactly its own blow (%d)" % [nm, k, blows])
+		_check(swung >= 2, "%s: stages at least two attackers (%d)" % [nm, swung])

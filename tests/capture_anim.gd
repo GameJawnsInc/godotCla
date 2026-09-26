@@ -9,8 +9,9 @@ extends SceneTree
 ##   xvfb-run -a -s "-screen 0 540x1200x24" godot --rendering-driver opengl3 \
 ##     --path . --resolution 540x1200 --script tests/capture_anim.gd
 ## Env:
-##   CAPTURE=all | ability:<id> | intent:<type> | <basic name> | a,b,c
-##          (default all; "abilities", "intents" and "basic" pick a group)
+##   CAPTURE=all | ability:<id> | intent:<type> | x:<edge case> | <basic name>
+##          | a,b,c (default all; "abilities", "intents", "extras" and
+##          "basic" pick a group)
 ##   CAPTURE_OUT=<dir>        (default user://anim_frames)
 ##   CAPTURE_FRAMES=<n>       frames per strip (default 12)
 ##   CAPTURE_COLS=<n>         strip columns (default 4)
@@ -72,6 +73,9 @@ func _selected(spec: String) -> Array:
 					out.append("ability:" + aid)
 				for v in Scenes.INTENT_SCENES:
 					out.append("intent:" + v)
+				out.append_array(Scenes.EXTRA)
+			"extras":
+				out.append_array(Scenes.EXTRA)
 			"basic":
 				out.append_array(Scenes.BASIC)
 			"abilities":
@@ -92,6 +96,8 @@ func _scene(nm: String) -> Dictionary:
 	if nm.begins_with("intent:"):
 		var v := nm.substr(7)
 		return Scenes.intent_scene(v) if Scenes.INTENT_SCENES.has(v) else {}
+	if nm.begins_with("x:"):
+		return Scenes.extra_scene(nm)
 	return Scenes.basic_scene(nm)
 
 
