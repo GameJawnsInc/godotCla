@@ -1802,8 +1802,14 @@ func _idle_of(kind: String, id: int, now: float) -> Dictionary:
 
 ## Draw a creature sprite with its pose (shell/anim.gd pose()) and idle loop:
 ## squash and stretch anchored at the feet, lift into the air with a shadow
-## that stays on the ground, tint and a white-hot flash when hit. Returns the
-## body's tile rect (for rings, bars and overlays).
+## that stays on the ground (and thins as the body rises), a glow of the
+## ability's colour around a caster (pose aura), a colour laid over the body
+## (pose wash: a hurt red, a heal green) and a white-hot flash when hit.
+## The wash and the flash are the sprite's white SILHOUETTE drawn over it
+## (Paint.silhouette): a modulate above 1 only brightens each pixel as far as
+## its own colour allows, so that flash left the outlines and eyes green and
+## read cream, not white. Returns the body's tile rect (for rings, bars and
+## overlays).
 func _draw_body(id: String, ps: Dictionary, idl: Dictionary) -> Rect2:
 	var p: Vector2 = ps["pos"] + ps["off"] + Vector2(float(idl.get("dx", 0.0)), 0.0)
 	var lift := float(ps["lift"]) + float(idl.get("lift", 0.0))
@@ -1811,18 +1817,38 @@ func _draw_body(id: String, ps: Dictionary, idl: Dictionary) -> Rect2:
 	var r := _tile_rect_f(p)
 	var sh := clampf(1.0 - lift * 0.9, 0.4, 1.0)
 	draw_set_transform(Vector2(r.get_center().x, r.position.y + _ts * 0.86), 0.0, Vector2(sh, 0.42 * sh))
-	draw_circle(Vector2.ZERO, _ts * 0.36, Color(0, 0, 0, 0.32 * alpha))
+	draw_circle(Vector2.ZERO, _ts * 0.36, Color(0, 0, 0, 0.32 * alpha * (0.5 + 0.5 * sh)))
 	var feet := Vector2(r.get_center().x, r.position.y + _ts * 0.92 - lift * _ts)
 	var sx := float(ps["sx"]) * float(idl.get("sx", 1.0))
 	var sy := float(ps["sy"]) * float(idl.get("sy", 1.0))
-	draw_set_transform(feet, float(ps["rot"]) + float(idl.get("rot", 0.0)), Vector2(sx, sy))
+	var rot := float(ps["rot"]) + float(idl.get("rot", 0.0))
 	var tx := Art.tex(id, int(_ts))
+	var at := Vector2(-_ts / 2.0, -_ts * 0.92)
+	var aura: Color = ps.get("aura", Color(1, 1, 1, 0))
+	var wash: Color = ps.get("wash", Color(1, 1, 1, 0))
+	var fl := clampf(float(ps["flash"]), 0.0, 1.0)
+	var sil: Texture2D = null
+	if tx != null and (aura.a > 0.02 or wash.a > 0.02 or fl > 0.02):
+		sil = Paint.silhouette(tx)
+	if aura.a > 0.02:
+		# the wind-up: a soft halo, and the body's own outline lit in the colour
+		var mid := feet + Vector2(0, -_ts * 0.46 * sy)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		draw_circle(mid, _ts * 0.62, Color(aura.r, aura.g, aura.b, 0.12 * aura.a * alpha))
+		draw_circle(mid, _ts * 0.44, Color(aura.r, aura.g, aura.b, 0.16 * aura.a * alpha))
+		if sil != null:
+			draw_set_transform(feet + Vector2(0, _ts * 0.05), rot, Vector2(sx * 1.16, sy * 1.12))
+			draw_texture(sil, at, Color(aura.r, aura.g, aura.b, 0.8 * aura.a * alpha))
+	draw_set_transform(feet, rot, Vector2(sx, sy))
 	if tx != null:
 		var tint: Color = ps["tint"]
-		var at := Vector2(-_ts / 2.0, -_ts * 0.92)
 		draw_texture(tx, at, Color(tint.r, tint.g, tint.b, alpha))
-		var fl := float(ps["flash"])
-		if fl > 0.02:
+		if sil != null:
+			if wash.a > 0.02:
+				draw_texture(sil, at, Color(wash.r, wash.g, wash.b, wash.a * alpha))
+			if fl > 0.02:
+				draw_texture(sil, at, Color(1, 1, 1, fl * alpha))
+		elif fl > 0.02:
 			draw_texture(tx, at, Color(1.0 + 3.0 * fl, 1.0 + 3.0 * fl, 1.0 + 3.0 * fl, fl * alpha * 0.85))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	return Rect2(Vector2(feet.x - _ts / 2.0, feet.y - _ts * 0.92), Vector2(_ts, _ts))

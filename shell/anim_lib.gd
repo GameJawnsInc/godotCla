@@ -26,7 +26,7 @@ const T_WINDUP := 110
 const T_FLOAT := 750
 const T_FLASH := 220
 const T_RECOIL := 210
-const T_DIE := 460
+const T_DIE := 420
 const T_POP := 340
 const T_STATUS := 560
 const T_ENEMY := 300
@@ -74,7 +74,7 @@ const TERRAIN_COL := {
 const IDLE_BY_TRAIT := [
 	["boss", "heave"], ["drains", "hover"], ["fast", "pant"], ["oil_trail", "ooze"],
 	["splits", "ooze"], ["summons", "chug"], ["oozes", "chug"], ["stokes", "chug"],
-	["igniter", "skitter"], ["drags", "sway"],
+	["igniter", "skitter"], ["drags", "sway"], ["gums", "gulp"], ["spiked", "lumber"],
 ]
 const IDLE_BY_KIND := {"sludgeling": "ooze"}
 
