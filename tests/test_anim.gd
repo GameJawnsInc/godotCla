@@ -67,9 +67,11 @@ class RecCanvas:
 	extends RefCounted
 	var calls := 0
 	var bad := 0
+	var sig := ""  # every call's arguments, to compare two paints exactly
 
 	func _v(args: Array) -> void:
 		calls += 1
+		sig += str(args) + ";"
 		for a in args:
 			if a is Vector2 and not (is_finite(a.x) and is_finite(a.y)):
 				bad += 1
@@ -288,6 +290,19 @@ func _check_scene(sc: Dictionary) -> void:
 	# speeds: quick keeps the order of things and shortens them; off keeps
 	# only the numbers
 	var quick := Anim.plan(pre, sc["action"], evs, post, Anim.SPEEDS["quick"])
+	# speed invariance: a painter reads time as k * span, so the same clip at
+	# the same point of its life draws the same thing at every speed - a
+	# painter that read k * dur would draw its impact late at quick
+	if quick["clips"].size() == reel["clips"].size():
+		for ci in reel["clips"].size():
+			var a := RecCanvas.new()
+			var b := RecCanvas.new()
+			for kk in [0.2, 0.5, 0.8]:
+				Paint.paint_clip(a, reel["clips"][ci], kk, V)
+				Paint.paint_clip(b, quick["clips"][ci], kk, V)
+			_check(a.sig == b.sig, "%s: clip '%s' paints the same at quick speed" % [nm, reel["clips"][ci]["kind"]])
+	else:
+		_check(false, "%s: quick plans the same clips as full" % nm)
 	_check(int(quick["len"]) <= int(float(ln) * 0.6) + L.T_FLOAT + 20, "%s: quick is quicker (%d vs %d)" % [nm, quick["len"], ln])
 	var off := Anim.plan(pre, sc["action"], evs, post, Anim.SPEEDS["off"])
 	var only_numbers: bool = off["tracks"].is_empty() and off["ghosts"].is_empty()

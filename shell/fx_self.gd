@@ -718,7 +718,7 @@ static func _tender(cv, V: Dictionary, tile, sx: float, sy: float, lift: float, 
 ## lands, squashes and splits with a flare of its seam.
 static func _p_pod(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var fly := maxf(1.0, float(cl["fly"]))
 	var u := clampf(ms / fly, 0.0, 1.0)
 	var col: Color = cl.get("col", Color("9aa0a4"))
@@ -738,7 +738,7 @@ static func _p_pod(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			cv.draw_circle(q, t * (0.05 + 0.022 * float(j)), D.ca(col.lightened(0.45), 0.6 * (1.0 - float(j) / 5.0)))
 		_pod_body(cv, _lob(a, b, u, h), t, u * 9.0, 1.0, 1.0, col, 1.0)
 	else:
-		var v := clampf((ms - fly) / maxf(1.0, float(cl["dur"]) - fly), 0.0, 1.0)
+		var v := clampf((ms - fly) / maxf(1.0, float(cl.get("span", cl["dur"])) - fly), 0.0, 1.0)
 		_pod_body(cv, b + Vector2(0, t * 0.05 * v), t, 0.0, 1.0 + 0.7 * v, 1.0 - 0.55 * v, col, 1.0 - v)
 		D.glow(cv, b, t * (0.2 + 0.25 * v), D.ca(pal["b"], 0.8 * (1.0 - v)), 2)
 
@@ -846,10 +846,10 @@ static func _flames(cv, foot: Vector2, t: float, k: float, sz: float, seed: int,
 ## rise: a small molehill ridge (_ridge), a glint of root along its crack.
 static func _p_run(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var run := maxf(1.0, float(cl["run"]))
 	var u := D.ease_io(clampf(ms / run, 0.0, 1.0))
-	var fade := 1.0 - clampf((ms - run) / maxf(1.0, float(cl["dur"]) - run), 0.0, 1.0)
+	var fade := 1.0 - clampf((ms - run) / maxf(1.0, float(cl.get("span", cl["dur"])) - run), 0.0, 1.0)
 	var a := _feet(V, cl["from"]) + Vector2(0, -t * 0.06)
 	var b := _feet(V, cl["to"]) + Vector2(0, -t * 0.12)
 	var d := b - a
@@ -961,7 +961,7 @@ static func _p_cinch(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 ## strands from the body to the floor that thin and snap (or a spore puff).
 static func _p_glob(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var fly := maxf(1.0, float(cl["fly"]))
 	var a := _mid(V, cl["from"]) + Vector2(0, -t * 0.1)
 	var b := _mid(V, cl["to"]) + Vector2(0, t * 0.05)
@@ -994,7 +994,7 @@ static func _p_glob(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			cv.draw_circle(Vector2(-t * 0.04, -t * 0.045) * sz, t * 0.05 * sz, Color(1, 1, 1, 0.85))
 			cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		return
-	var v := clampf((ms - fly) / maxf(1.0, float(cl["dur"]) - fly), 0.0, 1.0)
+	var v := clampf((ms - fly) / maxf(1.0, float(cl.get("span", cl["dur"])) - fly), 0.0, 1.0)
 	var e := D.ease_out(v)
 	D.ring(cv, b, t * (0.2 + 0.42 * e), D.ca(col.lightened(0.45), 0.95 * (1.0 - v)), t * 0.065 * (1.0 - 0.5 * v))
 	if v < 0.25:
@@ -1045,10 +1045,10 @@ static func _p_splat(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 static func _p_crack(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var at = cl["at"]
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var cr := maxf(1.0, float(cl["crack"]))
 	var ck := clampf(ms / cr, 0.0, 1.0)
-	var fade := 1.0 - clampf((ms - cr) / maxf(1.0, float(cl["dur"]) - cr), 0.0, 1.0)
+	var fade := 1.0 - clampf((ms - cr) / maxf(1.0, float(cl.get("span", cl["dur"])) - cr), 0.0, 1.0)
 	var pal: Dictionary = cl["pal"]
 	var c := _feet(V, at) + Vector2(0, -t * 0.06)
 	var seed := _seed(at)
@@ -1082,13 +1082,13 @@ static func _p_crack(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 static func _p_erupt(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var at = cl["at"]
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var pal: Dictionary = cl["pal"]
 	var amt := float(cl.get("amt", 3))
 	var cap := float(cl.get("cap", 1))
 	var crowd := bool(cl.get("crowd", false))
 	var up := D.ease_out(clampf(ms / 65.0, 0.0, 1.0))
-	var down := D.ease_in(D.win(ms, 200.0, float(cl["dur"])))
+	var down := D.ease_in(D.win(ms, 200.0, float(cl.get("span", cl["dur"]))))
 	var g := up * (1.0 - down)
 	var base := _feet(V, at) + Vector2(0, t * 0.04)
 	var H := t * (1.0 + 0.12 * amt + 0.08 * cap)
@@ -1248,11 +1248,11 @@ static func _p_warp(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 ## settles and fades.
 static func _p_thread(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var go := float(cl.get("go", 0))
 	var travel := maxf(1.0, float(cl["travel"]))
 	var u := D.ease_io(clampf((ms - go) / travel, 0.0, 1.0))
-	var after := clampf((ms - go - travel) / maxf(1.0, float(cl["dur"]) - go - travel), 0.0, 1.0)
+	var after := clampf((ms - go - travel) / maxf(1.0, float(cl.get("span", cl["dur"])) - go - travel), 0.0, 1.0)
 	var fade := 1.0 - after
 	var pal: Dictionary = cl["pal"]
 	var a := _feet(V, cl["from"]) + Vector2(0, -t * 0.06)
@@ -1347,7 +1347,7 @@ static func _p_sprout(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 static func _p_shell(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var c := _mid(V, cl["at"])
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var snap := maxf(1.0, float(cl.get("snap", SNAP_MS)))
 	var amt := clampi(int(cl.get("amount", 2)), 1, 5)
 	var n := 1 + 2 * amt
@@ -1359,7 +1359,7 @@ static func _p_shell(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var bounce := sin(bk * PI) * (1.0 - bk) if ms >= snap else 0.0
 	var r := lerpf(t * 1.15, rr, fly) - t * 0.06 * bounce
 	var spin := (1.0 - fly) * 1.5
-	var sh := D.win(ms, snap + 60.0, float(cl["dur"]))
+	var sh := D.win(ms, snap + 60.0, float(cl.get("span", cl["dur"])))
 	var fade := 1.0 - D.ease_in(D.win(sh, 0.3, 1.0))
 	var blue := D.win(sh, 0.0, 0.5)
 	var a_in := clampf(u * 4.0, 0.0, 1.0) * fade
@@ -1398,7 +1398,7 @@ static func _p_shell(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 static func _p_crown(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var c := _mid(V, cl["at"])
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var pal: Dictionary = cl["pal"]
 	var dmg := float(cl.get("dmg", 2))
 	var turns := float(cl.get("turns", 3))
@@ -1410,7 +1410,7 @@ static func _p_crown(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var coil := D.ease_in(clampf(ms / bt, 0.0, 1.0))
 	var shoot := D.ease_out(clampf((ms - bt) / 60.0, 0.0, 1.0))
 	var settle := D.ease_io(D.win(ms, bt + 80.0, bt + 250.0))
-	var fade := 1.0 - D.ease_in(D.win(ms, bt + 190.0 + 25.0 * turns, float(cl["dur"])))
+	var fade := 1.0 - D.ease_in(D.win(ms, bt + 190.0 + 25.0 * turns, float(cl.get("span", cl["dur"]))))
 	var rot := ms * 0.0005 * (1.0 + 0.2 * turns)
 	var body := THORN.lerp(LEAF, 0.4)
 	var edge := BARK_DARK
@@ -1454,12 +1454,12 @@ static func _p_anchor(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var at = cl["at"]
 	var foot := _feet(V, at) + Vector2(0, -t * 0.02)
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var lead := float(cl.get("lead", 40))
 	var turns := float(cl.get("turns", 4))
 	var seed := _seed(at)
 	var drive := D.ease_out(D.win(ms, lead - 15.0, lead + 80.0))
-	var fade := 1.0 - D.ease_in(D.win(ms, lead + 220.0, float(cl["dur"])))
+	var fade := 1.0 - D.ease_in(D.win(ms, lead + 220.0, float(cl.get("span", cl["dur"]))))
 	var n := clampi(3 + int(turns), 5, 10)
 	var ln := t * (0.6 + 0.07 * minf(turns, 8.0))
 	var th := D.win(ms, lead, lead + 330.0)
@@ -1518,13 +1518,13 @@ static func _p_shaft(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var at = cl["at"]
 	var c := _mid(V, at)
 	var foot := _feet(V, at)
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var land := maxf(1.0, float(cl.get("land", 150)))
 	var pal: Dictionary = cl["pal"]
 	var amt := float(cl.get("amount", 1))
 	var lifted := bool(cl.get("lifted", true))
 	var desc := D.ease_in(clampf(ms / land, 0.0, 1.0))
-	var after := D.win(ms, land, float(cl["dur"]))
+	var after := D.win(ms, land, float(cl.get("span", cl["dur"])))
 	var fade := 1.0 - D.ease_out(D.win(after, 0.15, 0.85))
 	if lifted:
 		var push := D.ease_out(after)

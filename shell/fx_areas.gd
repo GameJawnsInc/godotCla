@@ -651,7 +651,7 @@ static func _runs_line(cv, runs: Array, col: Color, w: float) -> void:
 
 static func _paint_area(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
-	var dur := float(cl["dur"])
+	var dur := float(cl.get("span", cl["dur"]))
 	var ms := k * dur
 	var lead := float(cl["lead"])
 	var rms := float(cl["ring_ms"])
@@ -689,7 +689,7 @@ static func _paint_area(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 static func _paint_nova(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var pal: Dictionary = cl["pal"]
-	var dur := float(cl["dur"])
+	var dur := float(cl.get("span", cl["dur"]))
 	var ms := k * dur
 	var lead := float(cl["lead"])
 	var rms := float(cl["ring_ms"])
@@ -998,7 +998,7 @@ static func _nova_plain(cv, runs: Array, c: Vector2, t: float, pal: Dictionary, 
 static func _paint_ember(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var c := D.px(V, cl["at"])
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var heat := minf(1.0, float(cl.get("ttl", 2)) / 4.0)
 	var a := D.win(k, 0.0, 0.08) * D.tail(k, 0.6)
 	var throb := 0.85 + 0.15 * sin(ms * 0.02)
@@ -1023,7 +1023,7 @@ static func _paint_ember(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 
 static func _paint_cloud(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
-	var dur := float(cl["dur"])
+	var dur := float(cl.get("span", cl["dur"]))
 	var ms := k * dur
 	var lead := float(cl["lead"])
 	var rms := float(cl["ring_ms"])
@@ -1057,7 +1057,7 @@ static func _paint_cloud(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 ## The motes in the cloud, over the creatures: pollen glitters, spores drift.
 static func _paint_dust(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
-	var dur := float(cl["dur"])
+	var dur := float(cl.get("span", cl["dur"]))
 	var ms := k * dur
 	var lead := float(cl["lead"])
 	var rms := float(cl["ring_ms"])
@@ -1099,7 +1099,7 @@ static func _paint_dust(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 static func _paint_tide(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var pal: Dictionary = cl["pal"]
-	var dur := float(cl["dur"])
+	var dur := float(cl.get("span", cl["dur"]))
 	var ms := k * dur
 	var lead := float(cl["lead"])
 	var rms := float(cl["ring_ms"])
@@ -1174,7 +1174,7 @@ static func _paint_tide(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 static func _paint_shock(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var pal: Dictionary = cl["pal"]
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var lead := float(cl["lead"])
 	var dist := float(cl.get("dist", 1))
 	var c := D.px(V, cl["at"])
@@ -1221,7 +1221,7 @@ static func _paint_shock(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 static func _paint_swirl(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var pal: Dictionary = cl["pal"]
-	var dur := float(cl["dur"])
+	var dur := float(cl.get("span", cl["dur"]))
 	var ms := k * dur
 	var lead := float(cl["lead"])
 	var rms := float(cl["ring_ms"])
@@ -1320,7 +1320,7 @@ static func _paint_rewrite(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 ## that blocks.
 static func _paint_wave(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var lead := float(cl["lead"])
 	var rms := float(cl["ring_ms"])
 	var r := float(cl["r"])
@@ -1365,7 +1365,7 @@ static func _paint_lob(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var col: Color = cl.get("col", Color("6cc95c"))
 	var pal: Dictionary = cl.get("pal", L.PAL_DEFAULT)
 	var style := String(cl.get("style", "seed"))
-	var dur := float(cl["dur"])
+	var dur := float(cl.get("span", cl["dur"]))
 	var fly := minf(dur, float(cl.get("fly", dur)))
 	var ms := k * dur
 	if ms > fly:
@@ -1451,7 +1451,7 @@ static func _parent(p: Vector2i, ctr: Vector2i) -> Vector2i:
 static func _paint_roots(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var pal: Dictionary = cl["pal"]
-	var dur := float(cl["dur"])
+	var dur := float(cl.get("span", cl["dur"]))
 	var ms := k * dur
 	var lead := float(cl["lead"])
 	var rms := float(cl["ring_ms"])

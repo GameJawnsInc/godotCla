@@ -1399,7 +1399,7 @@ static func _p_dust(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 
 static func _p_slam(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var imp := float(cl["imp"])
 	var tiles: Array = cl.get("tiles", [])
 	var c := D.px(V, cl["at"])
@@ -1422,7 +1422,7 @@ static func _p_slam(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			D.line(cv, q, q + _polar(ang + PI * 0.75, t * 0.22), D.ca(MACHINE["b"], 0.4 + 0.5 * u), t * 0.05)
 			D.line(cv, q, q + _polar(ang - PI * 0.75, t * 0.22), D.ca(MACHINE["b"], 0.4 + 0.5 * u), t * 0.05)
 		return
-	var v := clampf((ms - imp) / maxf(1.0, float(cl["dur"]) - imp), 0.0, 1.0)
+	var v := clampf((ms - imp) / maxf(1.0, float(cl.get("span", cl["dur"])) - imp), 0.0, 1.0)
 	var f := 1.0 - v
 	var hot := HOT["b"].lerp(WARN, minf(1.0, v * 3.0))
 	for p in tiles:
@@ -1490,7 +1490,7 @@ static func _p_quake(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 
 static func _p_flood(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
-	var ms := k * float(cl["dur"]) - float(cl.get("lead", 0))
+	var ms := k * float(cl.get("span", cl["dur"])) - float(cl.get("lead", 0))
 	var per := maxf(1.0, float(cl["per"]))
 	var row := int(cl["row"])
 	var fx := float(cl["from_x"])
@@ -1563,7 +1563,7 @@ static func _p_glob(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var pal := _pal(cl, OIL)
 	var size := float(cl.get("size", 1.0))
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var fly := maxf(1.0, float(cl["fly"]))
 	var a := D.px(V, cl["from"]) + Vector2(0, -t * 0.25)
 	var b := D.px(V, cl["to"])
@@ -1594,7 +1594,7 @@ static func _p_glob(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 				cv.draw_circle(D.arc_point(a, b, ub, h), t * (0.06 - 0.015 * float(j)) * size, D.ca(pal["a"], 0.85))
 		_blob(cv, D.arc_point(a, b, u, h), t * 0.15 * size, pal, 1.0, t)
 		return
-	var s := clampf((ms - fly) / maxf(1.0, float(cl["dur"]) - fly), 0.0, 1.0)
+	var s := clampf((ms - fly) / maxf(1.0, float(cl.get("span", cl["dur"])) - fly), 0.0, 1.0)
 	var f := 1.0 - s
 	var g := b + Vector2(0, t * 0.12)
 	cv.draw_set_transform(g, 0.0, Vector2(1.0, 0.5))
@@ -1633,7 +1633,7 @@ static func _p_heat(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 static func _p_ember(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var pal := _pal(cl, HEAT)
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var fly := maxf(1.0, float(cl["fly"]))
 	var a := D.px(V, cl["from"])
 	var b := D.px(V, cl["to"])
@@ -1651,7 +1651,7 @@ static func _p_ember(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 		cv.draw_circle(q, t * 0.1, pal["b"])
 		return
 	# the slick catches: a flash, tongues of flame leaping up, a heat ring
-	var s := clampf((ms - fly) / maxf(1.0, float(cl["dur"]) - fly), 0.0, 1.0)
+	var s := clampf((ms - fly) / maxf(1.0, float(cl.get("span", cl["dur"])) - fly), 0.0, 1.0)
 	var f := 1.0 - s
 	D.glow(cv, b, t * (0.3 + 0.3 * D.ease_out(s)), D.ca(pal["b"], 0.8 * f))
 	for i in 4:
@@ -1665,7 +1665,7 @@ static func _p_gather(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var pal := _pal(cl, HEAT)
 	var c := D.px(V, cl["at"])
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var g := D.ease_in(minf(1.0, k / 0.75))
 	var rel := D.win(k, 0.73, 1.0)
 	var beat := 0.5 + 0.5 * sin(ms * (0.02 + 0.03 * g))
@@ -1742,7 +1742,7 @@ static func _p_smoke(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 static func _p_chain(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var pal := _pal(cl, MAGNET)
-	var dur := float(cl["dur"])
+	var dur := float(cl.get("span", cl["dur"]))
 	var ms := k * dur
 	var shoot := float(cl["shoot"])
 	var clamp_ms := float(cl["clamp"])
@@ -1819,7 +1819,7 @@ static func _p_chain(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 static func _p_siphon(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var pal := _pal(cl, CHARGE)
-	var dur := float(cl["dur"])
+	var dur := float(cl.get("span", cl["dur"]))
 	var ms := k * dur
 	var a := D.px(V, cl["from"])
 	var b := D.px(V, cl["to"])
@@ -1856,7 +1856,7 @@ static func _p_siphon(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 static func _p_tar(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var pal := _pal(cl, TAR)
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var fly := maxf(1.0, float(cl["fly"]))
 	var a := D.px(V, cl["from"]) + Vector2(0, t * 0.08)
 	var b := D.px(V, cl["to"])
@@ -1870,7 +1870,7 @@ static func _p_tar(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 				cv.draw_circle(D.arc_point(a, b, ub, h), t * (0.07 - 0.015 * float(j)), D.ca(pal["a"], 0.9))
 		_blob(cv, D.arc_point(a, b, u, h), t * 0.17, pal, 1.0, t)
 		return
-	var s := clampf((ms - fly) / maxf(1.0, float(cl["dur"]) - fly), 0.0, 1.0)
+	var s := clampf((ms - fly) / maxf(1.0, float(cl.get("span", cl["dur"])) - fly), 0.0, 1.0)
 	var f := D.tail(s, 0.5)
 	var burst := D.ease_out(minf(1.0, s * 5.0))
 	if not hit:
@@ -1905,7 +1905,7 @@ static func _p_tar(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 
 static func _p_tendril(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
-	var dur := float(cl["dur"])
+	var dur := float(cl.get("span", cl["dur"]))
 	var ms := k * dur
 	var grab := maxf(1.0, float(cl["grab"]))
 	var back := float(cl["back"])
@@ -1940,7 +1940,7 @@ static func _p_tendril(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 static func _p_weld(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var pal := _pal(cl, HOT)
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var A := D.px(V, cl["at"])
 	var P0 := D.px(V, cl["from"])
 	var s0 := float(cl["slide0"])
@@ -1961,7 +1961,7 @@ static func _p_weld(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			var v := _polar(ang, t * 0.55 * u) + Vector2(0, t * 0.7 * u * u)
 			D.line(cv, seam + v * 0.8, seam + v, D.ca(pal["b"].lerp(pal["a"], u), 1.0 - u), t * 0.045)
 		return
-	var s := clampf((ms - merge) / maxf(1.0, float(cl["dur"]) - merge), 0.0, 1.0)
+	var s := clampf((ms - merge) / maxf(1.0, float(cl.get("span", cl["dur"])) - merge), 0.0, 1.0)
 	var f := 1.0 - s
 	D.glow(cv, A, t * (0.65 - 0.25 * s), D.ca(Color("fff6cf"), 0.9 * f))
 	D.ring(cv, A, t * (0.3 + 0.8 * D.ease_out(s)), D.ca(pal["a"], f), t * 0.1 * f)
@@ -1971,9 +1971,9 @@ static func _p_weld(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 ## A stand-in body: the welder as it looked before it became a hulk.
 static func _p_body(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var r := D.tile_rect(V, cl["at"])
-	var buzz := D.win(ms, float(cl.get("buzz", 0)), float(cl["dur"]))
+	var buzz := D.win(ms, float(cl.get("buzz", 0)), float(cl.get("span", cl["dur"])))
 	var toward: Vector2 = cl.get("toward", Vector2.ZERO)
 	var off := Vector2(sin(ms * 0.11) * t * 0.03 * buzz, 0) + toward * t * 0.1 * D.ease_in(buzz)
 	cv.draw_set_transform(Vector2(r.get_center().x, r.position.y + t * 0.86) + off, 0.0, Vector2(1.0, 0.42))
@@ -1989,7 +1989,7 @@ static func _p_body(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 
 static func _p_strain(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var c := D.px(V, cl["at"])
 	var status := String(cl.get("status", ""))
 	var col := L.status_col(status)
@@ -2034,7 +2034,7 @@ static func _p_strain(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 
 static func _p_fizzle(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
-	var ms := k * float(cl["dur"])
+	var ms := k * float(cl.get("span", cl["dur"]))
 	var fly := maxf(1.0, float(cl["fly"]))
 	var a := D.px(V, cl["from"])
 	var b := D.px(V, cl["to"])
@@ -2050,7 +2050,7 @@ static func _p_fizzle(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 		_blob(cv, q, t * 0.14, pal, 1.0, t)
 	else:
 		# the smoke swallows it: grey puffs swirl in and close over it
-		var s := clampf((ms - fly) / maxf(1.0, float(cl["dur"]) - fly), 0.0, 1.0)
+		var s := clampf((ms - fly) / maxf(1.0, float(cl.get("span", cl["dur"])) - fly), 0.0, 1.0)
 		var f := 1.0 - s
 		if s < 0.35:
 			_blob(cv, b, t * 0.14 * (1.0 - s / 0.35), pal, 1.0 - s / 0.35, t)

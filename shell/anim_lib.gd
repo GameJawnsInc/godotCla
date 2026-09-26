@@ -243,6 +243,12 @@ static func clip(c: Dictionary, d: Dictionary) -> Dictionary:
 		d["pal"] = c.get("pal", PAL_DEFAULT)
 	d["t0"] = int(d["t0"])
 	d["dur"] = int(d.get("dur", 300))
+	# span: the clip's length at FULL speed. _scale shrinks t0/dur for the
+	# quick setting but never span, so a painter that reads time as k * span
+	# stays in step with the beats it stores in full-speed ms (a lob's `fly`,
+	# a slam's `imp`, a nova's `ring_ms`)
+	if not d.has("span"):
+		d["span"] = d["dur"]
 	c["reel"]["clips"].append(d)
 	return d
 
