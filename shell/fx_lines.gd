@@ -13,19 +13,26 @@ extends RefCounted
 ##              with the tip riding it; then the lash cracks down on it. More
 ##              damage is a thicker, thornier vine and a bigger crack
 ##   pull_line  a three-tined rake reaches the whole line, digs in and is
-##              dragged back, collecting every body it passes and furrowing
-##              the ground behind it
-##   wash_push  a pressurised stream with a foaming head and spray: washed
-##              tiles splash clean as it passes, the first body is shoved and
-##              slides with the stream on its back, and the slam splashes
-##              exactly when the collision damage lands. push/collision set
-##              the stream's weight, range its length
-##   push_line  wind streamlines and tumbling leaves and dust race down the
-##              line, blow cleared smoke away and shove the first body; a
-##              heavier shove is a thicker bundle carrying more debris
-##   dash_dir   the tender rides a rising gust: dust kicked up behind, a
-##              column of wind at lift-off (taller for more range), a helix
-##              round the rider, speed lines and afterimages, a landing puff
+##              dragged back, pushing every body it meets home ahead of it
+##              (a tile apart, never stacked) with short scars of torn soil
+##              trailing the tines
+##   wash_push  a pressurised stream with a foaming head and spray: each
+##              washed slick breaks up and is swept off in its own colour as
+##              the stream passes, the first body is shoved and slides with
+##              the stream pressing its face, and the slam splashes exactly
+##              when the collision damage lands. push/collision set the
+##              stream's weight, range its length
+##   push_line  a pale lane of moving air, wind streamlines and tumbling
+##              leaves and dust race down the line, blow cleared smoke away
+##              and shove the first body; a longer shove is a wider, denser
+##              bundle with one more gust front per tile past three
+##   dash_dir   the tender rides a rising gust: dust and a column of wind
+##              kicked up behind it at lift-off (denser for more range), a
+##              helix round the rider (a loop per tile of range), speed lines
+##              and afterimages that vanish on landing, a landing puff
+## Events land where they visibly happen: terrain a shoved or hauled body
+## crosses bites as it reaches that tile, a stagger and the hooks it sets off
+## land with the body, and a hook's own damage lands with the hook.
 ## build(op, c) lays the clips/segments and claims events (see shell/anim.gd);
 ## paint(cv, clip, k, V) draws this family's KINDS. shove() is shared with
 ## the areas family and keeps its original look there (the plain spark).
@@ -42,7 +49,7 @@ const Content := preload("res://sim/content.gd")
 
 const OPS := ["lance", "pull", "pull_line", "wash_push", "push_line", "dash_dir"]
 const KINDS := ["beam", "lance_glint", "lance_hit", "vine", "vine_crack", "vine_furrow", "jet", "jet_head",
-	"line_slam", "gust", "gust_puff", "dash_trail", "dash_dust"]
+	"jet_wash", "line_slam", "gust", "gust_puff", "dash_trail", "dash_dust"]
 
 const GLINT_MS := 120   # the lance's glint gathers (inside the cast wind-up)
 const BEAM_MS := 24     # per tile the beam's head travels
@@ -61,7 +68,13 @@ const GUST_MS := 30
 const SHOVE_MS := 70    # per tile a shoved or reeled body slides
 const DASH_MS := 60     # per tile the tender rides the updraft
 
+const FACE := 0.46      # a stream/gust presses a body this far in front of its centre
+const FURROW_LEN := 1.1 # tiles of torn soil trailing the rake's head
+const FURROW_FADE := 140
+const LINE_TYPES := ["damage", "ignite", "wash", "smoke_cleared", "hook"]
+
 const DUST := Color(0.74, 0.68, 0.56)
+const SOIL := Color(0.10, 0.07, 0.04)
 const LEAF := Color(0.62, 0.78, 0.36)
 const INK := Color(0.04, 0.08, 0.04)
 
@@ -150,6 +163,7 @@ static func _lance(c: Dictionary) -> int:
 	for p in bodies:
 		face[p] = tf + int((float(L.man(o, p)) - 0.3 - start) * BEAM_MS)
 	_claim_on_line(c, when, dv, face)
+	_claim_hook_damage(c, dv)
 	for i in range(int(c.get("ev0", 0)), int(c.get("ev1", c["events"].size()))):
 		var ev: Dictionary = c["events"][i]
 		if String(ev.get("t", "")) == "ignite" and when.has(ev.get("tile")):
@@ -170,11 +184,14 @@ static func _lance(c: Dictionary) -> int:
 
 ## Claim the cast's events that happen ON the line at the moment the effect
 ## reaches each tile: hits (with the line's direction; at `face` when given),
-## ignitions, washes, cleared smoke and the hooks those set off.
-static func _claim_on_line(c: Dictionary, when: Dictionary, d: Vector2, face: Dictionary = {}) -> void:
+## ignitions, washes, cleared smoke and the hooks those set off. `types`
+## narrows it (a shove claims its own hooks at the moment the body lands, so
+## the stream must not take them first at the moment it passes the tile).
+static func _claim_on_line(c: Dictionary, when: Dictionary, d: Vector2, face: Dictionary = {},
+		types: Array = LINE_TYPES) -> void:
 	var evs: Array = c["events"]
 	var aid := String(c["aid"])
-	for i in L.unclaimed(c, ["damage", "ignite", "wash", "smoke_cleared", "hook"]):
+	for i in L.unclaimed(c, types):
 		var ev: Dictionary = evs[i]
 		var tt := String(ev["t"])
 		if tt == "damage":
@@ -188,6 +205,63 @@ static func _claim_on_line(c: Dictionary, when: Dictionary, d: Vector2, face: Di
 		elif ev.get("tile") is Vector2i and when.has(ev["tile"]):
 			L.claim(c, i, int(when[ev["tile"]]))
 			L.reveal(c, ev["tile"], int(when[ev["tile"]]))
+
+
+## A hook one of this verb's beats set off (an ember graft on the oil the beam
+## lights) deals its damage right there, not when the step winds down: every
+## damage event whose src is a claimed hook's source id, up to the next hook,
+## lands just after that hook. (Left alone, it is a plain damage event the
+## director parks at the end of the verb - after the body it hurt has died.)
+static func _claim_hook_damage(c: Dictionary, d: Vector2) -> void:
+	var evs: Array = c["events"]
+	var ev1 := int(c.get("ev1", evs.size()))
+	for i in range(int(c.get("ev0", 0)), ev1):
+		var ev: Dictionary = evs[i]
+		if String(ev.get("t", "")) != "hook" or not L.claimed(c, i):
+			continue
+		var sid := str(ev.get("id", ""))
+		for j in range(i + 1, ev1):
+			var ej: Dictionary = evs[j]
+			var tj := String(ej.get("t", ""))
+			if tj == "hook" or tj == "ability":
+				break
+			if tj == "damage" and not L.claimed(c, j) and String(ej.get("src", "")) == sid:
+				var mine := String(ej.get("who", "")) == "player"
+				L.claim(c, j, int(c["times"][i]) + 30, null if mine else d)
+
+
+## When a body carried along `pts` (tiles; pts[0] is where it starts, one
+## tile every `per` ms from t0) steps onto the tiles that bite it: its terrain
+## entry damage events (src "<kind>:<by>") are matched in order to the path's
+## tiles holding that kind on the POST board - a tile the verb washed before
+## the shove no longer bites, a fire the body died in is still there - and
+## each lands as the body reaches that tile. {event index: ms}; an event with
+## no matching tile is left out (the caller falls back to mid-slide).
+static func _entry_times(c: Dictionary, id, pts: Array, t0: int, per: int) -> Dictionary:
+	var out := {}
+	var j0 := 1
+	for i in L.unclaimed(c, ["damage"]):
+		var ev: Dictionary = c["events"][i]
+		var src := String(ev.get("src", ""))
+		if ev.get("id") != id or not src.contains(":") or src.begins_with("collision:"):
+			continue
+		var kind := src.get_slice(":", 0)
+		for j in range(j0, pts.size()):
+			if L.tkind(c["post"], pts[j]) == kind:
+				out[i] = t0 + j * per
+				j0 = j + 1
+				break
+	return out
+
+
+## True when the cast's own damage reaches enemy `id` (a haul that drops it
+## dead in a fire never gets to the lash).
+static func _cast_lands(c: Dictionary, id) -> bool:
+	for i in L.unclaimed(c, ["damage"]):
+		var ev: Dictionary = c["events"][i]
+		if ev.get("id") == id and String(ev.get("src", "")) == String(c["aid"]):
+			return true
+	return false
 
 
 # --- vine -----------------------------------------------------------------------
@@ -227,9 +301,12 @@ static func _pull(c: Dictionary) -> int:
 		"bite": t_hook - t, "free": t_free - t, "dir": dv, "power": power,
 		"catches": [{"hook": t_hook - t, "free": t_free - t, "coil": true, "at": Vector2(tgt)}]})
 	if e != null:
+		# a body the haul dropped dead in a fire never meets the lash: no crack
+		var lashed := _cast_lands(c, e["id"])
 		_reel_in(c, e, tgt, land, t_hook, t_drag, t_crack, dv)
-		_clip(c, {"kind": "vine_crack", "t0": t_crack - 70, "dur": 330, "at": land, "hit": 70, "dir": dv,
-			"power": power})
+		if lashed:
+			_clip(c, {"kind": "vine_crack", "t0": t_crack - 70, "dur": 330, "at": land, "hit": 70, "dir": dv,
+				"power": power})
 	return t_crack + 60
 
 
@@ -238,13 +315,17 @@ static func _pull(c: Dictionary) -> int:
 static func _reel_in(c: Dictionary, e: Dictionary, from: Vector2i, land: Vector2i, t_hook: int, t_drag: int,
 		t_crack: int, away: Vector2) -> void:
 	var steps := L.man(from, land)
+	var path := L.path(c["pre"], from, land)
 	L.seg(c, e["id"], {"kind": "shake", "t0": t_hook, "dur": VINE_BITE + 20, "amt": 0.05})
 	if steps > 0:
-		L.move(c, e["id"], L.path(c["pre"], from, land), t_drag, steps * SHOVE_MS, 0.0)
+		L.move(c, e["id"], path, t_drag, steps * SHOVE_MS, 0.0)
 		L.seg(c, e["id"], {"kind": "squash", "t0": t_drag + steps * SHOVE_MS - 10, "dur": 110})
 	else:
 		# it will not come: it strains against the vine
-		L.seg(c, e["id"], {"kind": "lunge", "t0": t_hook, "dur": t_crack - t_hook, "dir": -away, "reach": 0.16})
+		L.seg(c, e["id"], {"kind": "lunge", "t0": t_hook, "dur": maxi(90, t_crack - t_hook), "dir": -away,
+			"reach": 0.16})
+	# terrain crossed mid-haul bites as the body reaches that tile
+	var entry := _entry_times(c, e["id"], path, t_drag, SHOVE_MS)
 	for i in L.unclaimed(c, ["damage", "status", "hook", "staggered"]):
 		var ev: Dictionary = c["events"][i]
 		if ev.get("id") != e["id"]:
@@ -253,8 +334,7 @@ static func _reel_in(c: Dictionary, e: Dictionary, from: Vector2i, land: Vector2
 		if String(ev["t"]) == "staggered":
 			L.claim(c, i, t_drag + steps * SHOVE_MS)
 		elif String(ev["t"]) == "damage" and src.contains(":"):
-			# terrain crossed mid-haul bites on the way
-			L.claim(c, i, t_drag + steps * SHOVE_MS / 2, -away)
+			L.claim(c, i, int(entry.get(i, t_drag + steps * SHOVE_MS / 2)), -away)
 		else:
 			L.claim(c, i, t_crack, away)
 
@@ -282,25 +362,47 @@ static func _pull_line(c: Dictionary) -> int:
 	var power := int(c["eff"].get("dmg", 2))
 	var catches: Array = []
 	var t_end := t_home
+	# where each body ends (nearest first, the sim's own order)
 	var occ := _occupancy(c)
+	var bodies: Array = []
 	for p in tiles:
 		var e = L.enemy_at(c["pre"], p)
-		if e == null:
-			continue
-		var land := _pull_land(c, e, o, occ)
-		var t_b := t_ret + (far_d - L.man(o, p)) * SHOVE_MS
+		if e != null:
+			bodies.append({"e": e, "p": p, "d": L.man(o, p), "land": _pull_land(c, e, o, occ)})
+	# when each starts to move, farthest first: the tines take the far body
+	# and push the pile home, so a body that the one behind it will reach is
+	# shoved ahead of it a tile early instead of being run into (both riding
+	# the head at once would draw them on one tile)
+	var lead := 0  # tiles the body behind rides ahead of the head
+	var land_behind := 1 << 20  # where that body ends, in tiles from the tender
+	for bi in range(bodies.size() - 1, -1, -1):
+		var b: Dictionary = bodies[bi]
+		var dd: int = b["d"]
+		var st := dd
+		if land_behind <= dd:
+			st = dd + lead + 1
+		b["start"] = mini(st, far_d)
+		lead = int(b["start"]) - dd
+		land_behind = L.man(o, b["land"])
+	for b in bodies:
+		var e: Dictionary = b["e"]
+		var p: Vector2i = b["p"]
+		var land: Vector2i = b["land"]
+		var t_b := t_ret + (far_d - int(b["start"])) * SHOVE_MS
 		var steps := L.man(p, land)
 		var t_crack := t_b + steps * SHOVE_MS + (15 if steps > 0 else 50)
 		catches.append({"hook": t_b - t, "free": t_b + steps * SHOVE_MS - t, "coil": false, "at": Vector2(p)})
+		var lashed := _cast_lands(c, e["id"])
 		_reel_in(c, e, p, land, t_b, t_b, t_crack, dv)
-		_clip(c, {"kind": "vine_crack", "t0": t_crack - 60, "dur": 300, "at": land, "hit": 60, "dir": dv,
-			"power": power, "small": true})
+		if lashed:
+			_clip(c, {"kind": "vine_crack", "t0": t_crack - 60, "dur": 300, "at": land, "hit": 60, "dir": dv,
+				"power": power, "small": true})
 		t_end = maxi(t_end, t_crack + 40)
 	_clip(c, {"kind": "vine", "t0": t, "dur": t_home - t + 60, "at": o, "hand": hand, "keys": keys,
 		"bite": t_far - t, "free": t_home - t, "dir": dv, "power": power, "rake": true, "catches": catches})
-	_clip(c, {"kind": "vine_furrow", "t0": t_ret, "dur": t_home - t_ret + 360, "layer": "ground", "at": o,
-		"far": Vector2(o) + dv * (float(far_d) + 0.3), "keys": keys, "t_ret": t_ret - t, "dir": dv,
-		"origin": t_ret - t})
+	# the scar trails the head from where the tines dug in until it is home
+	_clip(c, {"kind": "vine_furrow", "t0": t_ret, "dur": t_home - t_ret + FURROW_FADE, "layer": "ground", "at": o,
+		"far": Vector2(o) + dv * float(far_d), "keys": keys, "dir": dv, "origin": t_ret - t, "home": t_home - t})
 	return t_end
 
 
@@ -373,9 +475,14 @@ static func _wash(c: Dictionary, water: bool) -> int:
 	if not water and body != null:
 		for j in range(bj + 1, n):
 			when.erase(tiles[j])
-	_claim_on_line(c, when, dv)
+	# washes and cleared smoke land as the front passes; hooks wait for the
+	# shove below (a staggered or collision hook fires where the body LANDS,
+	# which the front can pass long before the body gets there)
+	_claim_on_line(c, when, dv, {}, ["wash", "smoke_cleared"])
 	if not water:
 		_blow_smoke(c, dv, when)
+	else:
+		_wash_splashes(c, dv, when)
 	var push := int(eff.get("push", eff.get("dist", 1)))
 	var coll := int(eff.get("collision_dmg", 1))
 	var weight := push + coll
@@ -387,24 +494,30 @@ static func _wash(c: Dictionary, water: bool) -> int:
 	if body == null:
 		keys.append([t_main - t, Vector2(o) + dv * end_d, 0])
 	else:
-		var face_d := float(bj + 1) - 0.36
+		# the front presses the body's face, never its middle, so the body
+		# stays readable under the foam
+		var face_d := maxf(start + 0.1, float(bj + 1) - FACE)
 		t_hit = t + int((face_d - start) * per)
 		var r := _shove_ex(c, body, d, push, t_hit, JAM_MS, {"wet": water, "power": coll if water else 1})
 		t_stop = int(r["stop"])
 		var land: Vector2i = r["land"]
 		keys.append([t_hit - t, Vector2(o) + dv * face_d, 0])
-		keys.append([t_stop - t, Vector2(land) - dv * 0.36, 0])
+		keys.append([t_stop - t, Vector2(land) - dv * FACE, 0])
 		t_main = t_stop
 		# water spills past a body it can shove and keeps washing the line
 		# (the sim washes every tile of it); a massive one stops it dead
 		if water and bj < n - 1 and not L.massive(String(body["kind"])):
-			over = {"from": float(bj + 1) + 0.36, "to": end_d}
+			over = {"from": float(bj + 1) + FACE, "to": end_d}
+	_claim_on_line(c, when, dv, {}, ["hook", "ignite", "damage"])
+	_claim_hook_damage(c, dv)
 	var cut := t_main - t + JET_HOLD
 	var dur := cut + JET_CUT + 40
-	var w := (0.16 + 0.03 * float(weight)) if water else (0.28 + 0.04 * float(weight))
+	# water: push + collision set the stream's weight; wind: the shove's reach
+	# sets the bundle (a longer shove is a wider, denser gust with more fronts)
+	var w := (0.16 + 0.03 * float(weight)) if water else (0.08 + 0.1 * float(push))
 	var common := {"t0": t, "dur": dur, "at": o, "from": Vector2(o) + dv * start, "dir": dv, "keys": keys,
 		"cut": cut, "w": w, "hit": t_hit - t if t_hit >= 0 else -1, "stop": t_stop - t if t_stop >= 0 else -1,
-		"start": start, "per": per, "over": over, "weight": weight}
+		"start": start, "per": per, "over": over, "weight": weight, "push": push}
 	if water:
 		var jet := common.duplicate()
 		jet["kind"] = "jet"
@@ -431,12 +544,33 @@ static func _blow_smoke(c: Dictionary, dv: Vector2, when: Dictionary) -> void:
 		if not when.has(ev.get("tile")) or int(c["times"][i]) != int(when[ev["tile"]]):
 			continue
 		L.quiet(c, i)
-		_clip(c, {"kind": "gust_puff", "t0": int(c["times"][i]), "dur": 520, "at": ev["tile"], "dir": dv})
+		# the puff is the colour of whatever the gust tore off the tile
+		var col: Color = L.TERRAIN_COL.get(L.tkind(c["pre"], ev["tile"]), Color(0.6, 0.62, 0.62))
+		_clip(c, {"kind": "gust_puff", "t0": int(c["times"][i]), "dur": 420, "at": ev["tile"], "dir": dv, "col": col})
+
+
+## The stream claims its washed tiles itself: the slick breaks up and is
+## swept down the line in its own colour under a burst of spray, instead of
+## the generic grey ring.
+static func _wash_splashes(c: Dictionary, dv: Vector2, when: Dictionary) -> void:
+	var evs: Array = c["events"]
+	for i in range(int(c.get("ev0", 0)), int(c.get("ev1", evs.size()))):
+		var ev: Dictionary = evs[i]
+		if String(ev.get("t", "")) != "wash" or not L.claimed(c, i) or c["quiet"][i]:
+			continue
+		if not when.has(ev.get("tile")) or int(c["times"][i]) != int(when[ev["tile"]]):
+			continue
+		L.quiet(c, i)
+		var col: Color = L.TERRAIN_COL.get(L.tkind(c["pre"], ev["tile"]), Color(0.3, 0.26, 0.3))
+		_clip(c, {"kind": "jet_wash", "t0": int(c["times"][i]) - 10, "dur": 380, "at": ev["tile"], "dir": dv,
+			"col": col})
 
 
 ## Shove `e` along d from time t_hit: slide to its post tile (or its death
 ## tile), collision damage at the stop. Returns when the shove settles.
-## (The areas family shoves through this too; its look is unchanged.)
+## (The areas family shoves through this too; its look is unchanged, and it
+## shares the timing rules: entry damage on the tile that bites, the stagger
+## and its hooks when the body lands.)
 static func shove(c: Dictionary, e: Dictionary, d: Vector2i, dist: int, t_hit: int) -> int:
 	return int(_shove_ex(c, e, d, dist, t_hit, 0, {})["end"])
 
@@ -473,7 +607,9 @@ static func _shove_ex(c: Dictionary, e: Dictionary, d: Vector2i, dist: int, t_hi
 	if jam > 0 and land == from and heavy:
 		# too heavy to move: the push only buffets it
 		L.seg(c, e["id"], {"kind": "shake", "t0": t_hit, "dur": 180, "amt": 0.05})
-	for i in L.unclaimed(c, ["damage", "hook", "status"]):
+	# terrain the body is shoved across bites as it reaches that tile
+	var entry := _entry_times(c, e["id"], L.path(c["pre"], from, land), t_hit, SHOVE_MS)
+	for i in L.unclaimed(c, ["damage", "hook", "status", "staggered"]):
 		var ev: Dictionary = c["events"][i]
 		var src := String(ev.get("src", ""))
 		if String(ev["t"]) == "damage" and src.begins_with("collision:"):
@@ -483,8 +619,11 @@ static func _shove_ex(c: Dictionary, e: Dictionary, d: Vector2i, dist: int, t_hi
 				if ev.get("id") == e["id"] and style.is_empty():
 					L.clip(c, {"kind": "spark", "t0": t_stop, "dur": 260, "at": land + d,
 						"col": Color("e6edd8"), "n": 7})
-		elif ev.get("id") == e["id"] and src.contains(":"):
-			L.claim(c, i, t_hit + slide / 2, dv)
+		elif String(ev["t"]) == "damage" and ev.get("id") == e["id"] and src.contains(":"):
+			L.claim(c, i, int(entry.get(i, t_hit + slide / 2)), dv)
+		elif String(ev["t"]) == "staggered" and ev.get("id") == e["id"]:
+			# the stagger (and the hooks it sets off) lands when the body does
+			L.claim(c, i, t_stop)
 		elif String(ev["t"]) == "hook" and ev.get("tile") == land:
 			L.claim(c, i, t_stop)
 	if collided and not style.is_empty():
@@ -512,7 +651,8 @@ static func _dash(c: Dictionary) -> int:
 	var t: int = c["t"]
 	var o: Vector2i = c["ppos"]
 	var dv := Vector2(_dir(c))
-	var to := o
+	# a tender the ride killed emits no dash event: it ends where the sim left it
+	var to: Vector2i = c["p1"]
 	for i in L.unclaimed(c, ["dash"]):
 		to = c["events"][i]["to"]
 		L.claim(c, i, t)
@@ -524,16 +664,31 @@ static func _dash(c: Dictionary) -> int:
 	# one rising arc for the whole ride (a blocked dash hops in place)
 	L.move(c, "player", [o, to], go, dur, hop)
 	L.seg(c, "player", {"kind": "squash", "t0": go + dur - 15, "dur": 140})
-	_clip(c, {"kind": "dash_dust", "t0": t, "dur": 440, "layer": "ground", "at": o, "dir": -dv, "kick": true})
-	_clip(c, {"kind": "dash_trail", "t0": go, "dur": dur + 240, "at": o, "from": Vector2(o), "to": Vector2(to),
+	_clip(c, {"kind": "dash_dust", "t0": t, "dur": 440, "layer": "ground", "at": o, "dir": -dv, "kick": true,
+		"lift": go - t, "reach": int(c["adef"].get("range", 3))})
+	_clip(c, {"kind": "dash_trail", "t0": go, "dur": dur + 170, "at": o, "from": Vector2(o), "to": Vector2(to),
 		"dir": dv, "travel": dur, "hop": hop, "reach": int(c["adef"].get("range", 3))})
 	_clip(c, {"kind": "dash_dust", "t0": go + dur - 20, "dur": 400, "layer": "ground", "at": to, "dir": dv,
 		"kick": false})
 	c["ppos"] = to
-	# whatever the tiles did to the tender on the way lands as it arrives
+	# whatever a tile does to the tender lands as it rides over that tile (a
+	# fire it crosses burns it there, in order), the rest as it arrives
+	var path := L.path(c["pre"], o, to)
+	var j0 := 1
 	for i in L.unclaimed(c, ["damage", "item_pickup", "heal"]):
-		if String(c["events"][i].get("who", "player")) == "player" or String(c["events"][i]["t"]) != "damage":
-			L.claim(c, i, go + dur)
+		var ev: Dictionary = c["events"][i]
+		if String(ev["t"]) == "damage" and String(ev.get("who", "")) != "player":
+			continue
+		var ti := go + dur
+		if String(ev["t"]) == "damage":
+			for j in range(j0, path.size()):
+				var tk := L.tkind(c["post"], path[j])
+				if tk != "" and int(Content.terrain(tk, "enter_dmg_player", 0)) > 0 \
+						and String(Content.terrain(tk, "enter_src", tk)) == String(ev.get("src", "")):
+					ti = go + dur * j / maxi(1, n)
+					j0 = j + 1
+					break
+		L.claim(c, i, ti)
 	return go + dur + 60
 
 
@@ -557,6 +712,8 @@ static func paint(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			_paint_jet(cv, cl, k, V)
 		"jet_head":
 			_paint_jet_head(cv, cl, k, V)
+		"jet_wash":
+			_paint_jet_wash(cv, cl, k, V)
 		"line_slam":
 			_paint_slam(cv, cl, k, V)
 		"gust":
@@ -740,8 +897,13 @@ static func _paint_lance_hit(cv, cl: Dictionary, k: float, V: Dictionary) -> voi
 		D.glow(cv, p, t * 0.16 * fl + 1.0, D.ca(pal["b"], 0.7 * fl))
 		return
 	var big := 1.0 + 0.16 * (power - 2.0)
+	# a crisp white flash, gone in a few frames; a piercing beam flashes where
+	# it ENTERS the body and bursts from there, so the body itself stays seen
+	fl = 1.0 - D.win(k, 0.0, 0.2)
+	if style == "pierce":
+		p -= dv * t * 0.3
 	if fl > 0.0:
-		D.glow(cv, p, t * 0.24 * big * (0.6 + 0.4 * fl), D.ca(Color.WHITE, 0.9 * fl))
+		D.glow(cv, p, t * 0.22 * big * (0.6 + 0.4 * fl), D.ca(Color.WHITE, 0.9 * fl))
 	# rays burst from the point of impact
 	var nr := 6 + int(power)
 	for i in nr:
@@ -754,7 +916,7 @@ static func _paint_lance_hit(cv, cl: Dictionary, k: float, V: Dictionary) -> voi
 	# sparks: thrown back at the caster off a body or a wall, blown out the
 	# far side by a piercing beam
 	var back := dv if style == "pierce" else -dv
-	var base := p + (dv * t * 0.3 if style == "pierce" else Vector2.ZERO)
+	var base := p + (dv * t * 0.6 if style == "pierce" else Vector2.ZERO)
 	for i in 7:
 		var spread := (D.h01(i * 13 + 5) - 0.5) * 1.9
 		var dir3 := back * cos(spread) + s * sin(spread)
@@ -762,10 +924,11 @@ static func _paint_lance_hit(cv, cl: Dictionary, k: float, V: Dictionary) -> voi
 		var q := base + dir3 * dist + Vector2(0, t * 0.3 * k * k)
 		D.line(cv, q, q - dir3 * t * 0.13 * (1.0 - k), D.ca(pal["b"] if i % 3 else Color.WHITE, a), maxf(1.0, t * 0.04))
 	if style == "pierce":
-		# punched through: a flash bar across the beam where it enters and exits
+		# punched through: a flash bar across the beam where it enters (p, the
+		# near face now) and a lingering one where it comes out the far side
 		var bar := t * (0.3 + 0.04 * power) * (0.4 + 0.6 * fl)
-		D.line(cv, p - dv * t * 0.3 - s * bar, p - dv * t * 0.3 + s * bar, D.ca(Color.WHITE, 0.95 * fl), maxf(1.5, t * 0.07))
-		D.line(cv, p + dv * t * 0.3 - s * bar * 0.8, p + dv * t * 0.3 + s * bar * 0.8, D.ca(pal["b"], 0.9 * a), maxf(1.0, t * 0.05))
+		D.line(cv, p - s * bar, p + s * bar, D.ca(Color.WHITE, 0.95 * fl), maxf(1.5, t * 0.07))
+		D.line(cv, p + dv * t * 0.6 - s * bar * 0.8, p + dv * t * 0.6 + s * bar * 0.8, D.ca(pal["b"], 0.9 * a), maxf(1.0, t * 0.05))
 
 
 # --- vine painters ---------------------------------------------------------------
@@ -834,13 +997,16 @@ static func _paint_vine(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 				D.leaf(cv, q + Vector2(cos(tan + side * PI * 0.5), sin(tan + side * PI * 0.5)) * w * 0.9,
 					tan + side * 0.9, t * 0.2, D.ca(pal["a"], fade))
 			if power >= 3.0:
+				# a heavier lash is a thorned vine: pale barbs with a dark
+				# outline, big enough to read on a phone
 				for j in 6:
 					var idx2 := int(float(m) * (0.18 + 0.12 * float(j)))
 					var q2 := pts[idx2]
 					var tan2 := (pts[mini(idx2 + 1, m)] - pts[maxi(idx2 - 1, 0)]).normalized()
 					var nrm := _perp(tan2) * (1.0 if j % 2 == 0 else -1.0)
-					D.spike(cv, q2 + nrm * w * 0.3, q2 + nrm * (w * 0.5 + t * 0.09) + tan2 * t * 0.04, t * 0.055,
-						D.ca(pal["b"], fade))
+					var tip2 := q2 + nrm * (w * 0.5 + t * 0.13) - tan2 * t * 0.05
+					D.spike(cv, q2 - nrm * w * 0.1, tip2 + nrm * t * 0.025, t * 0.11, D.ca(INK, 0.6 * fade))
+					D.spike(cv, q2 + nrm * w * 0.2, tip2, t * 0.075, D.ca(pal["b"], fade))
 	if rake:
 		_paint_tines(cv, tip, ang_tip, ms, bite, w, t, pal, fade)
 	else:
@@ -911,7 +1077,7 @@ static func _paint_crack(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var dv: Vector2 = cl["dir"]
 	var p := D.px(V, cl["at"])
 	var power := float(cl.get("power", 2))
-	var sc := (0.8 if bool(cl.get("small", false)) else 1.0) * (1.0 + 0.14 * (power - 2.0))
+	var sc := (0.8 if bool(cl.get("small", false)) else 1.0) * (1.0 + 0.2 * (power - 2.0))
 	var base := dv.angle() + PI
 	var sw := D.ease_in(clampf(ms / hit, 0.0, 1.0))
 	var fa := 1.0 - D.win(ms, hit, hit + 110.0)
@@ -929,7 +1095,7 @@ static func _paint_crack(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 		var f := clampf((ms - hit) / maxf(1.0, span - hit), 0.0, 1.0)
 		var a := 1.0 - f
 		# the crack itself: a white snap at the face that is gone in a blink
-		var sa := 1.0 - clampf((ms - hit) / 90.0, 0.0, 1.0)
+		var sa := 1.0 - clampf((ms - hit) / 75.0, 0.0, 1.0)
 		_star4(cv, p - dv * t * 0.24, t * 0.3 * sc * (1.0 + 0.3 * (1.0 - sa)), 0.4, D.ca(Color.WHITE, sa))
 		var nr := 4 + int(power)
 		for i in nr:
@@ -946,22 +1112,40 @@ static func _paint_crack(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 		D.glow(cv, p, t * 0.12 * sw + 1.0, D.ca(pal["b"], 0.5 * sw))
 
 
-## Furrows the rake's tines tear in the ground as it is dragged home.
+## The soil the rake's tines tear up as it is dragged home: three short scars
+## TRAILING the head (at most FURROW_LEN back toward where it dug in, fading
+## along their length - full-length lines read as bars, not furrows), clods
+## flicked up at the tines, all gone FURROW_FADE after the rake is home.
 static func _paint_furrow(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var span := _span(cl)
 	var ms := float(cl["origin"]) + k * span
+	var home := float(cl.get("home", cl["origin"] + span))
 	var dv: Vector2 = cl["dir"]
 	var s := _perp(dv)
 	var far := D.px(V, cl["far"])
 	var head := D.px(V, _key_at(cl["keys"], ms))
-	var a := 1.0 - D.win(k, 0.4, 1.0)
-	if far.distance_to(head) < 2.0:
-		head = far - dv * 2.0
-	for i in 3:
-		var off := s * (float(i) - 1.0) * t * 0.22
-		D.line(cv, far + off, head + off, D.ca(Color(0.07, 0.06, 0.04), 0.5 * a), maxf(1.0, t * 0.065))
-		D.line(cv, far + off - s * t * 0.04, head + off - s * t * 0.04, D.ca(DUST, 0.14 * a), maxf(1.0, t * 0.02))
+	var a := 1.0 - D.win(ms, home, home + float(FURROW_FADE))
+	var back := minf(far.distance_to(head), t * FURROW_LEN)
+	# at home the scar shrinks back into the hand as it fades
+	back *= a
+	if back > 2.0:
+		for i in 3:
+			var off := s * (float(i) - 1.0) * t * 0.2
+			for j in 3:
+				var u0 := float(j) / 3.0
+				var u1 := float(j + 1) / 3.0
+				var fa := a * (1.0 - u0) * 0.55
+				D.line(cv, head + off + dv * back * u0, head + off + dv * back * u1, D.ca(SOIL, fa), maxf(1.0, t * 0.06))
+			D.line(cv, head + off - s * t * 0.035, head + off - s * t * 0.035 + dv * back * 0.6, D.ca(DUST, 0.3 * a),
+				maxf(1.0, t * 0.02))
+	# clods kicked up behind the tines while they drag
+	var drag := 1.0 - D.win(ms, home - 40.0, home + 20.0)
+	for i in 4:
+		var life := fposmod(ms / 170.0 + D.h01(i * 7 + 5), 1.0)
+		var q := head + s * (D.h01(i * 3 + 1) - 0.5) * t * 0.5 + dv * t * (0.1 + 0.35 * life) \
+			- Vector2(0, t * 0.22 * sin(life * PI))
+		cv.draw_circle(q, t * 0.035 * (1.0 - 0.4 * life), D.ca(DUST if i % 2 else SOIL, 0.85 * drag * (1.0 - life)))
 
 
 # --- jet / gust painters -----------------------------------------------------------
@@ -988,6 +1172,27 @@ static func _stream_band(cv, a: Vector2, b: Vector2, w: float, phase: float, col
 	cv.draw_colored_polygon(left, col)
 	left.append(left[0])
 	cv.draw_polyline(left, col, 1.0, true)
+
+
+## A soft lens of moving air a -> b, `w` wide at its fullest, rippling, with
+## no rim (a rim reads as a pane of glass, not as wind).
+static func _air_lane(cv, a: Vector2, b: Vector2, w: float, phase: float, col: Color) -> void:
+	var ln := a.distance_to(b)
+	if ln < 2.0 or w < 0.5 or col.a <= 0.01:
+		return
+	var f := (b - a) / ln
+	var s := _perp(f)
+	var n := 10
+	var pts := PackedVector2Array()
+	# one side tip to tip, then back along the other without repeating the
+	# tips (a repeated vertex can fail the triangulation)
+	for i in n + 1:
+		var u := float(i) / float(n)
+		pts.append(a + f * ln * u + s * w * 0.5 * sqrt(sin(u * PI)) * (1.0 + 0.08 * sin(u * ln * 0.12 - phase)))
+	for i in range(n - 1, 0, -1):
+		var u := float(i) / float(n)
+		pts.append(a + f * ln * u - s * w * 0.5 * sqrt(sin(u * PI)) * (1.0 + 0.08 * sin(u * ln * 0.12 - phase + 1.7)))
+	cv.draw_colored_polygon(pts, col)
 
 
 ## The stream's (or gust's) head and tail at ms: the head rides the keys, the
@@ -1061,6 +1266,33 @@ static func _paint_jet_head(cv, cl: Dictionary, k: float, V: Dictionary) -> void
 		cv.draw_circle(q, t * 0.04 * (1.0 - 0.6 * life), D.ca(pal["b"] if i % 3 else Color.WHITE, al * (1.0 - life)))
 
 
+## A washed tile: the slick breaks into gobbets of its own colour that the
+## stream sweeps down the line, under a quick crown of spray.
+static func _paint_jet_wash(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
+	var t := D.ts(V)
+	var pal: Dictionary = cl["pal"]
+	var dv: Vector2 = cl["dir"]
+	var s := _perp(dv)
+	var p := D.px(V, cl["at"])
+	var col: Color = cl.get("col", Color(0.3, 0.26, 0.3))
+	var a := 1.0 - k
+	# the slick, torn loose and carried off
+	for i in 5:
+		var lat := (D.h01(i * 5 + 2) - 0.5) * t * 0.6
+		var q := p + s * lat * (1.0 + 0.4 * k) + dv * t * (-0.15 + (0.55 + 0.35 * D.h01(i + 9)) * D.ease_out(k))
+		cv.draw_circle(q, t * (0.11 - 0.05 * k) * (0.7 + 0.5 * D.h01(i + 3)), D.ca(col, 0.9 * a))
+	# the spray crown thrown up where the stream bit into it
+	var sp := 1.0 - D.win(k, 0.0, 0.7)
+	for i in 7:
+		var ang := -PI * (0.1 + 0.8 * float(i) / 6.0)
+		var dir2 := Vector2(cos(ang), sin(ang)) * Vector2(1.0, 0.8) + dv * 0.3
+		var q2 := p + dir2 * t * (0.1 + 0.38 * D.ease_out(k)) + Vector2(0, t * 0.3 * k * k)
+		cv.draw_circle(q2, t * 0.045 * (1.0 - 0.5 * k), D.ca(pal["b"] if i % 2 else Color.WHITE, 0.95 * sp))
+	var rr := t * (0.18 + 0.3 * D.ease_out(k))
+	cv.draw_polyline(_ellipse_arc(p + Vector2(0, t * 0.12), rr, rr * 0.45, 0.0, TAU, 16), D.ca(pal["a"], 0.7 * a),
+		maxf(1.0, t * 0.04 * (1.0 - 0.5 * k)), true)
+
+
 static func _paint_slam(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var pal: Dictionary = cl["pal"]
@@ -1070,7 +1302,7 @@ static func _paint_slam(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var pw := float(cl.get("power", 1))
 	var big := 0.66 + 0.13 * pw
 	var a := 1.0 - k
-	var fl := 1.0 - D.win(k, 0.0, 0.25)
+	var fl := 1.0 - D.win(k, 0.0, 0.17)
 	if fl > 0.0:
 		D.glow(cv, p, t * 0.26 * big * (0.5 + 0.5 * fl), D.ca(Color.WHITE, 0.9 * fl))
 	# the crack of impact: short hard rays across the contact face
@@ -1112,9 +1344,17 @@ static func _paint_gust(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var tail_d := noz.distance_to(tail)
 	var wide := t * float(cl["w"])
 	var blocked := float(cl["hit"]) >= 0.0 and ms >= float(cl["hit"])
-	# a heavier gust (more shove) is a thicker bundle carrying more debris
-	var weight := int(cl.get("weight", 4))
-	var nl := clampi(2 + weight, 4, 9)
+	# the shove's reach sets the bundle (the painter never sees an id): each
+	# tile of shove is two more streamlines, heavier strokes, more debris, and
+	# every tile past three one more gust front racing ahead
+	var push := int(cl.get("push", 3))
+	var heft := 1.0 + 0.15 * float(push - 3)
+	var nl := clampi(2 * push - 1, 4, 9)
+	# the moving air itself: a faint pale lane under the streamlines, so the
+	# whole line reads as one gust at a glance
+	if tail.distance_to(front) > 2.0:
+		_air_lane(cv, tail, front, wide * 2.4, ms * 0.03, D.ca(pal["a"], 0.08 * al))
+		_air_lane(cv, tail, front, wide * 1.4, ms * 0.03 + 1.0, D.ca(pal["a"], 0.08 * al))
 	# streamlines: dashes of wind flowing out to the front, parting round a body
 	for i in nl:
 		var lat := (float(i) - float(nl - 1) * 0.5) / (float(nl - 1) * 0.5)
@@ -1130,22 +1370,27 @@ static func _paint_gust(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			var part := 0.0
 			if blocked:
 				part = clampf(1.0 - (ln - xx) / (t * 0.6), 0.0, 1.0)
-			var off := lat * wide * (1.0 + 0.9 * part) + t * 0.03 * sin(xx * 0.08 + ms * 0.02 + float(i))
+			var off := lat * wide * (1.0 + 0.55 * part) + t * 0.03 * sin(xx * 0.08 + ms * 0.02 + float(i))
 			pts.append(noz + dv * xx + s * off)
 		var env := sin(clampf(x1 / maxf(1.0, ln), 0.0, 1.0) * PI) * 0.6 + 0.4
-		cv.draw_polyline(pts, D.ca(pal["c"], 0.55 * al * env), maxf(1.0, t * 0.075), true)
-		cv.draw_polyline(pts, D.ca(pal["b"], 0.95 * al * env), maxf(1.0, t * 0.035), true)
+		cv.draw_polyline(pts, D.ca(pal["c"], 0.55 * al * env), maxf(1.0, t * 0.075 * heft), true)
+		cv.draw_polyline(pts, D.ca(pal["b"], 0.95 * al * env), maxf(1.0, t * 0.035 * heft), true)
 		var hp := pts[pts.size() - 1]
 		cv.draw_arc(hp - s * t * 0.06 * signf(lat + 0.01), t * 0.06, dv.angle() - PI * 0.5, dv.angle() + PI * 0.7, 6,
 			D.ca(pal["b"], 0.8 * al * env), maxf(1.0, t * 0.03), true)
-	# the gust front: a bright bow while it travels
+	# the gust front(s): bright bows racing ahead while it travels
 	if not blocked and ms < float(cl["keys"][cl["keys"].size() - 1][0]) + 30.0:
-		cv.draw_arc(front - dv * t * 0.25, t * 0.38, dv.angle() - 0.9, dv.angle() + 0.9, 9, D.ca(pal["b"], 0.8), maxf(1.0, t * 0.05), true)
+		for f in clampi(push - 2, 1, 3):
+			var fr := front - dv * t * (0.25 + 0.3 * float(f))
+			var fa := 0.85 * (1.0 - 0.3 * float(f))
+			var rr := t * (0.2 + 0.06 * float(push)) * (1.0 - 0.15 * float(f))
+			cv.draw_arc(fr, rr, dv.angle() - 0.9, dv.angle() + 0.9, 9, D.ca(pal["c"], 0.6 * fa), maxf(1.0, t * 0.09), true)
+			cv.draw_arc(fr, rr, dv.angle() - 0.9, dv.angle() + 0.9, 9, D.ca(pal["b"], fa), maxf(1.0, t * 0.045), true)
 	# debris tumbling along with the wind: leaves and dust
-	for i in clampi(3 + weight, 5, 10):
+	for i in clampi(2 * push, 5, 10):
 		var lag := t * (0.15 + 0.9 * D.h01(i * 3 + 7))
 		var dx := clampf(ln - lag, tail_d, ln)
-		var off2 := (D.h01(i * 5 + 3) - 0.5) * wide * 2.2 + sin(ms * 0.03 + float(i) * 2.0) * t * 0.08
+		var off2 := (D.h01(i * 5 + 3) - 0.5) * wide * 1.8 + sin(ms * 0.03 + float(i) * 2.0) * t * 0.08
 		var q := noz + dv * dx + s * off2
 		if i % 2 == 0:
 			D.leaf(cv, q, ms * 0.025 * (1.0 + D.h01(i)) + float(i), t * 0.17, D.ca(LEAF, 0.95 * al))
@@ -1153,19 +1398,23 @@ static func _paint_gust(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			cv.draw_circle(q, t * 0.035, D.ca(DUST, 0.9 * al))
 
 
+## Smoke the gust tore off a tile, blown down the line: puffs stretched along
+## the wind, thrown well clear and thinning out as they go.
 static func _paint_gust_puff(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var dv: Vector2 = cl["dir"]
 	var s := _perp(dv)
 	var p := D.px(V, cl["at"])
-	var col: Color = L.TERRAIN_COL.get("smoke", Color(0.6, 0.62, 0.62))
-	var a := 1.0 - k
+	var col: Color = cl.get("col", Color(0.6, 0.62, 0.62))
+	var a := 1.0 - D.ease_in(k)
 	for i in 4:
-		var fwd := t * (0.1 + (0.9 + 0.3 * D.h01(i)) * D.ease_out(k))
-		var lat := (D.h01(i * 7 + 2) - 0.5) * t * 0.6 * (1.0 + k)
-		var q := p + dv * fwd + s * lat
-		cv.draw_circle(q, t * (0.18 + 0.22 * k) * (0.8 + 0.3 * D.h01(i + 4)), D.ca(col, 0.5 * a))
-	D.line(cv, p - dv * t * 0.2, p + dv * t * (0.2 + 0.8 * D.ease_out(k)), D.ca(Color.WHITE, 0.5 * a), maxf(1.0, t * 0.03))
+		var fwd := t * (0.05 + (1.2 + 0.5 * D.h01(i)) * D.ease_out(k))
+		var lat := (D.h01(i * 7 + 2) - 0.5) * t * 0.5 * (1.0 + 0.6 * k)
+		var q := p + dv * fwd + s * lat - Vector2(0, t * 0.15 * k)
+		var r := t * (0.17 + 0.12 * k) * (0.8 + 0.3 * D.h01(i + 4))
+		cv.draw_set_transform(q, dv.angle(), Vector2(1.0 + 0.9 * k, 0.8))
+		cv.draw_circle(Vector2.ZERO, r, D.ca(col, 0.6 * a * (1.0 - 0.15 * float(i))))
+		cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 # --- dash painters -----------------------------------------------------------------
@@ -1181,50 +1430,46 @@ static func _paint_dash(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var s := _perp(dv)
 	var hop := float(cl.get("hop", 0.3))
 	var u := clampf(ms / travel, 0.0, 1.0)
-	var fade := 1.0 - D.win(ms, travel, _span(cl))
+	# motion marks (speed lines, afterimages, the glint) belong to the ride and
+	# are gone a few frames after it lands; the rising wind settles a beat later
+	var ride := 1.0 - D.win(ms, travel - 10.0, travel + 80.0)
+	var swirl := 1.0 - D.win(ms, travel, travel + 150.0)
 	var cur := D.px(V, a.lerp(b, u)) - Vector2(0, hop * sin(u * PI) * t)
-	# lift-off: a column of wind streaks bursting up off the ground, taller
-	# and denser for an updraft with more reach
-	var col_k := clampf(ms / 260.0, 0.0, 1.0)
-	var reach := float(cl.get("reach", 3))
-	if col_k < 1.0:
-		var base := D.px(V, a) + Vector2(0, t * 0.4)
-		var nc := clampi(int(reach) + 2, 4, 8)
-		for i in nc:
-			var x := (float(i) - float(nc - 1) * 0.5) * t * 0.68 / float(nc - 1)
-			var y0 := t * (0.1 + (0.6 + 0.1 * reach) * D.ease_out(col_k)) * (0.7 + 0.5 * D.h01(i + 3))
-			var y1 := y0 + t * (0.25 + 0.2 * D.h01(i)) * (1.0 - col_k)
-			D.line(cv, base + Vector2(x, -y0), base + Vector2(x * 1.2, -y1), D.ca(pal["b"], 0.85 * (1.0 - col_k)), maxf(1.0, t * 0.035))
+	var reach := int(cl.get("reach", 3))
 	# afterimages of the tender strung along the ride
 	var tex = Art.tex("player", int(t))
-	if tex != null and a.distance_to(b) > 0.01:
+	if tex != null and a.distance_to(b) > 0.01 and ride > 0.0:
 		for j in 3:
 			var uj := u - 0.16 * float(j + 1)
 			if uj <= 0.0:
 				continue
 			var q := D.tile_rect(V, a.lerp(b, uj)).position - Vector2(0, hop * sin(uj * PI) * t)
-			cv.draw_texture(tex, q, Color(pal["b"].r, pal["b"].g, pal["b"].b, (0.5 - 0.15 * float(j)) * fade))
-	# speed lines streaming off behind
+			cv.draw_texture(tex, q, Color(pal["b"].r, pal["b"].g, pal["b"].b, (0.5 - 0.15 * float(j)) * ride))
+	# speed lines streaming off behind, drawn back in as it lands
 	var back := -dv if a.distance_to(b) > 0.01 else Vector2.DOWN
 	var side := _perp(back)
 	for i in 4:
 		var lat := (float(i) - 1.5) * t * 0.2
 		var l0 := t * (0.3 + 0.12 * D.h01(i))
-		var l1 := l0 + t * (0.5 + 0.4 * D.h01(i + 7)) * (0.4 + 0.6 * u)
+		var l1 := l0 + t * (0.5 + 0.4 * D.h01(i + 7)) * (0.4 + 0.6 * u) * ride
 		var p0 := cur + side * lat + back * l0
 		var p1 := cur + side * lat + back * l1
-		D.line(cv, p0, p1, D.ca(pal["c"], 0.5 * fade), maxf(1.0, t * 0.07))
-		D.line(cv, p0, p1, D.ca(pal["b"], 0.95 * fade), maxf(1.0, t * 0.03))
-	# the updraft itself: loops of wind rising round the rider
-	for i in 3:
-		var ph := fposmod(ms / 240.0 + float(i) / 3.0, 1.0)
+		D.line(cv, p0, p1, D.ca(pal["c"], 0.5 * ride), maxf(1.0, t * 0.07))
+		D.line(cv, p0, p1, D.ca(pal["b"], 0.95 * ride), maxf(1.0, t * 0.03))
+	# the updraft itself: loops of wind rising round the rider, one per tile
+	# of reach (an updraft that carries further is a denser spiral)
+	var nl := clampi(reach, 2, 5)
+	for i in nl:
+		var ph := fposmod(ms / 240.0 + float(i) / float(nl), 1.0)
 		var cy := cur + Vector2(0, t * (0.4 - 0.85 * ph))
-		var aa := sin(ph * PI) * fade
+		var aa := sin(ph * PI) * swirl
+		if aa <= 0.01:
+			continue
 		cv.draw_set_transform(cy, 0.0, Vector2(1.0, 0.32))
 		cv.draw_arc(Vector2.ZERO, t * (0.44 - 0.12 * ph), PI * (0.15 + ph), PI * (1.25 + ph), 10, D.ca(pal["b"], 0.9 * aa),
 			maxf(1.0, t * 0.05), true)
 		cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	D.twinkle(cv, cur + dv * t * 0.42 + s * t * 0.1, t * 0.12 * fade * (1.0 - u * 0.5), D.ca(Color.WHITE, 0.9 * fade))
+	D.twinkle(cv, cur + dv * t * 0.42 + s * t * 0.1, t * 0.12 * ride * (1.0 - u * 0.5), D.ca(Color.WHITE, 0.9 * ride))
 
 
 static func _paint_dust(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
@@ -1233,6 +1478,24 @@ static func _paint_dust(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var dv: Vector2 = cl["dir"]
 	var kick := bool(cl.get("kick", false))
 	var a := 1.0 - k
+	if kick:
+		# lift-off: a column of wind streaks bursting up off the ground BEHIND
+		# the rider (this clip is on the ground layer), taller and denser for
+		# an updraft with more reach
+		var pal: Dictionary = cl["pal"]
+		var reach := float(cl.get("reach", 3))
+		var col_k := D.win(k * _span(cl), float(cl.get("lift", 50)), float(cl.get("lift", 50)) + 260.0)
+		if col_k > 0.0 and col_k < 1.0:
+			var base := p + Vector2(0, t * 0.08)
+			var nc := clampi(2 * int(reach) - 1, 4, 9)
+			for i in nc:
+				var x := (float(i) - float(nc - 1) * 0.5) * t * 0.72 / float(nc - 1)
+				var y0 := t * (0.1 + (0.45 + 0.15 * reach) * D.ease_out(col_k)) * (0.7 + 0.5 * D.h01(i + 3))
+				var y1 := y0 + t * (0.25 + 0.2 * D.h01(i)) * (1.0 - col_k)
+				D.line(cv, base + Vector2(x, -y0), base + Vector2(x * 1.2, -y1), D.ca(pal["c"], 0.45 * (1.0 - col_k)),
+					maxf(1.0, t * 0.07))
+				D.line(cv, base + Vector2(x, -y0), base + Vector2(x * 1.2, -y1), D.ca(pal["b"], 0.9 * (1.0 - col_k)),
+					maxf(1.0, t * 0.035))
 	for i in 7:
 		var ang := TAU * float(i) / 7.0 + D.h01(i + 30) * 0.5
 		var dir2 := Vector2(cos(ang), sin(ang) * 0.45)
