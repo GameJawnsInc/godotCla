@@ -6,7 +6,8 @@ The shell boots to a main menu: PLAY (fresh run), RESUME (when a run is
 live), the run-setup rows (see *Setting up a run*), TUTORIAL, SETTINGS,
 QUIT. Settings persist to `user://tender.cfg`: hold-to-inspect delay, run
 seed mode (random / daily — everyone playing a daily gets the same run),
-and intro-tips frequency, alongside the run choices the title screen makes
+intro-tips frequency and animation speed (full / quick / off, see
+*Animations*), alongside the run choices the title screen makes
 (difficulty, loadout, package, mutator). The sheet also prints where
 finished run logs are kept. The `=` button in the status strip returns
 to the menu mid-run without losing the run.
@@ -280,6 +281,159 @@ rasterization, input handlers driving the sim, the whole tutorial script,
 the shrine sheet's choice sinks, run restore, log retention and import),
 part of the suite. `SHELL_EXPORT_SAVE=<path>` also drops a real run log
 there, which is how you get a save to feed `tests/import_run.gd`.
+
+## Animations
+
+Every step is animated, and none of it is a rule. The sim resolves a
+`step()` instantly; `shell/anim.gd` (the **director**) turns what that step
+did into a short **reel** the shell plays back, from four things only: the
+snapshot before, the action, the step's events and the snapshot after. It is
+pure data — it never touches the Game object, the clock or the scene tree,
+never mutates its inputs, and the same inputs always plan the same reel — so
+the sim stays unaware that anything animates, and every reel ends exactly on
+the board the post snapshot holds (a backstop walks any creature whose last
+drawn tile is not its post tile onto it).
+
+A reel is `{clips, tracks, ghosts, spawns, shakes, tswap, hp, ev_t, dim,
+bloomed, hud, len}`, every time an integer ms from the step:
+
+| part | what it is |
+|---|---|
+| clips | painted effects `{kind, t0, dur, span, layer, pal, at, ...}` in tile space: a beam, a cloud, a number. `span` is the clip's length at full speed (stamped by `anim_lib.clip`); painters read time as `k * span`, so a clip draws the same thing at every speed. `read: true` marks a word that keeps its reading time (quick) and survives `off` |
+| tracks | per creature (`"player"` or an enemy id) motion segments — `path` (slide or hop along points), `lunge`, `recoil`, `cast`, `squash`, `struggle`, `shake`, `tint` (with `hold`: the hurt red laid over the body, then snapped back), `flash`, `die` (style `wilt` for the tender), `pop`, `hide` (the body is drawn by a clip instead, as a teleport's sink and rise are); `Anim.pose()` folds them into where and how to draw it at time t |
+| ghosts | enemies that left the board, drawn where they fell until their death plays out |
+| spawns | enemies that joined it, hidden until they pop in |
+| shakes | `{t0, mag}` screen shakes (strongest wins, 320 ms decay) |
+| tswap | tiles whose terrain changed: they show the old kind until the verb reaches them (a seed bomb's growth appears ring by ring, a slick burns as the lance passes) |
+| hp | HP changes by time, so a bar (and the HP chip) drops when the blow lands, not when you tapped |
+| ev_t | when each of the step's events lands; the shell holds THE STAIRS AWAKEN / FLOOR RESTORED until theirs |
+| dim, bloomed, hud | the haze stage, the bloomed rooms and the shield / bloom / max-HP chips, each changing on the beat that changes it (a moss filter parts the haze as its beam lands; a room dresses when its bloom lands) |
+| len | the reel's length |
+
+**How a step becomes a reel.** One planner per action kind. A move is a hop;
+a strike a lunge and a slash; a cleanse a scrub; an item pops out of the
+satchel. An **ability** winds up in its element's colour (palette = the
+first of its tags in `anim_lib.ELEMENT_ORDER`), then each effect is built by
+the **verb family** that owns its op — `shell/fx_lines.gd` (lance, pulls,
+jets, gusts, dash), `shell/fx_areas.gd` (novas, clouds, tide, shock,
+whirlwind, conversion, seed bombs), `shell/fx_self.gd` (lobbed terrain,
+root walls, sap globs, spikes, teleports, bark, thorns, anchors, sunbeams) —
+and the next effect starts when the previous one's motion ends. Builders read
+data, never ids: a variant with a bigger number looks bigger, `pierce`
+punches through, `center: target` is thrown first, `kind: roots` rewrites in
+bark, a `growth` teleport travels through the mycelium where a `tile` one
+digs.
+
+`end_turn` gives every enemy that ACTS a **slot** — one with a non-idle
+telegraph, an event of its own, or a changed tile — in the sim's own
+execution order (`shell/fx_enemy.gd` draws each intent: bites, slams,
+quakes, floods, chains, siphons, tar globs, portals, welds...). The event
+stream is attributed to slots over the pre-step enemy list with a monotone
+cursor, and each machine is credited ONE blow a phase: a pack of one kind is
+credited bite by bite, a blow the shield soaked goes with the damage after
+it, and what a haul drops the tender onto (goo, fire, a supply) stays with
+the machine hauling. `fx_enemy` then spaces impacts a beat (`BEAT_MS`)
+apart, holds verbs aimed at the tender until a crane's haul lands (capped by
+`BEAT_LATEST` / `HAUL_LATEST`), and draws nothing for a machine that was
+gone before its turn (welded into a partner, killed earlier). The
+environment phase (hazard ticks, the smog clock, vents, regen) plays last.
+A machine's walking gait follows its idle style (`fx_enemy.GAIT_BY_IDLE`).
+
+A generic pass turns every event into its standard feedback at the moment it
+was given — damage numbers, a white hit flash and recoil away from the blow,
+deaths, spawns, status pops, screen shake. An event no builder claimed that
+follows from the one before it (a death, a status a hook landed, a bounty)
+lands right after its cause. Numbers and words that land on one tile
+together take separate rows, and paint after every other clip, so no puff
+covers the number it explains.
+
+**Playback.** `shell/main.gd` snapshots before and after each `_act`, plans
+the reel and plays it from `_reel_ms`; the map only ever draws poses from a
+reel that is still playing, and a new game starts with none. Input is never
+blocked: a new action simply starts a new reel (numbers still in the air
+carry over) — except the second step of ONE input (an out-of-charge tap ends
+the turn, then moves), whose reel is chained after the enemy turn's
+(`Anim.chain`). A descent has no reel — the floor fade is its animation. The
+game-over sheet waits for the killing blow to finish, and a tap or key
+during it finishes the reel instead of starting a new run.
+
+While a reel plays, nothing it changes shows early: the telegraphs on the
+map (and `! INCOMING`) are the ones being carried out — the pre-step board
+minus attackers whose death or stagger has landed — and the next turn's
+appear when the reel ends; status and buff overlays keep their pre-step
+value until each pop reaches its hand-off (`Paint.HANDOFF`), and a status
+spent during the step is held by a `status_hold` clip until the moment it
+is spent; the haze, the bloomed rooms, the HUD chips and the banners wait
+for their events.
+
+Between steps creatures loop an **idle** chosen from their traits
+(`anim_lib.IDLE_BY_TRAIT`: bosses heave, drones hover, hounds pant, sludges
+ooze, emitters chug, igniters skitter, cranes sway, spitters gulp, spiked
+machines lumber; anything else bobs), redrawn at about 20 fps like the smog
+haze (`IDLE_FRAME_MS`); statuses loop over the enemies they hold (stun
+stars, binding roots, drifting spores) and the tender wears its buffs
+(shield plates, a thorn crown, anchoring roots). The hit flash, the hurt
+wash and a cast's glow are the sprite's white silhouette
+(`Paint.silhouette`: the SVG re-rasterised with its colours rewritten to
+white, cached per sprite and size and prewarmed when the tile size changes)
+drawn over it.
+
+**The setting.** SETTINGS → Animations cycles **full** (the reel as
+planned), **quick** (every motion at 0.55× length; numbers and words keep
+their reading time) and **off** (no reel motion, no idle loops and no enemy
+status overlays; the step's numbers and words appear at once — the tender's
+buffs and the floor's ambient haze still draw). It is saved in
+`user://tender.cfg` as `anim`.
+
+**Tests.** `tests/test_anim.gd` (part of the suite) checks that every
+effect op and every enemy intent type has a builder — a new op with no
+animation fails it, the way the content lint fails an unknown op — that
+every builder op is a real op and every clip kind has exactly one painter.
+It plans a reel for every staged scene in `tests/anim_scenes.gd` (the
+tender's own verbs, every `Content.ABILITIES` row, every intent and both
+ways an intent fails, and the `x:` edge cases the reviews found bugs in —
+packs, shields, fused partners, graft hooks mid-verb, hauls, rakes through
+fire, thrown and surged areas): inputs untouched, deterministic, every
+creature lands on its post tile, the dead vanish and the new appear, every
+changed tile flips inside the reel, each ability op draws its verb, every
+clip paints finite geometry through a recording canvas and paints the SAME
+thing at quick speed, concurrent numbers on a tile take different rows, HP
+holds until the blow, poses stay sane, and the reel fits its budget at every
+speed while `off` keeps every number and word. It also checks the idle
+loops' bounds, the one-blow-per-machine attribution (`x:pack`,
+`x:shielded`, `x:haul_goo`), the holds (telegraphs, HUD chips, room
+dressing, the cleanse float saying the gain), the shell's playback (a step
+starts a reel that ends, numbers carry over, an out-of-charge move chains,
+a tap during the death reel does not start a new run, a new game has no
+reel, a descent has none, the setting cycles and persists), runs a soak over
+real optimizer and wanderer games (`ANIM_SOAK_SEEDS`, default 4), and fails
+on ANY engine or script error raised while planning and painting (a
+`Logger` counts them — a GDScript runtime error aborts only the function it
+happens in, so without it a builder that died mid-reel would still pass).
+
+### Watching the animations
+
+`tests/capture_anim.gd` renders the **real** shell frame by frame and
+composes each staged scene into a filmstrip PNG. It needs a display, so run
+it under a virtual one with the GL renderer:
+
+```
+CAPTURE=ability:solar_lance,intent:slam CAPTURE_OUT=/tmp/strips \
+  xvfb-run -a -s "-screen 0 540x1200x24" godot --rendering-driver opengl3 \
+  --path . --resolution 540x1200 --script tests/capture_anim.gd
+```
+
+`CAPTURE=all|basic|abilities|intents|extras|<name>,<name>` (names:
+`ability:<id>`, `intent:<type>`, `x:<edge case>` from `Scenes.EXTRA`, or a
+basic scene — `move`, `strike`, `strike_spiked`, `kill`, `cleanse`, `item`,
+`heal_item`, `surge`, `death`), `CAPTURE_OUT=<dir>` (default
+`user://anim_frames`), `CAPTURE_FRAMES` (12), `CAPTURE_COLS` (4),
+`CAPTURE_SCALE` (0.75), `CAPTURE_SPEED=full|quick|off`, `CAPTURE_BANNERS=1`
+(keep the full-map banners, suppressed by default). Each frame is stamped
+`<scene>  t=<ms>` and cropped to the visible map; a strip is named after its
+scene with `:` → `_` and `+` → `-` (`ability:clear_air+` →
+`ability_clear_air-.png`). The shell's animation clock is pinned per frame
+(`clock_override`), so a strip is exact and repeatable.
 
 ## Art
 
