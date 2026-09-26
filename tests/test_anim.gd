@@ -39,7 +39,7 @@ const Tutorial := preload("res://shell/tutorial.gd")
 ## quick budget is the full one scaled plus a float's life.
 const MAX_LEN_FULL := 2400
 const SEG_KINDS := ["path", "squash", "lunge", "recoil", "tint", "flash", "cast", "struggle", "die", "pop",
-	"warp_out", "warp_in", "hide", "shake"]
+	"hide", "shake"]
 
 var fails := 0
 var checks := 0
@@ -307,11 +307,17 @@ func _check_scene(sc: Dictionary) -> void:
 		_check(false, "%s: quick plans the same clips as full" % nm)
 	_check(int(quick["len"]) <= int(float(ln) * 0.6) + L.T_FLOAT + 20, "%s: quick is quicker (%d vs %d)" % [nm, quick["len"], ln])
 	var off := Anim.plan(pre, sc["action"], evs, post, Anim.SPEEDS["off"])
-	var only_numbers: bool = off["tracks"].is_empty() and off["ghosts"].is_empty()
+	var only_reading: bool = off["tracks"].is_empty() and off["ghosts"].is_empty()
 	for cl in off["clips"]:
-		if String(cl["kind"]) != "float" or int(cl["t0"]) != 0:
-			only_numbers = false
-	_check(only_numbers, "%s: 'off' keeps only the numbers" % nm)
+		if not (String(cl["kind"]) == "float" or bool(cl.get("read", false))) or int(cl["t0"]) != 0:
+			only_reading = false
+	_check(only_reading, "%s: 'off' keeps only what is read (numbers and words), at once" % nm)
+	# ... and keeps ALL of it: every number and word of the full reel
+	var said_full := 0
+	for cl in reel["clips"]:
+		if String(cl["kind"]) == "float" or bool(cl.get("read", false)):
+			said_full += 1
+	_check(off["clips"].size() == said_full, "%s: 'off' drops no number or word (%d of %d)" % [nm, off["clips"].size(), said_full])
 	# numbers on one tile that are on screen together never share a row
 	var fl: Array = []
 	for cl in reel["clips"]:

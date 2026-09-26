@@ -69,16 +69,15 @@ const TERRAIN_COL := {
 }
 
 ## Idle loop per enemy: derived from traits, never from the kind id (the same
-## rule the verb builders follow). IDLE_BY_KIND is the escape hatch for a row
-## whose traits say nothing about how it moves; it is empty on purpose. A row
-## with none of these traits falls back to "bob" - it breathes, it never
-## stands frozen.
+## rule the verb builders follow). A row whose traits say nothing about how it
+## moves gets a trait (or a data key on its Content.ENEMIES row), not an id
+## table here. A row with none of these traits falls back to "bob" - it
+## breathes, it never stands frozen.
 const IDLE_BY_TRAIT := [
 	["boss", "heave"], ["drains", "hover"], ["fast", "pant"], ["oil_trail", "ooze"],
 	["splits", "ooze"], ["summons", "chug"], ["oozes", "chug"], ["stokes", "chug"],
 	["igniter", "skitter"], ["drags", "sway"], ["gums", "gulp"], ["spiked", "lumber"],
 ]
-const IDLE_BY_KIND := {}
 
 
 # --- palettes -----------------------------------------------------------------
@@ -101,8 +100,6 @@ static func status_col(status: String) -> Color:
 
 
 static func idle_style(kind: String) -> String:
-	if IDLE_BY_KIND.has(kind):
-		return IDLE_BY_KIND[kind]
 	var traits: Array = Content.ENEMIES.get(kind, {}).get("traits", [])
 	for row in IDLE_BY_TRAIT:
 		if traits.has(row[0]):

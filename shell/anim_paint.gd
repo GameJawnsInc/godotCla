@@ -63,6 +63,7 @@ const HANDOFF_DEFAULT := 0.2
 static var _hold: Array = []
 ## White silhouettes of creature sprites, by "id@size" (see silhouette()).
 static var _sil := {}
+static var _white_re: RegEx = null
 
 
 static func owner_of(kind: String):
@@ -922,17 +923,17 @@ static func silhouette(id: String, size: int) -> Texture2D:
 	if not Art.ART.has(id) or size < 1:
 		_sil[key] = null
 		return null
+	# the white copy is the SAME svg with every colour rewritten to white
+	# (sprites paint only with hex colours, url() gradients of hex stops, or
+	# none; opacity rides in its own attributes), rasterised once by ThorVG -
+	# no per-byte GDScript loop over the pixels
+	if _white_re == null:
+		_white_re = RegEx.create_from_string("(fill|stroke|stop-color)=\"#[0-9a-fA-F]{3,8}\"")
+	var svg: String = _white_re.sub(String(Art.ART[id]), "$1=\"#ffffff\"", true)
 	var img := Image.new()
-	if img.load_svg_from_string(Art.ART[id], float(size) / 32.0) != OK or img.is_empty():
+	if img.load_svg_from_string(svg, float(size) / 32.0) != OK or img.is_empty():
 		_sil[key] = null
 		return null
-	img.convert(Image.FORMAT_RGBA8)
-	var data := img.get_data()
-	for i in range(0, data.size(), 4):
-		data[i] = 255
-		data[i + 1] = 255
-		data[i + 2] = 255
-	var out := ImageTexture.create_from_image(Image.create_from_data(img.get_width(), img.get_height(), false,
-		Image.FORMAT_RGBA8, data))
+	var out := ImageTexture.create_from_image(img)
 	_sil[key] = out
 	return out

@@ -1049,10 +1049,18 @@ static func _length(reel: Dictionary) -> int:
 ## Rescale every time in the reel. Speed 0 ("off") keeps only the numbers.
 static func _scale(reel: Dictionary, k: float) -> void:
 	if k <= 0.0:
+		# what must be READ survives: every float (numbers and the generic
+		# words) and every clip marked `read` (the enemy verbs' words), all at
+		# once - so read-words are restacked into distinct rows per tile
 		var keep: Array = []
+		var rows := {}
 		for cl in reel["clips"]:
-			if String(cl["kind"]) == "float":
+			if String(cl["kind"]) == "float" or bool(cl.get("read", false)):
 				cl["t0"] = 0
+				if cl.has("row"):
+					var rk := str(Vector2i(Vector2(cl.get("at", Vector2.ZERO)).round()))
+					cl["row"] = int(rows.get(rk, 0))
+					rows[rk] = int(cl["row"]) + 1
 				keep.append(cl)
 		reel["clips"] = keep
 		reel["tracks"] = {}
@@ -1228,7 +1236,6 @@ static func pose(reel: Dictionary, key, t: float, cur: Vector2) -> Dictionary:
 	if segs == null:
 		return out
 	out["pos"] = pos_at(reel, key, t, cur)
-	var warped := false
 	for s in segs:
 		var t0 := float(s["t0"])
 		var dur := maxf(1.0, float(s["dur"]))
@@ -1238,10 +1245,6 @@ static func pose(reel: Dictionary, key, t: float, cur: Vector2) -> Dictionary:
 			out["visible"] = false
 		if kind == "die" and k >= 1.0:
 			out["visible"] = false
-		if kind == "warp_out" and k >= 1.0:
-			warped = true
-		if kind == "warp_in" and k >= 0.0:
-			warped = false
 		if k < 0.0 or k >= 1.0:
 			continue
 		match kind:
@@ -1374,21 +1377,10 @@ static func pose(reel: Dictionary, key, t: float, cur: Vector2) -> Dictionary:
 				out["sy"] *= maxf(0.05, p)
 				out["alpha"] *= minf(1.0, k * 4.0)
 				out["flash"] = maxf(out["flash"], clampf(1.0 - k / 0.45, 0.0, 1.0))
-			"warp_out":
-				out["sx"] *= 1.0 - 0.8 * k
-				out["sy"] *= 1.0 + 0.5 * k
-				out["alpha"] *= 1.0 - k
-				out["lift"] += 0.2 * k
-			"warp_in":
-				out["sx"] *= 0.2 + 0.8 * _ease_out(k)
-				out["sy"] *= 1.5 - 0.5 * _ease_out(k)
-				out["alpha"] *= k
 			"hide":
 				out["visible"] = false
 			"shake":
 				out["off"] += Vector2(sin(k * PI * 10.0), cos(k * PI * 8.0)) * float(s.get("amt", 0.05)) * (1.0 - k)
-	if warped:
-		out["visible"] = false
 	return out
 
 

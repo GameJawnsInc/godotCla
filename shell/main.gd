@@ -194,6 +194,7 @@ var clock_override := -1
 ## A caption tests/capture_anim.gd stamps on the map (frame time); "" = none.
 var capture_label := ""
 const IDLE_FRAME_MS := 50
+var _warm_ts := -1  # the tile size the sprite caches were last warmed for
 var _idle_draw_ms := 0
 var _floor_fade_ms := -99999  # descend wipe: new floor fades in from dark
 var profile  # meta career: unlocks tiers/packages across runs (meta/profile.gd)
@@ -840,12 +841,13 @@ func _process(_dt: float) -> void:
 		animating = true  # danger vignette pulse
 	if game != null and game.over:
 		animating = true  # win/loss screens drift
-	if animating or smoggy:
+	var idling: bool = game != null and anim_mode != "off" and mode in ["normal", "target_dir", "target_tile", "cleanse"]
+	if animating:
 		queue_redraw()
-	elif game != null and anim_mode != "off" and mode in ["normal", "target_dir", "target_tile", "cleanse"] \
-			and _now() - _idle_draw_ms >= IDLE_FRAME_MS:
-		# idle loops (the tender and the machines breathe) are slow sines:
-		# ~20 fps is smooth enough and spares a phone's battery between moves
+	elif (smoggy or idling) and _now() - _idle_draw_ms >= IDLE_FRAME_MS:
+		# between moves only slow things move - the idle loops, the smog haze
+		# drifting, fires flickering: ~20 fps is smooth enough for them and
+		# spares a phone's battery (smog is up on nearly every turn of a floor)
 		_idle_draw_ms = _now()
 		queue_redraw()
 
@@ -2505,6 +2507,17 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	_vx1 = vx0 + vtw - 1
 	_vy1 = vy0 + vth - 1
 	_ts = minf(minf(vw * 0.996 / vtw, zone_h / vth), vw / 8.0)
+	if int(_ts) != _warm_ts:
+		# the tile size changed (a new floor, the room camera): rasterise the
+		# sprites and their hit-flash silhouettes now, so no cold raster lands
+		# on the frame a blow does
+		_warm_ts = int(_ts)
+		var ids := {"player": true}
+		for e0 in snap["enemies"]:
+			ids[String(e0["kind"])] = true
+		for id in ids:
+			Art.tex(id, _warm_ts)
+			Paint.silhouette(id, _warm_ts)
 	_mox = (vw - vtw * _ts) / 2.0 - vx0 * _ts
 	_moy = zone_y + (zone_h - vth * _ts) / 2.0 - vy0 * _ts
 	if not zoom_room:
