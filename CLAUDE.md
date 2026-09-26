@@ -137,6 +137,11 @@ architecture below is designed to bend rather than block.
     player-facing gates: `_check_card_text` holds every shipped description
     to a readable size on the tightest shrine card, and `_check_cleanse_hint`
     holds CLEANSE's refusal to the truth
+  - `godot --headless --path . --script tests/test_anim.gd` — the step
+    animations: every effect op and enemy intent type has a builder, and a
+    reel for every staged scene (`tests/anim_scenes.gd`: the tender's verbs,
+    every ability, every intent) is pure, deterministic, lands every
+    creature on its post tile, paints finite geometry and fits its budget
 - Bots live in one registry, `bots/roster.gd` (`Roster.names()/make(name, seed)`);
   every runner resolves persona names through it, and an unknown name fails
   loudly. `deeproot_rollout` is deeproot with rollout drafting (a separate
@@ -1242,6 +1247,18 @@ architecture below is designed to bend rather than block.
   draft SHEET (`SHEET=shop|draft|drop`), which is where the reading happens —
   both are the agent's way to see the shell. Sprites are hand-written
   SVG strings in `shell/svg_art.gd`. The sim must never depend on the shell.
+- Step animations (`docs/SHELL.md` "Animations") are presentation only and
+  never a rule: `shell/anim.gd` plans each step into a reel from (pre
+  snapshot, action, events, post snapshot) alone, the verb families
+  `shell/fx_lines.gd` / `fx_areas.gd` / `fx_self.gd` build ability ops and
+  `shell/fx_enemy.gd` enemy intents (a new effect op or intent type needs a
+  builder there, or `tests/test_anim.gd` fails), and builders read DATA (op,
+  numbers, tags, target shape, statuses, traits), never an ability id or an
+  enemy kind. No sim change is ever needed for an animation; if one seems
+  to be, the event stream is missing information - flag it rather than
+  reading the Game object. To SEE them, `tests/capture_anim.gd` renders the
+  real shell into filmstrip PNGs under `xvfb-run` (GL renderer), which the
+  Read tool displays.
 - Every choice card — shrine, draft, drop, forge — is ONE function
   (`shell/main.gd` `_card`) over ONE layout dict (`_card_layout`), and the
   three card lists (`_shop_cards` / `_draft_cards` / `_drop_cards`) are data

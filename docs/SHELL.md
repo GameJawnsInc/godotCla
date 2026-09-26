@@ -6,7 +6,8 @@ The shell boots to a main menu: PLAY (fresh run), RESUME (when a run is
 live), the run-setup rows (see *Setting up a run*), TUTORIAL, SETTINGS,
 QUIT. Settings persist to `user://tender.cfg`: hold-to-inspect delay, run
 seed mode (random / daily — everyone playing a daily gets the same run),
-and intro-tips frequency, alongside the run choices the title screen makes
+intro-tips frequency and animation speed (full / quick / off, see
+*Animations*), alongside the run choices the title screen makes
 (difficulty, loadout, package, mutator). The sheet also prints where
 finished run logs are kept. The `=` button in the status strip returns
 to the menu mid-run without losing the run.
@@ -280,6 +281,93 @@ rasterization, input handlers driving the sim, the whole tutorial script,
 the shrine sheet's choice sinks, run restore, log retention and import),
 part of the suite. `SHELL_EXPORT_SAVE=<path>` also drops a real run log
 there, which is how you get a save to feed `tests/import_run.gd`.
+
+## Animations
+
+Every step is animated, and none of it is a rule. The sim resolves a
+`step()` instantly; `shell/anim.gd` (the **director**) turns what that step
+did into a short **reel** the shell plays back, from four things only: the
+snapshot before, the action, the step's events and the snapshot after. It is
+pure data — it never touches the Game object, the clock or the scene tree,
+never mutates its inputs, and the same inputs always plan the same reel — so
+the sim stays unaware that anything animates, and every reel ends exactly on
+the board the post snapshot holds.
+
+A reel is `{clips, tracks, ghosts, spawns, shakes, tswap, hp, len}`:
+
+| part | what it is |
+|---|---|
+| clips | painted effects `{kind, t0, dur, layer, pal, ...}` in tile space: a beam, a cloud, a number |
+| tracks | per creature (`"player"` or an enemy id) motion segments — `path` (slide or hop), `lunge`, `recoil`, `cast`, `squash`, `die`, `pop`, `warp_out`/`warp_in`, `struggle`, `shake`, `tint`, `flash`; `Anim.pose()` folds them into where and how to draw it at time t |
+| ghosts | enemies that left the board, drawn where they fell until their death plays out |
+| spawns | enemies that joined it, hidden until they pop in |
+| tswap | tiles whose terrain changed: they show the old kind until the verb reaches them (a seed bomb's growth appears ring by ring, a slick burns as the lance passes) |
+| hp | HP changes by time, so a bar (and the HP chip) drops when the blow lands, not when you tapped |
+
+**How a step becomes a reel.** One planner per action kind. A move is a hop;
+a strike a lunge and a slash; a cleanse a scrub; an item pops out of the
+satchel. An **ability** winds up in its element's colour (palette = the
+first of its tags in `anim_lib.ELEMENT_ORDER`), then each effect is built by
+the **verb family** that owns its op — `shell/fx_lines.gd` (lance, pulls,
+jets, gusts, dash), `shell/fx_areas.gd` (novas, clouds, tide, shock,
+whirlwind, conversion, seed bombs), `shell/fx_self.gd` (lobbed terrain,
+root walls, sap globs, spikes, teleports, bark, thorns, anchors, sunbeams) —
+and the next effect starts when the previous one's motion ends. `end_turn`
+gives every enemy a **slot** in the sim's own execution order
+(`shell/fx_enemy.gd` draws each intent: bites, slams, quakes, floods,
+chains, siphons, tar globs, portals, welds...), attributing the event stream
+to slots with a monotone cursor over the pre-step enemy list, then plays
+the environment phase (hazard ticks, the smog clock, vents, regen). A
+generic pass turns every event into its standard feedback at the moment it
+was given — damage numbers, a white hit flash and recoil away from the blow,
+deaths, spawns, status pops, screen shake. Builders read data, never ids: a
+variant with a bigger number looks bigger, `pierce` punches through,
+`center: target` is thrown first, `kind: roots` rewrites in bark.
+
+**Playback.** `shell/main.gd` snapshots before and after each `_act`, plans
+the reel and plays it from `_reel_ms`. Input is never blocked: a new action
+simply starts a new reel (numbers still in the air carry over). A descent
+has no reel — the floor fade is its animation — and the game-over sheet
+waits for the killing blow to finish. Between steps creatures loop an
+**idle** chosen from their traits (bosses heave, drones hover, hounds pant,
+sludges ooze, emitters chug), statuses loop over the enemies they hold (stun
+stars, binding roots, drifting spores) and the tender wears its buffs
+(shield plates, a thorn crown, anchoring roots).
+
+**The setting.** SETTINGS → Animations cycles **full** (the reel as
+planned), **quick** (every motion at 0.55× length; numbers keep their
+reading time) and **off** (no motion at all, damage numbers only). It is
+saved in `user://tender.cfg` as `anim`.
+
+**Tests.** `tests/test_anim.gd` (part of the suite) checks that every
+effect op and every enemy intent type has a builder — a new op with no
+animation fails it, the way the content lint fails an unknown op — and
+plans a reel for every staged scene in `tests/anim_scenes.gd` (the
+tender's own verbs, every `Content.ABILITIES` row, every intent and both
+ways an intent fails): inputs untouched, deterministic, every creature
+lands on its post tile, the dead vanish and the new appear, every changed
+tile flips inside the reel, each ability op draws its verb, every clip
+paints finite geometry through a recording canvas, poses stay sane, and the
+reel fits its budget at every speed.
+
+### Watching the animations
+
+`tests/capture_anim.gd` renders the **real** shell frame by frame and
+composes each staged scene into a filmstrip PNG. It needs a display, so run
+it under a virtual one with the GL renderer:
+
+```
+CAPTURE=ability:solar_lance,intent:slam CAPTURE_OUT=/tmp/strips \
+  xvfb-run -a -s "-screen 0 540x1200x24" godot --rendering-driver opengl3 \
+  --path . --resolution 540x1200 --script tests/capture_anim.gd
+```
+
+`CAPTURE=all|basic|abilities|intents|<name>,<name>` (names:
+`ability:<id>`, `intent:<type>`, or a basic scene — `move`, `strike`,
+`strike_spiked`, `kill`, `cleanse`, `item`, `heal_item`, `surge`, `death`),
+`CAPTURE_FRAMES` (12), `CAPTURE_COLS` (4), `CAPTURE_SCALE` (0.75),
+`CAPTURE_SPEED=full|quick`. The shell's animation clock is pinned per frame
+(`clock_override`), so a strip is exact and repeatable.
 
 ## Art
 
