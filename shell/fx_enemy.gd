@@ -20,7 +20,16 @@ extends RefCounted
 ##
 ## A verb that lands something may start a little after its slot (_start):
 ## impacts fall one BEAT_MS apart, in the machines' own order, so a pack's
-## turn reads machine by machine. c.hit stays relative to the slot, c.t.
+## turn reads machine by machine, and a verb aimed at the tender waits for a
+## crane's haul to finish. c.hit stays relative to the slot, c.t.
+##
+## Some events cannot be attributed by the director's cursor - they carry no
+## enemy id (gummed, shield_absorb, flood, ignite_all), or name only the
+## attacker's KIND (the tender's damage: a pack of drill bots all match the
+## first one), or name the victim of a hook the verb set off. The verb that
+## caused one TAKES it (_take_event / _take_blow / _take_absorb), in stream
+## order, which is the machines' order; a machine that left the board before
+## its turn (_gone) draws nothing.
 ##
 ## Clip kinds are prefixed "en_" so they never collide with another family's.
 
@@ -53,6 +62,7 @@ const SMOKE_DARK := Color("46423e")
 const SMOKE_LIGHT := Color("9aa0a4")
 const LEAF := Color("86dc62")
 const WARN := Color("e04b3a")
+const SHIELD := Color("7fb6d9")
 
 ## Events that follow from the one right before them (a death after the blow,
 ## a status after a hook): they land 30 ms after it.
@@ -86,15 +96,37 @@ const IGNITE_SWEEP_MS := 620
 const BEAT_MS := 120
 const BEAT_WAIT_MAX := 260
 const BEAT_LATEST := 1100
+## Slots overlap, so a machine after a crane would otherwise spit at, bite or
+## chase the tile the tender is being HAULED to before it gets there: a verb
+## aimed at the tender lands, and a walker sets off, only once the haul is
+## done - but never later than this, so a crane at the back of a pack cannot
+## push the turn past its budget.
+const HAUL_LATEST := 1300
 
 ## Words a verb puts on the tender ("gummed", "-2 charge") pop up UNDER its
 ## feet, one row each, clear of the damage numbers rising over its head - so
 ## a pack's results never print over each other.
 const WORD_ROW := 0.4
+## A word reads for as long as a damage number does.
+const WORD_MS := L.T_FLOAT
+
+## Events an ignition's hooks set off (a resonance's root, an ember graft's
+## bite and whatever those kill): _ignite_all times them to the tile that
+## caught.
+const HOOK_RUN := ["hook", "hook_capped", "damage", "death", "split", "bounty", "status", "resisted",
+	"immune", "staggered", "smoke_burst", "core_shielded", "boss_phase", "player_death", "win"]
 
 
 static func build(verb: String, c: Dictionary) -> int:
 	c["pal"] = MACHINE
+	if _gone(c):
+		# it left the board before its turn came (welded into a partner, or
+		# killed by what an earlier machine set off): the pre board still
+		# shows its telegraph, but it never acted - drawing that intent would
+		# show an attack, a spit or a walk that did not happen
+		_claim_rest(c, int(c["t"]) + 60, Vector2(0, 1))
+		c["hit"] = 60
+		return int(c["t"])
 	match verb:
 		"move":
 			return _walk(c, "")
@@ -143,27 +175,62 @@ static func _ppos(c: Dictionary) -> Vector2i:
 	return c.get("ppos", c["p0"])
 
 
+## True when this machine left the board before its own turn: a partner
+## welded it in (the sim removes the eaten one, so it never acts), or its
+## death was already drawn by an earlier machine's verb (claimed by that
+## slot - an ignition hook that killed it, say).
+static func _gone(c: Dictionary) -> bool:
+	if c.get("post_e") != null or not c.has("e"):
+		return false
+	var id = c["e"]["id"]
+	var evs: Array = c["events"]
+	for i in evs.size():
+		var tt := String(evs[i].get("t", ""))
+		if tt == "assimilate" and L.same_id(evs[i].get("eaten"), id):
+			return true
+		if tt == "death" and L.same_id(evs[i].get("id"), id) and L.claimed(c, i):
+			return true
+	return false
+
+
 ## When this verb starts, given `off`, its own start-to-impact time: late
 ## enough that its impact lands a beat after the previous machine's (see
-## BEAT_MS). Records its impact for the machine after it.
-static func _start(c: Dictionary, off: int) -> int:
+## BEAT_MS). Records its impact for the machine after it. A verb that `aims`
+## at the tender also lands only after any haul this phase has finished (see
+## HAUL_LATEST).
+static func _start(c: Dictionary, off: int, aims: bool = true) -> int:
 	var t: int = c["t"]
 	var last := int(c.get("_en_beat", -100000))
 	var hit := t + off
 	var want := last + BEAT_MS
 	if hit < want and hit < BEAT_LATEST:
 		t += mini(mini(want - hit, BEAT_WAIT_MAX), BEAT_LATEST - hit)
+	var haul := int(c.get("_en_haul", -1))
+	if aims and haul >= 0:
+		# after a haul the aimed verbs queue behind it, still a beat apart
+		# (the haul, not the pack, is what made them late)
+		var land := maxi(t + off, mini(maxi(haul + 40, last + BEAT_MS), HAUL_LATEST))
+		t = land - off
 	c["_en_beat"] = maxi(last, t + off)
 	return t
 
 
 ## Pop a verb's words under the tender on their own row (see WORD_ROW); the
-## event's generic float is silenced.
+## event's generic float is silenced. A row is free again once the word on it
+## has faded, so a busy turn stacks only the words that are really on screen
+## together instead of walking every later word further down (and off the
+## view).
 static func _say(c: Dictionary, i: int, t: int, text: String, col: Color) -> void:
 	L.quiet(c, i)
-	var row := int(c.get("_en_rows", 0))
-	c["_en_rows"] = row + 1
-	L.clip(c, {"kind": "en_word", "t0": t, "dur": 900, "at": _ppos(c), "row": row, "text": text, "col": col})
+	var ends: Array = c.get("_en_rows", [])
+	var row := 0
+	while row < ends.size() and int(ends[row]) > t:
+		row += 1
+	if row == ends.size():
+		ends.append(0)
+	ends[row] = t + WORD_MS
+	c["_en_rows"] = ends
+	L.clip(c, {"kind": "en_word", "t0": t, "dur": WORD_MS, "at": _ppos(c), "row": row, "text": text, "col": col})
 
 
 static func _row(e: Dictionary) -> Dictionary:
@@ -194,14 +261,6 @@ static func _step_toward(a: Vector2i, b: Vector2i) -> Vector2i:
 	return Vector2i(0, signi(dl.y))
 
 
-static func _hits_player(c: Dictionary) -> bool:
-	for i in c["own"]:
-		var ev: Dictionary = c["events"][i]
-		if String(ev.get("t", "")) == "damage" and String(ev.get("who", "")) == "player":
-			return true
-	return false
-
-
 static func _own_of(c: Dictionary, tt: String) -> Array:
 	var out: Array = []
 	for i in c["own"]:
@@ -214,16 +273,66 @@ static func _own_of(c: Dictionary, tt: String) -> Array:
 ## For events whose `id` is not the enemy's (a "gummed" names the ability it
 ## gums), the director cannot attribute them to a machine; the verb that
 ## caused one takes it here, in stream order.
-static func _take_event(c: Dictionary, tt: String) -> int:
+## `key`/`val` narrow it further: a gum takes only the "gummed" whose slot is
+## the slot it telegraphed.
+static func _take_event(c: Dictionary, tt: String, key: String = "", val = null) -> int:
 	if not c.has("_en_taken"):
 		c["_en_taken"] = {}
 	var taken: Dictionary = c["_en_taken"]
 	var evs: Array = c["events"]
 	for i in evs.size():
-		if String(evs[i].get("t", "")) == tt and not taken.has(i):
-			taken[i] = true
-			return i
+		if String(evs[i].get("t", "")) != tt or taken.has(i):
+			continue
+		if key != "" and not (evs[i].has(key) and typeof(evs[i][key]) == typeof(val) and evs[i][key] == val):
+			continue
+		taken[i] = true
+		return i
 	return -1
+
+
+## This machine's event of type `tt`: its own when the director gave it one,
+## else the next one nobody took. Events with no enemy id (flood, ignite_all)
+## are attributed by a cursor the director can lose - a hook's damage on a
+## later machine moves it past the one that really acted.
+static func _own_or_take(c: Dictionary, tt: String) -> int:
+	var own := _own_of(c, tt)
+	if not own.is_empty():
+		if not c.has("_en_taken"):
+			c["_en_taken"] = {}
+		c["_en_taken"][own[0]] = true
+		return own[0]
+	return _take_event(c, tt)
+
+
+## Tiles of view directly above `p` (0..cap). Above the view's top edge sits
+## the status strip, so tall effects (a smoke column, a lob's apex, a ring)
+## bend or shrink instead of drawing over it. With no `vis` (the headless
+## suite's view) every tile counts as seen.
+static func _up(V: Dictionary, p: Vector2i, cap: int) -> int:
+	if not V.has("vis"):
+		return cap
+	var vis: Callable = V["vis"]
+	var n := 0
+	while n < cap and bool(vis.call(p + Vector2i(0, -(n + 1)))):
+		n += 1
+	return n
+
+
+static func _seen(V: Dictionary, p: Vector2i) -> bool:
+	return not V.has("vis") or bool((V["vis"] as Callable).call(p))
+
+
+static func _tile_of(p) -> Vector2i:
+	return Vector2i(Vector2(p).round())
+
+
+## Which way a plume leans when the view gives it no room to rise: `prefer`
+## (+1 right, -1 left) unless a wall stands there and not on the other side.
+static func _lean_side(c: Dictionary, at: Vector2i, prefer: int) -> int:
+	var s := 1 if prefer >= 0 else -1
+	if L.wall(c["pre"], at + Vector2i(s, 0)) and not L.wall(c["pre"], at + Vector2i(-s, 0)):
+		return -s
+	return s
 
 
 ## Where a creature stands right now in the reel being built: the end of its
@@ -243,10 +352,14 @@ static func _pos_now(c: Dictionary, key, fallback: Vector2i) -> Vector2i:
 ## Claim every event of this enemy the verb did not claim itself: a blow to
 ## the tender at the impact (recoiling along `d`), thorns biting back a beat
 ## later (the attacker recoils and sparks green), a consequence right after
-## its cause, anything else just after the impact.
-static func _claim_rest(c: Dictionary, t_hit: int, d: Vector2) -> void:
+## its cause, anything else just after the impact. `me_at` is where the
+## attacker stands at the impact (a slamming boss is on its landing arm, not
+## home) - the thorn sparks fly off it there.
+static func _claim_rest(c: Dictionary, t_hit: int, d: Vector2, me_at = null) -> void:
 	var e: Dictionary = c.get("e", {})
 	var evs: Array = c["events"]
+	if me_at == null and not e.is_empty():
+		me_at = e["pos"]
 	for i in c.get("own", []):
 		if L.claimed(c, i):
 			continue
@@ -257,12 +370,74 @@ static func _claim_rest(c: Dictionary, t_hit: int, d: Vector2) -> void:
 		elif tt == "damage" and not e.is_empty() and L.same_id(ev.get("id"), e["id"]):
 			L.claim(c, i, t_hit + 60, -d)
 			if String(ev.get("src", "")) == "thorns":
-				L.clip(c, {"kind": "en_impact", "t0": t_hit + 50, "dur": 300, "at": e["pos"], "dir": -d,
+				L.clip(c, {"kind": "en_impact", "t0": t_hit + 50, "dur": 300, "at": me_at, "dir": -d,
 					"dmg": int(ev.get("amt", 1)), "hit": true, "pal": L.pal_of("displace")})
 		elif i > 0 and FOLLOWS.has(tt) and L.claimed(c, i - 1):
 			L.claim(c, i, int(c["times"][i - 1]) + 30)
 		else:
 			L.claim(c, i, t_hit + 30)
+
+
+## A blow that connects while the tender's shield is up: the sim emits
+## {t: "shield_absorb", amt} - no enemy id, so the director hands it to
+## whichever machine emitted the event before it and it lands at THAT
+## machine's impact (or the phase's end). Take it in stream order while the
+## shield the pre board had lasts, and land it on this blow. Returns what the
+## shield absorbed (0 when the blow never touched one).
+static func _take_absorb(c: Dictionary, t_hit: int) -> int:
+	if not c.has("_en_shield"):
+		c["_en_shield"] = int(c["pre"]["player"].get("shield", 0))
+	if int(c["_en_shield"]) <= 0:
+		return 0
+	var i := _take_event(c, "shield_absorb")
+	if i < 0:
+		return 0
+	var amt := maxi(1, int(c["events"][i].get("amt", 1)))
+	c["_en_shield"] = int(c["_en_shield"]) - amt
+	L.claim(c, i, t_hit)
+	# the word goes under the feet with the other verb words, clear of the
+	# number the rest of the blow may still put over the head
+	_say(c, i, t_hit, "blocked", SHIELD)
+	return amt
+
+
+## A blow that connects: take ITS damage event - the next {damage, who:
+## player, src: this machine's kind} nobody took - and land it on this
+## impact. The director matches a blow to the first machine of that kind at
+## or after its cursor, and a blow moves the cursor only TO that machine, so
+## the second drill bot's bite is handed to the first one and pops (stacked)
+## on the first lunge while the second lunge reads as a miss. Taking them in
+## machine order puts each bite on its own lunge; what follows from it (the
+## tender falling) follows it. Returns true when a damage event was taken.
+static func _take_blow(c: Dictionary, t_hit: int, d: Vector2) -> bool:
+	if not c.has("_en_taken"):
+		c["_en_taken"] = {}
+	var taken: Dictionary = c["_en_taken"]
+	var kind := String(c["e"]["kind"])
+	var evs: Array = c["events"]
+	for i in evs.size():
+		var ev: Dictionary = evs[i]
+		if taken.has(i) or String(ev.get("t", "")) != "damage" or String(ev.get("who", "")) != "player" \
+				or String(ev.get("src", "")) != kind:
+			continue
+		taken[i] = true
+		L.claim(c, i, t_hit, d)
+		var j := i + 1
+		while j < evs.size() and ["player_death", "hook", "hook_capped"].has(String(evs[j].get("t", ""))):
+			L.claim(c, j, t_hit + 30)
+			j += 1
+		return true
+	return false
+
+
+## The blow of a machine whose intent carries `dmg`: the shield takes what it
+## can, the rest is a damage event this blow takes. Returns [hit, shielded].
+static func _blow(c: Dictionary, t_hit: int, d: Vector2, dmg: int) -> Array:
+	var absorbed := _take_absorb(c, t_hit)
+	var landed := false
+	if dmg - absorbed > 0:
+		landed = _take_blow(c, t_hit, d)
+	return [landed or absorbed > 0, absorbed > 0]
 
 
 static func _cross(c: Dictionary, center: Vector2i) -> Array:
@@ -294,6 +469,11 @@ static func _walk(c: Dictionary, force: String) -> int:
 		_claim_rest(c, t + 80, Vector2(0, 1))
 		c["hit"] = 80
 		return t + 80
+	# a machine chasing a tender a crane is still hauling sets off once it
+	# lands (the sim moved it after the haul, toward the tender's new tile)
+	var haul := int(c.get("_en_haul", -1))
+	if haul >= 0:
+		t = maxi(t, mini(haul - 40, HAUL_LATEST))
 	var gname := force if force != "" else gait_of(String(e["kind"]))
 	var g: Dictionary = GAITS[gname]
 	var step := int(g["step"])
@@ -338,7 +518,7 @@ static func _walk(c: Dictionary, force: String) -> int:
 		elif String(ev.get("t", "")) == "damage" and L.same_id(ev.get("id"), id):
 			L.claim(c, i, t + hurt * step, back)
 	_claim_rest(c, t + dur, _dir_or_down(from, to))
-	c["hit"] = dur
+	c["hit"] = t + dur - int(c["t"])
 	return t + dur + 40
 
 
@@ -401,9 +581,10 @@ static func _attack(c: Dictionary) -> int:
 	L.seg(c, e["id"], {"kind": "lunge", "t0": t, "dur": 300, "dir": -d, "reach": 0.3})
 	L.seg(c, e["id"], {"kind": "lunge", "t0": t + 190, "dur": 220, "dir": d, "reach": 0.6})
 	var t_hit := t + 267
+	var blow: Array = _blow(c, t_hit, d, dmg) if tile == _ppos(c) else [false, false]
 	L.clip(c, {"kind": "en_smear", "t0": t + 200, "dur": 130, "at": e["pos"], "dir": d})
 	L.clip(c, {"kind": "en_impact", "t0": t_hit, "dur": 380, "at": tile, "dir": d, "dmg": dmg,
-		"hit": _hits_player(c), "pal": HOT})
+		"hit": blow[0], "shield": blow[1], "pal": HOT})
 	_claim_rest(c, t_hit, d)
 	c["hit"] = t_hit - int(c["t"])
 	return t_hit + 160
@@ -441,11 +622,13 @@ static func _slam(c: Dictionary) -> int:
 		L.seg(c, id, {"kind": "path", "t0": t_imp + 190, "dur": 260, "pts": [Vector2(land), Vector2(boss)], "hop": 0.3})
 		L.seg(c, id, {"kind": "squash", "t0": t_imp + 440, "dur": 120})
 	var cross := _cross(c, tile)
+	if cross.has(_ppos(c)):
+		_blow(c, t_imp, _dir_or_down(land, _ppos(c)), dmg)
 	L.clip(c, {"kind": "en_slam", "t0": t, "dur": (t_imp - t) + 470, "at": tile, "land": land,
 		"imp": t_imp - t, "tiles": cross, "dmg": dmg, "layer": "ground"})
 	L.clip(c, {"kind": "en_debris", "t0": t_imp, "dur": 600, "at": tile, "tiles": cross, "n": 10 + dmg})
 	c["reel"]["shakes"].append({"t0": t_imp, "mag": 6.0 + float(dmg)})
-	_claim_rest(c, t_imp, _dir_or_down(land, _ppos(c)))
+	_claim_rest(c, t_imp, _dir_or_down(land, _ppos(c)), land)
 	c["hit"] = t_imp - int(c["t"])
 	return t_imp + 220
 
@@ -473,6 +656,8 @@ static func _quake(c: Dictionary) -> int:
 	for q in _arms(boss):
 		if not L.wall(c["pre"], q):
 			ring.append(q)
+	if L.man(boss, _ppos(c)) == 1:
+		_blow(c, t_imp, _dir_or_down(boss, _ppos(c)), int(e["intent"].get("dmg", 2)))
 	L.clip(c, {"kind": "en_quake", "t0": t_imp - 10, "dur": 560, "at": boss, "tiles": ring, "layer": "ground"})
 	L.clip(c, {"kind": "en_debris", "t0": t_imp, "dur": 560, "at": boss, "tiles": ring, "n": 12})
 	c["reel"]["shakes"].append({"t0": t_imp, "mag": 7.5})
@@ -491,10 +676,33 @@ static func _flood(c: Dictionary) -> int:
 	var boss: Vector2i = e["pos"]
 	var row := int(e["intent"].get("row", boss.y))
 	var w := int(c["pre"]["map"]["w"])
+	# the tiles this flood writes: oil on the row that no machine acting
+	# after the core laid (a later sludge's trail tile was occupied when the
+	# flood ran, so the sim skipped it - its own walk reveals it)
+	var later := {}
+	var seen_me := false
+	for pe in c["pre"]["enemies"]:
+		if seen_me:
+			later[pe["pos"]] = true
+		elif L.same_id(pe["id"], id):
+			seen_me = true
+	var xs: Array = []
+	var sw: Dictionary = c["reel"]["tswap"]
+	for p in sw:
+		if p.y == row and String(sw[p]["post"]) == "oil" and not sw[p].has("t") and not later.has(p):
+			xs.append(p.x)
+	# it pours onto the flooded tile nearest the core's column (never a wall);
+	# a core standing on the row gushes out of itself
 	var bx := boss.x
+	if boss.y != row and not xs.is_empty():
+		var best := 1 << 20
+		for x in xs:
+			if absi(int(x) - boss.x) < best:
+				best = absi(int(x) - boss.x)
+				bx = int(x)
 	var drop := Vector2i(bx, row)
-	var fly := 70 + 40 * absi(row - boss.y) if boss.y != row else 0
-	var t := _start(c, 140 + fly)
+	var fly := 70 + 40 * L.man(boss, drop) if boss != drop else 0
+	var t := _start(c, 140 + fly, false)
 	L.seg(c, id, {"kind": "shake", "t0": t, "dur": 220, "amt": 0.07})
 	L.seg(c, id, {"kind": "cast", "t0": t + 40, "dur": 280})
 	var t_land := t + 140 + fly
@@ -502,18 +710,30 @@ static func _flood(c: Dictionary) -> int:
 		# a gush of oil pours from the core down onto the row
 		L.clip(c, {"kind": "en_glob", "t0": t + 140, "dur": fly + 300, "at": drop, "from": boss, "to": drop,
 			"fly": fly, "size": 1.5, "stream": true, "pal": OIL})
-	var far := maxi(1, maxi(bx - 1, (w - 2) - bx))
+	# the crests run to the walls of the stretch they poured into and break
+	# there; the sim floods the WHOLE row, so tiles past those walls (other
+	# rooms, out of view) flip as the crest breaks rather than pacing the
+	# reel across the whole map
+	var lo := bx
+	while lo - 1 >= 1 and not L.wall(c["pre"], Vector2i(lo - 1, row)):
+		lo -= 1
+	var hi := bx
+	while hi + 1 <= w - 2 and not L.wall(c["pre"], Vector2i(hi + 1, row)):
+		hi += 1
+	var far := maxi(1, maxi(bx - lo, hi - bx))
 	var per := clampi(FLOOD_SWEEP_MS / far, 12, 48)
-	var xs: Array = []
-	var sw: Dictionary = c["reel"]["tswap"]
-	for p in sw:
-		if p.y == row and String(sw[p]["post"]) == "oil" and not sw[p].has("t"):
-			xs.append(p.x)
-			L.reveal(c, p, t_land + absi(p.x - bx) * per + per / 2)
+	for x in xs:
+		var dx := absi(int(x) - bx)
+		if int(x) < lo:
+			dx = bx - lo + 1
+		elif int(x) > hi:
+			dx = hi - bx + 1
+		L.reveal(c, Vector2i(int(x), row), t_land + dx * per + per / 2)
 	L.clip(c, {"kind": "en_flood", "t0": t_land - 20, "dur": 20 + far * per + 360, "at": drop, "row": row,
-		"from_x": bx, "x_min": 1, "x_max": w - 2, "per": per, "lead": 20, "xs": xs, "layer": "ground"})
-	for i in _own_of(c, "flood"):
-		L.claim(c, i, t_land)
+		"from_x": bx, "x_min": lo, "x_max": hi, "per": per, "lead": 20, "xs": xs, "layer": "ground"})
+	var fi := _own_or_take(c, "flood")
+	if fi >= 0:
+		L.claim(c, fi, t_land)
 	_claim_rest(c, t_land, Vector2(0, 1))
 	c["hit"] = t_land - int(c["t"])
 	return t_land + mini(far * per, 360) + 80
@@ -522,7 +742,7 @@ static func _flood(c: Dictionary) -> int:
 ## The furnace flares white-hot and flings embers: every slick catches in a
 ## wave spreading out from it, nearest first.
 static func _ignite_all(c: Dictionary) -> int:
-	var t := _start(c, 210)
+	var t := _start(c, 210, false)
 	var e: Dictionary = c["e"]
 	var id = e["id"]
 	var boss: Vector2i = e["pos"]
@@ -532,9 +752,17 @@ static func _ignite_all(c: Dictionary) -> int:
 	L.clip(c, {"kind": "en_heat", "t0": t, "dur": 560, "at": boss, "pal": HEAT})
 	var t_go := t + 210
 	var sw: Dictionary = c["reel"]["tswap"]
+	# its slicks: tiles that were flammable and are burning now, bar any an
+	# "ignite" event names (ignite_all emits none - that is another igniter,
+	# a cinder mite's step, whose own walk reveals it)
+	var named := {}
+	for ev in c["events"]:
+		if String(ev.get("t", "")) == "ignite" and ev.get("tile") is Vector2i:
+			named[ev["tile"]] = true
 	var tiles: Array = []
 	for p in sw:
-		if String(sw[p]["post"]) == "fire" and not sw[p].has("t"):
+		if String(sw[p]["post"]) == "fire" and not sw[p].has("t") and not named.has(p) \
+				and bool(Content.terrain(String(sw[p]["pre"]), "flammable", false)):
 			tiles.append(p)
 	var far := 1
 	for p in tiles:
@@ -551,14 +779,36 @@ static func _ignite_all(c: Dictionary) -> int:
 		L.clip(c, {"kind": "en_ember", "t0": t_go, "dur": fly + 320, "at": p, "from": boss, "to": p,
 			"fly": fly, "pal": HEAT})
 	var evs: Array = c["events"]
+	var ia := _own_or_take(c, "ignite_all")
+	if ia >= 0:
+		L.claim(c, ia, t_go)
+		# every slick that caught ran the ignite hooks (a resonance's root, an
+		# ember graft's bite) BEFORE the sim emitted ignite_all; those events
+		# name the enemy they hit, so the director hands them to that machine
+		# and they would land at its slot, before the fireball got there. They
+		# land when their own tile catches: walk the run back from ignite_all
+		# and time each hook to its tile and its consequences just after it.
+		var s := ia
+		while s > 0 and HOOK_RUN.has(String(evs[s - 1].get("t", ""))):
+			s -= 1
+		var cur := -1
+		for i in range(s, ia):
+			var ev: Dictionary = evs[i]
+			var tt := String(ev.get("t", ""))
+			if tt == "hook":
+				# a hook on a tile this verb did not light is some other
+				# machine's tail: not ours, nor what follows it
+				cur = int(at_tile[ev["tile"]]) if ev.get("tile") is Vector2i and at_tile.has(ev["tile"]) else -1
+				if cur >= 0:
+					L.claim(c, i, cur)
+			elif cur >= 0:
+				L.claim(c, i, cur + 30, Vector2(0, -1) if tt == "damage" else null)
 	for i in c["own"]:
 		if L.claimed(c, i):
 			continue
 		var tile = evs[i].get("tile")
 		if tile is Vector2i and at_tile.has(tile):
 			L.claim(c, i, at_tile[tile])
-		elif String(evs[i].get("t", "")) == "ignite_all":
-			L.claim(c, i, t_go)
 	_claim_rest(c, t_go, Vector2(0, 1))
 	c["hit"] = t_go - int(c["t"])
 	return mini(last, t_go + 360) + 80
@@ -567,7 +817,7 @@ static func _ignite_all(c: Dictionary) -> int:
 ## Heat spirals into the core and it glows brighter and brighter: a charge
 ## the player reads as "next turn, something big".
 static func _gather(c: Dictionary) -> int:
-	var t := _start(c, 470)
+	var t := _start(c, 470, false)
 	var e: Dictionary = c["e"]
 	L.seg(c, e["id"], {"kind": "cast", "t0": t, "dur": 540})
 	L.seg(c, e["id"], {"kind": "shake", "t0": t + 200, "dur": 300, "amt": 0.03})
@@ -592,7 +842,7 @@ static func _dredge(c: Dictionary) -> int:
 		if String(sw[p]["pre"]) == "growth" and String(sw[p]["post"]) == "goo" and not sw[p].has("t"):
 			tiles.append(p)
 			near = mini(near, L.man(p, boss))
-	var t := _start(c, 160 + near * 55)
+	var t := _start(c, 160 + near * 55, false) if not tiles.is_empty() else int(c["t"])
 	L.seg(c, id, {"kind": "cast", "t0": t, "dur": 320})
 	var first := t + 400
 	var back := t + 200
@@ -628,7 +878,7 @@ static func _ooze(c: Dictionary) -> int:
 	var e: Dictionary = c["e"]
 	var id = e["id"]
 	var spits := _own_of(c, "ooze")
-	var t := _start(c, 470) if not spits.is_empty() else int(c["t"])
+	var t := _start(c, 420, false) if not spits.is_empty() else int(c["t"])
 	# two deep pump strokes (stacked squashes press twice as far)
 	for k in 2:
 		L.seg(c, id, {"kind": "squash", "t0": t + k * 130, "dur": 130})
@@ -639,7 +889,9 @@ static func _ooze(c: Dictionary) -> int:
 		var ev: Dictionary = c["events"][i]
 		if not (ev.get("tile") is Vector2i):
 			continue
-		var fly := 240
+		# a short, high lob: a neighbour tile is close, so the glob goes UP and
+		# drops (a flat 240 ms arc to the next tile read as a hovering ball)
+		var fly := 190
 		var t_land := t + 230 + fly
 		L.clip(c, {"kind": "en_glob", "t0": t + 230, "dur": fly + 320, "at": ev["tile"], "from": e["pos"],
 			"to": ev["tile"], "fly": fly, "size": 1.35, "pal": OIL})
@@ -658,14 +910,17 @@ static func _stoke(c: Dictionary) -> int:
 	var id = e["id"]
 	var fired := _own_of(c, "stoke")
 	var big := not fired.is_empty()
-	var t := _start(c, 190) if big else int(c["t"])
+	var t := _start(c, 190, false) if big else int(c["t"])
+	var lean := _lean_side(c, e["pos"], 1)
 	L.seg(c, id, {"kind": "shake", "t0": t, "dur": 200, "amt": 0.05})
 	L.seg(c, id, {"kind": "cast", "t0": t + 90, "dur": 300})
-	L.clip(c, {"kind": "en_smoke", "t0": t + 140, "dur": 820 if big else 520, "at": e["pos"], "big": big})
+	L.clip(c, {"kind": "en_smoke", "t0": t + 140, "dur": 760 if big else 520, "at": e["pos"], "big": big,
+		"lean": lean})
 	for i in fired:
 		L.claim(c, i, t + 190)
-		L.clip(c, {"kind": "float", "t0": t + 240, "dur": L.T_FLOAT, "at": Vector2(e["pos"]) + Vector2(0.95, 0.55),
-			"text": "+smog", "col": Color("c8ced2")})
+		# the label rises on the side the plume does not bend to
+		L.clip(c, {"kind": "float", "t0": t + 240, "dur": L.T_FLOAT,
+			"at": Vector2(e["pos"]) + Vector2(-0.95 * float(lean), 0.55), "text": "+smog", "col": Color("c8ced2")})
 	_claim_rest(c, t + 190, Vector2(0, -1))
 	c["hit"] = t + 190 - int(c["t"])
 	return t + 420
@@ -675,11 +930,24 @@ static func _stoke(c: Dictionary) -> int:
 ## sludgeling rises from (the director opens its portal and pops it there).
 static func _summon(c: Dictionary) -> int:
 	var e: Dictionary = c["e"]
-	var t := _start(c, 390) if not _own_of(c, "summon").is_empty() else int(c["t"])
+	var t := _start(c, 390, false) if not _own_of(c, "summon").is_empty() else int(c["t"])
 	var id = e["id"]
+	# the exhaust bends away from the tile the sludgeling rises on (hard over
+	# when that tile is right above the stack)
+	var away := 1
+	var bend := 0.0
+	for i in _own_of(c, "summon"):
+		var ch = c["post_en"].get(c["events"][i].get("child"))
+		if ch == null:
+			continue
+		if ch["pos"].x > e["pos"].x:
+			away = -1
+		if ch["pos"].x == e["pos"].x and ch["pos"].y < e["pos"].y:
+			bend = 0.55
 	L.seg(c, id, {"kind": "shake", "t0": t, "dur": 300, "amt": 0.06})
 	L.seg(c, id, {"kind": "cast", "t0": t + 150, "dur": 280})
-	L.clip(c, {"kind": "en_smoke", "t0": t, "dur": 560, "at": e["pos"], "big": false})
+	L.clip(c, {"kind": "en_smoke", "t0": t, "dur": 560, "at": e["pos"], "big": false,
+		"lean": _lean_side(c, e["pos"], away), "bend": bend})
 	var end := t + 300
 	for i in _own_of(c, "summon"):
 		var child = c["post_en"].get(c["events"][i].get("child"))
@@ -736,11 +1004,15 @@ static func _drag(c: Dictionary) -> int:
 		L.seg(c, id, {"kind": "lunge", "t0": t_pull - 20, "dur": 240, "dir": -d, "reach": 0.12})
 		end = t_pull + n * step
 		c["ppos"] = pts[pts.size() - 1]
+		c["_en_haul"] = maxi(int(c.get("_en_haul", -1)), end)
 	if held >= 0:
 		L.claim(c, held, t_clamp + 40)
 		L.seg(c, "player", {"kind": "shake", "t0": t_clamp, "dur": 320, "amt": 0.05})
 		end = t_clamp + 320
-	L.seg(c, "player", {"kind": "flash", "t0": t_clamp, "dur": 120})
+	if n > 0 or held >= 0:
+		# the clamp bites: only when it reached the tender (a chain that falls
+		# short never touched it)
+		L.seg(c, "player", {"kind": "flash", "t0": t_clamp, "dur": 120})
 	var fpts: Array = []
 	for q in pts:
 		fpts.append(Vector2(q))
@@ -763,7 +1035,10 @@ static func _gum(c: Dictionary) -> int:
 	var reach := int(_row(e).get("gum_range", 3))
 	var idx := -1
 	if L.man(me, p) <= reach:
-		idx = _take_event(c, "gummed")
+		# the gummed event names the ability, not the spitter: take the next
+		# one for the slot this spitter telegraphed, in stream order
+		var slot = e["intent"].get("slot")
+		idx = _take_event(c, "gummed", "slot", slot) if slot != null else _take_event(c, "gummed")
 	var to := p
 	if idx < 0:
 		to = me
@@ -836,7 +1111,7 @@ static func _drain(c: Dictionary) -> int:
 ## hulk, which is hidden until its pop).
 static func _fuse(c: Dictionary) -> int:
 	var e: Dictionary = c["e"]
-	var t := _start(c, 380) if not _own_of(c, "assimilate").is_empty() else int(c["t"])
+	var t := _start(c, 380, false) if not _own_of(c, "assimilate").is_empty() else int(c["t"])
 	var id = e["id"]
 	var me: Vector2i = e["pos"]
 	var merge := t + 380
@@ -1004,6 +1279,13 @@ static func _sparks(cv, p: Vector2, dir: Vector2, spread: float, n: int, reach: 
 		D.line(cv, tail, head, D.ca(hot.lerp(cool, u), 1.0 - u * u), w)
 
 
+## How high (tiles) a lob between two tiles may arc before its apex would
+## leave the view (see _up).
+static func _lob_room(V: Dictionary, a, b) -> float:
+	var up := mini(_up(V, _tile_of(a), 2), _up(V, _tile_of(b), 2))
+	return float(up) + 0.25
+
+
 ## A small rock chunk: an irregular quad.
 static func _chunk(cv, p: Vector2, s: float, rot: float, col: Color) -> void:
 	if s < 1.0 or col.a <= 0.01:
@@ -1067,10 +1349,20 @@ static func _p_impact(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 		D.star(cv, c, t * (0.16 + 0.24 * u) * sc, D.ca(pal["a"], 1.0 - u), 4, d.angle(), t * 0.06)
 	D.ring(cv, c, t * (0.16 + 0.4 * D.ease_out(k)) * sc, D.ca(pal["b"], 0.9 * (1.0 - k)), t * 0.07 * (1.0 - k))
 	var n := int(5 + 2 * sc)
-	# grinding sparks spray off both sides of the contact and fall
-	_sparks(cv, c, s - d * 0.4, 0.6, n, t * 1.2 * sc, k, t, 11, pal["b"], pal["a"], t * 0.07)
-	_sparks(cv, c, -s - d * 0.4, 0.6, n, t * 1.2 * sc, k, t, 37, pal["b"], pal["a"], t * 0.07)
-	_sparks(cv, c, -d, 0.5, 3, t * 0.8 * sc, k, t, 63, Color.WHITE, pal["b"], t * 0.06)
+	# grinding sparks spray off both sides of the contact and fall - short of
+	# the view's top edge when the victim stands on the top row
+	var reach := t * minf(1.2 * sc, float(_up(V, _tile_of(cl["at"]), 2)) + 0.55)
+	_sparks(cv, c, s - d * 0.4, 0.6, n, reach, k, t, 11, pal["b"], pal["a"], t * 0.07)
+	_sparks(cv, c, -s - d * 0.4, 0.6, n, reach, k, t, 37, pal["b"], pal["a"], t * 0.07)
+	_sparks(cv, c, -d, 0.5, 3, minf(t * 0.8 * sc, reach), k, t, 63, Color.WHITE, pal["b"], t * 0.06)
+	if bool(cl.get("shield", false)):
+		# the shield takes it: a blue shell flares on the side the blow came from
+		var ang := (-d).angle()
+		var sa := 1.0 - D.ease_in(k)
+		cv.draw_arc(D.px(V, cl["at"]), t * (0.46 + 0.06 * k), ang - 1.2, ang + 1.2, 14, D.ca(SHIELD, 0.95 * sa),
+			maxf(2.0, t * 0.09 * sa), true)
+		cv.draw_arc(D.px(V, cl["at"]), t * (0.46 + 0.06 * k), ang - 0.7, ang + 0.7, 10, D.ca(Color.WHITE, 0.8 * sa),
+			maxf(1.0, t * 0.035), true)
 	if not hit:
 		for i in 3:
 			cv.draw_circle(c + Vector2((float(i) - 1.0) * t * 0.2 * (0.5 + k), t * 0.2 - t * 0.15 * k),
@@ -1135,12 +1427,16 @@ static func _p_slam(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	for p in tiles:
 		cv.draw_rect(D.tile_rect(V, p).grow(-t * 0.04), D.ca(hot, 0.7 * f * f))
 	var grow := D.ease_out(minf(1.0, v * 3.5))
+	# the shockwave and the crack running up stop at the view's top edge
+	var room := float(_up(V, _tile_of(cl["at"]), 2)) + 0.6
 	for j in 4:
 		var dv := Vector2(L.DIRS[j])
-		_crack(cv, c, dv, t * 1.35 * grow, t, 17 + j * 31, D.ca(Color("1a120c"), 0.9 * f), t * 0.07)
+		var reach := minf(1.35, room - 0.3) if L.DIRS[j].y < 0 else 1.35
+		_crack(cv, c, dv, t * reach * grow, t, 17 + j * 31, D.ca(Color("1a120c"), 0.9 * f), t * 0.07)
 		_crack(cv, c + dv * t * 0.5, dv.rotated(0.9), t * 0.4 * grow, t, 71 + j * 13, D.ca(Color("1a120c"), 0.8 * f), t * 0.05)
-	D.ring(cv, c, t * (0.35 + 1.65 * D.ease_out(v)), D.ca(MACHINE["b"], 0.9 * f), t * 0.16 * f)
-	D.ring(cv, c, t * (0.2 + 1.0 * D.ease_out(v)), D.ca(HOT["a"], 0.7 * f), t * 0.08 * f)
+	var r1 := minf(2.0, room)
+	D.ring(cv, c, t * (0.35 + (r1 - 0.35) * D.ease_out(v)), D.ca(MACHINE["b"], 0.9 * f), t * 0.16 * f)
+	D.ring(cv, c, t * (0.2 + (r1 * 0.6 - 0.2) * D.ease_out(v)), D.ca(HOT["a"], 0.7 * f), t * 0.08 * f)
 
 
 static func _p_debris(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
@@ -1206,7 +1502,7 @@ static func _p_flood(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			continue
 		var since := (run - dx) * per
 		var a := clampf(1.0 - since / 320.0, 0.0, 1.0)
-		if a <= 0.02:
+		if a <= 0.02 or not _seen(V, Vector2i(int(x), row)):
 			continue
 		var r := D.tile_rect(V, Vector2(x, row))
 		cv.draw_rect(r.grow(-t * 0.04), D.ca(OIL["a"], 0.5 * a * fade))
@@ -1220,6 +1516,8 @@ static func _p_flood(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			head = lim
 		var bx := D.px(V, Vector2(head, row)).x
 		var b := Vector2(bx, y)
+		if not _seen(V, Vector2i(roundi(head), row)):
+			continue
 		if past <= 0.0:
 			# the crest: a rounded hump of oil leaning into its run, a sheen
 			# along its back, a pale lip curling over the front and spray ahead
@@ -1268,7 +1566,8 @@ static func _p_glob(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var fly := maxf(1.0, float(cl["fly"]))
 	var a := D.px(V, cl["from"]) + Vector2(0, -t * 0.25)
 	var b := D.px(V, cl["to"])
-	var h := t * (0.35 + 0.1 * a.distance_to(b) / t)
+	# a lob that clearly goes up and comes down, but never over the view's top
+	var h := minf(t * (0.62 + 0.08 * a.distance_to(b) / t), _lob_room(V, cl["from"], cl["to"]) * t)
 	if bool(cl.get("stream", false)):
 		# a gush: a thick rope of oil whose tail follows its head down
 		var u1 := minf(1.0, ms / fly)
@@ -1311,19 +1610,23 @@ static func _p_heat(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var pal := _pal(cl, HEAT)
 	var c := D.px(V, cl["at"])
+	# sparks and the heat ring stay inside the view (see _up)
+	var room := float(_up(V, _tile_of(cl["at"]), 2)) + 0.5
 	var g := D.pulse(D.win(k, 0.0, 0.85))
 	D.glow(cv, c, t * (0.45 + 0.55 * g), D.ca(pal["a"], 0.65 * g))
 	cv.draw_circle(c, t * 0.14 * (0.4 + g), D.ca(pal["b"], g))
+	var rise := clampf(room - 0.3, 0.5, 1.2)
 	for i in 8:
 		var u := D.win(k, float(i) * 0.06, float(i) * 0.06 + 0.5)
 		if u <= 0.0 or u >= 1.0:
 			continue
 		var x := (D.h01(i * 7 + 3) - 0.5) * t * 0.9
-		D.twinkle(cv, c + Vector2(x + sin(u * 7.0 + float(i)) * t * 0.08, -t * (0.2 + 1.0 * u)), t * 0.08 * (1.0 - u),
+		D.twinkle(cv, c + Vector2(x + sin(u * 7.0 + float(i)) * t * 0.08, -t * rise * u), t * 0.08 * (1.0 - u),
 			D.ca(pal["b"].lerp(pal["a"], u), 1.0 - u))
 	var w := D.win(k, 0.3, 0.9)
 	if w > 0.0 and w < 1.0:
-		D.ring(cv, c, t * (0.4 + 1.1 * D.ease_out(w)), D.ca(pal["a"], 0.9 * (1.0 - w)), t * 0.12 * (1.0 - w))
+		var rr := minf(1.5, room)
+		D.ring(cv, c, t * (0.4 + (rr - 0.4) * D.ease_out(w)), D.ca(pal["a"], 0.9 * (1.0 - w)), t * 0.12 * (1.0 - w))
 
 
 static func _p_ember(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
@@ -1333,7 +1636,7 @@ static func _p_ember(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var fly := maxf(1.0, float(cl["fly"]))
 	var a := D.px(V, cl["from"])
 	var b := D.px(V, cl["to"])
-	var h := t * (0.45 + 0.08 * a.distance_to(b) / t)
+	var h := minf(t * (0.45 + 0.08 * a.distance_to(b) / t), _lob_room(V, cl["from"], cl["to"]) * t)
 	if ms < fly:
 		var u := ms / fly
 		# a fireball with a flame tail streaming back along its arc
@@ -1369,18 +1672,23 @@ static func _p_gather(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	cv.draw_circle(c, t * (0.07 + 0.1 * g + 0.02 * beat) * (1.0 - rel), D.ca(pal["b"], 0.95))
 	# a ring of heat tightening round the core
 	if rel <= 0.0:
-		D.ring(cv, c, t * (0.95 - 0.5 * g), D.ca(pal["a"], 0.25 + 0.5 * g), t * (0.03 + 0.04 * g))
-	# heat streaks drawn in to the core from all round
+		D.ring(cv, c, t * (0.95 - 0.5 * g), D.ca(pal["a"], 0.4 + 0.5 * g), t * (0.04 + 0.05 * g))
+	# heat streaks drawn in to the core from all round (from inside the view)
+	var reach := minf(1.4, float(_up(V, _tile_of(cl["at"]), 2)) + 0.45)
 	for i in 12:
 		var st := D.h01(i * 13 + 2) * 0.4
 		var u := D.win(k, st, st + 0.4)
 		if u <= 0.0 or u >= 1.0:
 			continue
 		var ang := D.h01(i * 29 + 7) * TAU + u * 1.4
-		var r := t * 1.4 * (1.0 - D.ease_in(u))
+		var r := t * reach * (1.0 - D.ease_in(u))
 		var head := c + _polar(ang, r)
-		D.line(cv, head, c + _polar(ang - 0.25, r + t * 0.28), D.ca(pal["a"], 0.7 * u + 0.2), t * 0.05)
-		cv.draw_circle(head, t * 0.045, D.ca(pal["b"], 0.6 + 0.4 * u))
+		var tail := c + _polar(ang - 0.25, r + t * 0.3)
+		# a hot streak: an orange body with a white-hot core line, brightest
+		# as it nears the core
+		D.line(cv, head, tail, D.ca(pal["a"], 0.6 * u + 0.35), t * 0.075)
+		D.line(cv, head, head.lerp(tail, 0.5), D.ca(pal["b"], 0.5 + 0.5 * u), t * 0.035)
+		cv.draw_circle(head, t * 0.05, D.ca(pal["b"], 0.7 + 0.3 * u))
 	if rel > 0.0 and rel < 1.0:
 		D.ring(cv, c, t * (0.3 + 0.9 * D.ease_out(rel)), D.ca(pal["b"], 1.0 - rel), t * 0.12 * (1.0 - rel))
 		D.glow(cv, c, t * 0.5 * (1.0 - rel), D.ca(pal["b"], 0.7 * (1.0 - rel)))
@@ -1390,19 +1698,31 @@ static func _p_smoke(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var big := bool(cl.get("big", false))
 	var top := D.px(V, cl["at"]) + Vector2(0, -t * 0.48)
-	var n := 10 if big else 4
-	var rise := 1.7 if big else 0.8
-	var grow := 0.36 if big else 0.16
+	var n := 9 if big else 4
+	var want := 1.4 if big else 0.75
+	var grow := 0.3 if big else 0.16
+	# the column may not climb past the view's top edge (the status strip
+	# sits there, and a stack on the top row would belch its whole column
+	# into it): what it cannot rise it drifts sideways, a plume in the wind
+	var room := float(_up(V, _tile_of(cl["at"]), 2)) + 0.02
+	var rise := clampf(room - 0.2 - (0.14 + grow) * 0.8, 0.25, want)
+	var bent := float(cl.get("bend", 0.0)) > 0.0
+	var lean := maxf((want - rise) * 0.9, float(cl.get("bend", 0.0))) * float(cl.get("lean", 1))
+	if bent:
+		rise *= 0.7
 	# the ember glow at the mouth as it belches
 	var gm := D.pulse(D.win(k, 0.0, 0.45))
 	D.glow(cv, top, t * 0.22 * gm, D.ca(HEAT["a"], 0.7 * gm))
 	for i in n:
-		var st := float(i) * (0.055 if big else 0.1)
+		var st := float(i) * (0.06 if big else 0.1)
 		var u := D.win(k, st, st + 0.6)
 		if u <= 0.0 or u >= 1.0:
 			continue
-		var drift := (D.h01(i * 9 + 1) - 0.5) * t * 0.6 * u
-		var q := top + Vector2(drift, -t * (0.1 + rise * D.ease_out(u)))
+		var drift := (D.h01(i * 9 + 1) - 0.5) * t * 0.5 * u
+		# a plume in the wind bends late; one told to bend (off a spawn tile)
+		# leans from the mouth
+		var side_u := D.ease_out(u) if bent else D.ease_in(u)
+		var q := top + Vector2(drift + lean * t * side_u, -t * (0.1 + rise * D.ease_out(u)))
 		var r := t * (0.14 + grow * u)
 		var a := 0.9 * (1.0 - u * u)
 		cv.draw_circle(q, r * 1.08, D.ca(Color("262422"), 0.6 * a))
@@ -1412,7 +1732,8 @@ static func _p_smoke(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 		for i in 4:
 			var u := D.win(k, 0.02 + float(i) * 0.05, 0.4 + float(i) * 0.05)
 			if u > 0.0 and u < 1.0:
-				cv.draw_circle(top + Vector2((D.h01(i * 3) - 0.5) * t * 0.4, -t * 1.3 * u), t * 0.035, D.ca(HEAT["b"], 1.0 - u))
+				cv.draw_circle(top + Vector2((D.h01(i * 3) - 0.5) * t * 0.4 + lean * t * 0.7 * u * u, -t * rise * u),
+					t * 0.035, D.ca(HEAT["b"], 1.0 - u))
 
 
 # --- paint: ranged -------------------------------------------------------------------
@@ -1539,7 +1860,7 @@ static func _p_tar(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var a := D.px(V, cl["from"]) + Vector2(0, t * 0.08)
 	var b := D.px(V, cl["to"])
 	var hit := bool(cl.get("hit", true))
-	var h := t * (0.45 + 0.12 * a.distance_to(b) / t)
+	var h := minf(t * (0.45 + 0.12 * a.distance_to(b) / t), _lob_room(V, cl["from"], cl["to"]) * t)
 	if ms < fly:
 		var u := ms / fly
 		for j in 3:
