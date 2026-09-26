@@ -131,6 +131,7 @@ func _init() -> void:
 		n += 1
 	_check_idle()
 	_check_attribution()
+	_check_holds()
 	_check_shell()
 	_check_soak()
 	_check(errs.n == 0, "no engine or script errors while planning and painting (%d: %s)" % [errs.n, str(errs.first)])
@@ -554,3 +555,71 @@ func _check_attribution() -> void:
 						blows += 1
 			_check(blows == 1, "%s: machine %d is credited exactly its own blow (%d)" % [nm, k, blows])
 		_check(swung >= 2, "%s: stages at least two attackers (%d)" % [nm, swung])
+
+
+## Nothing the step changed may show before the beat that changes it: the
+## telegraph an attacker carries stays until its stagger lands, the HUD chips
+## (shield, max HP, bloom) wait for their floats, a room dresses when its
+## room_bloom lands, and the cleanse float says what the cleanse PAID (the
+## sim's event carries the balance, not the gain).
+func _check_holds() -> void:
+	var sh = Shell.new()
+	sh._ready()
+	if sh._run_save != null:
+		sh._run_save.close()
+		sh._run_save = null
+	sh._game_is_run = false
+	sh.screen = "game"
+	sh.mode = "normal"
+	sh.anim_mode = "full"
+	# tide: the sludgeling beside the tender telegraphs an attack on (4,4);
+	# the wave staggers it, and only then does the red tile go
+	var td: Dictionary = Scenes.ability_scene("tide")
+	sh.game = td["game"]
+	sh.clock_override = 10000
+	sh._act(td["action"])
+	var at0: bool = sh._threat_tiles(sh._threat_snap(sh.game.snapshot())).has(Vector2i(4, 4))
+	sh.clock_override = 10000 + int(sh._reel["len"]) + 100
+	var at1: bool = sh._threat_tiles(sh._threat_snap(sh.game.snapshot())).has(Vector2i(4, 4))
+	_check(at0 and not at1, "tide: the attacker's telegraph holds until its stagger lands (%s -> %s)" % [at0, at1])
+	# Ironheart: shield 0 -> 3 and max HP 30 -> 31 wait for their floats
+	var ih: Dictionary = Scenes.extra_scene("x:ironheart")
+	var ipre: Dictionary = ih["game"].snapshot()
+	var ievs: Array = ih["game"].step(ih["action"])
+	var ipost: Dictionary = ih["game"].snapshot()
+	var ir := Anim.plan(ipre, ih["action"], ievs, ipost)
+	_check(Anim.hud_shown(ir, "shield", 0.0, int(ipost["player"]["shield"])) == int(ipre["player"]["shield"])
+		and Anim.hud_shown(ir, "max_hp", 0.0, int(ipost["player"]["max_hp"])) == int(ipre["player"]["max_hp"]),
+		"x:ironheart: the shield and max-HP chips hold until their beat")
+	var iend := float(ir["len"]) + 1.0
+	_check(Anim.hud_shown(ir, "shield", iend, int(ipost["player"]["shield"])) == int(ipost["player"]["shield"])
+		and Anim.hud_shown(ir, "max_hp", iend, int(ipost["player"]["max_hp"])) == int(ipost["player"]["max_hp"]),
+		"x:ironheart: the chips land on the post values")
+	# a cleanse with bloom already in the purse
+	var cl: Dictionary = Scenes.basic_scene("cleanse")
+	var cg = cl["game"]
+	cg.bloom = 5
+	var cpre: Dictionary = cg.snapshot()
+	var cevs: Array = cg.step(cl["action"])
+	var cpost: Dictionary = cg.snapshot()
+	var cr := Anim.plan(cpre, cl["action"], cevs, cpost)
+	var said := []
+	for c2 in cr["clips"]:
+		if String(c2["kind"]) == "float":
+			said.append(String(c2["text"]))
+	var bal := int(cpre["bloom"])
+	for ev in cevs:
+		if String(ev.get("t", "")) == "cleanse":
+			bal = int(ev.get("bloom", bal))
+	var paid := bal - int(cpre["bloom"])
+	_check(said.has("+%d" % paid) and (paid == bal or not said.has("+%d" % bal)),
+		"cleanse: the float says the gain (+%d), never the balance (%d): %s" % [paid, bal, str(said)])
+	_check(Anim.hud_shown(cr, "bloom", 0.0, int(cpost["bloom"])) == 5
+		and Anim.hud_shown(cr, "bloom", float(cr["len"]) + 1.0, int(cpost["bloom"])) == int(cpost["bloom"]),
+		"cleanse: the bloom chip holds 5 until the bloom lands")
+	var bl_post: Array = cpost["map"].get("bloomed", [])
+	if not bl_post.is_empty():
+		_check(Anim.bloomed_shown(cr, 0.0, bl_post) == cpre["map"].get("bloomed", []),
+			"cleanse: the room dresses only when its bloom lands")
+	sh.clock_override = -1
+	sh.free()

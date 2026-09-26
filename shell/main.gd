@@ -183,6 +183,12 @@ var anim_mode := "full"  # full | quick | off (Animations setting)
 ## Set while an input's SECOND step runs (an out-of-charge tap ends the turn,
 ## then moves): its reel is chained after the first instead of replacing it.
 var _chain_next := false
+## The board the current reel started from and the events it plays: while it
+## plays, the telegraphs on the map are the ones being carried out (an
+## attacker's red tile stays until its death or stagger lands), not the next
+## turn's.
+var _reel_pre: Dictionary = {}
+var _reel_evs: Array = []
 ## A fixed clock (ms) for tests/capture_anim.gd filmstrips; -1 = the real one.
 var clock_override := -1
 ## A caption tests/capture_anim.gd stamps on the map (frame time); "" = none.
@@ -283,6 +289,8 @@ func _reset_reel() -> void:
 	_reel = {}
 	_reel_ms = -99999
 	_chain_next = false
+	_reel_pre = {}
+	_reel_evs = []
 
 
 func _new_game() -> void:
@@ -590,6 +598,7 @@ func _start_reel(pre: Dictionary, a: Dictionary, evs: Array, prev_floor: int) ->
 		var first_len := int(_reel.get("len", 0))
 		var nr := Anim.plan(pre, a, evs, game.snapshot(), float(Anim.SPEEDS.get(anim_mode, 1.0)))
 		_reel = Anim.chain(_reel, nr)
+		_reel_evs = _reel_evs + evs
 		var bt: Array = []
 		for t in nr.get("ev_t", []):
 			bt.append(int(t) + first_len - int(ort))
@@ -603,6 +612,8 @@ func _start_reel(pre: Dictionary, a: Dictionary, evs: Array, prev_floor: int) ->
 				c2["t0"] = int(float(cl["t0"]) - ort)
 				carry.append(c2)
 	_reel = Anim.plan(pre, a, evs, game.snapshot(), float(Anim.SPEEDS.get(anim_mode, 1.0)))
+	_reel_pre = pre
+	_reel_evs = evs
 	if not carry.is_empty():
 		_reel["clips"].append_array(carry)
 		for c2 in carry:
@@ -1772,6 +1783,30 @@ func _room_view(m: Dictionary) -> Rect2i:
 	return Rect2i(pp.x - 4, pp.y - 3, 9, 7)
 
 
+## The snapshot whose telegraphs to draw now: the live one, or while a reel
+## plays the board it started from, minus every enemy whose death or stagger
+## has already landed in it.
+func _threat_snap(snap: Dictionary) -> Dictionary:
+	var rt := _reel_t()
+	if _reel_pre.is_empty() or not Anim.playing(_reel, rt):
+		return snap
+	var gone := {}
+	for gh in _reel.get("ghosts", []):
+		if float(gh["t_die"]) <= rt:
+			gone[gh["id"]] = true
+	var ev_t: Array = _reel.get("ev_t", [])
+	for i in mini(_reel_evs.size(), ev_t.size()):
+		if String(_reel_evs[i].get("t", "")) == "staggered" and float(ev_t[i]) <= rt:
+			gone[_reel_evs[i].get("id")] = true
+	var ens: Array = []
+	for e in _reel_pre.get("enemies", []):
+		if not gone.has(e["id"]):
+			ens.append(e)
+	var v := snap.duplicate(false)
+	v["enemies"] = ens
+	return v
+
+
 func _threat_tiles(snap: Dictionary) -> Dictionary:
 	var t := {}
 	for e in snap["enemies"]:
@@ -2355,11 +2390,15 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	var y := pad + row_h * 0.72
 	var x := vw * 0.025
 	var php := clampi(Anim.hp_shown(_reel, "player", _reel_t(), int(pl["hp"])), 0, int(pl["max_hp"]))
-	x = _chip(x, y, "ic_hp", "%d/%d" % [php, pl["max_hp"]], vw, vh, COL_TEXT if php > 3 else COL_RED)
-	if int(pl["shield"]) > 0:
-		x = _chip(x, y, "ic_shield", str(pl["shield"]), vw, vh)
+	# every chip holds its value until the beat that changes it lands
+	var pmax := Anim.hud_shown(_reel, "max_hp", _reel_t(), int(pl["max_hp"]))
+	php = clampi(php, 0, maxi(pmax, 1))
+	x = _chip(x, y, "ic_hp", "%d/%d" % [php, pmax], vw, vh, COL_TEXT if php > 3 else COL_RED)
+	var pshield := Anim.hud_shown(_reel, "shield", _reel_t(), int(pl["shield"]))
+	if pshield > 0:
+		x = _chip(x, y, "ic_shield", str(pshield), vw, vh)
 	x = _chip(x, y, "ic_charge", "%d" % pl["charge"], vw, vh)
-	x = _chip(x, y, "ic_bloom", str(snap["bloom"]), vw, vh)
+	x = _chip(x, y, "ic_bloom", str(Anim.hud_shown(_reel, "bloom", _reel_t(), int(snap["bloom"]))), vw, vh)
 	var btn_h := row_h * 1.05
 	_button(Rect2(vw - vw * 0.095, pad, vw * 0.075, btn_h), "?", "help", int(vh * 0.024))
 	_button(Rect2(vw - vw * 0.185, pad, vw * 0.075, btn_h), "=", "menu", int(vh * 0.024))
@@ -2420,7 +2459,11 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 		_txt(Vector2(vw - fw - gw - vw * 0.055, y2 + mh), gl,
 			Color(0.6, 0.85, 0.55) if not done else COL_DIM_TEXT, int(vh * 0.016))
 		right_edge = vw - fw - gw - vw * 0.075
-	if _threat_tiles(snap).has(pl["pos"]):
+	# the tile the tender is DRAWN on, against the telegraphs being carried out
+	var shown_at: Vector2i = pl["pos"]
+	if Anim.playing(_reel, _reel_t()):
+		shown_at = Vector2i((Anim.pos_at(_reel, "player", _reel_t(), Vector2(pl["pos"]))).round())
+	if _threat_tiles(_threat_snap(snap)).has(shown_at):
 		var ix := mx + mw + vw * 0.02
 		_txt_fit(Vector2(ix, y2 + mh), "! INCOMING", COL_RED, int(vh * 0.021),
 			maxf(right_edge - ix, vw * 0.06))
@@ -2481,7 +2524,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	var pal: Dictionary = BIOME_PAL.get(
 		String(game.floor_def(game.floor_num).get("biome", "strip_mine")), BIOME_PAL["strip_mine"])
 	var brects: Array = []
-	for ri in m.get("bloomed", []):
+	for ri in Anim.bloomed_shown(rl, rt, m.get("bloomed", [])):
 		brects.append(m["rooms"][ri])
 	# the ground takes sides: corruption stains its neighbours dark
 	var blight := {}
@@ -2613,13 +2656,14 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 
 	var thc := COL_THREAT
 	thc.a = 0.22 + 0.12 * sin(_now() / 240.0)
-	for t in _threat_tiles(snap):
+	var tsnap := _threat_snap(snap)
+	for t in _threat_tiles(tsnap):
 		if _vis(t):
 			draw_rect(_tile_rect(t), thc)
-	for e0 in snap["enemies"]:
+	for e0 in tsnap["enemies"]:
 		if String(e0["intent"].get("type", "")) != "fuse":
 			continue
-		for e1 in snap["enemies"]:
+		for e1 in tsnap["enemies"]:
 			if e1["id"] == e0["intent"].get("with", -1) and (_vis(e0["pos"]) or _vis(e1["pos"])):
 				var wa := 0.5 + 0.4 * absf(sin(_now() / 180.0))
 				draw_line(_tile_rect(e0["pos"]).get_center(), _tile_rect(e1["pos"]).get_center(),

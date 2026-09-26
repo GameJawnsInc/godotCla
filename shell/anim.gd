@@ -58,7 +58,7 @@ const SCREENED_VERB := "screened"
 
 static func empty_reel() -> Dictionary:
 	return {"clips": [], "tracks": {}, "ghosts": [], "spawns": {}, "shakes": [], "tswap": {}, "hp": {},
-		"ev_t": [], "dim": {}, "len": 0}
+		"ev_t": [], "dim": {}, "bloomed": {}, "hud": {}, "len": 0}
 
 
 static func plan(pre: Dictionary, action: Dictionary, events: Array, post: Dictionary, speed: float = 1.0) -> Dictionary:
@@ -96,6 +96,7 @@ static func plan(pre: Dictionary, action: Dictionary, events: Array, post: Dicti
 		if (tt == "undim" or tt == "smog_dim") and events[i].has("dim"):
 			dims.append([int(c["times"][i]), int(events[i]["dim"])])
 	reel["dim"] = {"pre": int(pre.get("dim", 0)), "at": dims}
+	_room_and_hud(c)
 	_land_all(c)
 	reel["len"] = _length(reel)
 	if speed != 1.0:
@@ -665,6 +666,9 @@ static func _feedback(c: Dictionary, t_end: int) -> void:
 	var st_run := {}
 	var own_cleanse := String(c["action"].get("type", "")) == "cleanse"
 	var restored := false
+	# the sim's cleanse event carries the bloom TOTAL after it, not the gain:
+	# follow the balance through the stream to say what this cleanse paid
+	var bloom_run := int(c["pre"].get("bloom", 0))
 	for i in evs.size():
 		var ev: Dictionary = evs[i]
 		var t: int = int(c["times"][i])
@@ -753,7 +757,10 @@ static func _feedback(c: Dictionary, t_end: int) -> void:
 					L.clip(c, {"kind": "burst", "t0": t, "dur": 600, "at": cp, "col": Color("e8c840")})
 				L.clip(c, {"kind": "tile_pop", "t0": t, "dur": 340, "at": cp, "layer": "ground",
 					"col": L.TERRAIN_COL.get(L.tkind(c["post"], cp), Color("6cc95c"))})
-				say.call(cp, t + 20, Vector2(cp), "+%d" % int(ev.get("bloom", 1)), Color("f7d85a"))
+				var gain := int(ev.get("bloom", bloom_run)) - bloom_run
+				bloom_run = int(ev.get("bloom", bloom_run))
+				if gain > 0:
+					say.call(cp, t + 20, Vector2(cp), "+%d" % gain, Color("f7d85a"))
 			"death":
 				var dk = ev.get("id")
 				var dd = last_hit.get(dk, Vector2.ZERO)
@@ -938,6 +945,68 @@ static func _reveals(c: Dictionary, t_end: int) -> void:
 			sw[p]["t"] = t_end
 
 
+## When the floor's dressing and the HUD's chips change: a room turns green
+## when its room_bloom lands, and the shield, bloom and max-HP chips move on
+## the beats that move them (a shield going up or absorbing, a cleanse's
+## bloom, a bounty) - never at the tap. A change no event accounts for (an
+## item's max HP, say) lands with the float that announces it, else at 0.
+static func _room_and_hud(c: Dictionary) -> void:
+	var reel: Dictionary = c["reel"]
+	var evs: Array = c["events"]
+	var pre: Dictionary = c["pre"]
+	var post: Dictionary = c["post"]
+	var rooms: Array = []
+	var hud := {"shield": [], "bloom": [], "max_hp": []}
+	var sh_run := int(pre["player"].get("shield", 0))
+	var bl_run := int(pre.get("bloom", 0))
+	for i in evs.size():
+		var ev: Dictionary = evs[i]
+		var t: int = int(c["times"][i])
+		match String(ev.get("t", "")):
+			"room_bloom":
+				rooms.append([t, int(ev.get("room", -1))])
+				hud["bloom"].append([t, int(ev.get("bonus", 0))])
+				bl_run += int(ev.get("bonus", 0))
+			"cleanse":
+				# the event carries the balance after the cleanse, not the gain
+				var tot := int(ev.get("bloom", bl_run))
+				hud["bloom"].append([t, tot - bl_run])
+				bl_run = tot
+			"bounty":
+				hud["bloom"].append([t, int(ev.get("bloom", 0))])
+				bl_run += int(ev.get("bloom", 0))
+			"floor_restored":
+				hud["bloom"].append([t, int(ev.get("bonus", 0))])
+				bl_run += int(ev.get("bonus", 0))
+			"shield":
+				var tot := int(ev.get("total", sh_run))
+				hud["shield"].append([t, tot - sh_run])
+				sh_run = tot
+			"shield_absorb":
+				hud["shield"].append([t, -int(ev.get("amt", 0))])
+				sh_run -= int(ev.get("amt", 0))
+	var cues := {"shield": "shield", "max_hp": " max", "bloom": "bloom"}
+	var nows := {"shield": int(post["player"].get("shield", 0)), "max_hp": int(post["player"].get("max_hp", 0)),
+		"bloom": int(post.get("bloom", 0))}
+	var pres := {"shield": int(pre["player"].get("shield", 0)), "max_hp": int(pre["player"].get("max_hp", 0)),
+		"bloom": int(pre.get("bloom", 0))}
+	for key in hud:
+		var sum := 0
+		for h in hud[key]:
+			sum += int(h[1])
+		var rest: int = int(nows[key]) - int(pres[key]) - sum
+		if rest == 0:
+			continue
+		var at := 0
+		for cl in reel["clips"]:
+			if String(cl["kind"]) == "float" and String(cl.get("text", "")).contains(String(cues[key])):
+				at = int(cl["t0"])
+				break
+		hud[key].append([at, rest])
+	reel["bloomed"] = {"pre": (pre["map"].get("bloomed", []) as Array).duplicate(), "at": rooms}
+	reel["hud"] = hud
+
+
 ## The backstop behind every builder: a creature whose last drawn position is
 ## not the tile the post snapshot holds is walked there after its last
 ## segment, so no reel can ever leave a body drawn off its sim tile.
@@ -992,6 +1061,8 @@ static func _scale(reel: Dictionary, k: float) -> void:
 		reel["shakes"] = []
 		reel["hp"] = {}
 		reel["dim"] = {}
+		reel["bloomed"] = {}
+		reel["hud"] = {}
 		for i in reel["ev_t"].size():
 			reel["ev_t"][i] = 0
 		for p in reel["tswap"]:
@@ -1022,6 +1093,11 @@ static func _scale(reel: Dictionary, k: float) -> void:
 		reel["ev_t"][i] = int(float(reel["ev_t"][i]) * k)
 	for d in reel.get("dim", {}).get("at", []):
 		d[0] = int(float(d[0]) * k)
+	for r in reel.get("bloomed", {}).get("at", []):
+		r[0] = int(float(r[0]) * k)
+	for key in reel.get("hud", {}):
+		for h in reel["hud"][key]:
+			h[0] = int(float(h[0]) * k)
 	reel["len"] = _length(reel)
 
 
@@ -1074,6 +1150,16 @@ static func chain(a: Dictionary, b: Dictionary) -> Dictionary:
 	else:
 		for d in b.get("dim", {}).get("at", []):
 			out["dim"]["at"].append([int(d[0]) + off, d[1]])
+	if out.get("bloomed", {}).is_empty():
+		out["bloomed"] = b.get("bloomed", {}).duplicate(true)
+	else:
+		for r in b.get("bloomed", {}).get("at", []):
+			out["bloomed"]["at"].append([int(r[0]) + off, r[1]])
+	for key in b.get("hud", {}):
+		if not out["hud"].has(key):
+			out["hud"][key] = []
+		for h in b["hud"][key]:
+			out["hud"][key].append([int(h[0]) + off, h[1]])
 	out["len"] = _length(out)
 	return out
 
@@ -1327,6 +1413,31 @@ static func dim_shown(reel: Dictionary, t: float, dim_now: int) -> int:
 		if float(e[0]) <= t:
 			shown = int(e[1])
 	return shown
+
+
+## The bloomed rooms to DRESS at reel time t: the pre-step list plus every
+## room whose room_bloom has landed (the post list once the reel is over).
+static func bloomed_shown(reel: Dictionary, t: float, now_list: Array) -> Array:
+	var b: Dictionary = reel.get("bloomed", {})
+	if b.is_empty() or not playing(reel, t):
+		return now_list
+	var out: Array = (b.get("pre", []) as Array).duplicate()
+	for r in b.get("at", []):
+		if float(r[0]) <= t and not out.has(int(r[1])):
+			out.append(int(r[1]))
+	return out
+
+
+## A HUD chip's value to SHOW at reel time t ("shield", "bloom", "max_hp"):
+## its post-step value with every change that has not landed yet undone.
+static func hud_shown(reel: Dictionary, key: String, t: float, now_val: int) -> int:
+	if not playing(reel, t):
+		return now_val
+	var v := now_val
+	for h in reel.get("hud", {}).get(key, []):
+		if float(h[0]) > t:
+			v -= int(h[1])
+	return v
 
 
 ## True while any part of the reel is still playing at time t.
