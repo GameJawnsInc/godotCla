@@ -29,16 +29,22 @@ const FxLines := preload("res://shell/fx_lines.gd")
 
 const OPS := ["aoe_damage", "aoe_status", "wash_all", "push_all", "clear_smoke", "convert_radius", "grow_radius"]
 const KINDS := ["area", "nova", "ember", "cloud", "dust", "tide", "shock", "swirl", "smoke_lift",
-	"rewrite", "seed_lob", "roots_net", "sprout"]
+	"rewrite", "wave", "seed_lob", "roots_net", "sprout"]
 
 const RING_MS := 75     # per ring the front advances
 const LOB_MS := 260     # a thrown seed / pod / sap bead in flight
+const IMPACT_MS := 220  # ...and the splat where it lands (same clip, after the flight)
 const HOLD_MS := 330    # the covered tiles stay lit this long after the last ring
+const PULSE_MS := 250.0 # a lingering status beats once per turn it will hold
+## What a hook row's own effects emit right behind its `hook` event.
+const HOOK_FOLLOW := ["damage", "status", "resisted", "immune", "terrain", "death"]
 ## A nova's anticipation before ring 0, per look.
 const NOVA_LEAD := {"sunfire": 110, "geyser": 170, "spores": 90, "prism": 120, "plain": 80}
 ## A thrown seed's body (the sprout on it takes the ability's palette).
 const SEED_COL := Color("d9b36a")
 const DIRT_COL := Color("6b4f33")
+## The red a long burn (ignite_ttl) pulls a sunfire corona toward.
+const DEEP_FIRE := Color("ff4a1c")
 
 
 static func build(op: String, c: Dictionary) -> int:
@@ -76,9 +82,13 @@ static func _cover(snap: Dictionary, center: Vector2i, r: int) -> Array:
 ## reached and stays faintly lit; the outline of the whole covered set draws
 ## itself as the front reaches each outer edge.
 static func _area(c: Dictionary, center: Vector2i, tiles: Array, t0: int, lead: int, rms: int,
-		fill: Color, rim: Color, hold: int, alpha: float = 1.0, rainbow: bool = false) -> void:
+		fill: Color, rim: Color, hold: int, alpha: float = 1.0, rainbow: bool = false) -> Dictionary:
 	if tiles.is_empty():
-		return
+		return {}
+	# a dark body colour (bark, roots) sinks into the dark green floor as mud:
+	# lift it toward its own rim so the lit tiles still read as lit
+	if fill.get_luminance() < 0.45:
+		fill = fill.lerp(rim, 0.35)
 	var cover := {}
 	var maxd := 0
 	for tp in tiles:
@@ -94,7 +104,7 @@ static func _area(c: Dictionary, center: Vector2i, tiles: Array, t0: int, lead: 
 			var s := Vector2(-n.y, n.x)
 			var mid := Vector2(p) + n * 0.5
 			edges.append([mid - s * 0.5, mid + s * 0.5, int(tp[1])])
-	L.clip(c, {"kind": "area", "t0": t0, "dur": lead + maxd * rms + hold, "at": center, "tiles": tiles,
+	return L.clip(c, {"kind": "area", "t0": t0, "dur": lead + maxd * rms + hold, "at": center, "tiles": tiles,
 		"edges": edges, "lead": lead, "ring_ms": rms, "col": fill, "rim": rim, "alpha": alpha,
 		"rainbow": rainbow, "layer": "ground"})
 
@@ -134,10 +144,27 @@ static func _claim_rings(c: Dictionary, center: Vector2i, r: int, t: int, types:
 		if not (tile is Vector2i) or L.man(tile, center) > r:
 			continue
 		var tt := t + L.man(tile, center) * rms
-		L.claim(c, i, tt + (15 if tt0 == "damage" else 0), L.dir_of(center, tile))
-		if ev.get("tile") is Vector2i:
+		# a hit (and a hook on it - a kill) lands just after the front has
+		# swept the tile; terrain and statuses change as it arrives
+		L.claim(c, i, tt + (15 if tt0 == "damage" or tt0 == "hook" else 0), L.dir_of(center, tile))
+		# a hook names a tile but changes nothing on it (its terrain event does)
+		if ev.get("tile") is Vector2i and tt0 != "hook":
 			L.reveal(c, ev["tile"], tt)
 		out.append(i)
+	# what a hook row did on its tile (a graft's damage_at, the growth a kill
+	# leaves) happens with the hook, not at the end of the step: the generic
+	# follow-on rule covers statuses and deaths but not damage or terrain
+	for h in out:
+		if String(evs[h].get("t", "")) != "hook":
+			continue
+		var th := int(c["times"][h])
+		for j in range(h + 1, int(c.get("ev1", evs.size()))):
+			var tj := String(evs[j].get("t", ""))
+			if L.claimed(c, j) or not HOOK_FOLLOW.has(tj):
+				break
+			L.claim(c, j, th + 15)
+			if tj == "terrain" and evs[j].get("tile") is Vector2i:
+				L.reveal(c, evs[j]["tile"], th + 15)
 	return out
 
 
@@ -167,6 +194,59 @@ static func _died_already(c: Dictionary, id) -> bool:
 		if String(evs[i].get("t", "")) == "death" and evs[i].get("id") == id and L.claimed(c, i - 1):
 			return true
 	return false
+
+
+## Something thrown at `to` (a seed, a pod, a sap bead): one clip that flies
+## for LOB_MS and then splats where it lands. Returns the landing time.
+static func _lob(c: Dictionary, from: Vector2i, to: Vector2i, col: Color, style: String, t: int) -> int:
+	L.clip(c, {"kind": "seed_lob", "t0": t, "dur": LOB_MS + IMPACT_MS, "fly": LOB_MS, "from": from, "to": to,
+		"col": col, "style": style, "at": to})
+	return t + LOB_MS
+
+
+## Where a shove (FxLines.shove) will stop each body and when: [enemy, land,
+## t_stop] per entry of `shoves` ([enemy, dir, dist, t_hit]), the same walk
+## the shove itself makes.
+static func _shove_stops(c: Dictionary, shoves: Array) -> Array:
+	var out: Array = []
+	for sh in shoves:
+		var e: Dictionary = sh[0]
+		var from: Vector2i = e["pos"]
+		var land := from
+		var pe = c["post_en"].get(e["id"])
+		if pe != null:
+			land = pe["pos"]
+		elif not L.massive(String(e["kind"])):
+			land = L.push_end(c["pre"], from, sh[1], int(sh[2]), e["id"], c["ppos"])
+		out.append([e, land, int(sh[3]) + L.man(from, land) * FxLines.SHOVE_MS])
+	return out
+
+
+## Claim every hook of a shoving verb before the shoves run: a stagger or a
+## collision hook fires where a shoved body stops (or on the body it slammed
+## into), when it stops; anything else rides the ring that reached its tile.
+## (FxLines.shove compares every unclaimed hook's String id with an enemy's
+## int id, which is a script error - so none may be left for it to see.)
+static func _preclaim_hooks(c: Dictionary, center: Vector2i, stops: Array, t_ring: int) -> void:
+	var evs: Array = c["events"]
+	for i in L.unclaimed(c, ["hook"]):
+		var ht = evs[i].get("tile")
+		var th := -1
+		if ht is Vector2i:
+			for st in stops:
+				if st[1] == ht:
+					th = int(st[2])
+					break
+			if th < 0:
+				for st in stops:
+					if L.man(st[1], ht) <= 1:
+						th = int(st[2])
+						break
+			if th < 0:
+				th = t_ring + L.man(center, ht) * RING_MS
+		else:
+			th = t_ring
+		L.claim(c, i, th)
 
 
 # --- builders -----------------------------------------------------------------------
@@ -213,16 +293,25 @@ static func _nova(c: Dictionary) -> int:
 	_area(c, center, tiles, t, lead, RING_MS, pal["c"] if deep else pal["a"], pal["b"], HOLD_MS,
 		0.8 if style == "spores" else 0.9, style == "prism")
 	var tail := 380 if style == "geyser" else 300
-	L.clip(c, {"kind": "nova", "t0": t, "dur": lead + r * RING_MS + tail, "at": center, "r": r,
+	var nv := L.clip(c, {"kind": "nova", "t0": t, "dur": lead + r * RING_MS + tail, "at": center, "r": r,
 		"style": style, "lead": lead, "ring_ms": RING_MS, "dmg": dmg, "tiles": tiles,
 		"ignite": bool(eff.get("ignite", false)), "deep": deep, "verdant": _surged(c),
 		"walls": _walls_near(c["pre"], center, r + 2)})
+	if style == "geyser":
+		# the column bursts up BEHIND the tender (ground layer) and heaves them
+		# up on it, so the caster is never hidden; its crown and the rain it
+		# throws ride over everything (the air clip above)
+		var colm: Dictionary = nv.duplicate()
+		colm["part"] = "column"
+		colm["layer"] = "ground"
+		c["reel"]["clips"].append(colm)
+		L.move(c, "player", [center, center], t + lead / 2, lead / 2 + r * RING_MS + 250, 0.14 + 0.05 * float(dmg))
 	var ign := L.unclaimed(c, ["ignite"])
 	_claim_rings(c, center, r, t0, ["damage", "ignite", "hook"])
 	if ttl > 0:
 		for i in ign:
 			if L.claimed(c, i) and c["events"][i].get("tile") is Vector2i:
-				L.clip(c, {"kind": "ember", "t0": int(c["times"][i]), "dur": 380 + ttl * 110,
+				L.clip(c, {"kind": "ember", "t0": int(c["times"][i]), "dur": 320 + ttl * 90,
 					"at": c["events"][i]["tile"], "ttl": ttl, "layer": "ground"})
 	c["reel"]["shakes"].append({"t0": t0, "mag": 1.0 + 0.6 * float(r) + 0.4 * float(dmg)})
 	return t0 + r * RING_MS + (90 if style == "geyser" else 110)
@@ -239,16 +328,23 @@ static func _cloud(c: Dictionary) -> int:
 	var col := L.status_col(status)
 	var turns := maxi(1, int(eff.get("turns", 1)))
 	var t_land := t
-	if center != c["ppos"]:
-		L.clip(c, {"kind": "seed_lob", "t0": t, "dur": LOB_MS, "from": c["ppos"], "to": center,
-			"col": col, "style": "pod", "at": center})
-		t_land = t + LOB_MS
+	# a cloud centred on its target is THROWN: a pod lobbed there - tossed
+	# straight up and caught by the air when that target is your own tile,
+	# so the thrown variant never looks like the burst around your head
+	if String(eff.get("center", "self")) == "target" or center != c["ppos"]:
+		t_land = _lob(c, c["ppos"], center, col, "pod", t)
 	var lead := 60
 	var tiles := _cover(c["pre"], center, r)
-	var hold := 360 + 90 * turns
-	_area(c, center, tiles, t_land, lead, RING_MS, col, col.lightened(0.35), hold - 60, 0.75)
+	var hold := 300 + 60 * turns
+	# a status that holds for several turns beats once per turn: the tiles
+	# flash and the glitter bursts again (a drifting spore needs no beat - it
+	# stacks, and its motes say so by rising)
+	var pulses := 1 if status == "spore" else mini(turns, 3)
+	var ar := _area(c, center, tiles, t_land, lead, RING_MS, col, col.lightened(0.35), hold - 60, 0.75)
+	if not ar.is_empty():
+		ar["pulses"] = pulses
 	var cl := {"t0": t_land, "dur": lead + r * RING_MS + hold, "at": center, "tiles": tiles,
-		"status": status, "turns": turns, "lead": lead, "ring_ms": RING_MS, "col": col}
+		"status": status, "turns": turns, "pulses": pulses, "lead": lead, "ring_ms": RING_MS, "col": col}
 	var ground := cl.duplicate()
 	ground["kind"] = "cloud"
 	ground["layer"] = "ground"
@@ -286,14 +382,27 @@ static func _tide(c: Dictionary) -> int:
 	crest["kind"] = "tide"
 	crest["part"] = "crest"
 	L.clip(c, crest)
-	_claim_rings(c, o, rng, t + lead, ["wash", "hook"])
+	# only the washes ride the rings: a hook here comes from a shove (a stagger,
+	# a collision) and lands when that body stops, which the shove claims
+	_claim_rings(c, o, rng, t + lead, ["wash"])
 	var t_end := t + lead + rng * RING_MS + 160
+	var shoves: Array = []
 	for d in L.DIRS:
 		for p in L.line(c["pre"], o, d, rng, false, false):
 			var e = L.enemy_at(c["pre"], p)
 			if e != null:
-				t_end = maxi(t_end, FxLines.shove(c, e, d, push, t + lead + L.man(o, p) * RING_MS))
+				shoves.append([e, d, push, t + lead + L.man(o, p) * RING_MS])
 				break
+	_preclaim_hooks(c, o, _shove_stops(c, shoves), t + lead)
+	for sh in shoves:
+		var e: Dictionary = sh[0]
+		var te := FxLines.shove(c, e, sh[1], push, int(sh[3]))
+		t_end = maxi(t_end, te)
+		# a rider's status (a pinning tide) takes the body the moment ITS wave
+		# pins it, not when the last of the four runs out
+		for i in L.unclaimed(c, ["status", "resisted", "immune"]):
+			if c["events"][i].get("id") == e["id"]:
+				L.claim(c, i, te - 90)
 	return t_end
 
 
@@ -310,10 +419,14 @@ static func _shock(c: Dictionary) -> int:
 	L.seg(c, "player", {"kind": "squash", "t0": t_hit - 30, "dur": 170})
 	c["reel"]["shakes"].append({"t0": t_hit, "mag": 2.0 + float(dist)})
 	var t_end := t_hit + 200
+	var shoves: Array = []
 	for d in L.DIRS:
 		var e = L.enemy_at(c["pre"], o + d)
 		if e != null and c["pre_en"].has(e["id"]) and not _died_already(c, e["id"]):
-			t_end = maxi(t_end, FxLines.shove(c, e, d, dist, t_hit + 45))
+			shoves.append([e, d, dist, t_hit + 45])
+	_preclaim_hooks(c, o, _shove_stops(c, shoves), t_hit)
+	for sh in shoves:
+		t_end = maxi(t_end, FxLines.shove(c, sh[0], sh[1], dist, int(sh[3])))
 	return t_end
 
 
@@ -353,13 +466,19 @@ static func _convert(c: Dictionary) -> int:
 	var blocks := bool(Content.terrain(kind, "blocks", false))
 	var t_land := t
 	if center != c["ppos"] and c.get("areas_landed") != center:
-		L.clip(c, {"kind": "seed_lob", "t0": t, "dur": LOB_MS, "from": c["ppos"], "to": center,
-			"col": col, "style": "sap", "at": center})
-		t_land = t + LOB_MS
+		t_land = _lob(c, c["ppos"], center, col, "sap", t)
 	c["areas_landed"] = center
 	var lead := 50
 	var tiles := _cover(c["pre"], center, r)
-	_area(c, center, tiles, t_land, lead, RING_MS, col, col.lightened(0.45), 320, 0.85)
+	# a diamond an earlier effect of this cast just lit (the reclaimer's own
+	# seed) is not lit twice: the wave rolling over it says it
+	if c.get("areas_shown", []) != [center, r]:
+		_area(c, center, tiles, t_land, lead, RING_MS, col, col.lightened(0.45), 320, 0.85)
+	c["areas_shown"] = [center, r]
+	# the wave of life rolls out from where the bead burst
+	L.clip(c, {"kind": "wave", "t0": t_land, "dur": lead + r * RING_MS + 200, "at": center, "r": r,
+		"lead": lead, "ring_ms": RING_MS, "col": col, "blocks": blocks,
+		"walls": _walls_near(c["pre"], center, r + 2), "layer": "ground"})
 	var evs: Array = c["events"]
 	for i in L.unclaimed(c, ["convert"]):
 		var p = evs[i].get("tile")
@@ -369,7 +488,7 @@ static func _convert(c: Dictionary) -> int:
 		L.claim(c, i, ta)
 		L.quiet(c, i)
 		L.reveal(c, p, ta + 110)
-		L.clip(c, {"kind": "rewrite", "t0": ta, "dur": 560, "at": p, "col": col, "blocks": blocks,
+		L.clip(c, {"kind": "rewrite", "t0": ta, "dur": 480, "at": p, "col": col, "blocks": blocks,
 			"from_col": L.TERRAIN_COL.get(L.tkind(c["pre"], p), Color("3a2e3f")), "layer": "ground"})
 	return t_land + lead + r * RING_MS + 160
 
@@ -382,14 +501,13 @@ static func _grow(c: Dictionary) -> int:
 	var t_land := t
 	var thrown: bool = center != c["ppos"]
 	if thrown:
-		L.clip(c, {"kind": "seed_lob", "t0": t, "dur": LOB_MS, "from": c["ppos"], "to": center,
-			"col": pal["a"], "style": "seed", "at": center})
-		t_land = t + LOB_MS
+		t_land = _lob(c, c["ppos"], center, pal["a"], "seed", t)
 	c["areas_landed"] = center
 	var lead := 40
 	var t0 := t_land + lead
 	var tiles := _cover(c["pre"], center, r)
 	_area(c, center, tiles, t_land, lead, RING_MS, pal["a"], pal["b"], 320, 0.75)
+	c["areas_shown"] = [center, r]
 	L.clip(c, {"kind": "roots_net", "t0": t_land, "dur": lead + r * RING_MS + 380, "at": center,
 		"tiles": tiles, "lead": lead, "ring_ms": RING_MS, "thrown": thrown, "verdant": _surged(c),
 		"layer": "ground"})
@@ -404,11 +522,20 @@ static func _grow(c: Dictionary) -> int:
 			sprouts.append(p)
 			L.reveal(c, p, tt + 60)
 			L.clip(c, {"kind": "sprout", "t0": tt, "dur": 480, "at": p, "layer": "ground"})
+	# the growth event lands with the seed; a hook on the planting fires on
+	# ITS tile's ring - and only a hook inside this diamond, so a later effect
+	# of the same cast keeps its own hooks
+	var evs: Array = c["events"]
 	for i in L.unclaimed(c, ["growth", "hook"]):
-		L.claim(c, i, t0)
+		if String(evs[i]["t"]) == "growth":
+			L.claim(c, i, t0)
+			continue
+		var ht = evs[i].get("tile")
+		if ht is Vector2i and L.man(ht, center) <= r:
+			L.claim(c, i, t0 + L.man(ht, center) * RING_MS)
 	# a tangle's roots take whoever stands on the fresh growth
 	for i in L.unclaimed(c, ["status", "resisted", "immune"]):
-		var e = c["pre_en"].get(c["events"][i].get("id"))
+		var e = c["pre_en"].get(evs[i].get("id"))
 		if e != null and sprouts.has(e["pos"]):
 			L.claim(c, i, t0 + L.man(e["pos"], center) * RING_MS + 130)
 	return t0 + r * RING_MS + 200
@@ -438,6 +565,8 @@ static func paint(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			_paint_smoke_lift(cv, cl, k, V)
 		"rewrite":
 			_paint_rewrite(cv, cl, k, V)
+		"wave":
+			_paint_wave(cv, cl, k, V)
 		"seed_lob":
 			_paint_lob(cv, cl, k, V)
 		"roots_net":
@@ -492,7 +621,9 @@ static func _front_runs(V: Dictionary, c: Vector2, R: float, walls: Dictionary) 
 	var runs: Array = []
 	if R < 1.0:
 		return runs
-	var n := 4 * clampi(int(ceil(R / D.ts(V) * 2.0)), 2, 12)
+	# fine enough (about a quarter tile a step) that a run never pokes more
+	# than a sliver into the rock it stops at
+	var n := 4 * clampi(int(ceil(R / D.ts(V) * 4.0)), 2, 24)
 	var cur := PackedVector2Array()
 	var prev := _perim(c, R, 0.0)
 	for i in range(1, n + 1):
@@ -529,6 +660,7 @@ static func _paint_area(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var al := float(cl.get("alpha", 1.0))
 	var fade := clampf((dur - ms) / 240.0, 0.0, 1.0)
 	var rainbow := bool(cl.get("rainbow", false))
+	var pulses := int(cl.get("pulses", 1))
 	var ctr := Vector2(cl["at"])
 	var ins := t * 0.06
 	for tp in cl["tiles"]:
@@ -541,6 +673,8 @@ static func _paint_area(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			var dv := Vector2(p) - ctr
 			fc = Color.from_hsv(fposmod(dv.angle() / TAU + ms * 0.0006, 1.0), 0.55, 1.0)
 		var fl := 1.0 - D.ease_out(D.win(u, 0.0, 240.0))
+		for pj in range(1, pulses):
+			fl = maxf(fl, 0.8 * D.pulse(D.win(u, PULSE_MS * float(pj) - 60.0, PULSE_MS * float(pj) + 200.0)))
 		var rr := D.tile_rect(V, p).grow(-ins)
 		cv.draw_rect(rr, D.ca(fc, al * (0.13 + 0.37 * fl) * fade))
 		if fl > 0.02:
@@ -564,12 +698,20 @@ static func _paint_nova(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var dmg := float(cl.get("dmg", 1))
 	var style := String(cl.get("style", "plain"))
 	if bool(cl.get("fizzle", false)):
-		# a glint that goes nowhere: the condition was not met
+		# the condition was not met: the charge gathers over the head, finds
+		# nothing to feed on, greys out and goes up in a puff
 		var q := c + Vector2(0, -t * 0.55)
 		var a0 := D.pulse(k)
-		D.glow(cv, q, t * 0.3 * a0, D.ca(pal["b"], 0.5))
-		D.twinkle(cv, q, t * 0.2 * a0, D.ca(pal["b"], a0))
-		cv.draw_circle(q + Vector2(0, -t * 0.3 * k), t * (0.08 + 0.12 * k), Color(0.6, 0.62, 0.62, 0.5 * (1.0 - k)))
+		var grey := Color(0.62, 0.64, 0.64)
+		var lit: Color = pal["b"].lerp(grey, D.win(k, 0.25, 0.6))
+		D.glow(cv, q, t * 0.3 * a0, D.ca(lit, 0.5))
+		var cw := t * 0.13 * a0
+		if cw > 1.0:
+			cv.draw_colored_polygon(PackedVector2Array([q + Vector2(0, -cw * 1.9), q + Vector2(cw, 0),
+				q + Vector2(0, cw * 1.9), q + Vector2(-cw, 0)]), D.ca(lit, 0.9 * a0))
+		for i in 3:
+			var pq := q + Vector2((float(i) - 1.0) * t * 0.14, -t * 0.4 * D.win(k, 0.45, 1.0))
+			cv.draw_circle(pq, t * (0.05 + 0.08 * D.win(k, 0.45, 1.0)), D.ca(grey, 0.55 * D.win(k, 0.4, 0.55) * (1.0 - k)))
 		return
 	var g := D.win(ms, 0.0, lead)
 	var f := clampf((ms - lead) / rms, 0.0, r)
@@ -583,19 +725,20 @@ static func _paint_nova(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var lf := 1.0 - po
 	var out := D.win(ms, t_full + 30.0, dur)
 	var walls: Dictionary = cl.get("walls", {})
-	var runs: Array = _front_runs(V, c, R, walls) if ms >= lead and lf > 0.0 else []
+	var column := String(cl.get("part", "")) == "column"
+	var runs: Array = _front_runs(V, c, R, walls) if ms >= lead and lf > 0.0 and not column else []
 	match style:
 		"sunfire":
 			_nova_sun(cv, cl, V, walls, runs, c, t, pal, ms, lead, R, lf, g, out, dmg)
 		"geyser":
-			_nova_geyser(cv, cl, V, c, t, pal, ms, lead, rms, t_full, g, dmg)
+			_nova_geyser(cv, cl, V, c, t, pal, ms, lead, rms, t_full, g, dmg, column)
 		"spores":
 			_nova_spores(cv, cl, V, walls, runs, c, t, pal, ms, lead, R, lf, g, out, dmg)
 		"prism":
 			_nova_prism(cv, V, walls, c, t, ms, lead, R, lf, g, out, dmg)
 		_:
 			_nova_plain(cv, runs, c, t, pal, ms, lead, lf)
-	if bool(cl.get("verdant", false)) and ms >= lead and lf > 0.0:
+	if bool(cl.get("verdant", false)) and ms >= lead and lf > 0.0 and not column:
 		# the surge rides the front: leaves wheel out on it
 		for i in 12:
 			var s := (float(i) + 0.3) / 12.0 + ms * 0.00012
@@ -617,6 +760,8 @@ static func _nova_sun(cv, cl: Dictionary, V: Dictionary, walls: Dictionary, runs
 	var sun := c + Vector2(0, -t * 0.55)
 	var deep := bool(cl.get("deep", false))
 	var hot: Color = pal["c"].darkened(0.3) if deep else pal["c"]
+	# a long burn is a deeper fire: its body runs red where a flash runs gold
+	var body: Color = pal["a"].lerp(DEEP_FIRE, 0.6) if deep else pal["a"]
 	if ms < lead:
 		var ge := D.ease_in(g)
 		D.glow(cv, sun, t * (0.2 + 0.4 * ge), D.ca(pal["a"], 0.6))
@@ -648,8 +793,17 @@ static func _nova_sun(cv, cl: Dictionary, V: Dictionary, walls: Dictionary, runs
 			D.line(cv, c + dv * t * 0.45, c + dv * reach, D.ca(pal["b"], 0.55 * lf), t * (0.025 + 0.02 * dmg))
 	# the corona: a burning diamond front with flame tongues licking outward
 	_runs_line(cv, runs, D.ca(hot, 0.6 * lf), t * 0.3)
-	_runs_line(cv, runs, D.ca(pal["a"], 0.95 * lf), t * 0.14)
+	_runs_line(cv, runs, D.ca(body, 0.95 * lf), t * 0.14)
 	_runs_line(cv, runs, D.ca(pal["b"], lf), t * 0.05)
+	# a heavier flare burns in layers: one trailing corona per point of damage
+	# past the first, so a 2-damage flare reads as a double wall of fire
+	for j in range(1, mini(int(dmg), 3)):
+		var Rj := R - t * 0.34 * float(j)
+		if Rj < t * 0.6:
+			break
+		var rj := _front_runs(V, c, Rj, walls)
+		_runs_line(cv, rj, D.ca(hot, 0.5 * lf), t * 0.2)
+		_runs_line(cv, rj, D.ca(pal["b"], 0.85 * lf), t * 0.05)
 	var nt := 12 + 4 * int(cl["r"])
 	for i in nt:
 		var s := (float(i) + 0.5) / float(nt) + ms * 0.00005
@@ -658,7 +812,7 @@ static func _nova_sun(cv, cl: Dictionary, V: Dictionary, walls: Dictionary, runs
 		if _in_rock(V, walls, base):
 			continue
 		var tip := base + _perim_n(s) * t * (0.16 + 0.08 * dmg + (0.08 if deep else 0.0)) * fl
-		D.spike(cv, base, tip, t * 0.17, D.ca(hot if i % 2 == 0 else pal["a"], 0.95 * lf))
+		D.spike(cv, base, tip, t * 0.17, D.ca(hot if i % 2 == 0 else body, 0.95 * lf))
 	if bool(cl.get("ignite", false)) and R > t:
 		# embers thrown off the front
 		for i in 6:
@@ -669,44 +823,55 @@ static func _nova_sun(cv, cl: Dictionary, V: Dictionary, walls: Dictionary, runs
 			cv.draw_circle(q, t * 0.045, D.ca(pal["b"], 0.9 * lf))
 
 
-## Water: ripples draw in at the feet, a column bursts up, and its spray rains
-## down onto every covered tile ring by ring, splashing as it lands.
+## Water: ripples draw in at the feet, a column bursts up behind the tender
+## (the "column" part, on the ground layer) and its crown throws spray that
+## rains down onto every covered tile ring by ring, splashing as it lands
+## (the air part). More damage: a thicker, taller column and heavier rain.
 static func _nova_geyser(cv, cl: Dictionary, V: Dictionary, c: Vector2, t: float, pal: Dictionary, ms: float,
-		lead: float, rms: float, t_full: float, g: float, dmg: float) -> void:
+		lead: float, rms: float, t_full: float, g: float, dmg: float, column: bool) -> void:
 	var feet := c + Vector2(0, t * 0.3)
 	var rise := D.ease_out(D.win(ms, lead * 0.35, lead))
 	var fall := D.ease_in(D.win(ms, t_full + 50.0, t_full + 280.0))
-	# anticipation: rings drawing in on the ground
-	if ms < lead:
-		cv.draw_set_transform(feet, 0.0, Vector2(1.0, 0.45))
-		for j in 2:
-			var rr := t * (0.9 - 0.6 * D.win(ms, float(j) * 40.0, lead))
-			D.ring(cv, Vector2.ZERO, rr, D.ca(pal["b"], 0.35 + 0.4 * g), t * 0.06)
-		cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	var top_full := feet + Vector2(0, -t * (1.75 + 0.15 * dmg))
-	var h := t * (1.75 + 0.15 * dmg) * rise * (1.0 - fall)
-	if h > 2.0:
-		var w := t * (0.19 + 0.04 * dmg)
-		var wob := sin(ms * 0.045) * t * 0.03
-		var top := feet + Vector2(wob, -h)
-		cv.draw_colored_polygon(PackedVector2Array([feet + Vector2(-w * 1.5, 0), top + Vector2(-w, 0),
-			top + Vector2(w, 0), feet + Vector2(w * 1.5, 0)]), D.ca(pal["c"], 0.5))
-		cv.draw_colored_polygon(PackedVector2Array([feet + Vector2(-w * 1.15, 0), top + Vector2(-w * 0.7, 0),
-			top + Vector2(w * 0.7, 0), feet + Vector2(w * 1.15, 0)]), D.ca(pal["a"], 0.7))
-		D.line(cv, feet, top, D.ca(pal["b"], 0.9), w * 0.5)
+	var hmax := t * (1.45 + 0.2 * dmg)
+	var h := hmax * rise * (1.0 - fall)
+	var w := t * (0.13 + 0.07 * dmg)
+	var wob := sin(ms * 0.045) * t * 0.03
+	var top := feet + Vector2(wob, -h)
+	if column:
+		# anticipation: rings drawing in on the ground
+		if ms < lead:
+			cv.draw_set_transform(feet, 0.0, Vector2(1.0, 0.45))
+			for j in 2:
+				var rr := t * (0.9 - 0.6 * D.win(ms, float(j) * 40.0, lead))
+				D.ring(cv, Vector2.ZERO, rr, D.ca(pal["b"], 0.35 + 0.4 * g), t * 0.06)
+			cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		if h > 2.0:
+			cv.draw_colored_polygon(PackedVector2Array([feet + Vector2(-w * 1.5, 0), top + Vector2(-w, 0),
+				top + Vector2(w, 0), feet + Vector2(w * 1.5, 0)]), D.ca(pal["c"], 0.75))
+			cv.draw_colored_polygon(PackedVector2Array([feet + Vector2(-w * 1.1, 0), top + Vector2(-w * 0.7, 0),
+				top + Vector2(w * 0.7, 0), feet + Vector2(w * 1.1, 0)]), D.ca(pal["a"], 0.9))
+			D.line(cv, feet, top, D.ca(pal["b"], 0.95), w * 0.45)
+		# the foot of the column
+		var fo := D.win(ms, lead * 0.35, t_full + 280.0)
+		if fo > 0.0 and fo < 1.0:
+			cv.draw_set_transform(feet, 0.0, Vector2(1.0, 0.45))
+			D.ring(cv, Vector2.ZERO, t * (0.3 + 0.35 * fo), D.ca(pal["b"], 0.8 * (1.0 - fo)), t * 0.08)
+			cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		return
+	# the foaming crown, over the tender's head; it bursts into spray as the
+	# column falls rather than dropping down onto the tender's face
+	var ca := 1.0 - D.win(ms, t_full + 40.0, t_full + 150.0)
+	if h > 2.0 and ca > 0.0:
 		for j in 5:
 			var ang := PI + PI * float(j) / 4.0 + sin(ms * 0.02 + float(j)) * 0.2
-			cv.draw_circle(top + Vector2(cos(ang) * w * 1.1, sin(ang) * w * 0.7), w * (0.5 + 0.12 * float(j % 2)),
-				D.ca(pal["b"], 0.85))
-	# the foot of the column
-	var fo := D.win(ms, lead * 0.35, t_full + 280.0)
-	if fo > 0.0 and fo < 1.0:
-		cv.draw_set_transform(feet, 0.0, Vector2(1.0, 0.45))
-		D.ring(cv, Vector2.ZERO, t * (0.3 + 0.35 * fo), D.ca(pal["b"], 0.8 * (1.0 - fo)), t * 0.08)
-		cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			var bq := top + Vector2(cos(ang) * w * 1.15, sin(ang) * w * 0.7) * (1.0 + 0.8 * (1.0 - ca))
+			var br := w * (0.5 + 0.12 * float(j % 2)) * (0.6 + 0.4 * ca)
+			cv.draw_circle(bq, br * 1.2, D.ca(pal["c"], 0.6 * ca))
+			cv.draw_circle(bq, br, D.ca(pal["b"], 0.95 * ca))
 	# the rain: drops arc off the crown and land ring by ring
+	var top_full := feet + Vector2(0, -hmax)
 	var tiles: Array = cl.get("tiles", [])
-	var per := 2 if tiles.size() <= 9 else 1
+	var per := mini(1 + int(dmg), 3) if tiles.size() <= 9 else 1
 	for tp in tiles:
 		var d := int(tp[1])
 		if d < 1:
@@ -716,12 +881,21 @@ static func _nova_geyser(cv, cl: Dictionary, V: Dictionary, c: Vector2, t: float
 		var p: Vector2i = tp[0]
 		for j in per:
 			var n := p.x * 31 + p.y * 17 + j * 7
-			var dst := D.px(V, p) + Vector2(D.h01(n) - 0.5, D.h01(n + 1) - 0.5) * t * 0.4
+			var dst := D.px(V, p) + Vector2(D.h01(n) - 0.5, D.h01(n + 1) - 0.5) * t * 0.45
 			var u := (ms - launch_t) / maxf(1.0, land_t - launch_t)
 			if u > 0.0 and u < 1.0:
-				var q := D.arc_point(top_full, dst, D.ease_in(u), t * 0.35)
-				var q0 := D.arc_point(top_full, dst, D.ease_in(maxf(0.0, u - 0.12)), t * 0.35)
-				D.line(cv, q0, q, D.ca(pal["a"], 0.8), t * 0.07)
+				# each drop leaves the crown on its own side, and one falling
+				# behind the tender swings wide round the body instead of
+				# streaking down across it
+				var side := signf(dst.x - c.x)
+				if absf(dst.x - c.x) < t * 0.5:
+					side = 1.0 if j % 2 == 0 else -1.0
+				var from := top_full + Vector2(side * w * 1.1, 0)
+				var swing := Vector2(side * t * 0.5, 0) if dst.y > c.y and absf(dst.x - c.x) < t * 0.5 else Vector2.ZERO
+				var q := D.arc_point(from, dst, D.ease_in(u), t * 0.35) + swing * sin(D.ease_in(u) * PI)
+				var u0 := D.ease_in(maxf(0.0, u - 0.12))
+				var q0 := D.arc_point(from, dst, u0, t * 0.35) + swing * sin(u0 * PI)
+				D.line(cv, q0, q, D.ca(pal["a"], 0.85), t * 0.07)
 				cv.draw_circle(q, t * 0.075, D.ca(pal["b"], 0.95))
 			elif u >= 1.0:
 				var s := (ms - land_t) / 240.0
@@ -797,7 +971,7 @@ static func _nova_prism(cv, V: Dictionary, walls: Dictionary, c: Vector2, t: flo
 		D.line(cv, q + dv * t * 0.15, c + dv * reach, D.ca(col, 0.3 * lf), t * (0.16 + 0.03 * dmg))
 		D.line(cv, q + dv * t * 0.15, c + dv * reach, D.ca(col, 0.9 * lf), t * 0.05)
 	# the front in shifting spectrum
-	var seg := 16
+	var seg := 4 * clampi(int(ceil(R / t * 3.0)), 3, 12)
 	for i in seg:
 		var s0 := float(i) / float(seg)
 		var s1 := float(i + 1) / float(seg)
@@ -875,8 +1049,9 @@ static func _paint_cloud(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			var off := Vector2(D.h01(n) - 0.5, D.h01(n + 1) - 0.4) * t * 0.55
 			var drift := Vector2(sin(ms * 0.004 + float(n)) * t * 0.08, -t * (0.3 if spore else 0.12) * (u / 900.0))
 			var rad := t * (0.14 + 0.16 * gr + 0.05 * D.h01(n + 2))
-			var pc: Color = col.darkened(0.1) if j == 0 else col.lightened(0.25)
-			cv.draw_circle(base + off + drift, rad, D.ca(pc, 0.34 * dens * gr * fade))
+			# light puffs: a saturated tint at low alpha over the grass reads as mud
+			var pc: Color = col.lightened(0.3) if j == 0 else col.lightened(0.55)
+			cv.draw_circle(base + off + drift, rad, D.ca(pc, 0.26 * dens * gr * fade))
 
 
 ## The motes in the cloud, over the creatures: pollen glitters, spores drift.
@@ -890,6 +1065,7 @@ static func _paint_dust(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var spore := String(cl.get("status", "")) == "spore"
 	var fade := clampf((dur - ms) / 260.0, 0.0, 1.0)
 	var turns := int(cl.get("turns", 1))
+	var pulses := int(cl.get("pulses", 1))
 	var per := 1 if cl["tiles"].size() > 13 else 2
 	if turns > 1 and cl["tiles"].size() <= 13:
 		per = 3
@@ -912,6 +1088,8 @@ static func _paint_dust(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 				var ph := fposmod(u / 340.0 + D.h01(n + 5), 1.0)
 				var q2 := base + off + Vector2(0, -t * 0.25 * (u / 900.0))
 				var burst := 1.0 - D.win(u, 0.0, 180.0)
+				for pj in range(1, pulses):
+					burst = maxf(burst, D.pulse(D.win(u, PULSE_MS * float(pj) - 60.0, PULSE_MS * float(pj) + 160.0)))
 				var sz := t * (0.07 + 0.08 * D.pulse(ph) + 0.1 * burst)
 				D.twinkle(cv, q2, sz, D.ca(col.lightened(0.45), fade))
 
@@ -1137,6 +1315,46 @@ static func _paint_rewrite(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 		D.glow(cv, c, t * 0.45 * (1.0 - u2 / 0.6), D.ca(col.lightened(0.6), 0.5))
 
 
+## The wave of life a conversion rolls out: a pale crest on the diamond,
+## breaking at the rock, with leaflets riding it - or bark stakes, for a kind
+## that blocks.
+static func _paint_wave(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
+	var t := D.ts(V)
+	var ms := k * float(cl["dur"])
+	var lead := float(cl["lead"])
+	var rms := float(cl["ring_ms"])
+	var r := float(cl["r"])
+	var c := D.px(V, cl["at"])
+	var col: Color = cl.get("col", Color("6cc95c"))
+	var pale := col.lightened(0.55)
+	if ms < lead:
+		# the burst gathering where the bead broke
+		D.glow(cv, c, t * (0.2 + 0.3 * D.win(ms, 0.0, lead)), D.ca(pale, 0.6))
+		return
+	var t_full := lead + r * rms
+	var po := D.win(ms, t_full, t_full + 180.0)
+	var lf := 1.0 - po
+	if lf <= 0.0:
+		return
+	var R := (clampf((ms - lead) / rms, 0.0, r) + 0.5 + 0.35 * D.ease_out(po)) * t
+	var walls: Dictionary = cl.get("walls", {})
+	var runs := _front_runs(V, c, R, walls)
+	_runs_line(cv, runs, D.ca(col.darkened(0.35), 0.75 * lf), t * 0.2)
+	_runs_line(cv, runs, D.ca(pale, 0.95 * lf), t * 0.07)
+	var blocks := bool(cl.get("blocks", false))
+	var n := 8 + 4 * int(r)
+	for i in n:
+		var s := (float(i) + 0.5) / float(n)
+		var base := _perim(c, R, s)
+		if _in_rock(V, walls, base):
+			continue
+		var nn := _perim_n(s)
+		if blocks:
+			D.spike(cv, base, base + nn * t * 0.24 * lf, t * 0.13, D.ca(pale, lf))
+		else:
+			D.leaf(cv, base + nn * t * 0.1, nn.angle() + sin(ms * 0.02 + float(i)) * 0.4, t * 0.26 * lf, D.ca(pale, lf))
+
+
 ## A thrown seed (grow), pod (a cloud centred on its target) or sap bead
 ## (convert): big, dark-rimmed and glowing so it reads over the grass, with a
 ## trail, a ground shadow and a landing ring on the target.
@@ -1147,8 +1365,15 @@ static func _paint_lob(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var col: Color = cl.get("col", Color("6cc95c"))
 	var pal: Dictionary = cl.get("pal", L.PAL_DEFAULT)
 	var style := String(cl.get("style", "seed"))
-	var h := t * (0.8 + 0.2 * a.distance_to(b) / t)
-	var u := k
+	var dur := float(cl["dur"])
+	var fly := minf(dur, float(cl.get("fly", dur)))
+	var ms := k * dur
+	if ms > fly:
+		_paint_splat(cv, b, t, col, style, (ms - fly) / maxf(1.0, dur - fly))
+		return
+	# a toss onto your own tile goes straight up, high enough to clear the head
+	var h := t * (0.8 + 0.2 * a.distance_to(b) / t) if a.distance_to(b) > t * 0.5 else t * 1.25
+	var u := ms / maxf(1.0, fly)
 	var arc := 4.0 * u * (1.0 - u)
 	var q := D.arc_point(a, b, u, h)
 	# where it will land
@@ -1162,18 +1387,18 @@ static func _paint_lob(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 		var uj := u - float(j + 1) * 0.045
 		if uj > 0.0:
 			cv.draw_circle(D.arc_point(a, b, uj, h), t * (0.075 - 0.01 * float(j)), D.ca(col.lightened(0.5), 0.75 - 0.11 * float(j)))
-	var sz := t * (0.18 + 0.07 * arc)
-	D.glow(cv, q, sz * 2.1, D.ca(col.lightened(0.5), 0.4))
+	var sz := t * (0.2 + 0.08 * arc)
+	D.glow(cv, q, sz * 2.1, D.ca(col.lightened(0.5), 0.45))
 	match style:
 		"seed":
 			cv.draw_set_transform(q, k * 8.0, Vector2(1.0, 0.8))
-			cv.draw_circle(Vector2.ZERO, sz * 1.22, SEED_COL.darkened(0.6))
+			cv.draw_circle(Vector2.ZERO, sz * 1.25, SEED_COL.darkened(0.6))
 			cv.draw_circle(Vector2.ZERO, sz, SEED_COL)
 			cv.draw_circle(Vector2(-sz * 0.3, -sz * 0.3), sz * 0.32, Color(1, 1, 0.9, 0.85))
 			cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 			var la := -PI * 0.5 + sin(k * 16.0) * 0.5
-			D.leaf(cv, q + Vector2(cos(la), sin(la)) * sz * 1.1, la, sz * 1.5, pal["c"])
-			D.leaf(cv, q + Vector2(cos(la), sin(la)) * sz * 1.1, la, sz * 1.15, pal["b"])
+			D.leaf(cv, q + Vector2(cos(la), sin(la)) * sz * 1.1, la, sz * 1.6, pal["c"])
+			D.leaf(cv, q + Vector2(cos(la), sin(la)) * sz * 1.1, la, sz * 1.2, pal["b"])
 		"pod":
 			cv.draw_circle(q, sz * 1.2, col.darkened(0.5))
 			cv.draw_circle(q, sz, col)
@@ -1187,6 +1412,31 @@ static func _paint_lob(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			D.tri(cv, q + Vector2(-sz * 0.7, -sz * 0.5), q + Vector2(sz * 0.7, -sz * 0.5), q + Vector2(0, -sz * 1.9),
 				col.lightened(0.15))
 			cv.draw_circle(q + Vector2(-sz * 0.3, -sz * 0.25), sz * 0.3, D.ca(Color.WHITE, 0.8))
+
+
+## The thrown thing lands (v 0..1 after touchdown): a flash, a squat ring
+## slapping out across the tile and bits flung off it - soil for a seed,
+## glitter for a pod, droplets for a bead of sap.
+static func _paint_splat(cv, b: Vector2, t: float, col: Color, style: String, v: float) -> void:
+	var e := D.ease_out(v)
+	D.glow(cv, b, t * (0.3 + 0.3 * e), D.ca(col.lightened(0.6), 0.7 * (1.0 - v)))
+	if v < 0.35:
+		cv.draw_circle(b, t * 0.2 * (1.0 - v / 0.35), D.ca(col.lightened(0.85), 0.9))
+	cv.draw_set_transform(b + Vector2(0, t * 0.24), 0.0, Vector2(1.0, 0.45))
+	D.ring(cv, Vector2.ZERO, t * (0.25 + 0.6 * e), D.ca(col.darkened(0.4), 0.6 * (1.0 - v)), t * 0.16 * (1.0 - 0.5 * v))
+	D.ring(cv, Vector2.ZERO, t * (0.25 + 0.6 * e), D.ca(col.lightened(0.45), 1.0 - v), t * 0.07)
+	cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	for i in 7:
+		var ang := -PI * (0.08 + 0.84 * float(i) / 6.0)
+		var q := b + Vector2(cos(ang), sin(ang)) * t * 0.55 * e + Vector2(0, t * (0.1 + 0.55 * v * v))
+		var rad := t * 0.07 * (1.0 - 0.5 * v)
+		match style:
+			"seed":
+				cv.draw_circle(q, rad, D.ca(DIRT_COL if i % 2 == 0 else col, 1.0 - v))
+			"pod":
+				D.twinkle(cv, q, rad * 1.8, D.ca(col.lightened(0.4), 1.0 - v))
+			_:
+				cv.draw_circle(q, rad, D.ca(col.lightened(0.2), 1.0 - v))
 
 
 static func _parent(p: Vector2i, ctr: Vector2i) -> Vector2i:
@@ -1209,15 +1459,23 @@ static func _paint_roots(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var c := D.px(V, ctr)
 	var fade := clampf((dur - ms) / 240.0, 0.0, 1.0)
 	var u0 := ms / 300.0
-	if u0 < 1.0:
+	if bool(cl.get("thrown", false)):
+		# the seed's own splat is the impact; the soil it broke stays a beat
+		if u0 < 1.0:
+			cv.draw_set_transform(c + Vector2(0, t * 0.26), 0.0, Vector2(1.0, 0.45))
+			cv.draw_circle(Vector2.ZERO, t * 0.3, D.ca(DIRT_COL, 0.55 * (1.0 - u0)))
+			cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	elif u0 < 1.0:
+		# planted where the tender stands: a flash and a ring of light clods
+		D.glow(cv, c + Vector2(0, t * 0.15), t * 0.45 * (1.0 - u0), D.ca(pal["b"], 0.55))
 		cv.draw_set_transform(c + Vector2(0, t * 0.2), 0.0, Vector2(1.0, 0.5))
-		D.ring(cv, Vector2.ZERO, t * (0.2 + 0.55 * D.ease_out(u0)), D.ca(pal["b"], 1.0 - u0), t * 0.09)
+		D.ring(cv, Vector2.ZERO, t * (0.2 + 0.6 * D.ease_out(u0)), D.ca(pal["c"], 0.6 * (1.0 - u0)), t * 0.15)
+		D.ring(cv, Vector2.ZERO, t * (0.2 + 0.6 * D.ease_out(u0)), D.ca(pal["b"], 1.0 - u0), t * 0.07)
 		cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-		var clod: Color = DIRT_COL if bool(cl.get("thrown", false)) else pal["b"]
 		for i in 6:
 			var ang := -PI * (0.1 + 0.8 * float(i) / 5.0)
 			var q := c + Vector2(cos(ang), sin(ang)) * t * 0.5 * D.ease_out(u0) + Vector2(0, t * 0.1 + t * 0.6 * u0 * u0)
-			cv.draw_circle(q, t * 0.055 * (1.0 - 0.5 * u0), D.ca(clod, 1.0 - u0))
+			cv.draw_circle(q, t * 0.065 * (1.0 - 0.5 * u0), D.ca(pal["b"], 1.0 - u0))
 	for tp in cl["tiles"]:
 		var d := int(tp[1])
 		if d == 0:
