@@ -184,6 +184,8 @@ var anim_mode := "full"  # full | quick | off (Animations setting)
 var clock_override := -1
 ## A caption tests/capture_anim.gd stamps on the map (frame time); "" = none.
 var capture_label := ""
+const IDLE_FRAME_MS := 50
+var _idle_draw_ms := 0
 var _floor_fade_ms := -99999  # descend wipe: new floor fades in from dark
 var profile  # meta career: unlocks tiers/packages across runs (meta/profile.gd)
 ## The four run choices the title screen makes, all persisted in tender.cfg
@@ -778,9 +780,13 @@ func _process(_dt: float) -> void:
 		animating = true  # danger vignette pulse
 	if game != null and game.over:
 		animating = true  # win/loss screens drift
-	if game != null and anim_mode != "off" and mode in ["normal", "target_dir", "target_tile", "cleanse"]:
-		animating = true  # idle loops: the tender and the machines breathe
 	if animating or smoggy:
+		queue_redraw()
+	elif game != null and anim_mode != "off" and mode in ["normal", "target_dir", "target_tile", "cleanse"] \
+			and _now() - _idle_draw_ms >= IDLE_FRAME_MS:
+		# idle loops (the tender and the machines breathe) are slow sines:
+		# ~20 fps is smooth enough and spares a phone's battery between moves
+		_idle_draw_ms = _now()
 		queue_redraw()
 
 
