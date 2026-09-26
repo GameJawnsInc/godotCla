@@ -6,20 +6,33 @@ extends SceneTree
 ##      type, has a builder - a new op or intent with no animation fails here,
 ##      the way the content lint fails an unknown op
 ##   2. every staged scene (tests/anim_scenes.gd: the tender's verbs, all
-##      Content.ABILITIES rows, every intent) plans a reel that is pure
-##      (inputs untouched), deterministic, lands every creature exactly where
-##      the post snapshot has it, hides the dead and the not-yet-spawned,
-##      flips every changed tile inside the reel, draws the ability's verb,
-##      and stays inside the time budget at each speed
+##      Content.ABILITIES rows, every intent and its two failures, and the
+##      x: edge cases) plans a reel that is pure (inputs untouched),
+##      deterministic, lands every creature exactly where the post snapshot
+##      has it, hides the dead and the not-yet-spawned, flips every changed
+##      tile inside the reel, draws the ability's verb, holds each HP bar
+##      until its blow, gives concurrent numbers on a tile their own rows,
+##      and stays inside the time budget at each speed ('off' keeping every
+##      number and word)
 ##   3. every clip of every reel paints through a recording canvas at five
-##      points of its life with finite coordinates, and every pose is sane
-##   4. the shell plays a reel on each step, cycles and persists the setting,
-##      and holds the HP a blow has not reached yet
+##      points of its life with finite coordinates, paints the SAME thing at
+##      quick speed (painters read k * span), and every pose is sane; idle
+##      loops stay in bounds
+##   4. the director credits one blow per machine (x:pack, x:shielded) and
+##      keeps a haul's tile events with the crane (x:haul_goo); telegraphs,
+##      HUD chips and room dressing hold until their beat and the cleanse
+##      float says the gain; the shell starts and ends a reel per step,
+##      carries numbers over, chains an out-of-charge move after the enemy
+##      turn, lets no tap during the death reel start a new run, starts a new
+##      game with no reel and a descent with none, and cycles and persists
+##      the setting
 ##   5. a soak over real bot-played runs (ANIM_SOAK_SEEDS, default 4 seeds x
 ##      2 personas): every step's reel lands every creature, hides the dead,
 ##      flips its tiles, paints finite geometry and fits the budget - the
 ##      enemy-phase event attribution meets whole packs, bosses and deaths
 ##      it was never staged for
+## A Logger counts every engine or script error raised meanwhile, and any
+## error fails the suite.
 ## Run: godot --headless --path . --script tests/test_anim.gd
 ## To SEE the animations: tests/capture_anim.gd (needs xvfb-run).
 

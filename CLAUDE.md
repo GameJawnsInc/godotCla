@@ -140,8 +140,13 @@ architecture below is designed to bend rather than block.
   - `godot --headless --path . --script tests/test_anim.gd` — the step
     animations: every effect op and enemy intent type has a builder, and a
     reel for every staged scene (`tests/anim_scenes.gd`: the tender's verbs,
-    every ability, every intent) is pure, deterministic, lands every
-    creature on its post tile, paints finite geometry and fits its budget
+    every ability, every intent and its two failures, and the `x:` edge
+    cases) is pure, deterministic, lands every creature on its post tile,
+    paints finite geometry (the same at quick speed) and fits its budget;
+    plus the one-blow-per-machine attribution, the holds (telegraphs, HUD
+    chips, room dressing), the shell's playback and setting, and a soak over
+    real bot runs (`ANIM_SOAK_SEEDS`, default 4). ANY engine or script error
+    raised while planning or painting fails it
 - Bots live in one registry, `bots/roster.gd` (`Roster.names()/make(name, seed)`);
   every runner resolves persona names through it, and an unknown name fails
   loudly. `deeproot_rollout` is deeproot with rollout drafting (a separate

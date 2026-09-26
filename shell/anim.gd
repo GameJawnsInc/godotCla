@@ -34,7 +34,8 @@ const FxEnemy := preload("res://shell/fx_enemy.gd")
 const OP_FAMILIES := [FxLines, FxAreas, FxSelf]
 
 ## Speed presets for the ANIMATION setting: a multiplier on every reel time.
-## "off" keeps only the information (damage numbers), at t = 0.
+## "off" keeps only what is READ (every float and every `read` word clip),
+## all at t = 0.
 const SPEEDS := {"full": 1.0, "quick": 0.55, "off": 0.0}
 
 ## Events that belong to the environment phase of an end_turn (after every
@@ -638,7 +639,13 @@ static func _feedback(c: Dictionary, t_end: int) -> void:
 	for id in c["pre_en"]:
 		if not c["post_en"].has(id):
 			gone.append(id)
+	# every number and word is QUEUED here and stacked after the pass, in time
+	# order: a hook's number that comes earlier in the stream but lands later
+	# must not push back the number of the blow that set it off
+	var asks: Array = []
 	var say := func(key, t: int, at: Vector2, text: String, col: Color) -> void:
+		asks.append([t, asks.size(), key, at, text, col])
+	var place := func(key, t: int, at: Vector2, text: String, col: Color) -> void:
 		var sk := Vector2i(at.round())
 		var st: Array = stack.get(sk, [-100000, -1])
 		var t0: int = maxi(t, int(st[0]) + L.FLOAT_STACK)
@@ -880,6 +887,10 @@ static func _feedback(c: Dictionary, t_end: int) -> void:
 			L.clip(c, {"kind": "status_hold", "t0": 0, "dur": until, "at": Vector2(pe["pos"]), "who": id,
 				"status": keep, "layer": "air"})
 
+	asks.sort_custom(func(a, b): return int(a[0]) < int(b[0]) or (int(a[0]) == int(b[0]) and int(a[1]) < int(b[1])))
+	for q in asks:
+		place.call(q[2], int(q[0]), q[3], String(q[4]), q[5])
+
 
 static func _hp_change(reel: Dictionary, key, t: int, delta: int) -> void:
 	if not reel["hp"].has(key):
@@ -1046,7 +1057,8 @@ static func _length(reel: Dictionary) -> int:
 	return n
 
 
-## Rescale every time in the reel. Speed 0 ("off") keeps only the numbers.
+## Rescale every time in the reel (never a clip's `span`, which is how its
+## painter stays in step). Speed 0 ("off") keeps only the numbers and words.
 static func _scale(reel: Dictionary, k: float) -> void:
 	if k <= 0.0:
 		# what must be READ survives: every float (numbers and the generic

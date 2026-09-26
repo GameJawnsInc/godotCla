@@ -16,7 +16,7 @@ extends SceneTree
 ##   CAPTURE_FRAMES=<n>       frames per strip (default 12)
 ##   CAPTURE_COLS=<n>         strip columns (default 4)
 ##   CAPTURE_SCALE=<f>        frame scale in the strip (default 0.75)
-##   CAPTURE_SPEED=full|quick (default full)
+##   CAPTURE_SPEED=full|quick|off (default full)
 ##   CAPTURE_BANNERS=1        keep the full-map banners (default: suppressed)
 ## Prints one line per strip: name, reel length, frame times, path.
 

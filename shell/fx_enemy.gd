@@ -1001,6 +1001,17 @@ static func _drag(c: Dictionary) -> int:
 		L.move(c, "player", pts, t_pull, n * step, 0.0)
 		for j in n:
 			L.claim(c, drags[j], t_pull + (j + 1) * step)
+		# what a leg drops the tender onto (goo, fire, a supply) bites as the
+		# tender arrives on that tile, not when the whole haul is over
+		var leg := -1
+		for i in c["own"]:
+			var ev: Dictionary = c["events"][i]
+			var tt := String(ev.get("t", ""))
+			if tt == "drag":
+				leg = drags.find(i)
+			elif leg >= 0 and not L.claimed(c, i) and (tt == "item_pickup" or tt == "satchel_full" \
+					or (tt == "damage" and String(ev.get("who", "")) == "player")):
+				L.claim(c, i, t_pull + (leg + 1) * step, L.dir_of(pts[leg], pts[leg + 1]))
 		L.seg(c, "player", {"kind": "squash", "t0": t_pull + n * step - 20, "dur": 120})
 		L.seg(c, id, {"kind": "lunge", "t0": t_pull - 20, "dur": 240, "dir": -d, "reach": 0.12})
 		end = t_pull + n * step

@@ -7,10 +7,14 @@ extends RefCounted
 ##
 ## Vocabulary (docs/SHELL.md "Animations"):
 ##   reel     what one step() looks like: {clips, tracks, ghosts, spawns,
-##            shakes, tswap, len}. Times are integer ms from the step.
-##   clip     one painted effect {kind, t0, dur, layer, pal, ...geometry}.
-##            Geometry is in TILE space (Vector2i / Vector2 tile coords);
-##            the painter owns pixels.
+##            shakes, tswap, hp, ev_t, dim, bloomed, hud, len}. Times are
+##            integer ms from the step.
+##   clip     one painted effect {kind, t0, dur, span, layer, pal, at,
+##            ...geometry}. `span` is its full-speed length (clip() stamps
+##            it; painters read time as k * span so a clip draws the same at
+##            every speed); `read: true` keeps a word's reading time at quick
+##            and keeps it when animations are off. Geometry is in TILE space
+##            (Vector2i / Vector2 tile coords); the painter owns pixels.
 ##   track    per creature ("player" or an enemy id) list of motion SEGMENTS
 ##            {kind, t0, dur, ...}; Anim.pose() folds them into where and how
 ##            to draw the creature at time t.

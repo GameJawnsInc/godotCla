@@ -9,8 +9,11 @@ extends RefCounted
 ## handed in.
 ##
 ## V (the view) = {ts: tile size px, ox/oy: pixel origin of tile (0, 0),
-## font, now: ms}. Tile coordinates are Vector2/Vector2i; px() is the CENTRE
-## of that tile.
+## font, now: ms, vis: optional Callable(Vector2i) -> bool - the room
+## camera's crop: Paint.paint skips a clip whose `at` tile it rejects and
+## fx_enemy keeps tall effects under the status strip with it; absent (the
+## headless suite) means every tile is seen}. Tile coordinates are
+## Vector2/Vector2i; px() is the CENTRE of that tile.
 
 static func px(V: Dictionary, p) -> Vector2:
 	var q := Vector2(p)
