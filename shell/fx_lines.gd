@@ -441,8 +441,12 @@ static func _pull_land(c: Dictionary, e: Dictionary, o: Vector2i, occ: Dictionar
 			hp -= int(Content.terrain(tk, "enter_dmg_enemy", 0))
 			if hp <= 0:
 				break
+	# a body gone after the cast (it died on the haul, or to the rake's own
+	# lash) leaves the board before the next body is pulled - the sim erases
+	# it from `enemies` - so it frees its tile instead of claiming it
 	occ.erase(from)
-	occ[p] = e["id"]
+	if pe != null:
+		occ[p] = e["id"]
 	return p
 
 

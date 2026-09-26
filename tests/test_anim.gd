@@ -311,6 +311,27 @@ func _check_scene(sc: Dictionary) -> void:
 		if String(cl["kind"]) != "float" or int(cl["t0"]) != 0:
 			only_numbers = false
 	_check(only_numbers, "%s: 'off' keeps only the numbers" % nm)
+	# numbers on one tile that are on screen together never share a row
+	var fl: Array = []
+	for cl in reel["clips"]:
+		if String(cl["kind"]) == "float":
+			fl.append(cl)
+	for i in fl.size():
+		for j in range(i + 1, fl.size()):
+			var a0: Dictionary = fl[i]
+			var b0: Dictionary = fl[j]
+			if Vector2i(Vector2(a0["at"]).round()) != Vector2i(Vector2(b0["at"]).round()):
+				continue
+			var both := mini(int(a0["t0"]) + int(a0["dur"]), int(b0["t0"]) + int(b0["dur"])) - maxi(int(a0["t0"]), int(b0["t0"]))
+			if both > 300 and absi(int(a0["t0"]) - int(b0["t0"])) < int(L.T_FLOAT * 0.5):
+				_check(int(a0.get("n", 0)) != int(b0.get("n", 0)),
+					"%s: '%s' and '%s' on one tile take different rows" % [nm, a0["text"], b0["text"]])
+	# where the raked fall: a body the lash or the fire killed frees its
+	# tile at once, so the one behind is dragged INTO it and dies there
+	if nm == "x:rake_fire" or nm == "x:rake_kill":
+		for gh in reel["ghosts"]:
+			_check(Vector2i(Vector2(gh["pos"]).round()) == Vector2i(5, 4),
+				"%s: raked body %d dies on (5, 4), not %s" % [nm, gh["id"], str(gh["pos"])])
 	# HP: a bar holds its pre-step value until the blow lands
 	for e in pre["enemies"]:
 		var pe = L.enemy_by_id(post, e["id"])

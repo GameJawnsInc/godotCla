@@ -1148,13 +1148,24 @@ static func _blocked(c: Dictionary) -> int:
 	var t: int = c["t"]
 	var e: Dictionary = c["e"]
 	var status := ""
+	var blocked: Array = []
 	for i in c["own"]:
 		var tt := String(c["events"][i].get("t", ""))
 		for sname in Content.STATUSES:
 			if String(Content.STATUSES[sname].get("blocked_event", sname)) == tt:
 				status = sname
-				L.claim(c, i, t + 40)
-				L.quiet(c, i)
+				blocked.append(i)
+	# cause before effect: when this very phase landed the status (a hook
+	# rooting it as an earlier machine's fire reached its tile), the strain
+	# waits until that pop has visibly happened
+	for j in c["events"].size():
+		var ev: Dictionary = c["events"][j]
+		if String(ev.get("t", "")) == "status" and String(ev.get("status", "")) == status \
+				and L.same_id(ev.get("id"), e["id"]) and L.claimed(c, j):
+			t = maxi(t, int(c["times"][j]) + 60)
+	for i in blocked:
+		L.claim(c, i, t + 40)
+		L.quiet(c, i)
 	var tile = e["intent"].get("tile", _ppos(c))
 	if not (tile is Vector2i):
 		tile = _ppos(c)

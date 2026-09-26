@@ -954,8 +954,13 @@ static func _nova_prism(cv, V: Dictionary, walls: Dictionary, c: Vector2, t: flo
 	var show := minf(1.0, g * 2.0) * live
 	# the light shaft falling into the crystal, then the crystal itself
 	if ms < lead + 120.0:
+		# a short shaft that fades out upward: it must read as light falling
+		# into the crystal, never as a tether from whatever stands above
 		var sh := 1.0 - D.win(ms, lead, lead + 120.0)
-		D.line(cv, q + Vector2(0, -t * 1.4), q, D.ca(Color(1, 1, 0.95), 0.7 * g * sh), t * 0.12)
+		for j in 4:
+			var a0 := q + Vector2(0, -t * 0.14 * float(j + 1))
+			var a1 := q + Vector2(0, -t * 0.14 * float(j))
+			D.line(cv, a0, a1, D.ca(Color(1, 1, 0.95), 0.7 * g * sh * (1.0 - 0.24 * float(j))), t * (0.12 - 0.02 * float(j)))
 	cv.draw_colored_polygon(PackedVector2Array([q + Vector2(0, -ch * 1.12), q + Vector2(cw * 1.2, 0),
 		q + Vector2(0, ch * 1.12), q + Vector2(-cw * 1.2, 0)]), D.ca(Color(0.35, 0.45, 0.6), 0.8 * show))
 	cv.draw_colored_polygon(PackedVector2Array([q + Vector2(0, -ch), q + Vector2(cw, 0), q + Vector2(0, ch),

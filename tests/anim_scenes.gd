@@ -215,7 +215,7 @@ const BASIC := ["move", "strike", "strike_spiked", "kill", "cleanse", "item", "h
 const EXTRA := ["x:pack", "x:shielded", "x:fuse_attack", "x:ignite_hooks", "x:top_row", "x:haul",
 	"x:slam_thorns", "x:kill_stunned", "x:ironheart", "x:balm_capped", "x:spore_tick", "x:updraft_open",
 	"x:gust_free", "x:rake_fire", "x:jet_undertow", "x:tide_grafts", "x:drift_far", "x:tangle_surged",
-	"x:reclaim_oil", "x:prism_fizzle", "x:burrow_long", "x:vent_open", "x:haul_goo"]
+	"x:reclaim_oil", "x:prism_fizzle", "x:burrow_long", "x:vent_open", "x:haul_goo", "x:rake_kill"]
 
 
 static func _cast(g, target) -> Dictionary:
@@ -312,6 +312,12 @@ static func extra_scene(nm: String) -> Dictionary:
 		"x:rake_fire":
 			g = _game(OPEN, ["vine_whip+rake"], [{"kind": "sludgeling", "pos": Vector2i(6, 4)},
 				{"kind": "drill_bot", "pos": Vector2i(7, 4)}], {Vector2i(5, 4): "fire"})
+			a = _cast(g, Vector2i(1, 0))
+		"x:rake_kill":
+			# two 1-HP bodies on the line and no fire: the near one dies to the
+			# lash, leaves the board, and the far one is dragged into its tile
+			g = _game(OPEN, ["vine_whip+rake"], [{"kind": "sludgeling", "pos": Vector2i(6, 4)},
+				{"kind": "sludgeling", "pos": Vector2i(7, 4)}])
 			a = _cast(g, Vector2i(1, 0))
 		"x:jet_undertow":
 			g = _game(ARENA, ["water_jet+sluice"], [], {}, ["undertow"])

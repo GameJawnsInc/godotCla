@@ -83,7 +83,17 @@ static func paint(cv, reel: Dictionary, rt: float, layer: String, V: Dictionary)
 		_hold = _holds(reel, rt)
 	if reel.is_empty():
 		return
-	for cl in reel.get("clips", []):
+	# two passes: every effect first, then the numbers and words, so a death
+	# puff or a burst can never billow over the number it explains
+	var clips: Array = reel.get("clips", [])
+	var order: Array = []
+	for cl in clips:
+		if String(cl["kind"]) != "float":
+			order.append(cl)
+	for cl in clips:
+		if String(cl["kind"]) == "float":
+			order.append(cl)
+	for cl in order:
 		if String(cl.get("layer", "air")) != layer:
 			continue
 		var age := rt - float(cl["t0"])
@@ -338,7 +348,10 @@ static func _float(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var big := _is_number(s)
 	var p := D.px(V, cl["at"])
 	if n > 0:
-		p += Vector2((0.26 if n % 2 == 1 else -0.26) * t, -0.16 * t * float(n))
+		# each stacked float takes the next row up (a full line - a number is
+		# ~0.45 tile wide, so a sideways nudge alone never cleared it), with a
+		# small stagger so a column of rows still reads as separate beats
+		p += Vector2((0.12 if n % 2 == 1 else -0.12) * t, -(0.4 if big else 0.32) * t * float(n))
 	var rise := D.ease_out(D.win(k, 0.0, 0.45))
 	# over the head, rising into the tile above - or, when someone stands in
 	# that tile (`low`, set by the director), on the body's own chest, so the

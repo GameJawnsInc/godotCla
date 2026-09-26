@@ -359,11 +359,28 @@ static func _plan_ability(c: Dictionary) -> int:
 	var t := L.T_WINDUP
 	for eff in adef.get("effects", []):
 		t = _build_effect(c, L.surged(eff, surge), t, surge)
-	# riders are the combo moments: a small gold flourish at the tender
+	# riders are the combo moments: a small gold flourish where the rider
+	# landed - on the creatures its status or damage reached (the events just
+	# before it in the stream), else on the cast's target, else the tender
 	for i in L.unclaimed(c, ["rider"]):
-		L.claim(c, i, maxi(L.T_WINDUP, t - 120))
-		L.clip(c, {"kind": "spark", "t0": maxi(L.T_WINDUP, t - 120), "dur": 300,
-			"at": c["ppos"], "col": Color("e8c840"), "n": 8})
+		var at_ms := maxi(L.T_WINDUP, t - 120)
+		var spots: Array = []
+		var j: int = i - 1
+		while j > ia and spots.size() < 3:
+			var ev: Dictionary = evs[j]
+			var tt := String(ev.get("t", ""))
+			if tt == "rider":
+				break
+			if (tt == "status" or tt == "damage") and c["pre_en"].has(ev.get("id")) and not (ev.get("id") is String):
+				at_ms = maxi(at_ms, int(c["times"][j]))
+				spots.append(Vector2i(_pos_at(c, ev["id"], int(c["times"][j])).round()))
+			j -= 1
+		if spots.is_empty():
+			var tg = c.get("target")
+			spots.append(tg if tg is Vector2i and not L.DIRS.has(tg) else c["ppos"])
+		L.claim(c, i, at_ms)
+		for sp in spots:
+			L.clip(c, {"kind": "spark", "t0": at_ms, "dur": 300, "at": sp, "col": Color("e8c840"), "n": 8})
 	return t
 
 
@@ -600,27 +617,38 @@ static func _feedback(c: Dictionary, t_end: int) -> void:
 			L.claim(c, i, int(c["times"][i - 1]) + 30)
 		else:
 			L.claim(c, i, t_end)
-	# Numbers and words on one body stack: one that lands while the last is
-	# still fresh waits a beat and fans out beside it (a shield that blocks
-	# half a blow says "blocked" AND "-1"); one that lands later starts fresh,
-	# exactly when its own blow does. Keyed by "player", an enemy id or a tile.
+	# Numbers and words on one tile stack: one that lands while the last is
+	# still fresh waits a beat and takes the next row up (a shield that blocks
+	# half a blow says "blocked" AND "-1"; a body raked into the fire a corpse
+	# just left gets its own row); one that lands later starts fresh, exactly
+	# when its own blow does. Keyed by the landing tile, so two bodies' numbers
+	# on one tile stack too.
 	var stack := {}
 	# A number rises into the tile above its body; when someone stands there
 	# it would sit on THEIR feet and read as their damage, so it stays low,
 	# on its own body, instead.
+	# A living body holds its post tile; a body that died is wherever its
+	# track has it at that moment - never its own vacated pre-step tile, which
+	# would push its own killing number down into its own death puff.
 	var taken := {}
 	for e in c["post"]["enemies"]:
-		taken[e["pos"]] = true
+		taken[e["pos"]] = e["id"]
+	var gone: Array = []
 	for id in c["pre_en"]:
 		if not c["post_en"].has(id):
-			taken[c["pre_en"][id]["pos"]] = true
+			gone.append(id)
 	var say := func(key, t: int, at: Vector2, text: String, col: Color) -> void:
-		var st: Array = stack.get(key, [-100000, -1])
+		var sk := Vector2i(at.round())
+		var st: Array = stack.get(sk, [-100000, -1])
 		var t0: int = maxi(t, int(st[0]) + L.FLOAT_STACK)
 		var n: int = int(st[1]) + 1 if t0 - int(st[0]) < int(L.T_FLOAT * 0.5) else 0
-		stack[key] = [t0, n]
-		var above := Vector2i(at.round()) + Vector2i(0, -1)
-		var low: bool = taken.has(above) or Vector2i(_pos_at(c, "player", t0).round()) == above
+		stack[sk] = [t0, n]
+		var above := sk + Vector2i(0, -1)
+		var low: bool = taken.has(above) and not L.same_id(taken[above], key)
+		low = low or (not (key is String and key == "player") and Vector2i(_pos_at(c, "player", t0).round()) == above)
+		for gid in gone:
+			if not L.same_id(gid, key) and Vector2i(_pos_at(c, gid, t0).round()) == above:
+				low = true
 		L.clip(c, {"kind": "float", "t0": t0, "dur": L.T_FLOAT, "at": at, "text": text, "n": n, "col": col,
 			"low": low})
 	var last_hit := {}  # victim key -> direction of its latest blow (a death tips away from it)
