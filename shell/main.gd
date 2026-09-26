@@ -15,6 +15,9 @@ const Art := preload("res://shell/svg_art.gd")
 const Tutorial := preload("res://shell/tutorial.gd")
 const AudioKit := preload("res://shell/audio.gd")
 const Profile := preload("res://meta/profile.gd")
+const Anim := preload("res://shell/anim.gd")
+const Paint := preload("res://shell/anim_paint.gd")
+const AnimLib := preload("res://shell/anim_lib.gd")
 const PROFILE_PATH := "user://tender_profile.json"
 const RUN_SAVE_PATH := "user://tender_run.save"
 # Replay compatibility rides on the sim's own version: a stale log replayed
@@ -171,12 +174,16 @@ var _vy0 := 0
 var _vx1 := 999
 var _vy1 := 999
 
-const ANIM_MS := 140
-var _anim_from := {}  # "player" / enemy id -> Vector2 tile pos before the step
-var _anim_ms := -99999
-
-const FX_MS := 700
-var _fx: Array = []  # transient map effects {kind, pos: Vector2 tile, text, col, t0}
+## Step animation (docs/SHELL.md "Animations"): every step() is planned into
+## a short reel by shell/anim.gd and played back from _reel_ms. The reel is
+## pure data over snapshots; nothing here decides a rule.
+var _reel: Dictionary = {}
+var _reel_ms := -99999
+var anim_mode := "full"  # full | quick | off (Animations setting)
+## A fixed clock (ms) for tests/capture_anim.gd filmstrips; -1 = the real one.
+var clock_override := -1
+## A caption tests/capture_anim.gd stamps on the map (frame time); "" = none.
+var capture_label := ""
 var _floor_fade_ms := -99999  # descend wipe: new floor fades in from dark
 var profile  # meta career: unlocks tiers/packages across runs (meta/profile.gd)
 ## The four run choices the title screen makes, all persisted in tender.cfg
@@ -190,8 +197,6 @@ var sel_mutator := ""    # the one mutator the run carries ("" = none)
 var run_tier := 0  # tier the live run actually started at
 var _run_recorded := false
 var _run_unlocks: Array = []
-var _shake_ms := -99999
-var _shake_mag := 0.0
 var _banner: Array = []
 var _banner_ms := -99999
 var _run_save: FileAccess = null  # open append handle for the live run's log
@@ -228,7 +233,7 @@ func _roll_seed() -> void:
 	if seed_mode == "daily":
 		seed_v = _daily_seed()
 	else:
-		seed_v = (int(Time.get_unix_time_from_system()) * 1103515245 + Time.get_ticks_msec()) % 1000000
+		seed_v = (int(Time.get_unix_time_from_system()) * 1103515245 + _now()) % 1000000
 
 
 ## Keep the menu's run choices inside what the career actually unlocked: the
@@ -426,6 +431,9 @@ func _load_settings() -> void:
 		intro_mode = String(cf.get_value("ui", "intro_mode", "once"))
 		sfx_on = bool(cf.get_value("ui", "sfx_on", true))
 		music_on = bool(cf.get_value("ui", "music_on", true))
+		anim_mode = String(cf.get_value("ui", "anim", "full"))
+		if not Anim.SPEEDS.has(anim_mode):
+			anim_mode = "full"
 		sel_tier = int(cf.get_value("ui", "tier", 0))
 		sel_loadout = String(cf.get_value("ui", "loadout", "tender"))
 		sel_package = String(cf.get_value("ui", "package", ""))
@@ -439,6 +447,7 @@ func _save_settings() -> void:
 	cf.set_value("ui", "intro_mode", intro_mode)
 	cf.set_value("ui", "sfx_on", sfx_on)
 	cf.set_value("ui", "music_on", music_on)
+	cf.set_value("ui", "anim", anim_mode)
 	cf.set_value("ui", "tier", sel_tier)
 	cf.set_value("ui", "loadout", sel_loadout)
 	cf.set_value("ui", "package", sel_package)
@@ -449,10 +458,8 @@ func _save_settings() -> void:
 func _act(a: Dictionary) -> void:
 	if game == null or game.over:
 		return
-	var prev := {"player": Vector2(game.player["pos"])}
+	var pre: Dictionary = game.snapshot()
 	var prev_floor: int = game.floor_num
-	for e in game.enemies:
-		prev[e["id"]] = Vector2(e["pos"])
 	if screen == "tutorial" and not tut_done:
 		var st: Dictionary = Tutorial.STEPS[tut_step]
 		var kind := String(a.get("type", ""))
@@ -464,8 +471,7 @@ func _act(a: Dictionary) -> void:
 			_flash("follow the guide for now")
 			return
 		var tevs: Array = game.step(a)
-		_arm_anim(prev, prev_floor)
-		_spawn_fx(tevs, prev)
+		_start_reel(pre, a, tevs, prev_floor)
 		_play_events(tevs)
 		if advances:
 			if st.get("until_dead", false):
@@ -491,8 +497,7 @@ func _act(a: Dictionary) -> void:
 	if _game_is_run and _run_save != null:
 		_run_save.store_line(var_to_str(a).replace("\n", " "))
 		_run_save.flush()
-	_arm_anim(prev, prev_floor)
-	_spawn_fx(evs, prev)
+	_start_reel(pre, a, evs, prev_floor)
 	if game.over and _game_is_run and not _run_recorded:
 		_record_finished_run()
 	for ev in evs:
@@ -554,84 +559,52 @@ func _play_events(evs: Array) -> void:
 		audio.play(picks[i])
 
 
-## Turn a step's events into transient map effects: floating numbers over
-## whoever was hit, white hit flashes, gold cleanse bursts, grey death puffs.
-func _spawn_fx(evs: Array, prev: Dictionary) -> void:
-	var now := Time.get_ticks_msec()
-	var stack := {}  # tile -> count, so numbers landing together fan out in time
+## Plan the step just taken into a reel (shell/anim.gd) and start playing it.
+## A descent has no reel: the floor fade-in is its animation. Numbers from the
+## previous reel that are still in the air keep flying - a fast player never
+## loses the damage they just dealt.
+func _start_reel(pre: Dictionary, a: Dictionary, evs: Array, prev_floor: int) -> void:
+	_spawn_banners(evs)
+	if game.floor_num != prev_floor:
+		_reel = {}
+		_floor_fade_ms = _now()
+		return
+	var ort := _reel_t()
+	var carry: Array = []
+	if Anim.playing(_reel, ort):
+		for cl in _reel["clips"]:
+			if String(cl["kind"]) == "float" and ort < float(cl["t0"]) + float(cl["dur"]):
+				var c2: Dictionary = cl.duplicate()
+				c2["t0"] = int(float(cl["t0"]) - ort)
+				carry.append(c2)
+	_reel = Anim.plan(pre, a, evs, game.snapshot(), float(Anim.SPEEDS.get(anim_mode, 1.0)))
+	if not carry.is_empty():
+		_reel["clips"].append_array(carry)
+		for c2 in carry:
+			_reel["len"] = maxi(int(_reel["len"]), int(c2["t0"]) + int(c2["dur"]))
+	_reel_ms = _now()
+
+
+## The clock every animation reads. clock_override pins it for filmstrips.
+func _now() -> int:
+	return clock_override if clock_override >= 0 else Time.get_ticks_msec()
+
+
+## Time into the current reel (ms).
+func _reel_t() -> float:
+	return float(_now() - _reel_ms)
+
+
+## Full-map banners for the moments that change the floor's state.
+func _spawn_banners(evs: Array) -> void:
 	for ev in evs:
 		match String(ev.get("t", "")):
-			"damage":
-				var p := _fx_pos(ev, prev)
-				if p.x < -0.5:
-					continue
-				var k := str(p)
-				stack[k] = int(stack.get(k, -1)) + 1
-				var mine: bool = ev.get("who", "") == "player"
-				_fx.append({"kind": "float", "pos": p, "text": "-%d" % int(ev["amt"]),
-					"col": COL_RED if mine else COL_CREAM, "t0": now + int(stack[k]) * 110})
-				_fx.append({"kind": "flash", "pos": p, "col": Color(1, 1, 1), "t0": now})
-				if mine:
-					_shake(2.0 + minf(float(int(ev["amt"])) * 1.2, 6.0))
-			"heal":
-				_fx.append({"kind": "float", "pos": Vector2(game.player["pos"]),
-					"text": "+%d" % int(ev["amt"]), "col": Color("8fdc6a"), "t0": now})
-			"shield":
-				_fx.append({"kind": "float", "pos": Vector2(game.player["pos"]),
-					"text": "shield", "col": Color("7fb6d9"), "t0": now})
-			"cleanse":
-				var cp := Vector2(ev["tile"])
-				_fx.append({"kind": "burst", "pos": cp, "col": COL_GOLD, "t0": now})
-				_fx.append({"kind": "float", "pos": cp, "text": "+%d" % int(ev.get("bloom", 1)),
-					"col": COL_GOLD, "t0": now})
-			"death":
-				var dp := _fx_pos(ev, prev)
-				if dp.x > -0.5:
-					_fx.append({"kind": "puff", "pos": dp, "col": Color(0.62, 0.64, 0.66), "t0": now})
-			"room_bloom":
-				var bp := Vector2(game.player["pos"])
-				_fx.append({"kind": "burst", "pos": bp, "col": Color(0.91, 0.70, 0.82), "t0": now})
-				_fx.append({"kind": "float", "pos": bp, "text": "BLOOM +%d" % int(ev.get("bonus", 2)),
-					"col": COL_GOLD, "t0": now + 120})
 			"stairs_awaken":
 				_banner = ["THE STAIRS AWAKEN"]
-				_banner_ms = now
-				if ev.has("tile"):
-					_fx.append({"kind": "burst", "pos": Vector2(ev["tile"]), "col": COL_GOLD, "t0": now})
+				_banner_ms = _now()
 			"floor_restored":
 				_banner = ["FLOOR RESTORED", "the skies clear"]
-				_banner_ms = now
-				_fx.append({"kind": "burst", "pos": Vector2(game.player["pos"]), "col": Color(0.6, 0.9, 0.5), "t0": now})
-			"verdant":
-				if ev.has("tile"):
-					_fx.append({"kind": "burst", "pos": Vector2(ev["tile"]), "col": Color(0.55, 0.9, 0.45), "t0": now})
-			"boss_phase", "ignite_all", "flood", "smoke_burst":
-				_shake(9.0)
-	if _fx.size() > 40:
-		_fx = _fx.slice(_fx.size() - 40)
-
-
-## Best-known tile for an event's subject: the player, a live enemy, or the
-## pre-step position of something that just died.
-func _fx_pos(ev: Dictionary, prev: Dictionary) -> Vector2:
-	if ev.get("who", "") == "player":
-		return Vector2(game.player["pos"])
-	var id = ev.get("id", null)
-	if id != null:
-		for e in game.enemies:
-			if e["id"] == id:
-				return Vector2(e["pos"])
-		if prev.has(id):
-			return prev[id]
-	return Vector2(-9, -9)
-
-
-## Brief screen shake; magnitudes from concurrent hits keep the strongest.
-func _shake(mag: float) -> void:
-	if Time.get_ticks_msec() - _shake_ms > 320:
-		_shake_mag = 0.0
-	_shake_ms = Time.get_ticks_msec()
-	_shake_mag = maxf(_shake_mag, mag)
+				_banner_ms = _now()
 
 
 ## Tutorial until_dead condition: `true` waits for an empty floor, a String
@@ -644,28 +617,6 @@ func _tut_cleared(cond) -> bool:
 				return false
 		return true
 	return game.enemies.is_empty()
-
-
-func _arm_anim(prev: Dictionary, prev_floor: int) -> void:
-	if game.floor_num != prev_floor:
-		_anim_from = {}
-		_fx = []
-		_floor_fade_ms = Time.get_ticks_msec()
-		return
-	_anim_from = prev
-	_anim_ms = Time.get_ticks_msec()
-
-
-## Where to draw a creature right now: sliding from its previous tile for a
-## beat after each step. Long jumps (teleports, dashes) snap instead.
-func _anim_pos(key, cur: Vector2i) -> Vector2:
-	var t := (Time.get_ticks_msec() - _anim_ms) / float(ANIM_MS)
-	if t >= 1.0 or not _anim_from.has(key):
-		return Vector2(cur)
-	var from: Vector2 = _anim_from[key]
-	if from.distance_to(Vector2(cur)) > 3.0:
-		return Vector2(cur)
-	return from.lerp(Vector2(cur), clampf(t, 0.0, 1.0))
 
 
 func _legal_of(kind: String) -> Array:
@@ -791,7 +742,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 	elif ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT:
 		if ev.pressed:
 			_press_pos = ev.position
-			_press_ms = Time.get_ticks_msec()
+			_press_ms = _now()
 			_held = true
 			queue_redraw()  # pressed-state shading on buttons
 		else:
@@ -799,7 +750,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_held = false
 			if had_tip:
 				tooltip = []
-			elif Time.get_ticks_msec() - _press_ms < hold_ms:
+			elif _now() - _press_ms < hold_ms:
 				_click(ev.position)
 			queue_redraw()
 	elif ev is InputEventMouseMotion:
@@ -815,24 +766,20 @@ func _process(_dt: float) -> void:
 	if screen == "menu":
 		queue_redraw()  # spores drift across the title vista
 		return
-	if _held and tooltip.is_empty() and Time.get_ticks_msec() - _press_ms >= hold_ms:
+	if _held and tooltip.is_empty() and _now() - _press_ms >= hold_ms:
 		_show_tooltip(_press_pos)
-	var animating: bool = Time.get_ticks_msec() - _anim_ms < ANIM_MS + 40
+	var animating: bool = Anim.playing(_reel, _reel_t())
 	var smoggy: bool = game != null and not game.over and (int(game.smog) > 0 or int(game.dim) > 0)
-	if not _fx.is_empty():
-		var fnow := Time.get_ticks_msec()
-		_fx = _fx.filter(func(f): return fnow - int(f["t0"]) < FX_MS)
+	if _now() - _floor_fade_ms < 1450:
 		animating = true
-	if Time.get_ticks_msec() - _floor_fade_ms < 1450:
-		animating = true
-	if Time.get_ticks_msec() - _banner_ms < 1650:
+	if _now() - _banner_ms < 1650:
 		animating = true
 	if game != null and not game.over and int(game.player["hp"]) <= maxi(2, int(game.player["max_hp"]) / 4):
 		animating = true  # danger vignette pulse
-	if Time.get_ticks_msec() - _shake_ms < 360:
-		animating = true
 	if game != null and game.over:
 		animating = true  # win/loss screens drift
+	if game != null and anim_mode != "off" and mode in ["normal", "target_dir", "target_tile", "cleanse"]:
+		animating = true  # idle loops: the tender and the machines breathe
 	if animating or smoggy:
 		queue_redraw()
 
@@ -1452,6 +1399,8 @@ func _tap(tag: String) -> void:
 				seed_mode = "daily" if seed_mode == "random" else "random"
 			"intro":
 				intro_mode = {"once": "always", "always": "never", "never": "once"}.get(intro_mode, "once")
+			"anim":
+				anim_mode = {"full": "quick", "quick": "off", "off": "full"}.get(anim_mode, "full")
 		_save_settings()
 		queue_redraw()
 
@@ -1812,6 +1761,65 @@ func _shadow(p: Vector2i) -> void:
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
+## The terrain to DRAW this frame: the post-step board, except tiles the
+## current reel has not reached yet, which still show their pre-step kind.
+func _terrain_view(snap: Dictionary, rt: float) -> Dictionary:
+	var out := {}
+	for t in snap["terrain"].keys():
+		out[t] = String(snap["terrain"][t]["kind"])
+	for t in _reel.get("tswap", {}):
+		var k = Anim.terrain_at(_reel, t, rt)
+		if k == null:
+			continue
+		if String(k) == "":
+			out.erase(t)
+		else:
+			out[t] = String(k)
+	return out
+
+
+## The view the painter draws in: tile size, pixel origin, font, clock and
+## the visibility test (the room camera can crop the floor).
+func _anim_view() -> Dictionary:
+	return {"ts": _ts, "ox": _mox, "oy": _moy, "font": font, "now": float(_now()), "vis": Callable(self, "_vis")}
+
+
+## Idle loop for an enemy: its style from anim_lib, a phase from its id so a
+## pack never breathes in unison.
+func _idle_of(kind: String, id: int, now: float) -> Dictionary:
+	if anim_mode == "off":
+		return {"lift": 0.0, "sx": 1.0, "sy": 1.0, "rot": 0.0, "dx": 0.0}
+	return Anim.idle(AnimLib.idle_style(kind), float(id) * 0.37, now)
+
+
+## Draw a creature sprite with its pose (shell/anim.gd pose()) and idle loop:
+## squash and stretch anchored at the feet, lift into the air with a shadow
+## that stays on the ground, tint and a white-hot flash when hit. Returns the
+## body's tile rect (for rings, bars and overlays).
+func _draw_body(id: String, ps: Dictionary, idl: Dictionary) -> Rect2:
+	var p: Vector2 = ps["pos"] + ps["off"] + Vector2(float(idl.get("dx", 0.0)), 0.0)
+	var lift := float(ps["lift"]) + float(idl.get("lift", 0.0))
+	var alpha := float(ps["alpha"])
+	var r := _tile_rect_f(p)
+	var sh := clampf(1.0 - lift * 0.9, 0.4, 1.0)
+	draw_set_transform(Vector2(r.get_center().x, r.position.y + _ts * 0.86), 0.0, Vector2(sh, 0.42 * sh))
+	draw_circle(Vector2.ZERO, _ts * 0.36, Color(0, 0, 0, 0.32 * alpha))
+	var feet := Vector2(r.get_center().x, r.position.y + _ts * 0.92 - lift * _ts)
+	var sx := float(ps["sx"]) * float(idl.get("sx", 1.0))
+	var sy := float(ps["sy"]) * float(idl.get("sy", 1.0))
+	draw_set_transform(feet, float(ps["rot"]) + float(idl.get("rot", 0.0)), Vector2(sx, sy))
+	var tx := Art.tex(id, int(_ts))
+	if tx != null:
+		var tint: Color = ps["tint"]
+		var at := Vector2(-_ts / 2.0, -_ts * 0.92)
+		draw_texture(tx, at, Color(tint.r, tint.g, tint.b, alpha))
+		var fl := float(ps["flash"])
+		if fl > 0.02:
+			draw_texture(tx, at, Color(1.0 + 3.0 * fl, 1.0 + 3.0 * fl, 1.0 + 3.0 * fl, fl * alpha * 0.85))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	return Rect2(Vector2(feet.x - _ts / 2.0, feet.y - _ts * 0.92), Vector2(_ts, _ts))
+
+
 func _hot(r: Rect2, tag: String) -> void:
 	hotspots.append({"rect": r, "tag": tag})
 
@@ -1973,7 +1981,7 @@ func _draw() -> void:
 		_draw_intro(vw, vh)
 	if screen == "tutorial" and tut_done:
 		_draw_tut_done(vw, vh)
-	elif snap["over"]:
+	elif snap["over"] and not Anim.playing(_reel, _reel_t()):
 		_draw_over(snap, vw, vh)
 
 
@@ -1984,7 +1992,7 @@ func _draw_menu(vw: float, vh: float) -> void:
 	draw_rect(Rect2(0, 0, vw, sh), Color("233c37"))
 	draw_rect(Rect2(0, sh * 0.35, vw, sh * 0.65), Color("2b4a40"))
 	draw_rect(Rect2(0, sh * 0.62, vw, sh * 0.38), Color("35584a"))
-	var tsec := Time.get_ticks_msec() / 1000.0
+	var tsec := _now() / 1000.0
 	var sun := Vector2(vw * 0.82, sh * 0.52)
 	draw_circle(sun, vw * 0.13, Color(0.95, 0.88, 0.55, 0.10))
 	draw_circle(sun, vw * 0.095, Color(0.95, 0.88, 0.55, 0.16))
@@ -2072,6 +2080,8 @@ func _draw_settings(vw: float, vh: float) -> void:
 	_button(Rect2(vw * 0.06, y, bw, bh), "Sound effects:  %s" % ("on" if sfx_on else "off"), "set:sfx", int(bh * 0.3))
 	y += bh + vh * 0.025
 	_button(Rect2(vw * 0.06, y, bw, bh), "Music:  %s" % ("on" if music_on else "off"), "set:music", int(bh * 0.3))
+	y += bh + vh * 0.025
+	_button(Rect2(vw * 0.06, y, bw, bh), "Animations:  %s" % anim_mode, "set:anim", int(bh * 0.3))
 	y += bh + vh * 0.03
 	# the globalized path is absolute, so the whole line used to shrink to the
 	# 9px _fit_size floor whatever the label said - the tail is the useful half
@@ -2105,7 +2115,7 @@ func _draw_tut_banner(vw: float, vh: float) -> void:
 	_button(xr, "EXIT", "menu", int(vh * 0.016))
 	# pulse the stairs when the guide points there
 	if st.get("guide_to_stairs", false) and game.map["stairs"] != Vector2i(-1, -1) and _vis(game.map["stairs"]):
-		var pulse := 2.0 + 2.0 * absf(sin(Time.get_ticks_msec() / 300.0))
+		var pulse := 2.0 + 2.0 * absf(sin(_now() / 300.0))
 		draw_rect(_tile_rect(game.map["stairs"]).grow(3), COL_GOLD, false, pulse)
 		queue_redraw()
 
@@ -2253,7 +2263,8 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	# row 1: vitals left, menu/help buttons right
 	var y := pad + row_h * 0.72
 	var x := vw * 0.025
-	x = _chip(x, y, "ic_hp", "%d/%d" % [pl["hp"], pl["max_hp"]], vw, vh, COL_TEXT if int(pl["hp"]) > 3 else COL_RED)
+	var php := clampi(Anim.hp_shown(_reel, "player", _reel_t(), int(pl["hp"])), 0, int(pl["max_hp"]))
+	x = _chip(x, y, "ic_hp", "%d/%d" % [php, pl["max_hp"]], vw, vh, COL_TEXT if php > 3 else COL_RED)
 	if int(pl["shield"]) > 0:
 		x = _chip(x, y, "ic_shield", str(pl["shield"]), vw, vh)
 	x = _chip(x, y, "ic_charge", "%d" % pl["charge"], vw, vh)
@@ -2279,7 +2290,7 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	draw_circle(Vector2(mx + mw * 0.93, y2 + mh * 0.42), mh * 0.30, Color("f2e4a0"))
 	var sw := mw * frac
 	if sw > 0.5:
-		var tsec := Time.get_ticks_msec() / 1000.0
+		var tsec := _now() / 1000.0
 		var scol := Color("453b33")
 		draw_rect(Rect2(mx, y2, sw, mh), scol)
 		for i in 3:
@@ -2300,7 +2311,7 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 		draw_texture(ctx, Vector2(mx + mw / 1.15 - csz / 2.0, y2 + (mh - csz) / 2.0))
 	draw_rect(Rect2(mx, y2, mw, mh), Color(0, 0, 0, 0.35), false, 1.0)
 	if snap["smog"] >= choke:
-		var pulse := 0.45 + 0.35 * sin(Time.get_ticks_msec() / 180.0)
+		var pulse := 0.45 + 0.35 * sin(_now() / 180.0)
 		draw_rect(Rect2(mx - 2, y2 - 2, mw + 4, mh + 4), Color(0.88, 0.29, 0.23, pulse), false, 2.0)
 	# the floor and green readouts are RIGHT-aligned, so they have to be measured
 	# before "! INCOMING" is drawn - it used to start at a fixed x with no width
@@ -2364,11 +2375,14 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	_moy = zone_y + (zone_h - vth * _ts) / 2.0 - vy0 * _ts
 	if not zoom_room:
 		_moy = zone_y  # anchored under the status strip; slack below feeds the log
-	var sage := float(Time.get_ticks_msec() - _shake_ms) / 320.0
-	if sage < 1.0:
-		var amp := _shake_mag * (1.0 - sage)
-		_mox += sin(float(Time.get_ticks_msec()) * 0.09) * amp
-		_moy += cos(float(Time.get_ticks_msec()) * 0.115) * amp
+	var rt := _reel_t()
+	var amp := Anim.shake_at(_reel, rt)
+	if amp > 0.0:
+		_mox += sin(float(_now()) * 0.09) * amp
+		_moy += cos(float(_now()) * 0.115) * amp
+	# the terrain as it should LOOK right now: a tile a verb is about to plant,
+	# burn or wash still shows what was there until the verb reaches it
+	var terr := _terrain_view(snap, rt)
 
 	var pal: Dictionary = BIOME_PAL.get(
 		String(game.floor_def(game.floor_num).get("biome", "strip_mine")), BIOME_PAL["strip_mine"])
@@ -2377,8 +2391,8 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		brects.append(m["rooms"][ri])
 	# the ground takes sides: corruption stains its neighbours dark
 	var blight := {}
-	for bt in snap["terrain"].keys():
-		var bk := String(snap["terrain"][bt]["kind"])
+	for bt in terr.keys():
+		var bk := String(terr[bt])
 		if Content.is_corruption(bk):
 			blight[bt] = true
 			for d in DIRS4.values():
@@ -2438,17 +2452,17 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			_txt(Vector2(vw * 0.025, ly), log_lines[i], COL_TEXT if i == log_lines.size() - 1 else COL_DIM_TEXT, lfs)
 			ly += lfs * 1.4
 
-	for t in snap["terrain"].keys():
+	for t in terr.keys():
 		if _vis(t):
-			var tk := String(snap["terrain"][t]["kind"])
+			var tk := String(terr[t])
 			if tk == "fire":
-				var fl := 0.14 + 0.09 * sin(Time.get_ticks_msec() / 130.0 + float(t.x * 3 + t.y * 5))
+				var fl := 0.14 + 0.09 * sin(_now() / 130.0 + float(t.x * 3 + t.y * 5))
 				draw_circle(_tile_rect(t).get_center(), _ts * 0.62, Color(0.95, 0.55, 0.2, fl))
 			if tk == "growth":
 				# alive: each plant sways on its own phase; some carry a flower
 				var gph := float(t.x * 7 + t.y * 11)
 				var ctr := _tile_rect(t).get_center()
-				draw_set_transform(ctr, sin(Time.get_ticks_msec() / 900.0 + gph) * 0.055, Vector2.ONE)
+				draw_set_transform(ctr, sin(_now() / 900.0 + gph) * 0.055, Vector2.ONE)
 				var gtx := Art.tex("growth", int(_ts))
 				if gtx != null:
 					draw_texture(gtx, Vector2(-_ts / 2.0, -_ts / 2.0))
@@ -2459,30 +2473,30 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			else:
 				_sprite(tk, t)
 			if Content.is_corruption(tk):
-				var shm := 0.04 + 0.04 * sin(Time.get_ticks_msec() / 600.0 + float(t.x * 5 + t.y * 3))
+				var shm := 0.04 + 0.04 * sin(_now() / 600.0 + float(t.x * 5 + t.y * 3))
 				draw_circle(_tile_rect(t).get_center() + Vector2(-_ts * 0.15, -_ts * 0.1),
 					_ts * 0.10, Color(0.62, 0.55, 0.68, shm))
 				# filth exhales: a slow dark wisp curls up from the corruption
-				var wph := fposmod(Time.get_ticks_msec() / 3000.0 + float(t.x * 11 + t.y * 5) * 0.23, 1.0)
+				var wph := fposmod(_now() / 3000.0 + float(t.x * 11 + t.y * 5) * 0.23, 1.0)
 				if wph < 0.45:
 					draw_circle(_tile_rect(t).get_center() + Vector2(_ts * 0.12 * sin(wph * 11.0), -_ts * (0.15 + wph * 0.9)),
 						_ts * (0.05 + wph * 0.09), Color(0.16, 0.12, 0.14, 0.4 * (1.0 - wph / 0.45)))
 			elif tk == "growth":
 				# life breathes: a warm mote drifts up from some plants
 				if ((t.x * 40503) ^ (t.y * 76261)) % 3 == 0:
-					var mph := fposmod(Time.get_ticks_msec() / 2600.0 + float(t.x * 3 + t.y * 13) * 0.37, 1.0)
+					var mph := fposmod(_now() / 2600.0 + float(t.x * 3 + t.y * 13) * 0.37, 1.0)
 					if mph < 0.6:
 						draw_circle(_tile_rect(t).get_center() + Vector2(_ts * 0.14 * sin(mph * 8.0), -_ts * (0.1 + mph * 0.8)),
 							_ts * 0.035, Color(0.95, 0.92, 0.65, 0.7 * (1.0 - mph / 0.6)))
 	for v in m["vents"]:
 		if _vis(v):
 			_sprite("vent", v)
-			if snap["terrain"].has(v) and String(snap["terrain"][v]["kind"]) == "growth":
+			if terr.has(v) and String(terr[v]) == "growth":
 				# sealed: the growth chokes the grate (drawn again over the vent)
 				_sprite("growth", v)
 				draw_rect(_tile_rect(v).grow(-2), Color(0.42, 0.72, 0.35, 0.85), false, 2.0)
 				continue
-			var vph := fposmod(Time.get_ticks_msec() / 2000.0 + float(v.x * 7 + v.y * 13) * 0.31, 1.0)
+			var vph := fposmod(_now() / 2000.0 + float(v.x * 7 + v.y * 13) * 0.31, 1.0)
 			if vph < 0.55:
 				draw_circle(_tile_rect(v).get_center() + Vector2(_ts * 0.1 * sin(vph * 9.0), -_ts * (0.2 + vph * 0.8)),
 					_ts * (0.06 + vph * 0.10), Color(0.58, 0.52, 0.46, 0.35 * (1.0 - vph / 0.55)))
@@ -2496,15 +2510,15 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			draw_arc(sc + Vector2(_ts * 0.7, _ts * 0.65), _ts * 0.14, PI, TAU, 6, Color(0.35, 0.55, 0.3), 2.0)
 		else:
 			draw_rect(_tile_rect(m["stairs"]).grow(-1), COL_GOLD, false,
-				2.2 + 1.2 * sin(Time.get_ticks_msec() / 400.0))
+				2.2 + 1.2 * sin(_now() / 400.0))
 	if m["shrine"] != Vector2i(-1, -1) and _vis(m["shrine"]):
 		_sprite("shrine", m["shrine"])
-		var twk := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 350.0)
+		var twk := 0.5 + 0.5 * sin(_now() / 350.0)
 		draw_circle(_tile_rect(m["shrine"]).position + Vector2(_ts * 0.82, _ts * 0.18),
 			_ts * 0.05, Color(0.95, 0.9, 0.6, 0.25 + 0.55 * twk))
 
 	var thc := COL_THREAT
-	thc.a = 0.22 + 0.12 * sin(Time.get_ticks_msec() / 240.0)
+	thc.a = 0.22 + 0.12 * sin(_now() / 240.0)
 	for t in _threat_tiles(snap):
 		if _vis(t):
 			draw_rect(_tile_rect(t), thc)
@@ -2513,17 +2527,19 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			continue
 		for e1 in snap["enemies"]:
 			if e1["id"] == e0["intent"].get("with", -1) and (_vis(e0["pos"]) or _vis(e1["pos"])):
-				var wa := 0.5 + 0.4 * absf(sin(Time.get_ticks_msec() / 180.0))
+				var wa := 0.5 + 0.4 * absf(sin(_now() / 180.0))
 				draw_line(_tile_rect(e0["pos"]).get_center(), _tile_rect(e1["pos"]).get_center(),
 					Color(0.91, 0.45, 0.16, wa), 3.0)
 
+	var V := _anim_view()
+	Paint.paint(self, _reel, rt, "ground", V)
+
+	var now := float(_now())
 	for e in snap["enemies"]:
-		if not _vis(e["pos"]):
+		var ps := Anim.pose(_reel, e["id"], rt, Vector2(e["pos"]))
+		if not ps["visible"] or not _vis(Vector2i((ps["pos"] as Vector2).round())):
 			continue
-		var ap := _anim_pos(e["id"], e["pos"])
-		_shadow_f(ap)
-		_sprite_f(e["kind"], ap)
-		var r := _tile_rect_f(ap)
+		var r := _draw_body(String(e["kind"]), ps, _idle_of(String(e["kind"]), int(e["id"]), now))
 		if e.get("elite", false):
 			draw_rect(r.grow(-1), COL_GOLD, false, 2.0)
 		if e["traits"].has("spiked") or e.get("elite", false):
@@ -2532,28 +2548,34 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 				draw_circle(r.get_center() + Vector2(cos(sang), sin(sang)) * _ts * 0.44, _ts * 0.045, Color(0.75, 0.78, 0.8))
 		var edef: Dictionary = Content.ENEMIES[e["kind"]]
 		var maxhp: int = int(edef["hp"]) + (Content.ELITE_HP_BONUS if e.get("elite", false) else 0)
-		if e["hp"] < maxhp or edef["traits"].has("boss"):
-			var frac: float = clampf(float(e["hp"]) / maxf(1.0, float(maxhp)), 0.0, 1.0)
+		var shp := Anim.hp_shown(_reel, e["id"], rt, int(e["hp"]))
+		if shp < maxhp or edef["traits"].has("boss"):
+			var frac: float = clampf(float(shp) / maxf(1.0, float(maxhp)), 0.0, 1.0)
 			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2(_ts - 4, 3)), Color(0, 0, 0, 0.6))
 			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2((_ts - 4) * frac, 3)), COL_RED)
+		if not (e["status"] as Dictionary).is_empty() and anim_mode != "off":
+			Paint.status_overlay(self, V, r.get_center(), e["status"], now)
+	# the fallen: drawn from where they fell until their death plays out
+	for g in _reel.get("ghosts", []):
+		var gs := Anim.pose(_reel, g["id"], rt, Vector2(g["pos"]))
+		if gs["visible"] and _vis(g["pos"]):
+			_draw_body(String(g["kind"]), gs, {"lift": 0.0, "sx": 1.0, "sy": 1.0, "rot": 0.0, "dx": 0.0})
 
-	var pap := _anim_pos("player", snap["player"]["pos"])
-	_shadow_f(pap)
-	var bob := pap + Vector2(0, -0.02 - 0.02 * sin(Time.get_ticks_msec() / 480.0))
-	_sprite_f("player", bob)
-	var pr := _tile_rect_f(pap)
-	draw_rect(pr.grow(1), Color(0.56, 0.86, 0.42, 0.85), false, 2.0)
-	if int(snap["player"].get("anchor_turns", 0)) > 0:
-		draw_rect(pr.grow(-2), Color("7a5a34"), false, 2.0)
-	if int(snap["player"].get("thorns_turns", 0)) > 0:
-		draw_rect(pr.grow(-4), Color("57b34a"), false, 1.5)
+	var pps := Anim.pose(_reel, "player", rt, Vector2(snap["player"]["pos"]))
+	var pr := _tile_rect_f(pps["pos"])
+	if pps["visible"]:
+		draw_rect(_tile_rect_f(pps["pos"]).grow(1), Color(0.56, 0.86, 0.42, 0.85), false, 2.0)
+		var pidle := Anim.idle("player", 0.0, now) if anim_mode != "off" \
+			else {"lift": 0.02, "sx": 1.0, "sy": 1.0, "rot": 0.0, "dx": 0.0}
+		pr = _draw_body("player", pps, pidle)
+		Paint.buff_overlay(self, V, pr.get_center(), snap["player"], now)
 
 	# ambient haze drifts across the world once the skies dim
 	var dimlvl: int = int(snap["dim"])
 	if dimlvl > 0:
 		var hz := Rect2(_mox + _vx0 * _ts, _moy + _vy0 * _ts,
 			(_vx1 - _vx0 + 1) * _ts, (_vy1 - _vy0 + 1) * _ts)
-		var hsec := Time.get_ticks_msec() / 1000.0
+		var hsec := _now() / 1000.0
 		var choked: bool = int(snap["smog"]) >= int(game.floor_def(game.floor_num).get("smog_choke", 40))
 		for i in 6:
 			var hr := hz.size.x * (0.09 + 0.045 * float(i % 3))
@@ -2566,7 +2588,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			draw_circle(Vector2(hx, hy), hr, hcol)
 
 	# life returns: butterflies over bloomed rooms
-	var lts := Time.get_ticks_msec() / 1000.0
+	var lts := _now() / 1000.0
 	for bi in brects.size():
 		var br2: Rect2i = brects[bi]
 		for k in 2:
@@ -2590,43 +2612,10 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			draw_circle(Vector2(fx2, fy2), _ts * 0.10, Color(0.95, 0.85, 0.4, 0.10 * glow))
 			draw_circle(Vector2(fx2, fy2), _ts * 0.028, Color(0.98, 0.92, 0.6, 0.85 * glow))
 
-	# transient combat feedback: flashes, bursts, puffs, floating numbers
-	var fnow := Time.get_ticks_msec()
-	for fx in _fx:
-		var age := float(fnow - int(fx["t0"])) / FX_MS
-		if age < 0.0 or age > 1.0:
-			continue
-		var fp: Vector2 = fx["pos"]
-		if not _vis(Vector2i(int(fp.x), int(fp.y))):
-			continue
-		var fr := _tile_rect_f(fp)
-		var c: Vector2 = fr.get_center()
-		match String(fx["kind"]):
-			"flash":
-				if age < 0.35:
-					draw_rect(fr, Color(1, 1, 1, 0.38 * (1.0 - age / 0.35)))
-			"burst":
-				var bcol: Color = fx["col"]
-				bcol.a = 1.0 - age
-				var rad := _ts * (0.25 + age * 0.55)
-				for i in 6:
-					var ang := TAU * float(i) / 6.0 + age * 1.8
-					draw_circle(c + Vector2(cos(ang), sin(ang)) * rad, _ts * 0.06 * (1.0 - age * 0.5), bcol)
-			"puff":
-				var pcol: Color = fx["col"]
-				pcol.a = 0.5 * (1.0 - age)
-				draw_circle(c + Vector2(0, -_ts * age * 0.4), _ts * (0.2 + age * 0.35), pcol)
-				draw_circle(c + Vector2(-_ts * 0.22, -_ts * age * 0.55), _ts * (0.12 + age * 0.25), pcol)
-				draw_circle(c + Vector2(_ts * 0.2, -_ts * age * 0.3), _ts * (0.1 + age * 0.22), pcol)
-			"float":
-				var fcol: Color = fx["col"]
-				fcol.a = 1.0 if age < 0.55 else 1.0 - (age - 0.55) / 0.45
-				var fsz2 := int(_ts * 0.42)
-				var s2 := String(fx["text"])
-				var fy := fr.position.y - _ts * (0.15 + age * 0.75)
-				var tw2 := font.get_string_size(s2, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz2).x
-				draw_string(font, Vector2(c.x - tw2 / 2.0 + 1, fy + 1), s2, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz2, Color(0, 0, 0, fcol.a * 0.8))
-				draw_string(font, Vector2(c.x - tw2 / 2.0, fy), s2, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz2, fcol)
+	# the step's effects that play over the creatures: beams, clouds, numbers
+	Paint.paint(self, _reel, rt, "air", V)
+	if capture_label != "":
+		_txt(Vector2(_mox + _vx0 * _ts + 6, _moy + _vy0 * _ts + _ts * 0.4), capture_label, COL_GOLD, int(_ts * 0.3))
 
 	if mode == "target_tile":
 		for t in mode_targets:
@@ -2664,10 +2653,11 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		var bx2 := (vw - bw2) / 2.0
 		var by2 := _status_end + vh * 0.030
 		var bh2 := vh * 0.014
-		var bfrac := clampf(float(e["hp"]) / maxf(1.0, float(edef2["hp"])), 0.0, 1.0)
+		var bhp := Anim.hp_shown(_reel, e["id"], _reel_t(), int(e["hp"]))
+		var bfrac := clampf(float(bhp) / maxf(1.0, float(edef2["hp"])), 0.0, 1.0)
 		draw_rect(Rect2(bx2 - vw * 0.015, by2 - vh * 0.024, bw2 + vw * 0.03, bh2 + vh * 0.031), Color(0.03, 0.05, 0.04, 0.82))
 		_txt(Vector2(bx2, by2 - vh * 0.006), String(edef2["name"]).to_upper(), COL_RED, int(vh * 0.017))
-		var hps := "%d / %d" % [int(e["hp"]), int(edef2["hp"])]
+		var hps := "%d / %d" % [bhp, int(edef2["hp"])]
 		var hpw := font.get_string_size(hps, HORIZONTAL_ALIGNMENT_LEFT, -1, int(vh * 0.014)).x
 		_txt(Vector2(bx2 + bw2 - hpw, by2 - vh * 0.006), hps, COL_TEXT, int(vh * 0.014))
 		draw_rect(Rect2(bx2, by2, bw2, bh2), Color(0, 0, 0, 0.6))
@@ -2678,7 +2668,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	# danger vignette: the edges bleed red while the tender is nearly down
 	var pl0: Dictionary = snap["player"]
 	if int(pl0["hp"]) <= maxi(2, int(pl0["max_hp"]) / 4) and not game.over:
-		var da := 0.10 + 0.07 * sin(Time.get_ticks_msec() / 300.0)
+		var da := 0.10 + 0.07 * sin(_now() / 300.0)
 		var dc := Color(0.85, 0.2, 0.12, da)
 		var d0 := Color(0.85, 0.2, 0.12, 0.0)
 		var dd := _ts * 1.6
@@ -2696,13 +2686,13 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			PackedColorArray([dc, d0, d0, dc]))
 
 	# each new floor fades in from the dark of the descent
-	var fage := float(Time.get_ticks_msec() - _floor_fade_ms) / 450.0
+	var fage := float(_now() - _floor_fade_ms) / 450.0
 	if fage < 1.0:
 		draw_rect(Rect2(0, _status_end, vw, vh * Z_MAP_END - _status_end),
 			Color(0.02, 0.03, 0.03, 1.0 - maxf(fage, 0.0)))
 
 	# and its name hangs over the map for a moment
-	var spl := float(Time.get_ticks_msec() - _floor_fade_ms) / 1400.0
+	var spl := float(_now() - _floor_fade_ms) / 1400.0
 	if spl >= 0.0 and spl < 1.0:
 		var sa := 1.0 if spl < 0.55 else 1.0 - (spl - 0.55) / 0.45
 		var scy := (mr.position.y + mr.end.y) / 2.0
@@ -2715,7 +2705,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			Color(0.6, 0.85, 0.55, sa * 0.9), int(vh * 0.016))
 
 	# event banners (stairs awaken, floor restored)
-	var bage := float(Time.get_ticks_msec() - _banner_ms) / 1600.0
+	var bage := float(_now() - _banner_ms) / 1600.0
 	if bage >= 0.0 and bage < 1.0 and not _banner.is_empty():
 		var ba := 1.0 if bage < 0.6 else 1.0 - (bage - 0.6) / 0.4
 		var bcy := (mr.position.y + mr.end.y) / 2.0 - vh * 0.05
@@ -3301,7 +3291,7 @@ func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 	hotspots.clear()
 	draw_rect(Rect2(0, 0, vw, vh), COL_SHEET)
 	var won: bool = snap["won"]
-	var tsec := Time.get_ticks_msec() / 1000.0
+	var tsec := _now() / 1000.0
 	if won:
 		var sun := Vector2(vw / 2.0, vh * 0.185)
 		draw_circle(sun, vw * 0.20, Color(0.95, 0.88, 0.55, 0.08))

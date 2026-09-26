@@ -133,8 +133,14 @@ const GLYPH_ENEMY := {"d": "drill_bot", "S": "oil_sludge", "s": "sludgeling", "L
 
 ## Parse ROOM into the sim's fixed_floor config.
 static func floor_config() -> Dictionary:
+	return room_config(ROOM, FDEF)
+
+
+## Parse any ASCII room (the glyphs above) into a fixed_floor config. The
+## animation suite stages its scenes with it (tests/anim_scenes.gd).
+static func room_config(room: String, fdef: Dictionary) -> Dictionary:
 	var rows: Array = []
-	for line in ROOM.strip_edges().split("\n"):
+	for line in room.strip_edges().split("\n"):
 		rows.append(line)
 	var h := rows.size()
 	var w := 0
@@ -167,7 +173,7 @@ static func floor_config() -> Dictionary:
 				gen["enemies"].append({"kind": GLYPH_ENEMY[ch], "pos": p})
 	gen["tiles"] = tiles
 	gen["rooms"] = [Rect2i(1, 1, w - 2, h - 2)]
-	return {"gen": gen, "fdef": FDEF}
+	return {"gen": gen, "fdef": fdef}
 
 
 static func game_config() -> Dictionary:
