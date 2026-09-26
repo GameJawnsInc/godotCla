@@ -6,11 +6,12 @@ extends RefCounted
 ##   create_terrain  a seed pod is lobbed, splits, and the terrain bursts out
 ##                   of it (billowing cloud, flame, a sprout or a root wall,
 ##                   by what the TERRAIN row says the kind does); cast on the
-##                   tender's own tile it is thrown off the body instead, with
-##                   bark chaff
-##   grow_wall       a root runs under the floor to the target, then roots
-##                   heave up tile by tile with dirt flying; aimed at a body
-##                   (a cage) they lean in and a coil cinches round its feet
+##                   tender's own tile it rolls out round its feet instead,
+##                   half behind the body and half in front, with bark chaff
+##   grow_wall       a root tunnels to the target (a small molehill ridge),
+##                   then roots heave up tile by tile with dirt flying - more
+##                   and taller the longer the wall lasts; aimed at a body (a
+##                   cage) they lean in and a coil cinches round its feet
 ##   apply_status    a glob arcs onto the target and splats: sticky sap for a
 ##                   status that holds, a ball of spores for one that ticks
 ##   damage          the floor cracks and glows under the target - veins run
@@ -19,13 +20,15 @@ extends RefCounted
 ##   teleport        by the target shape: to growth, the tender sinks into
 ##                   spores, a glowing root-thread runs under the floor and it
 ##                   blooms back up; to a bare tile, it dives into a hole, a
-##                   mound tunnels across and it bursts out in a spray of dirt
+##                   mound tunnels across leaving a molehill ridge, and it
+##                   bursts out in a spray of dirt
 ##   plant_origin    a sprout pushes up where the tender left
 ##   shield          bark plates snap shut round the tender, then shimmer blue
 ##   thorns          vines coil tight, spikes burst out, then settle to a crown
 ##   anchor          a hop and a stomp: roots drive into the floor, dust rolls
 ##   undim           a sunbeam drops through the haze and parts it
-##   status_target   a rider's status lands on what the parent touched
+##   status_target   a rider's status lands on each body just after the
+##                   parent touched that body
 ## Sizes, counts and tempo come from the effect's numbers (amount, dmg, turns,
 ## ttl, the rider's cap), the ability's target shape and palette, status and
 ## terrain rows - never from an ability id or an enemy kind.
@@ -49,7 +52,7 @@ const SOIL := Color(0.07, 0.05, 0.035)
 const BARK := Color("8a6a3e")
 const BARK_DARK := Color("47301b")
 const BARK_LIGHT := Color("e0bd84")
-const POD := Color("7d8c3c")
+const POD := Color("98ac48")
 const LEAF := Color("6cc95c")
 const THORN := Color("3f7a33")
 const SHIELD := Color("7fb6d9")
@@ -59,7 +62,7 @@ const HAZE := Color(0.50, 0.43, 0.36)
 
 const LOB_MS := 170       # a lobbed pod or glob in flight ...
 const LOB_TILE_MS := 35   # ... plus this per tile of distance
-const RUN_MS := 45        # per tile a root runs under the floor to its wall
+const RUN_MS := 60        # per tile a root runs under the floor to its wall
 const HEAVE_MS := 75      # a root wall's rings heave this far apart
 const CRACK_MS := 170     # the floor cracks this long before a spike erupts
 const SNAP_MS := 150      # bark plates fly in, then snap shut
@@ -151,8 +154,18 @@ static func _burst_terrain(c: Dictionary, tile: Vector2i, look: String, col: Col
 		"sprout":
 			L.clip(c, {"kind": "trail_sprout", "t0": t_land, "dur": 520, "at": tile, "col": col})
 		_:
-			L.clip(c, {"kind": "terrain_burst", "t0": t_land, "dur": 460 + 45 * ttl, "at": tile, "col": col,
-				"look": look, "size": 0.85 + 0.07 * float(ttl), "n": mini(8 + ttl, 14), "here": here})
+			# a longer-lived kind swells bigger and hangs a little longer, but
+			# the burst always thins out onto the real tile quickly
+			var burst := {"kind": "terrain_burst", "t0": t_land, "dur": 420 + 35 * mini(ttl, 6), "at": tile, "col": col,
+				"look": look, "size": 0.85 + 0.07 * float(mini(ttl, 6)), "n": mini(8 + ttl, 14), "here": here}
+			if here and look == "cloud":
+				# round the tender's feet: the far half goes behind its body
+				var far := burst.duplicate()
+				far["half"] = "far"
+				far["layer"] = "ground"
+				L.clip(c, far)
+				burst["half"] = "near"
+			L.clip(c, burst)
 
 
 static func _wall(c: Dictionary) -> int:
@@ -176,14 +189,14 @@ static func _wall(c: Dictionary) -> int:
 		var tt := t0 + (j * 40 if body != null else L.man(p, center) * HEAVE_MS)
 		var lean := Vector2(center - p) if body != null else Vector2.ZERO
 		L.clip(c, {"kind": "root_heave", "t0": tt, "dur": 560, "at": p, "lean": lean, "ttl": ttl})
-		L.clip(c, {"kind": "clod_burst", "t0": tt + 60, "dur": 460, "at": p, "n": 6, "puffs": 3, "h": 0.8,
-			"spread": 0.5, "seed": j})
+		L.clip(c, {"kind": "clod_burst", "t0": tt + 60, "dur": 460, "at": p, "n": 4 + mini(ttl, 8) / 2, "puffs": 3,
+			"h": 0.8, "spread": 0.5, "seed": j})
 		L.reveal(c, p, tt + 190)
 		t_last = maxi(t_last, tt)
 	for i in L.unclaimed(c, ["roots"]):
 		L.claim(c, i, t0 + 90)
 	if not tiles.is_empty():
-		c["reel"]["shakes"].append({"t0": t0 + 80, "mag": minf(1.8 + 0.6 * float(tiles.size()), 4.5)})
+		c["reel"]["shakes"].append({"t0": t0 + 80, "mag": minf(1.2 + 0.5 * float(tiles.size()) + 0.15 * float(ttl), 5.0)})
 	if body != null:
 		var tc := t_last + 170
 		L.clip(c, {"kind": "root_cinch", "t0": tc, "dur": 480, "at": center})
@@ -203,10 +216,11 @@ static func _glob(c: Dictionary) -> int:
 	var cloud := int(Content.STATUSES.get(status, {}).get("tick_dmg", 0)) > 0
 	var dist := maxi(1, L.man(c["ppos"], tile))
 	var fly := mini(LOB_MS - 20 + 40 * dist, 360)
-	var size := 0.8 + 0.1 * float(mini(turns, 5))
+	var size := 0.7 + 0.15 * float(mini(turns, 5))
 	L.seg(c, "player", {"kind": "lunge", "t0": t - 20, "dur": 220, "dir": L.dir_of(c["ppos"], tile), "reach": 0.16})
 	L.clip(c, {"kind": "sap_glob", "t0": t, "dur": fly + 320, "fly": fly, "from": c["ppos"], "to": tile,
-		"col": col, "cloud": cloud, "size": size, "h": 0.55 + 0.1 * float(dist), "at": tile})
+		"col": col, "cloud": cloud, "size": size, "strands": clampi(turns + 1, 2, 6), "h": 0.55 + 0.1 * float(dist),
+		"at": tile})
 	var t_hit := t + fly
 	L.clip(c, {"kind": "sap_splat", "t0": t_hit, "dur": 380 + 40 * mini(turns, 5), "at": tile, "col": col,
 		"cloud": cloud, "size": size, "layer": "ground"})
@@ -379,7 +393,7 @@ static func _anchor(c: Dictionary) -> int:
 	# a little hop, then the stomp the roots drive in on
 	L.move(c, "player", [pp, pp], t, t_th - t, 0.22)
 	L.seg(c, "player", {"kind": "squash", "t0": t_th - 10, "dur": 200})
-	L.clip(c, {"kind": "root_anchor", "t0": t_th - 40, "dur": 640, "lead": 40, "at": pp, "turns": turns,
+	L.clip(c, {"kind": "root_anchor", "t0": t_th - 40, "dur": 560, "lead": 40, "at": pp, "turns": turns,
 		"layer": "ground"})
 	L.clip(c, {"kind": "clod_burst", "t0": t_th, "dur": 460, "at": pp, "n": 4, "puffs": 6, "h": 0.45, "spread": 1.2})
 	for i in L.unclaimed(c, ["anchor"]):
@@ -406,11 +420,22 @@ static func _undim(c: Dictionary) -> int:
 
 static func _rider_status(c: Dictionary) -> int:
 	var t: int = c["t"]
+	var evs: Array = c["events"]
 	for i in L.unclaimed(c, ["status", "resisted", "immune"]):
-		L.claim(c, i, t + 40)
-		var ev: Dictionary = c["events"][i]
-		if String(ev["t"]) == "status" and c["pre_en"].has(ev.get("id")):
-			L.seg(c, ev["id"], {"kind": "tint", "t0": t + 40, "dur": 380,
+		var ev: Dictionary = evs[i]
+		# it takes hold on each body just after the parent touched THAT body
+		# (the latest time the parent's builder gave an event about it), and
+		# 40 ms into the parent's impact when the parent never named it
+		var id = ev.get("id")
+		var touched := -1
+		for j in range(int(c.get("ev0", 0)), i):
+			var ej = evs[j].get("id")
+			if L.claimed(c, j) and typeof(ej) == typeof(id) and ej == id:
+				touched = maxi(touched, int(c["times"][j]))
+		var tt := touched + 40 if touched >= 0 else t + 40
+		L.claim(c, i, tt)
+		if String(ev["t"]) == "status" and c["pre_en"].has(id):
+			L.seg(c, id, {"kind": "tint", "t0": tt, "dur": 380,
 				"col": L.status_col(String(ev.get("status", ""))).lerp(Color.WHITE, 0.25)})
 	return t + 120
 
@@ -578,6 +603,92 @@ static func _thorn(cv, base: Vector2, tip: Vector2, w: float, edge: Color, body:
 	D.line(cv, base - s * w * 0.1 + d * 0.1, base + d * 0.78, hi, maxf(1.0, w * 0.13))
 
 
+## A wobbly path a -> b sampled evenly (about four points a tile): a slow
+## wave of `amp` tiles plus a per-point jitter of `jit` tiles, both pinched to
+## nothing at the ends so it leaves and reaches the tile centres exactly.
+static func _wobble_path(a: Vector2, b: Vector2, t: float, amp: float, jit: float, seed: int) -> PackedVector2Array:
+	var d := b - a
+	var s := Vector2(-d.y, d.x).normalized()
+	var n := clampi(int(d.length() / (t * 0.25)), 6, 22)
+	var out := PackedVector2Array()
+	for i in n + 1:
+		var f := float(i) / float(n)
+		var pinch := sin(f * PI)
+		var wob := sin(f * PI * 2.3 + float(seed)) * t * amp * pinch + (D.h01(seed + i * 7) - 0.5) * t * jit * pinch
+		out.append(a.lerp(b, f) + s * wob)
+	return out
+
+
+## The point `f` (0..1) of the way along a path sampled evenly in f.
+static func _along(pts: PackedVector2Array, f: float) -> Vector2:
+	var m := pts.size() - 1
+	var u := clampf(f, 0.0, 1.0) * float(m)
+	var j := mini(int(u), m - 1)
+	return pts[j].lerp(pts[j + 1], u - float(j))
+
+
+## Something tunnelling under the floor along `pts`, `u` (0..1) of the way:
+## a molehill ridge of turned-up lumps over the part it has covered - each
+## heaves up as the digger passes and settles behind it - a crack down the
+## spine, and while it travels the digger's own mound at the head, a heap of
+## earth that bobs as it digs and sheds crumbs. `sc` scales it all (a root
+## running to its wall is a smaller one than a burrowing tender).
+static func _ridge(cv, pts: PackedVector2Array, u: float, t: float, sc: float, fade: float, ms: float, seed: int) -> void:
+	if pts.size() < 2 or fade <= 0.01 or u <= 0.0:
+		return
+	var m := pts.size() - 1
+	var total := 0.0
+	for i in m:
+		total += pts[i].distance_to(pts[i + 1])
+	var head := _along(pts, u)
+	var crack := PackedVector2Array()
+	for i in mini(int(u * float(m)), m) + 1:
+		crack.append(pts[i])
+	if crack[crack.size() - 1].distance_to(head) > 0.5:
+		crack.append(head)
+	if crack.size() >= 2:
+		cv.draw_polyline(crack, D.ca(SOIL, 0.85 * fade), maxf(1.0, t * 0.04 * sc), true)
+	var nb := clampi(int(total / (t * 0.15 * sc)), 2, 20)
+	for i in nb:
+		var f := (float(i) + 0.5) / float(nb)
+		if f > u:
+			break
+		var behind := (u - f) * total / t
+		var pop := D.ease_out(clampf(behind / 0.22, 0.0, 1.0))
+		var settle := 1.0 - 0.35 * clampf((behind - 0.22) / 1.2, 0.0, 1.0)
+		var h1 := D.h01(seed + i * 13)
+		var r := t * 0.1 * sc * (0.8 + 0.5 * h1) * pop * settle
+		if r < 0.8:
+			continue
+		var p := _along(pts, f) + Vector2((D.h01(seed + i * 5 + 2) - 0.5) * t * 0.1 * sc, 0)
+		cv.draw_circle(p + Vector2(r * 0.15, r * 0.3), r * 1.12, D.ca(SOIL, 0.6 * fade))
+		cv.draw_circle(p, r, D.ca(DIRT, fade))
+		cv.draw_circle(p + Vector2(-r * 0.3, -r * 0.35), r * 0.45, D.ca(DIRT_LIGHT, 0.9 * fade))
+	if u >= 1.0:
+		return
+	# the digger's mound: three lumps heaped up, the top one heaving
+	var R := t * 0.24 * sc
+	var bob := absf(sin(ms * 0.045)) * R * 0.25
+	_ell(cv, head + Vector2(0, R * 0.4), R * 1.45, R * 0.5, D.ca(Color.BLACK, 0.35))
+	# three passes (shadow, body, light) so no lump's shadow lands on another
+	for lay in 3:
+		for j in 3:
+			var off := Vector2(-R * 0.55, -R * 0.1) if j == 0 else (Vector2(R * 0.55, -R * 0.05) if j == 1 \
+				else Vector2(0, -R * 0.45 - bob))
+			var r2 := R * (0.62 if j == 0 else (0.58 if j == 1 else 0.8))
+			if lay == 0:
+				cv.draw_circle(head + off + Vector2(0, R * 0.12), r2 * 1.08, SOIL)
+			elif lay == 1:
+				cv.draw_circle(head + off, r2, DIRT)
+			else:
+				cv.draw_circle(head + off + Vector2(-r2 * 0.3, -r2 * 0.38), r2 * 0.42, DIRT_LIGHT)
+	for i in 4:
+		var ph := fposmod(ms * 0.006 + float(i) / 4.0, 1.0)
+		var sd := -1.0 if i % 2 == 0 else 1.0
+		var q := head + Vector2(sd * R * (0.7 + 1.0 * ph), -R * 0.8 - R * 1.6 * sin(ph * PI))
+		_clod(cv, q, R * 0.24, ph * 6.0 + float(i), D.ca(DIRT_LIGHT, 1.0 - ph))
+
+
 ## The tender's own sprite, drawn by a verb that has taken its body over (the
 ## player track is hidden meanwhile): scaled from the feet like the shell's
 ## _draw_body, lifted, faded, with a coloured glow over it.
@@ -636,70 +747,86 @@ static func _pod_body(cv, p: Vector2, t: float, rot: float, sx: float, sy: float
 	if a <= 0.01:
 		return
 	cv.draw_set_transform(p, rot, Vector2(sx, sy * 0.8))
-	cv.draw_circle(Vector2.ZERO, t * 0.17, D.ca(POD.darkened(0.5), a))
-	cv.draw_circle(Vector2.ZERO, t * 0.135, D.ca(POD, a))
+	cv.draw_circle(Vector2.ZERO, t * 0.2, D.ca(POD.darkened(0.55), a))
+	cv.draw_circle(Vector2.ZERO, t * 0.16, D.ca(POD, a))
 	# the seam, glowing with what the pod carries
-	cv.draw_line(Vector2(-t * 0.13, 0), Vector2(t * 0.13, 0), D.ca(col.lightened(0.55), a), maxf(1.0, t * 0.05), true)
-	cv.draw_circle(Vector2(-t * 0.05, -t * 0.07), t * 0.04, D.ca(Color.WHITE, 0.8 * a))
-	cv.draw_line(Vector2(0, -t * 0.13), Vector2(t * 0.04, -t * 0.24), D.ca(POD.darkened(0.3), a), maxf(1.0, t * 0.045), true)
+	cv.draw_line(Vector2(-t * 0.15, 0), Vector2(t * 0.15, 0), D.ca(col.lightened(0.6), a), maxf(1.0, t * 0.06), true)
+	cv.draw_circle(Vector2(-t * 0.06, -t * 0.08), t * 0.045, D.ca(Color.WHITE, 0.85 * a))
+	cv.draw_line(Vector2(0, -t * 0.15), Vector2(t * 0.05, -t * 0.27), D.ca(POD.darkened(0.3), a), maxf(1.0, t * 0.05), true)
 	cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 ## New terrain bursting out: a flash, a shock ring on the floor, then billows
 ## (or flame tongues) that swell, rise and thin out over the tile the real
-## terrain has just appeared on. Thrown off the tender's own body it rings
-## the tender instead of covering it, and flings bark chaff.
+## terrain has just appeared on - a full, rounded heap that stays over its own
+## tile rather than a wreath spilling onto the neighbours. Thrown off the
+## tender's own body it rolls OUT round its feet as a ring instead of covering
+## it, and flings bark chaff: that ring is painted as two clips, the far half
+## under the creatures (`half` "far", behind the body) and the near half over
+## them (`half` "near"), so the body stands inside its own smoke screen.
 static func _p_burst(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var at = cl["at"]
 	var foot := _feet(V, at)
-	var c := foot + Vector2(0, -t * 0.34)
 	var col: Color = cl.get("col", Color("9aa0a4"))
 	var sz := float(cl.get("size", 1.0))
 	var here := bool(cl.get("here", false))
+	var half := String(cl.get("half", ""))
+	var c := foot + Vector2(0, -t * (0.14 if here else 0.34))
 	var seed := _seed(at)
-	var f := D.win(k, 0.0, 0.2)
-	if f < 1.0:
-		D.glow(cv, c, t * (0.2 + 0.4 * D.ease_out(f)), D.ca(col.lightened(0.7), 0.75 * (1.0 - f)), 3)
-	var rk := D.win(k, 0.0, 0.45)
-	if rk < 1.0:
-		var re := D.ease_out(rk) * (1.3 if here else 1.0)
-		_ell_ring(cv, foot, t * (0.2 + 0.75 * re), t * (0.08 + 0.3 * re), D.ca(col.lightened(0.5), 0.85 * (1.0 - rk)), t * 0.06)
+	if half != "far":
+		var f := D.win(k, 0.0, 0.2)
+		if f < 1.0:
+			D.glow(cv, c, t * (0.2 + 0.35 * D.ease_out(f)), D.ca(col.lightened(0.7), 0.75 * (1.0 - f)), 3)
+		var rk := D.win(k, 0.0, 0.45)
+		if rk < 1.0:
+			var re := D.ease_out(rk) * (1.3 if here else 1.0)
+			_ell_ring(cv, foot, t * (0.2 + 0.7 * re), t * (0.08 + 0.28 * re), D.ca(col.lightened(0.5), 0.85 * (1.0 - rk)), t * 0.06)
 	if String(cl.get("look", "cloud")) == "flame":
 		_flames(cv, foot, t, k, sz, seed, col)
 		return
 	var n := int(cl.get("n", 10))
 	var hi := col.lightened(0.75)
-	# a burst on open floor swells from the middle (three puffs keep its
-	# heart full); thrown off the tender it rolls OUT as a ring, clear of it
-	var core := 0 if here else 3
 	# three passes - every shaded underside, then every body, then every
 	# highlight - so no puff's shadow lands on a neighbour's lit side
 	for lay in 3:
-		for i in n + core:
+		for i in n:
 			var h1 := D.h01(seed + i * 13)
 			var h2 := D.h01(seed + i * 29 + 5)
-			var ang := TAU * (float(i) + 0.4 * h1) / float(n)
-			var g := D.ease_out(D.win(k, 0.03 * h2, 0.5 + 0.05 * h2))
-			var r0 := t * (0.42 if here else 0.05)
-			var r1 := t * sz * ((0.55 + 0.3 * h1) if here else (0.3 + 0.26 * h1))
-			if i >= n:
-				r1 = t * 0.1 * sz
-			var q := c + Vector2(cos(ang), sin(ang) * 0.62) * lerpf(r0, r1, g) + Vector2(0, -t * (0.05 + 0.22 * h2) * g)
-			var pr := t * ((0.07 + (0.07 + 0.05 * h2) * g) if here else (0.08 + (0.11 + 0.07 * h2) * sz * g))
-			var a := minf(1.0, k * 14.0) * D.tail(k, (0.3 if here else 0.4) + 0.22 * h1) * (0.8 if here else 1.0)
+			var g := D.ease_out(D.win(k, 0.03 * h2, 0.45 + 0.05 * h2))
+			var q: Vector2
+			var pr: float
+			if here:
+				var ang := TAU * (float(i) + 0.4 * h1) / float(n)
+				if half != "" and (sin(ang) < 0.0) != (half == "far"):
+					continue
+				var rr := t * lerpf(0.4, 0.68 + 0.14 * h1, g)
+				q = c + Vector2(cos(ang) * rr, sin(ang) * rr * 0.5 - t * (0.04 + 0.14 * h2) * g)
+				pr = t * (0.09 + (0.07 + 0.05 * h2) * g)
+			else:
+				# a sunflower spread fills the heap from the middle out; the
+				# middle puffs are the biggest and rise the most (a billow)
+				var rf := sqrt((float(i) + 0.5) / float(n))
+				var ang2 := float(i) * 2.39996 + float(seed)
+				var rr2 := t * (0.04 + 0.3 * rf * g) * (0.85 + 0.15 * sz)
+				q = c + Vector2(cos(ang2) * rr2, sin(ang2) * rr2 * 0.6 - t * ((0.04 + 0.2 * (1.0 - rf)) * g + 0.12 * k))
+				pr = t * (0.08 + (0.1 + 0.05 * h2) * (1.25 - 0.45 * rf) * sz * g)
+			var a := minf(1.0, k * 14.0) * D.tail(k, (0.3 if here else 0.42) + 0.2 * h1) * (0.85 if here else 1.0)
 			if lay == 0:
 				cv.draw_circle(q + Vector2(0, pr * 0.28), pr, D.ca(col.darkened(0.35), 0.55 * a))
 			elif lay == 1:
 				cv.draw_circle(q, pr * 0.9, D.ca(col.lightened(0.2), 0.85 * a))
 			else:
 				cv.draw_circle(q + Vector2(-pr * 0.3, -pr * 0.32), pr * 0.42, D.ca(hi, 0.6 * a))
-	if here:
+	if here and half != "far":
+		# bark chaff flung off the shell, spinning, falling back
 		for i in 8:
-			var ang2 := TAU * (float(i) + 0.5 * D.h01(seed + i * 5)) / 8.0
+			var ang3 := TAU * (float(i) + 0.5 * D.h01(seed + i * 5)) / 8.0
 			var u := D.ease_out(D.win(k, 0.0, 0.6))
-			var q2 := c + Vector2(cos(ang2), sin(ang2) * 0.7) * t * (0.3 + 0.8 * u) + Vector2(0, t * 0.35 * u * u)
-			_flake(cv, q2, t * 0.07, k * 9.0 + float(i), D.ca(BARK_LIGHT if i % 2 == 0 else BARK, D.tail(k, 0.35)))
+			var q2 := c + Vector2(cos(ang3), sin(ang3) * 0.6) * t * (0.3 + 0.75 * u) + Vector2(0, t * (0.4 * u * u - 0.25 * sin(u * PI)))
+			var fa := D.tail(k, 0.35)
+			_flake(cv, q2 + Vector2(t * 0.012, t * 0.012), t * 0.09, k * 9.0 + float(i), D.ca(BARK_DARK, fa))
+			_flake(cv, q2, t * 0.08, k * 9.0 + float(i), D.ca(BARK_LIGHT if i % 2 == 0 else BARK, fa))
 
 
 static func _flames(cv, foot: Vector2, t: float, k: float, sz: float, seed: int, col: Color) -> void:
@@ -716,43 +843,32 @@ static func _flames(cv, foot: Vector2, t: float, k: float, sz: float, seed: int,
 
 
 ## A root running under the floor from the tender to where the wall will
-## rise: a crack opens behind a travelling ridge of earth.
+## rise: a small molehill ridge (_ridge), a glint of root along its crack.
 static func _p_run(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var ms := k * float(cl["dur"])
 	var run := maxf(1.0, float(cl["run"]))
 	var u := D.ease_io(clampf(ms / run, 0.0, 1.0))
 	var fade := 1.0 - clampf((ms - run) / maxf(1.0, float(cl["dur"]) - run), 0.0, 1.0)
-	var a := _feet(V, cl["from"]) + Vector2(0, -t * 0.04)
-	var b := _feet(V, cl["to"]) + Vector2(0, -t * 0.3)
+	var a := _feet(V, cl["from"]) + Vector2(0, -t * 0.06)
+	var b := _feet(V, cl["to"]) + Vector2(0, -t * 0.12)
 	var d := b - a
 	if d.length() < 1.0:
 		D.glow(cv, a, t * 0.3 * fade, D.ca(BARK_LIGHT, 0.5), 2)
 		return
-	var s := Vector2(-d.y, d.x).normalized()
 	var seed := _seed(cl["to"])
-	var n := 10
-	var pts := PackedVector2Array()
-	var hf := u * float(n)
-	var head := a
-	for i in n + 1:
-		var f := float(i) / float(n)
-		var p := a.lerp(b, f) + s * (D.h01(seed + i * 11) - 0.5) * t * 0.16 * sin(f * PI)
-		if float(i) <= hf:
-			pts.append(p)
-			head = p
-		else:
-			var prev: Vector2 = pts[pts.size() - 1] if pts.size() > 0 else a
-			head = prev.lerp(p, hf - floorf(hf))
-			pts.append(head)
-			break
-	if pts.size() >= 2:
-		cv.draw_polyline(pts, D.ca(SOIL, 0.75 * fade), t * 0.08, true)
-		cv.draw_polyline(pts, D.ca(BARK, 0.9 * fade), t * 0.035, true)
-	if u < 1.0:
-		_ell(cv, head + Vector2(0, t * 0.02), t * 0.2, t * 0.09, D.ca(Color.BLACK, 0.3))
-		_ell(cv, head + Vector2(0, -t * 0.02), t * 0.17, t * 0.085, DIRT)
-		_ell(cv, head + Vector2(-t * 0.03, -t * 0.05), t * 0.09, t * 0.035, DIRT_LIGHT)
+	var pts := _wobble_path(a, b, t, 0.04, 0.12, seed)
+	# the same language as a burrow, smaller: a root is tunnelling to its wall
+	_ridge(cv, pts, u, t, 0.72, fade, ms, seed)
+	if u > 0.0:
+		# a glimpse of the root itself along the crack
+		var hi := mini(int(u * float(pts.size() - 1)), pts.size() - 1)
+		var root := PackedVector2Array()
+		for i in hi + 1:
+			root.append(pts[i])
+		root.append(_along(pts, u))
+		if root.size() >= 2 and root[0].distance_to(root[root.size() - 1]) > 1.0:
+			cv.draw_polyline(root, D.ca(BARK_LIGHT, 0.8 * fade), maxf(1.0, t * 0.022), true)
 
 
 ## Roots heaving up out of one floor tile: the floor splits and bulges, then
@@ -782,19 +898,22 @@ static func _p_heave(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	_ell(cv, base + Vector2(-t * 0.05, -t * 0.08 * bul), t * 0.15 * bul, t * 0.05 * bul, D.ca(DIRT_LIGHT, 0.9))
 	if grow <= 0.01:
 		return
-	# a longer-lived wall heaves more roots, and thicker ones
-	var n := clampi(1 + int(ttl / 2.0), 3, 5)
+	# a longer-lived wall heaves more roots, taller and thicker ones: ttl 4
+	# is three, ttl 6 a dense palisade of five
+	var n := clampi(int(ttl) - 1, 3, 6)
+	var tall := 0.46 + 0.05 * minf(ttl, 8.0)
+	var spread := 0.7 + 0.03 * float(n - 3)
 	for i in n:
 		var fx := (float(i) + 0.5) / float(n) - 0.5
 		var h1 := D.h01(seed + i * 7 + 1)
-		var hgt := t * (0.6 + 0.22 * h1) * grow
-		var b0 := base + Vector2(fx * t * 0.72, t * 0.03 * absf(fx))
+		var hgt := t * (tall + 0.2 * h1) * (1.0 - 0.25 * absf(fx)) * grow
+		var b0 := base + Vector2(fx * t * spread, t * 0.03 * absf(fx))
 		var tip := b0 + Vector2(fx * t * 0.2, -hgt) + lean * t * 0.3 * grow
 		var dd := tip - b0
 		if dd.length() < 1.5:
 			continue
 		var sv := Vector2(-dd.y, dd.x).normalized()
-		var w := t * (0.17 + 0.012 * ttl) * (1.0 - 0.35 * absf(fx))
+		var w := t * (0.14 + 0.012 * minf(ttl, 8.0)) * (1.0 - 0.3 * absf(fx))
 		var pts := PackedVector2Array()
 		for j in 5:
 			var f := float(j) / 4.0
@@ -890,9 +1009,11 @@ static func _p_glob(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 			var rr := t * (0.15 + 0.4 * e) * (0.6 + 0.4 * D.h01(i))
 			cv.draw_circle(b + Vector2(cos(ang3), sin(ang3) * 0.8) * rr, t * (0.07 + 0.08 * e), D.ca(col, 0.5 * (1.0 - v)))
 	else:
+		# a status that holds longer leaves more strands to snap
 		var sn := D.win(v, 0.0, 0.75)
-		for i in 3:
-			var x := (float(i) - 1.0) * t * 0.26
+		var ns := int(cl.get("strands", 3))
+		for i in ns:
+			var x := (float(i) / float(maxi(1, ns - 1)) - 0.5) * t * 0.52
 			var top := b + Vector2(x * 0.5, -t * 0.02)
 			var bot := b + Vector2(x, t * 0.42)
 			D.line(cv, top, top.lerp(bot, 1.0 - 0.45 * sn), D.ca(col.darkened(0.15), 0.95 * (1.0 - sn)), t * 0.05 * (1.0 - sn) + 1.0)
@@ -1123,7 +1244,8 @@ static func _p_warp(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 ## The road between the two tiles, under the floor. mycel: a glowing root-
 ## thread snakes from the old tile to the new one with hyphae branching off
 ## behind its bright head, then fades. dig: the hole closes behind, and a
-## mound of earth heaves across, leaving a crack that fades.
+## mound of earth heaves across leaving a molehill ridge (_ridge) that
+## settles and fades.
 static func _p_thread(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var t := D.ts(V)
 	var ms := k * float(cl["dur"])
@@ -1145,15 +1267,14 @@ static func _p_thread(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	if d.length() < 1.0:
 		D.glow(cv, a, t * 0.3 * fade, D.ca(pal["a"], 0.6), 2)
 		return
+	var all := _wobble_path(a, b, t, (0.05 if dig else 0.14), (0.1 if dig else 0.05), seed)
+	var n := all.size() - 1
 	var s := Vector2(-d.y, d.x).normalized()
-	var n := clampi(int(d.length() / (t * 0.25)), 6, 22)
-	var amp := t * (0.05 if dig else 0.14)
-	var all := PackedVector2Array()
-	for i in n + 1:
-		var f := float(i) / float(n)
-		var wob := sin(f * PI * 2.3 + float(seed)) * amp * sin(f * PI) \
-			+ (D.h01(seed + i * 7) - 0.5) * t * (0.1 if dig else 0.05) * sin(f * PI)
-		all.append(a.lerp(b, f) + s * wob)
+	if dig:
+		# the tunnel: a molehill ridge of turned-up lumps behind a travelling
+		# mound, a crack down its spine; it settles and fades once it arrives
+		_ridge(cv, all, u, t, 1.0, fade, ms, seed)
+		return
 	var hf := u * float(n)
 	var hi := mini(int(hf), n)
 	var pts := PackedVector2Array()
@@ -1162,37 +1283,6 @@ static func _p_thread(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var head: Vector2 = all[hi].lerp(all[mini(hi + 1, n)], hf - float(hi))
 	if u < 1.0:
 		pts.append(head)
-	if dig:
-		# the tunnel: a ridge of turned-up earth that swells toward the moving
-		# mound like a wake, with a crack down its spine; it settles and thins
-		if pts.size() >= 2 and fade > 0.01:
-			var wh := t * (0.52 if u < 1.0 else 0.26) * (0.4 + 0.6 * fade)
-			var wt := t * 0.1 * fade + 1.0
-			var ridge := PackedVector2Array()
-			for p in pts:
-				ridge.append(p + Vector2(0, -t * 0.035))
-			_taper(cv, pts, wt, wh, D.ca(DIRT, 0.95 * fade))
-			_taper(cv, ridge, wt * 0.5, wh * 0.45, D.ca(DIRT_LIGHT, 0.9 * fade))
-			cv.draw_polyline(pts, D.ca(SOIL, 0.85 * fade), t * 0.03, true)
-		if u > 0.0 and u < 1.0:
-			# the mound: a dome of earth heaving along, shedding crumbs
-			var bob := absf(sin(ms * 0.05)) * t * 0.04
-			var rx := t * 0.34
-			var ry := t * 0.26 + bob
-			_ell(cv, head + Vector2(0, t * 0.02), rx * 1.12, t * 0.13, D.ca(Color.BLACK, 0.35))
-			var dome := PackedVector2Array()
-			for i in 9:
-				var ang := PI + PI * float(i) / 8.0
-				dome.append(head + Vector2(cos(ang) * rx, sin(ang) * ry))
-			cv.draw_colored_polygon(dome, DIRT)
-			cv.draw_arc(head + Vector2(0, -ry * 0.1), rx * 0.72, PI * 1.12, PI * 1.55, 6, D.ca(DIRT_LIGHT, 0.95), t * 0.07, true)
-			D.line(cv, head + Vector2(-rx * 0.1, -ry * 0.9), head + Vector2(rx * 0.25, -ry * 0.35), D.ca(SOIL, 0.8), t * 0.03)
-			for i in 4:
-				var ph := fposmod(ms * 0.006 + float(i) / 4.0, 1.0)
-				var sd := -1.0 if i % 2 == 0 else 1.0
-				var q := head + Vector2(sd * t * (0.15 + 0.22 * ph), -t * 0.15 - t * 0.35 * sin(ph * PI))
-				_clod(cv, q, t * 0.05, ph * 6.0, D.ca(DIRT_LIGHT, 1.0 - ph))
-		return
 	if pts.size() >= 2:
 		cv.draw_polyline(pts, D.ca(pal["c"], 0.6 * fade), t * 0.14, true)
 		cv.draw_polyline(pts, D.ca(pal["a"], 0.9 * fade), t * 0.07, true)
@@ -1369,9 +1459,9 @@ static func _p_anchor(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 	var turns := float(cl.get("turns", 4))
 	var seed := _seed(at)
 	var drive := D.ease_out(D.win(ms, lead - 15.0, lead + 80.0))
-	var fade := 1.0 - D.ease_in(D.win(ms, lead + 260.0, float(cl["dur"])))
+	var fade := 1.0 - D.ease_in(D.win(ms, lead + 220.0, float(cl["dur"])))
 	var n := clampi(3 + int(turns), 5, 10)
-	var ln := t * (0.55 + 0.06 * minf(turns, 8.0))
+	var ln := t * (0.6 + 0.07 * minf(turns, 8.0))
 	var th := D.win(ms, lead, lead + 330.0)
 	if th > 0.0 and th < 1.0:
 		var e := D.ease_out(th)
@@ -1384,18 +1474,18 @@ static func _p_anchor(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 		var ang := PI * (-0.08 + 1.16 * (float(i) + 0.5) / float(slabs))
 		var p := foot + Vector2(cos(ang) * t * 0.7, sin(ang) * t * 0.32)
 		var up := _back(D.win(ms, lead + 10.0 * float(i), lead + 130.0 + 10.0 * float(i)))
-		var hh := t * (0.4 + 0.12 * D.h01(seed + i)) * up
+		var hh := t * (0.5 + 0.14 * D.h01(seed + i)) * up
 		if hh > 1.0:
-			var sd := 1.0 if cos(ang) > 0.0 else -1.0
-			D.line(cv, foot, p, D.ca(SOIL, 0.8 * fade), t * 0.04)
-			var slab := PackedVector2Array([p + Vector2(-t * 0.17, t * 0.03), p + Vector2(t * 0.17, t * 0.03),
-				p + Vector2(t * 0.1 + sd * t * 0.07, -hh), p + Vector2(-t * 0.09 + sd * t * 0.07, -hh * 0.78)])
+			var lean := t * 0.09 * (1.0 if cos(ang) > 0.0 else -1.0)
+			D.line(cv, foot, p, D.ca(SOIL, 0.85 * fade), t * 0.05)
+			var slab := PackedVector2Array([p + Vector2(-t * 0.21, t * 0.04), p + Vector2(t * 0.21, t * 0.04),
+				p + Vector2(t * 0.13 + lean, -hh), p + Vector2(-t * 0.11 + lean, -hh * 0.78)])
 			cv.draw_colored_polygon(slab, D.ca(STONE.darkened(0.6), fade))
-			var inner := PackedVector2Array([p + Vector2(-t * 0.12, 0), p + Vector2(t * 0.12, 0),
-				p + Vector2(t * 0.07 + sd * t * 0.07, -hh * 0.9), p + Vector2(-t * 0.06 + sd * t * 0.07, -hh * 0.72)])
+			var inner := PackedVector2Array([p + Vector2(-t * 0.15, 0), p + Vector2(t * 0.15, 0),
+				p + Vector2(t * 0.09 + lean, -hh * 0.9), p + Vector2(-t * 0.07 + lean, -hh * 0.72)])
 			cv.draw_colored_polygon(inner, D.ca(STONE, fade))
-			D.line(cv, p + Vector2(-t * 0.06 + sd * t * 0.07, -hh * 0.7), p + Vector2(t * 0.07 + sd * t * 0.07, -hh * 0.88),
-				D.ca(STONE.lightened(0.5), fade), t * 0.04)
+			D.line(cv, p + Vector2(-t * 0.07 + lean, -hh * 0.7), p + Vector2(t * 0.09 + lean, -hh * 0.9),
+				D.ca(STONE.lightened(0.6), fade), t * 0.05)
 	if drive <= 0.01:
 		return
 	for i in n:
@@ -1411,11 +1501,12 @@ static func _p_anchor(cv, cl: Dictionary, k: float, V: Dictionary) -> void:
 		for j in 4:
 			var f := float(j) / 3.0
 			pts.append(foot.lerp(tip, f) + sv * sin(f * PI + h1 * 4.0) * t * 0.05 * f)
-		_taper(cv, pts, t * 0.17, t * 0.04, D.ca(BARK_DARK, fade))
-		_taper(cv, pts, t * 0.1, t * 0.025, D.ca(BARK.lightened(0.15), fade))
-		D.line(cv, pts[0] - sv * t * 0.02, pts[2] - sv * t * 0.015, D.ca(BARK_LIGHT, 0.85 * fade), t * 0.025)
+		_taper(cv, pts, t * 0.22, t * 0.05, D.ca(BARK_DARK, fade))
+		_taper(cv, pts, t * 0.13, t * 0.03, D.ca(BARK.lightened(0.15), fade))
+		D.line(cv, pts[0] - sv * t * 0.025, pts[2] - sv * t * 0.018, D.ca(BARK_LIGHT, 0.9 * fade), t * 0.03)
 		if drive > 0.9:
-			_ell(cv, tip, t * 0.06, t * 0.03, D.ca(SOIL, 0.85 * fade))
+			# where the tip bites into the floor
+			_ell(cv, tip, t * 0.08, t * 0.04, D.ca(SOIL, 0.9 * fade))
 
 
 ## A sunbeam dropping from the top of the map onto the tender: the smog
