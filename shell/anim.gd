@@ -53,6 +53,9 @@ const DAMAGING_INTENTS := ["attack", "slam", "quake"]
 ## Pseudo-intents fx_enemy handles for an enemy whose intent never ran.
 const BLOCKED_VERB := "blocked"
 const SCREENED_VERB := "screened"
+## How long a chained step waits on a pop the tender wears (chain_offset): as
+## long as the hurt tint a landed blow holds it for.
+const CHAIN_POP_MS := 380
 
 
 # --- planning ------------------------------------------------------------------
@@ -643,9 +646,9 @@ static func _feedback(c: Dictionary, t_end: int) -> void:
 	# order: a hook's number that comes earlier in the stream but lands later
 	# must not push back the number of the blow that set it off
 	var asks: Array = []
-	var say := func(key, t: int, at: Vector2, text: String, col: Color) -> void:
-		asks.append([t, asks.size(), key, at, text, col])
-	var place := func(key, t: int, at: Vector2, text: String, col: Color) -> void:
+	var say := func(key, t: int, at: Vector2, text: String, col: Color, soft := false) -> void:
+		asks.append([t, asks.size(), key, at, text, col, soft])
+	var place := func(key, t: int, at: Vector2, text: String, col: Color, soft := false) -> void:
 		var sk := Vector2i(at.round())
 		var st: Array = stack.get(sk, [-100000, -1])
 		var t0: int = maxi(t, int(st[0]) + L.FLOAT_STACK)
@@ -657,8 +660,10 @@ static func _feedback(c: Dictionary, t_end: int) -> void:
 		for gid in gone:
 			if not L.same_id(gid, key) and Vector2i(_pos_at(c, gid, t0).round()) == above:
 				low = true
-		L.clip(c, {"kind": "float", "t0": t0, "dur": L.T_FLOAT, "at": at, "text": text, "n": n, "col": col,
+		var fl := L.clip(c, {"kind": "float", "t0": t0, "dur": L.T_FLOAT, "at": at, "text": text, "n": n, "col": col,
 			"low": low})
+		if soft:
+			fl["soft"] = true
 	var last_hit := {}  # victim key -> direction of its latest blow (a death tips away from it)
 	var pl0: Dictionary = c["pre"]["player"]
 	# the tender's buffs and HP as the stream changes them, so each overlay
@@ -736,19 +741,21 @@ static func _feedback(c: Dictionary, t_end: int) -> void:
 					"who": "player", "pre": shield_run})
 				shield_run -= int(ev.get("amt", 0))
 			"heal":
-				# what the bar really gains: a heal is capped at max HP
+				# what the bar really gains: a heal is capped at max HP. Every
+				# piece of it is SOFT (chain): a glow on the tender that never
+				# holds a chained step back - it moves with the tender instead
 				var gain := clampi(int(ev.get("amt", 0)), 0, maxi(0, hp_max - hp_run))
 				hp_run += gain
 				_hp_change(reel, "player", t, gain)
 				var hp := _pos_at(c, "player", t)
 				if gain > 0:
-					say.call("player", t, hp, "+%d" % gain, Color("8fdc6a"))
+					say.call("player", t, hp, "+%d" % gain, Color("8fdc6a"), true)
 				L.clip(c, {"kind": "motes", "t0": maxi(0, t - 80), "dur": 640, "from": Vector2i(hp.round()), "to": Vector2i(hp.round()),
-					"col": Color("8fdc6a"), "n": 7, "rise": true})
+					"col": Color("8fdc6a"), "n": 7, "rise": true, "soft": true})
 				L.clip(c, {"kind": "ring", "t0": t, "dur": 360, "at": hp, "r0": 0.2, "r1": 0.75,
-					"col": Color("b8f09a"), "w": 0.07, "layer": "ground"})
-				L.seg(c, "player", {"kind": "cast", "t0": maxi(0, t - 40), "dur": 300, "col": Color("8fdc6a")})
-				L.seg(c, "player", {"kind": "tint", "t0": t, "dur": 360, "col": Color(0.82, 1.0, 0.62)})
+					"col": Color("b8f09a"), "w": 0.07, "layer": "ground", "soft": true})
+				L.seg(c, "player", {"kind": "cast", "t0": maxi(0, t - 40), "dur": 300, "col": Color("8fdc6a"), "soft": true})
+				L.seg(c, "player", {"kind": "tint", "t0": t, "dur": 360, "col": Color(0.82, 1.0, 0.62), "soft": true})
 			"shield":
 				var sp := _pos_at(c, "player", t)
 				say.call("player", t + 60, sp, "shield %d" % int(ev.get("total", 0)), Color("a8d4ee"))
@@ -889,7 +896,7 @@ static func _feedback(c: Dictionary, t_end: int) -> void:
 
 	asks.sort_custom(func(a, b): return int(a[0]) < int(b[0]) or (int(a[0]) == int(b[0]) and int(a[1]) < int(b[1])))
 	for q in asks:
-		place.call(q[2], int(q[0]), q[3], String(q[4]), q[5])
+		place.call(q[2], int(q[0]), q[3], String(q[4]), q[5], bool(q[6]))
 
 
 static func _hp_change(reel: Dictionary, key, t: int, delta: int) -> void:
@@ -1121,18 +1128,110 @@ static func _scale(reel: Dictionary, k: float) -> void:
 	reel["len"] = _length(reel)
 
 
-## Two reels back to back: `b` is a step taken by the same input right after
-## `a` (an out-of-charge tap ends the turn, then moves), offset to start when
-## `a` ends and merged in. b's pre board is a's post board, so every
-## creature's segments simply continue; a tile both steps changed shows a's
-## old kind until a's flip and b's final kind after it.
-static func chain(a: Dictionary, b: Dictionary) -> Dictionary:
+## When `b` may start inside `a` (chain). Tracks, not the whole reel: an
+## out-of-charge tap ends the turn and then moves, and waiting for every
+## machine's turn to play out before the tender stirs made quick play feel
+## locked. So b waits only for what it shares with a -
+##   - the tender's own business: every non-soft segment of its track in a
+##     (a blow landing on it, a haul dragging it, a spike, its death) and
+##     every pop it wears (a shield soaking a blow); the soft regen glow at
+##     the end of a turn is not business and moves with it
+##   - every creature b touches: its whole track in a (the machine a chained
+##     strike hits finishes its own walk first)
+##   - a machine walking through, or falling on, a tile the tender's b path
+##     uses, and a tile both steps change (b's change lands after a's)
+##   - the haze stage, when b changes it too
+## Everything else in a - the rest of the enemy turn, the environment phase -
+## plays on around b. Never later than a's end, which is the old rule.
+static func chain_offset(a: Dictionary, b: Dictionary) -> int:
+	if a.is_empty() or b.is_empty():
+		return 0
+	var ta: Dictionary = a.get("tracks", {})
+	var tb: Dictionary = b.get("tracks", {})
+	var off := 0
+	for s in ta.get("player", []):
+		if not bool(s.get("soft", false)):
+			off = maxi(off, int(s["t0"]) + int(s["dur"]))
+	# a pop worn by the tender (a shield soaking a whole blow leaves no mark
+	# on its track, only this)
+	for cl in a.get("clips", []):
+		var who = cl.get("who")
+		if who is String and who == "player" and not bool(cl.get("soft", false)):
+			# until it has landed, not until it has been read
+			off = maxi(off, int(cl["t0"]) + mini(int(cl["dur"]), CHAIN_POP_MS))
+	for key in tb:
+		if key is String and key == "player":
+			continue
+		for s in ta.get(key, []):
+			off = maxi(off, int(s["t0"]) + int(s["dur"]))
+	var tiles := {}
+	for s in tb.get("player", []):
+		if String(s["kind"]) == "path":
+			for pt in s["pts"]:
+				tiles[Vector2i(Vector2(pt).round())] = true
+	for key in ta:
+		if key is String and key == "player":
+			continue
+		for s in ta[key]:
+			if String(s["kind"]) != "path":
+				continue
+			for pt in s["pts"]:
+				if tiles.has(Vector2i(Vector2(pt).round())):
+					off = maxi(off, int(s["t0"]) + int(s["dur"]))
+					break
+	for g in a.get("ghosts", []):
+		if tiles.has(Vector2i(Vector2(g["pos"]).round())):
+			off = maxi(off, int(g["t_die"]) + L.T_DIE)
+	for p in b.get("tswap", {}):
+		if a.get("tswap", {}).has(p):
+			off = maxi(off, int(a["tswap"][p].get("t", 0)) + 1)
+	if not b.get("dim", {}).get("at", []).is_empty():
+		for d in a.get("dim", {}).get("at", []):
+			off = maxi(off, int(d[0]) + 1)
+	return mini(off, int(a.get("len", 0)))
+
+
+## Two reels merged: `b` is a step taken by the same input right after `a`
+## (an out-of-charge tap ends the turn, then moves), started at `off` ms into
+## `a` (default chain_offset: as soon as nothing b needs is still playing)
+## and merged in. b's pre board is a's post board, so every creature's
+## segments simply continue; a tile both steps changed shows a's old kind
+## until a's flip and b's final kind after it. a's soft tender glow that has
+## not started by `off` is moved onto the tender's b destination, after its
+## b motion, so it never plays on the tile the tender just left.
+static func chain(a: Dictionary, b: Dictionary, off: int = -1) -> Dictionary:
 	if a.is_empty():
 		return b
 	if b.is_empty():
 		return a
-	var off := int(a.get("len", 0))
+	if off < 0:
+		off = chain_offset(a, b)
 	var out: Dictionary = a.duplicate(true)
+	var b_end := 0
+	var b_at = null
+	for s in b["tracks"].get("player", []):
+		b_end = maxi(b_end, int(s["t0"]) + int(s["dur"]))
+		if String(s["kind"]) == "path":
+			b_at = s["pts"][s["pts"].size() - 1]
+	if b_at != null:
+		# one shift for the whole glow, so its motes, ring and number keep
+		# their beats relative to each other
+		var soft_items: Array = []
+		for cl in out["clips"]:
+			if bool(cl.get("soft", false)) and int(cl["t0"]) >= off:
+				soft_items.append(cl)
+				for k in ["at", "from", "to"]:
+					if cl.has(k):
+						cl[k] = Vector2i(Vector2(b_at).round()) if cl[k] is Vector2i else Vector2(b_at)
+		for s in out["tracks"].get("player", []):
+			if bool(s.get("soft", false)) and int(s["t0"]) >= off:
+				soft_items.append(s)
+		var first := -1
+		for it in soft_items:
+			first = int(it["t0"]) if first < 0 else mini(first, int(it["t0"]))
+		var delta := maxi(0, off + b_end - first) if first >= 0 else 0
+		for it in soft_items:
+			it["t0"] = int(it["t0"]) + delta
 	for cl in b["clips"]:
 		var c2: Dictionary = cl.duplicate(true)
 		c2["t0"] = int(c2["t0"]) + off

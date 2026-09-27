@@ -181,7 +181,8 @@ var _reel: Dictionary = {}
 var _reel_ms := -99999
 var anim_mode := "full"  # full | quick | off (Animations setting)
 ## Set while an input's SECOND step runs (an out-of-charge tap ends the turn,
-## then moves): its reel is chained after the first instead of replacing it.
+## then moves): its reel is chained into the first instead of replacing it,
+## starting as soon as nothing it shares with the first is still playing.
 var _chain_next := false
 ## The board the current reel started from and the events it plays: while it
 ## plays, the telegraphs on the map are the ones being carried out (an
@@ -596,13 +597,16 @@ func _start_reel(pre: Dictionary, a: Dictionary, evs: Array, prev_floor: int) ->
 		return
 	var ort := _reel_t()
 	if _chain_next and Anim.playing(_reel, ort):
-		var first_len := int(_reel.get("len", 0))
+		# the second step starts as soon as nothing it needs is still playing
+		# (Anim.chain_offset: the tender's own blows and hauls, the machines
+		# it touches) - never after the whole enemy turn has played out
 		var nr := Anim.plan(pre, a, evs, game.snapshot(), float(Anim.SPEEDS.get(anim_mode, 1.0)))
-		_reel = Anim.chain(_reel, nr)
+		var off := Anim.chain_offset(_reel, nr)
+		_reel = Anim.chain(_reel, nr, off)
 		_reel_evs = _reel_evs + evs
 		var bt: Array = []
 		for t in nr.get("ev_t", []):
-			bt.append(int(t) + first_len - int(ort))
+			bt.append(int(t) + off - int(ort))
 		_spawn_banners(evs, bt)
 		return
 	var carry: Array = []

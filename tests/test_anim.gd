@@ -22,8 +22,9 @@ extends SceneTree
 ##      keeps a haul's tile events with the crane (x:haul_goo); telegraphs,
 ##      HUD chips and room dressing hold until their beat and the cleanse
 ##      float says the gain; the shell starts and ends a reel per step,
-##      carries numbers over, chains an out-of-charge move after the enemy
-##      turn, lets no tap during the death reel start a new run, starts a new
+##      carries numbers over, chains an out-of-charge move INTO the enemy
+##      turn per track (a free tender hops at once, a bitten one after the
+##      bite, the regen glow follows it), lets no tap during the death reel start a new run, starts a new
 ##      game with no reel and a descent with none, and cycles and persists
 ##      the setting
 ##   5. a soak over real bot-played runs (ANIM_SOAK_SEEDS, default 4 seeds x
@@ -126,6 +127,91 @@ class RecCanvas:
 	func draw_set_transform(p, rot = 0.0, sc = Vector2.ONE) -> void:
 		_v([p, float(rot), sc])
 
+
+## Track clearing for the chained step: the tender's second step waits only
+## for what it shares with the enemy turn (its own blows and hauls, the
+## machines it touches), not for every machine's turn to play out.
+func _check_chain_tracks() -> void:
+	# nothing touches the tender: its hop starts well inside the enemy turn
+	var mv: Dictionary = Scenes.intent_scene("move")
+	var g = mv["game"]
+	var pre: Dictionary = g.snapshot()
+	var ea: Array = g.step({"type": "end_turn"})
+	var mid: Dictionary = g.snapshot()
+	var a := Anim.plan(pre, {"type": "end_turn"}, ea, mid)
+	var mvac := {"type": "move", "dir": Vector2i(0, -1)}
+	var evb: Array = g.step(mvac)
+	var b := Anim.plan(mid, mvac, evb, g.snapshot())
+	var off := Anim.chain_offset(a, b)
+	_check(int(a["len"]) > 200 and off < int(a["len"]) - 200,
+		"chain: a free tender does not wait out the enemy turn (offset %d of %d)" % [off, int(a["len"])])
+	var ch := Anim.chain(a, b, off)
+	var hop0 := -1
+	for s in ch["tracks"].get("player", []):
+		if String(s["kind"]) == "path":
+			hop0 = int(s["t0"])
+	_check(hop0 >= 0 and hop0 < int(a["len"]), "chain: the tender's hop plays during the enemy turn (t0 %d)" % hop0)
+	_check(Anim.pos_at(ch, "player", float(ch["len"]) + 1.0, Vector2.ZERO) == Vector2(g.player["pos"]), "chain: the tender still lands")
+	for key in a["tracks"]:
+		if key is String:
+			continue
+		_check(Anim.pos_at(ch, key, float(ch["len"]) + 1.0, Vector2(-9, -9)) == Anim.pos_at(a, key, float(a["len"]) + 1.0, Vector2(-9, -9)),
+			"chain: machine %s still finishes its own walk" % str(key))
+	# a machine bites the tender: the hop waits for the blow to land
+	var at: Dictionary = Scenes.intent_scene("attack")
+	var ga = at["game"]
+	var pa: Dictionary = ga.snapshot()
+	var eva: Array = ga.step({"type": "end_turn"})
+	var ma: Dictionary = ga.snapshot()
+	var ra := Anim.plan(pa, {"type": "end_turn"}, eva, ma)
+	var up := {"type": "move", "dir": Vector2i(0, -1)}
+	var evu: Array = ga.step(up)
+	var rb := Anim.plan(ma, up, evu, ga.snapshot())
+	var blow := -1
+	for h in ra.get("hp", {}).get("player", []):
+		if int(h[1]) < 0:
+			blow = maxi(blow, int(h[0]))
+	var offa := Anim.chain_offset(ra, rb)
+	_check(blow >= 0 and offa > blow, "chain: a bitten tender moves only after the bite lands (blow %d, offset %d)" % [blow, offa])
+	# a bite the shield soaks whole leaves no mark on the tender's track, only
+	# its pop: the hop still waits for it
+	var sh_sc: Dictionary = Scenes.intent_scene("attack")
+	var gs = sh_sc["game"]
+	gs.player["shield"] = 9
+	var ps: Dictionary = gs.snapshot()
+	var evs: Array = gs.step({"type": "end_turn"})
+	var ms: Dictionary = gs.snapshot()
+	var rs := Anim.plan(ps, {"type": "end_turn"}, evs, ms)
+	var evs2: Array = gs.step(up)
+	var rs2 := Anim.plan(ms, up, evs2, gs.snapshot())
+	var pop := -1
+	for cl in rs["clips"]:
+		if String(cl["kind"]) == "en_word" and String(cl.get("text", "")) == "blocked":
+			pop = int(cl["t0"])
+	var offs := Anim.chain_offset(rs, rs2)
+	_check(pop >= 0 and offs > pop, "chain: a shielded tender moves only after the blocked bite (pop %d, offset %d)" % [pop, offs])
+	# the soft regen glow never plays on the tile the tender left
+	var hg: Dictionary = Scenes.intent_scene("move")
+	var gh = hg["game"]
+	gh.terrain[gh.player["pos"]] = {"kind": "growth"}
+	gh.player["hp"] = 10
+	var ph: Dictionary = gh.snapshot()
+	var evh: Array = gh.step({"type": "end_turn"})
+	var mh: Dictionary = gh.snapshot()
+	var rh := Anim.plan(ph, {"type": "end_turn"}, evh, mh)
+	var evm: Array = gh.step(mvac)
+	var rm := Anim.plan(mh, mvac, evm, gh.snapshot())
+	var offh := Anim.chain_offset(rh, rm)
+	var chh := Anim.chain(rh, rm, offh)
+	var softs := 0
+	var misplaced := 0
+	for cl in chh["clips"]:
+		if bool(cl.get("soft", false)):
+			softs += 1
+			if cl.has("at") and Vector2(cl["at"]).round() != Vector2(gh.player["pos"]):
+				misplaced += 1
+	_check(softs >= 2 and misplaced == 0, "chain: the regen glow follows the tender (%d soft clips, %d left behind)" % [softs, misplaced])
+	_check(offh < int(rh["len"]), "chain: the regen glow does not hold the tender (offset %d of %d)" % [offh, int(rh["len"])])
 
 func _check(ok: bool, what: String) -> void:
 	checks += 1
@@ -437,6 +523,7 @@ func _check_shell() -> void:
 	_check(moved_enemy and tr.has("player"), "an out-of-charge move chains the enemy turn's reel and the move (%s)" % str(tr.keys()))
 	_check(Anim.pos_at(sh._reel, "player", float(sh._reel["len"]) + 1.0, Vector2(sh.game.player["pos"])) == Vector2(sh.game.player["pos"]),
 		"the chained reel lands the tender")
+	_check_chain_tracks()
 	# the killing blow: the sheet waits for it, a tap during it only finishes
 	# it, and the next game never inherits it
 	var dth: Dictionary = Scenes.basic_scene("death")

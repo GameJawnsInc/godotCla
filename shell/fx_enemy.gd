@@ -220,7 +220,7 @@ static func _start(c: Dictionary, off: int, aims: bool = true) -> int:
 ## has faded, so a busy turn stacks only the words that are really on screen
 ## together instead of walking every later word further down (and off the
 ## view).
-static func _say(c: Dictionary, i: int, t: int, text: String, col: Color) -> void:
+static func _say(c: Dictionary, i: int, t: int, text: String, col: Color) -> Dictionary:
 	L.quiet(c, i)
 	var ends: Array = c.get("_en_rows", [])
 	var row := 0
@@ -230,8 +230,11 @@ static func _say(c: Dictionary, i: int, t: int, text: String, col: Color) -> voi
 		ends.append(0)
 	ends[row] = t + WORD_MS
 	c["_en_rows"] = ends
-	L.clip(c, {"kind": "en_word", "t0": t, "dur": WORD_MS, "at": _ppos(c), "row": row, "text": text, "col": col,
-		"read": true})
+	# worn by the tender (who: player): a blow its shield soaks whole, a gum,
+	# a drain leave no mark on its track, so this word is what a chained step
+	# waits for (Anim.chain_offset) - never left behind on a tile it hopped off
+	return L.clip(c, {"kind": "en_word", "t0": t, "dur": WORD_MS, "at": _ppos(c), "row": row, "text": text, "col": col,
+		"read": true, "who": "player"})
 
 
 static func _row(e: Dictionary) -> Dictionary:

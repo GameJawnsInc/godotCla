@@ -352,8 +352,19 @@ the reel and plays it from `_reel_ms`; the map only ever draws poses from a
 reel that is still playing, and a new game starts with none. Input is never
 blocked: a new action simply starts a new reel (numbers still in the air
 carry over) — except the second step of ONE input (an out-of-charge tap ends
-the turn, then moves), whose reel is chained after the enemy turn's
-(`Anim.chain`). A descent has no reel — the floor fade is its animation. The
+the turn, then moves, strikes or cleanses), whose reel is chained INTO the
+enemy turn's (`Anim.chain`). The chain is per track, not per reel:
+`Anim.chain_offset` starts the second step as soon as nothing it shares with
+the enemy turn is still playing — the tender's own business (a blow landing
+on it, a haul, a spike, and a word worn on its tile such as a shield's
+"blocked", each until it lands), the whole track of any machine the step touches, a
+machine walking through or falling on a tile the tender's path uses, a tile
+both steps change, the haze when both change it — and never later than the
+enemy turn's end. The rest of the enemy turn plays on around the tender, so
+running out of charge mid-stride no longer freezes the tender while every
+machine takes its turn. The tender's regen glow (a heal standing on growth)
+is **soft**: it never holds the step back, and a soft glow that had not
+started yet is moved onto the tender's new tile, after its hop. A descent has no reel — the floor fade is its animation. The
 game-over sheet waits for the killing blow to finish, and a tap or key
 during it finishes the reel instead of starting a new run.
 
@@ -404,6 +415,8 @@ loops' bounds, the one-blow-per-machine attribution (`x:pack`,
 `x:shielded`, `x:haul_goo`), the holds (telegraphs, HUD chips, room
 dressing, the cleanse float saying the gain), the shell's playback (a step
 starts a reel that ends, numbers carry over, an out-of-charge move chains,
+the chained step waits only for its own tracks - a free tender hops during
+the enemy turn, a bitten one after the bite, and the regen glow follows it -
 a tap during the death reel does not start a new run, a new game has no
 reel, a descent has none, the setting cycles and persists), runs a soak over
 real optimizer and wanderer games (`ANIM_SOAK_SEEDS`, default 4), and fails
