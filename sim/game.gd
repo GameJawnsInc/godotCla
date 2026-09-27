@@ -162,7 +162,7 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## or mod row, no replay can observe either passive loop, and that rule is
 ## held by the injected _ResProbe rows in tests/test_grammar.gd and
 ## tests/test_economy.gd alone.
-const SIM_VERSION := 14
+const SIM_VERSION := 15
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -414,7 +414,15 @@ func step(action: Dictionary) -> Array:
 		else:
 			_emit({"t": "illegal", "action": "draft phase"})
 		return _step_events
-	match String(action.get("type", "")):
+	# tending by any means: the rooms that hold corruption before the
+	# player's action, so a removal other than CLEANSE (a convert, a wash)
+	# still blooms the room and restores the floor. end_turn is excluded -
+	# corruption that vanishes on the enemies' turn (a dredge) is not tending
+	var atype := String(action.get("type", ""))
+	var tend_floor := floor_num
+	var tend := atype != "end_turn" and phase == "play" and _count_corruption() > 0
+	var tend_rooms: Array = _corrupt_rooms() if tend else []
+	match atype:
 		"move":
 			_act_move(action)
 		"strike":
@@ -439,6 +447,8 @@ func step(action: Dictionary) -> Array:
 			_resolve_turn()
 		_:
 			_emit({"t": "error", "msg": "unknown action"})
+	if tend and not over and phase == "play" and floor_num == tend_floor:
+		_settle_tending(tend_rooms)
 	# one place covers every bloomless corruption removal (wash, convert,
 	# dredge, enemy-made changes): the gate can never demand more than what
 	# is still standing. Ignition is not one of them - a fire counts as the
@@ -1501,13 +1511,40 @@ func _act_cleanse(action: Dictionary) -> void:
 	if green_need > 0 and greened == green_need:
 		_emit({"t": "stairs_awaken", "tile": map["stairs"]})
 	_check_room_bloom(target)
-	# the whole floor scrubbed clean: it is RESTORED - skies clear for good
+	_check_restored()
+
+
+## The whole floor scrubbed clean: it is RESTORED - skies clear for good.
+func _check_restored() -> void:
 	if not map.get("restored", false) and _count_corruption() == 0:
 		map["restored"] = true
 		dim = 0
 		smog = maxi(smog - 8, 0)
 		bloom += 5
 		_emit({"t": "floor_restored", "bonus": 5})
+
+
+## Rooms (ascending index) that still hold corruption, counted the way the
+## room bloom counts it.
+func _corrupt_rooms() -> Array:
+	var out: Array = []
+	for t in terrain.keys():
+		if Content.counts_as_corruption(String(terrain[t]["kind"])):
+			var ri := _room_of(t)
+			if ri >= 0 and not out.has(ri):
+				out.append(ri)
+	out.sort()
+	return out
+
+
+## After a player action: every room that held corruption before it and holds
+## none now blooms, and a floor that had some and has none is restored - the
+## same payoffs CLEANSE gives, whatever tool did the tending (a convert, a
+## wash). A cleanse has already paid both inline, so this finds nothing then.
+func _settle_tending(rooms_before: Array) -> void:
+	for ri in rooms_before:
+		_bloom_room(int(ri))
+	_check_restored()
 
 
 func _act_descend() -> void:
@@ -1858,7 +1895,10 @@ func _room_has_corruption(ri: int) -> bool:
 
 ## A fully tended room blooms once: bonus bloom and a supply drop.
 func _check_room_bloom(p: Vector2i) -> void:
-	var ri := _room_of(p)
+	_bloom_room(_room_of(p))
+
+
+func _bloom_room(ri: int) -> void:
 	if ri < 0 or map.get("bloomed", []).has(ri) or _room_has_corruption(ri):
 		return
 	map["bloomed"].append(ri)

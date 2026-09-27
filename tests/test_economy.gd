@@ -939,6 +939,7 @@ func _check_quota_reclamp() -> void:
 		and int(gs.terrain[Vector2i(6, 1)].get("bloom", 1)) == 0
 	_ok(trail_ok, "sludge trail: terrain at (6,1) %s" % str(gs.terrain.get(Vector2i(6, 1))))
 	_check_pending_corruption()
+	_check_tending_by_any_means()
 	print("quota reclamp: wash 2->0, ignite no reclamp (fire counts), burnout to ash no reclamp, fire/ash wash 2->0, partial 3->2; enemy oil / bloom-0 ash pay 0 bloom, count greened")
 
 
@@ -991,6 +992,53 @@ func _check_pending_corruption() -> void:
 		"pending: %d illegal / %d error events during the run" % [_events_of(seen, "illegal").size(), _events_of(seen, "error").size()])
 	print("pending corruption: fire counts for the quota, the room bloom and the floor restore; it never shields the core and is never cleansable")
 
+
+## Tending by any means: the room bloom (bonus + supply pod) and the floor
+## restore follow the corruption, not the CLEANSE action - a Reclaimer Bomb
+## convert or a Water Jet wash that clears the last of it pays both. A removal
+## on the enemies' turn (end_turn: a dredge) is not tending and pays neither.
+func _check_tending_by_any_means() -> void:
+	var rows := [
+		"#########",
+		"#.@.~...#",
+		"#.......#",
+		"#########",
+	]
+	# 1. Reclaimer Bomb converts the room's last oil
+	var g = Game.new(1, _fixed(rows, ["seed_bomb+reclaim", "water_jet"], {"fdef": {"green_need": 0}}))
+	g.map["rooms"] = [Rect2i(1, 1, 7, 2)]
+	var b0: int = g.bloom
+	var ev: Array = g.step({"type": "ability", "slot": 0, "target": Vector2i(4, 1)})
+	_ok(_events_of(ev, "convert").size() == 1, "tending: reclaim converted %d tiles" % _events_of(ev, "convert").size())
+	_ok(_events_of(ev, "room_bloom").size() == 1, "tending: reclaim cleared the room and it did not bloom (%s)" % str(ev))
+	_ok(_events_of(ev, "floor_restored").size() == 1, "tending: reclaim cleared the floor and it was not restored")
+	_ok(g.bloom == b0 + Content.ROOM_BLOOM_BONUS + 5, "tending: reclaim bloom %d -> %d" % [b0, g.bloom])
+	var pods := 0
+	for t in g.terrain:
+		if String(g.terrain[t]["kind"]) == "supply":
+			pods += 1
+	_ok(pods == 1, "tending: %d supply pods after a reclaim room bloom" % pods)
+	# 2. Water Jet washes it away instead
+	var gw = Game.new(1, _fixed(rows, ["seed_bomb+reclaim", "water_jet"], {"fdef": {"green_need": 0}}))
+	gw.map["rooms"] = [Rect2i(1, 1, 7, 2)]
+	var evw: Array = gw.step({"type": "ability", "slot": 1, "target": Vector2i(1, 0)})
+	_ok(_events_of(evw, "wash").size() == 1, "tending: jet washed %d tiles" % _events_of(evw, "wash").size())
+	_ok(_events_of(evw, "room_bloom").size() == 1 and _events_of(evw, "floor_restored").size() == 1,
+		"tending: a wash that clears the floor bloomed %d / restored %d" % [_events_of(evw, "room_bloom").size(), _events_of(evw, "floor_restored").size()])
+	# 3. corruption that vanishes on end_turn pays nothing
+	var ge = Game.new(1, _fixed(rows, ["seed_bomb+reclaim", "water_jet"], {"fdef": {"green_need": 0}}))
+	ge.map["rooms"] = [Rect2i(1, 1, 7, 2)]
+	ge.terrain.erase(Vector2i(4, 1))
+	var eve: Array = ge.step({"type": "end_turn"})
+	_ok(_events_of(eve, "room_bloom").is_empty() and _events_of(eve, "floor_restored").is_empty(), "tending: end_turn bloomed/restored (%s)" % str(eve))
+	# 4. a cleanse still pays exactly once (the sweep finds nothing left to pay)
+	var gc = Game.new(1, _fixed(rows, ["seed_bomb+reclaim", "water_jet"], {"fdef": {"green_need": 0}}))
+	gc.map["rooms"] = [Rect2i(1, 1, 7, 2)]
+	gc.step({"type": "move", "dir": Vector2i(1, 0)})
+	var evc: Array = gc.step({"type": "cleanse", "target": Vector2i(4, 1)})
+	_ok(_events_of(evc, "room_bloom").size() == 1 and _events_of(evc, "floor_restored").size() == 1,
+		"tending: cleanse bloomed %d / restored %d" % [_events_of(evc, "room_bloom").size(), _events_of(evc, "floor_restored").size()])
+	print("tending by any means: reclaim convert and jet wash bloom the room and restore the floor; end_turn removals pay nothing; cleanse pays once")
 
 # --- h) config keys -----------------------------------------------------------
 

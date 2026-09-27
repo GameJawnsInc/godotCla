@@ -9460,3 +9460,19 @@ and `oil_tithe`. A run that reaches fire 3 is already close to mono-fire, so
 if `roots_burn` were ever enabled that row is where the pressure would land
 first. `damp` is unaffected by either decision - it is the unbuilt `on_wash`
 consumer, not a design tension.
+
+## 2026-09-27 - tending by any means (SIM_VERSION 15)
+
+Owner report: Reclaimer Bomb on a floor's last corruption paid no
+`floor_restored`, and a room it emptied paid no `room_bloom` (bonus + supply
+pod). Both payoffs were inside `_act_cleanse` only, so every non-cleanse
+removal (convert, wash) skipped them. They now follow the corruption: any
+play-phase player action except `end_turn` that empties a room or the floor
+pays them (enemy-turn removals such as a dredge still pay nothing). Per-tile
+convert/wash bloom is unchanged (still 0).
+
+playtest.gd, default config, seeds 1..30, before -> after:
+deeproot 26/30 -> 27/30 (CI [74%, 97%]); optimizer 16/30, magpie 3/30,
+sprout 1/30, wanderer 0 unchanged; optimizer bloom earned 44.7 -> 45.0/run.
+All gates pass. The shift is inside noise; not verified at 30+ seeds per
+persona beyond this run.

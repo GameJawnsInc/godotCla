@@ -991,8 +991,26 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (14
-  today: Block D5 — one resonance per element. ONE `Content.RESONANCES` row
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (15
+  today: tending by any means. The room bloom (bonus + supply pod) and the
+  floor restore used to live inside `_act_cleanse` alone, so a Reclaimer Bomb
+  convert or a Water Jet wash that took a room's or the floor's last
+  corruption paid neither (owner report). `Game.step` now snapshots the
+  corrupt rooms (`_corrupt_rooms`) before every play-phase player action
+  except `end_turn` - a removal on the enemies' turn, a dredge, is not
+  tending - and `_settle_tending` blooms each room the action emptied and
+  restores a floor it emptied (`_bloom_room` / `_check_restored`, the same
+  code the cleanse calls inline, so a cleanse is byte-identical and pays
+  once). Corridor corruption counts for the restore as it always did.
+  Per-tile convert/wash stay bloomless. Corpus: 96 records re-stamped with
+  no outcome diff, hash-only moves on `blockb_quota_reclamp_wash`,
+  `d6_palisade_ttl` and `det_fanatic_s42`; all 20 bot logs re-recorded and
+  only `det_deeproot_s42` changed (still wins floor 7, 104 turns, was 107);
+  `e1_reclaim_restores.json` is the demo and `tests/test_economy.gd`
+  `_check_tending_by_any_means` covers convert, wash, end_turn and cleanse.
+  Playtest at 30 seeds: every gate passes, deeproot 26 -> 27/30, every other
+  persona's wins unchanged.
+  Bump 14 was Block D5 — one resonance per element. ONE `Content.RESONANCES` row
   ships, `cinder_grip` (fire 3 -> an ignite hook that roots), and it changes
   what happens in PLAY the moment a run's kit and grafts reach fire 3, so a
   stored log diverges at its FIRST IGNITION after that and at nothing else —

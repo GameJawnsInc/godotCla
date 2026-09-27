@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[999],"smog_spawn_every":0},"room":["#########","#.@.....#","#......>#","#########"],"terrain":[{"kind":"oil","pos":[4,1]}]},"kit":["seed_bomb+reclaim","water_jet"],"pool":["seed_bomb+reclaim","water_jet"]},
+"actions": [{"slot":0,"target":[4,1],"type":"ability"}],
+"expect": {"events":[{"id":"seed_bomb+reclaim","t":"ability","target":"(4, 1)"},{"t":"convert","tile":"(4, 1)"},{"t":"room_bloom"},{"bonus":5,"t":"floor_restored"}],"floor":1,"timeout":true,"turns":0,"won":false},
+"note": "Tending by any means (SIM_VERSION 15): the room bloom (bonus + supply pod) and the floor restore follow the corruption, not the CLEANSE action. Reclaimer Bomb converts the floor's only oil at (4,1) to growth; the room it sat in now holds no corruption, so it blooms, and the floor holds none, so it is restored - the payoffs a cleanse of the same tile pays. Before bump 15 both lived inside _act_cleanse alone and a convert or a wash that took the last of it paid neither (the owner's report). Game.step snapshots the corrupt rooms before every player action except end_turn and _settle_tending pays whatever the action emptied; drop that call and this record fails in plain mode on pattern 3",
+"sim_version": 15,
+"hash": "3ee838f31376ae98732333e9d04abcf2f4820b8d137e1edc53a73ec1a5df4fc0"
+}
