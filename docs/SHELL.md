@@ -350,8 +350,17 @@ covers the number it explains.
 **Playback.** `shell/main.gd` snapshots before and after each `_act`, plans
 the reel and plays it from `_reel_ms`; the map only ever draws poses from a
 reel that is still playing, and a new game starts with none. Input is never
-blocked: a new action simply starts a new reel (numbers still in the air
-carry over) — except the second step of ONE input (an out-of-charge tap ends
+blocked: a new action simply starts a new reel, and nothing the old one was
+still doing snaps (`Anim.carry`): numbers still in the air keep flying, and
+every machine the new step leaves alone finishes its walk, its death or its
+pop-in on the beat it had. A machine the new step touches (hits, pushes,
+statuses), or one walking through the tender's new path, glides the rest of
+its walk in at most 140 ms before the new step reaches it, and snaps only
+when there is less than 40 ms to spare. Only MOTION carries: a lunge, a flash
+or a beam aimed at the tile the tender just left would read as aimed at
+nothing, so those end, and the old reel's terrain flips, bars, chips and haze
+show their end state at once. The tender's own old track ends too — the new
+step is the tender's — except the second step of ONE input (an out-of-charge tap ends
 the turn, then moves, strikes or cleanses), whose reel is chained INTO the
 enemy turn's (`Anim.chain`). The chain is per track, not per reel:
 `Anim.chain_offset` starts the second step as soon as nothing it shares with
@@ -417,6 +426,11 @@ dressing, the cleanse float saying the gain), the shell's playback (a step
 starts a reel that ends, numbers carry over, an out-of-charge move chains,
 the chained step waits only for its own tracks - a free tender hops during
 the enemy turn, a bitten one after the bite, and the regen glow follows it -
+a step cut into another carries each machine's motion (a walking machine does
+not snap, a machine the step hits glides in before the hit, one crossing the
+tender's path is out of it before the tender sets off, a dying one keeps dying,
+and the soak cuts every real step into the one before it at a quarter, half
+and three quarters and checks everyone still lands and picks up where it was) -
 a tap during the death reel does not start a new run, a new game has no
 reel, a descent has none, the setting cycles and persists), runs a soak over
 real optimizer and wanderer games (`ANIM_SOAK_SEEDS`, default 4), and fails

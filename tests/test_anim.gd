@@ -24,7 +24,8 @@ extends SceneTree
 ##      float says the gain; the shell starts and ends a reel per step,
 ##      carries numbers over, chains an out-of-charge move INTO the enemy
 ##      turn per track (a free tender hops at once, a bitten one after the
-##      bite, the regen glow follows it), lets no tap during the death reel start a new run, starts a new
+##      bite, the regen glow follows it), lets machines finish their moves
+##      when a new step cuts a reel off (Anim.carry), lets no tap during the death reel start a new run, starts a new
 ##      game with no reel and a descent with none, and cycles and persists
 ##      the setting
 ##   5. a soak over real bot-played runs (ANIM_SOAK_SEEDS, default 4 seeds x
@@ -212,6 +213,90 @@ func _check_chain_tracks() -> void:
 				misplaced += 1
 	_check(softs >= 2 and misplaced == 0, "chain: the regen glow follows the tender (%d soft clips, %d left behind)" % [softs, misplaced])
 	_check(offh < int(rh["len"]), "chain: the regen glow does not hold the tender (offset %d of %d)" % [offh, int(rh["len"])])
+
+## A new step during a reel: machines finish their moves instead of snapping
+## (Anim.carry), and the new step still starts at once.
+func _check_carry(sh) -> void:
+	# the shell: end the turn, act again mid-walk
+	var mv: Dictionary = Scenes.intent_scene("move")
+	sh.game = mv["game"]
+	sh.clock_override = 100000
+	sh._act({"type": "end_turn"})
+	var old: Dictionary = sh._reel
+	var key = null
+	var ort := 0
+	for k in old["tracks"]:
+		if k is String:
+			continue
+		for sg in old["tracks"][k]:
+			if String(sg["kind"]) == "path" and key == null:
+				key = k
+				ort = int(sg["t0"]) + int(sg["dur"]) / 2
+	_check(key != null, "carry: the enemy turn walks a machine")
+	if key == null:
+		return
+	var mid := Anim.pos_at(old, key, float(ort), Vector2(-9, -9))
+	sh.clock_override = 100000 + ort
+	sh._act({"type": "move", "dir": Vector2i(0, -1)})
+	var nr: Dictionary = sh._reel
+	var post_pos := Vector2(-9, -9)
+	for e in sh.game.enemies:
+		if e["id"] == key:
+			post_pos = Vector2(e["pos"])
+	_check(Anim.pos_at(nr, key, 0.0, post_pos).distance_to(mid) < 0.01,
+		"carry: a walking machine does not snap when the tender acts (%s vs %s)" % [str(Anim.pos_at(nr, key, 0.0, post_pos)), str(mid)])
+	_check(Anim.pos_at(nr, key, float(nr["len"]) + 1.0, post_pos) == post_pos, "carry: the machine still ends on its post tile")
+	var hop0 := -1
+	for sg in nr["tracks"].get("player", []):
+		if String(sg["kind"]) == "path":
+			hop0 = int(sg["t0"])
+	_check(hop0 >= 0 and hop0 < 100, "carry: the tender's new step still starts at once (t0 %d)" % hop0)
+	sh.clock_override = -1
+	# the rules, on hand-built reels
+	var o := Anim.empty_reel()
+	o["tracks"] = {
+		"player": [{"kind": "path", "t0": 0, "dur": 400, "pts": [Vector2(0, 0), Vector2(0, 1)], "hop": 0.2}],
+		5: [{"kind": "path", "t0": 0, "dur": 400, "pts": [Vector2(1, 1), Vector2(2, 1), Vector2(3, 1)], "hop": 0.0}],
+		6: [{"kind": "path", "t0": 0, "dur": 400, "pts": [Vector2(5, 5), Vector2(5, 6)], "hop": 0.0}],
+		7: [{"kind": "path", "t0": 300, "dur": 200, "pts": [Vector2(8, 8), Vector2(9, 8)], "hop": 0.0},
+			{"kind": "lunge", "t0": 520, "dur": 200, "dir": Vector2(1, 0)}],
+		9: [{"kind": "die", "t0": 300, "dur": 400}],
+	}
+	o["ghosts"] = [{"id": 9, "kind": "drill_bot", "elite": false, "pos": Vector2i(4, 4), "t_die": 300}]
+	o["len"] = 720
+	var n := Anim.empty_reel()
+	n["tracks"] = {
+		"player": [{"kind": "path", "t0": 40, "dur": 160, "pts": [Vector2(4, 6), Vector2(5, 6)], "hop": 0.2}],
+		5: [{"kind": "recoil", "t0": 100, "dur": 150, "dir": Vector2(1, 0), "amt": 0.1}],
+	}
+	n["len"] = 250
+	var cr := Anim.carry(o, 100.0, n)
+	var g5: Array = cr["tracks"].get(5, [])
+	_check(g5.size() == 2 and String(g5[0]["kind"]) == "path" and int(g5[0]["t0"]) == 0 and int(g5[0]["dur"]) == 100,
+		"carry: a machine the new step hits glides the rest of its walk before the hit (%s)" % str(g5))
+	if g5.size() == 2:
+		_check(Vector2(g5[0]["pts"][0]).distance_to(Anim.pos_at(o, 5, 100.0, Vector2.ZERO)) < 0.01
+			and Vector2(g5[0]["pts"].back()) == Vector2(3, 1), "carry: the glide starts where it was and ends where it was going")
+	var g6: Array = cr["tracks"].get(6, [])
+	_check(g6.size() == 1 and int(g6[0]["dur"]) == 40, "carry: a machine walking across the tender's path is out of it before the tender sets off (%s)" % str(g6))
+	var g7: Array = cr["tracks"].get(7, [])
+	_check(g7.size() == 1 and String(g7[0]["kind"]) == "path" and int(g7[0]["t0"]) == 200,
+		"carry: a machine the new step leaves alone walks on its own beat, its lunge dropped (%s)" % str(g7))
+	var gh_ok := false
+	for g in cr["ghosts"]:
+		if g["id"] == 9 and int(g["t_die"]) == 200:
+			gh_ok = true
+	_check(gh_ok and cr["tracks"].has(9), "carry: a machine still dying keeps dying where it fell")
+	var p_paths := 0
+	for sg in cr["tracks"]["player"]:
+		if String(sg["kind"]) == "path":
+			p_paths += 1
+	_check(p_paths == 1, "carry: the tender's old track ends - the new step is the tender's")
+	n["tracks"][5] = [{"kind": "recoil", "t0": 20, "dur": 150, "dir": Vector2(1, 0), "amt": 0.1}]
+	var cs := Anim.carry(o, 100.0, n)
+	_check(cs["tracks"][5].size() == 1, "carry: with no room before the hit the machine snaps, as before")
+	var done := Anim.carry(o, 900.0, n)
+	_check(done["tracks"].size() == n["tracks"].size() and done["ghosts"].is_empty(), "carry: a finished reel carries nothing")
 
 func _check(ok: bool, what: String) -> void:
 	checks += 1
@@ -524,6 +609,7 @@ func _check_shell() -> void:
 	_check(Anim.pos_at(sh._reel, "player", float(sh._reel["len"]) + 1.0, Vector2(sh.game.player["pos"])) == Vector2(sh.game.player["pos"]),
 		"the chained reel lands the tender")
 	_check_chain_tracks()
+	_check_carry(sh)
 	# the killing blow: the sheet waits for it, a tap during it only finishes
 	# it, and the next game never inherits it
 	var dth: Dictionary = Scenes.basic_scene("death")
@@ -568,12 +654,14 @@ func _check_soak() -> void:
 	var worst_at := ""
 	var V := {"ts": 40.0, "ox": 0.0, "oy": 0.0, "font": ThemeDB.fallback_font, "now": 0.0}
 	var before := fails
+	var carried := 0
 	for persona in ["optimizer", "wanderer"]:
 		for sd in range(1, seeds + 1):
 			var g = Game.new(sd)
 			var bot = Roster.make(persona, sd)
 			if bot.has_method("set_sim"):
 				bot.set_sim(g)
+			var prev: Dictionary = {}
 			for n in 400:
 				if g.over:
 					break
@@ -589,10 +677,32 @@ func _check_soak() -> void:
 					worst = ln
 					worst_at = tag
 				_soak_one(tag, reel, pre, post, V)
+				# the same step taken a quarter, half or three quarters of the
+				# way into the last one's reel: what it carries still lands
+				# everyone on the post board, and every machine it leaves alone
+				# picks up where it was
+				if not prev.is_empty() and int(pre.get("floor", 0)) == int(post.get("floor", 0)):
+					var ort := float(prev["len"]) * float(n % 3 + 1) / 4.0
+					var cr := Anim.carry(prev, ort, reel)
+					carried += 1
+					_soak_one(tag + " carried", cr, pre, post, V)
+					for e in pre["enemies"]:
+						var id = e["id"]
+						if reel["tracks"].has(id) or not prev["tracks"].has(id):
+							continue
+						var was := Anim.pos_at(prev, id, ort, Vector2(e["pos"]))
+						if Anim.pos_at(cr, id, 0.0, Vector2(e["pos"])).distance_to(was) > 0.01:
+							var near := false
+							for sg in cr["tracks"].get(id, []):
+								near = near or String(sg["kind"]) == "path"
+							# a machine crossing the tender's path may glide or snap
+							if near:
+								_check(false, "soak %s: machine %s picks up where it was" % [tag, str(id)])
+				prev = reel if int(pre.get("floor", 0)) == int(post.get("floor", 0)) else {}
 				if fails - before > 20:
 					print("soak: stopping early after 20 failures")
 					return
-	print("soak: %d real steps, longest reel %d ms (%s)" % [steps, worst, worst_at])
+	print("soak: %d real steps (%d also cut into the step before), longest reel %d ms (%s)" % [steps, carried, worst, worst_at])
 	_check(worst <= MAX_LEN_FULL, "soak: every real reel fits the budget (worst %d ms at %s)" % [worst, worst_at])
 
 

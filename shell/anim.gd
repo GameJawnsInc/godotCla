@@ -56,6 +56,16 @@ const SCREENED_VERB := "screened"
 ## How long a chained step waits on a pop the tender wears (chain_offset): as
 ## long as the hurt tint a landed blow holds it for.
 const CHAIN_POP_MS := 380
+## What a new step carries from a reel it cuts off (carry): the numbers
+## still in the air, and each machine's unfinished motion - a walk, a death,
+## a pop-in - so a quick player never sees the board snap.
+const CARRY_KINDS := ["path", "die", "pop"]
+## A machine the new step touches (hits, pushes, statuses) or that walks
+## through the tender's new path finishes its old walk in a quick glide first,
+## at most this long and never past the moment the new step reaches it; with
+## less than CATCHUP_MIN ms to spare it snaps, as every machine used to.
+const CATCHUP_MS := 140
+const CATCHUP_MIN := 40
 
 
 # --- planning ------------------------------------------------------------------
@@ -1281,6 +1291,154 @@ static func chain(a: Dictionary, b: Dictionary, off: int = -1) -> Dictionary:
 			out["hud"][key].append([int(h[0]) + off, h[1]])
 	out["len"] = _length(out)
 	return out
+
+
+## A new step cut `old` off `ort` ms in: merge what is still playing in it
+## into `nr`, the new step's reel (which starts now). The new step never waits
+## - input is never blocked - so this only decides what `old` keeps:
+##   - every number still in the air (floats), as before
+##   - every machine the new step leaves alone keeps its unfinished motion
+##     (CARRY_KINDS): it finishes its walk, its death, its pop-in on the beat
+##     it had. Only motion - a lunge, a flash, a beam aimed at the tile the
+##     tender just left would read as aimed at nothing, so those end here
+##   - a machine the new step touches, or whose walk crosses the tender's new
+##     path, glides the rest of its walk in CATCHUP_MS before the new step
+##     reaches it (snaps when there is no room)
+##   - the tender's own old track ends: the new step is the tender's
+## Everything else of `old` (terrain flips, bars, chips, haze) shows its end
+## state at once, exactly as it did when a new step replaced the reel. The
+## result still ends on the post board: `old` ended on the board `nr` starts
+## from, and a machine `nr` leaves alone does not move in it.
+static func carry(old: Dictionary, ort: float, nr: Dictionary) -> Dictionary:
+	if old.is_empty() or not playing(old, ort):
+		return nr
+	var out: Dictionary = nr.duplicate(true)
+	for cl in old.get("clips", []):
+		if String(cl["kind"]) == "float" and ort < float(cl["t0"]) + float(cl["dur"]):
+			var c2: Dictionary = cl.duplicate(true)
+			c2["t0"] = int(float(cl["t0"]) - ort)
+			out["clips"].append(c2)
+	# when the new step first reaches each machine
+	var touched := {}
+	var reach := func(key, t: int) -> void:
+		if key is String and key == "player":
+			return
+		touched[key] = mini(int(touched.get(key, t)), t)
+	for key in out["tracks"]:
+		for sg in out["tracks"][key]:
+			reach.call(key, int(sg["t0"]))
+	for cl in out["clips"]:
+		# a status_hold is drawn on the body wherever its track has it, so it
+		# never needs the body in place early
+		if cl.has("who") and cl["who"] != null and String(cl["kind"]) != "status_hold":
+			reach.call(cl["who"], int(cl["t0"]))
+	for id in out.get("spawns", {}):
+		reach.call(id, int(out["spawns"][id]))
+	# the tiles the tender's new path crosses, and when it sets off
+	var tiles := {}
+	var t_go := 1 << 30
+	for sg in out["tracks"].get("player", []):
+		if String(sg["kind"]) == "path":
+			t_go = mini(t_go, int(sg["t0"]))
+			for pt in sg["pts"]:
+				tiles[Vector2i(Vector2(pt).round())] = true
+	var old_tr: Dictionary = old.get("tracks", {})
+	for key in old_tr:
+		if key is String and key == "player":
+			continue
+		var live: Array = []
+		var crosses := false
+		for sg in old_tr[key]:
+			if float(sg["t0"]) + float(sg["dur"]) <= ort or not CARRY_KINDS.has(String(sg["kind"])):
+				continue
+			live.append(sg)
+			if String(sg["kind"]) == "path":
+				for pt in sg["pts"]:
+					if tiles.has(Vector2i(Vector2(pt).round())):
+						crosses = true
+		if live.is_empty():
+			continue
+		if touched.has(key) or crosses:
+			var limit := int(touched.get(key, 1 << 30))
+			if crosses:
+				limit = mini(limit, t_go)
+			var glide := mini(CATCHUP_MS, limit)
+			var pts := _pts_left(old, key, ort)
+			var add: Array = []
+			var glided := glide >= CATCHUP_MIN and pts.size() >= 2
+			if glided:
+				add.append({"kind": "path", "t0": 0, "dur": glide, "pts": pts, "hop": 0.0})
+			# a death or a pop-in still plays, after the glide
+			for sg in live:
+				if String(sg["kind"]) != "path":
+					var s3: Dictionary = sg.duplicate(true)
+					s3["t0"] = maxi(int(float(sg["t0"]) - ort), glide if glided else 0)
+					add.append(s3)
+			if not add.is_empty():
+				if not out["tracks"].has(key):
+					out["tracks"][key] = []
+				var merged: Array = add
+				merged.append_array(out["tracks"][key])
+				out["tracks"][key] = merged
+			continue
+		var segs: Array = []
+		for sg in live:
+			var s2: Dictionary = sg.duplicate(true)
+			s2["t0"] = int(float(sg["t0"]) - ort)
+			segs.append(s2)
+		out["tracks"][key] = segs
+		if old.get("spawns", {}).has(key):
+			out["spawns"][key] = int(float(old["spawns"][key]) - ort)
+	# the fallen keep falling where they fell
+	var ghosted := {}
+	for g in out["ghosts"]:
+		ghosted[g["id"]] = true
+	for g in old.get("ghosts", []):
+		# drawn exactly while its death was carried (every ghost has a die
+		# segment; a welded partner's is short, and one that glided dies after)
+		if ghosted.has(g["id"]):
+			continue
+		var t_die := -1
+		for sg in out["tracks"].get(g["id"], []):
+			if String(sg["kind"]) == "die":
+				t_die = int(sg["t0"])
+		if t_die < 0:
+			continue
+		var g2: Dictionary = g.duplicate(true)
+		g2["t_die"] = t_die
+		out["ghosts"].append(g2)
+	out["len"] = _length(out)
+	return out
+
+
+## The rest of a creature's walk at reel time t: where it is now, then every
+## tile its unfinished path segments still visit.
+static func _pts_left(reel: Dictionary, key, t: float) -> Array:
+	var segs: Array = reel.get("tracks", {}).get(key, [])
+	var here = null
+	for sg in segs:
+		if String(sg["kind"]) == "path":
+			here = pos_at(reel, key, t, sg["pts"][0])
+			break
+	if here == null:
+		return []
+	var pts: Array = [Vector2(here)]
+	for sg in segs:
+		if String(sg["kind"]) != "path":
+			continue
+		var t0 := float(sg["t0"])
+		var dur := maxf(1.0, float(sg["dur"]))
+		if t0 + dur <= t:
+			continue
+		var sp: Array = sg["pts"]
+		var from := 0
+		if t > t0:
+			from = int(clampf((t - t0) / dur, 0.0, 1.0) * float(sp.size() - 1)) + 1
+		for j in range(from, sp.size()):
+			var q := Vector2(sp[j])
+			if q.distance_to(pts[pts.size() - 1]) > 0.01:
+				pts.append(q)
+	return pts
 
 
 # --- playback --------------------------------------------------------------------

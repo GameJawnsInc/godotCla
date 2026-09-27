@@ -586,9 +586,11 @@ func _play_events(evs: Array) -> void:
 
 
 ## Plan the step just taken into a reel (shell/anim.gd) and start playing it.
-## A descent has no reel: the floor fade-in is its animation. Numbers from the
-## previous reel that are still in the air keep flying - a fast player never
-## loses the damage they just dealt.
+## A descent has no reel: the floor fade-in is its animation. A step taken
+## while the previous reel still plays never waits, and never snaps the
+## board either (Anim.carry): numbers still in the air keep flying - a fast
+## player never loses the damage they just dealt - and machines finish their
+## walks.
 func _start_reel(pre: Dictionary, a: Dictionary, evs: Array, prev_floor: int) -> void:
 	if game.floor_num != prev_floor:
 		_reel = {}
@@ -609,20 +611,13 @@ func _start_reel(pre: Dictionary, a: Dictionary, evs: Array, prev_floor: int) ->
 			bt.append(int(t) + off - int(ort))
 		_spawn_banners(evs, bt)
 		return
-	var carry: Array = []
-	if Anim.playing(_reel, ort):
-		for cl in _reel["clips"]:
-			if String(cl["kind"]) == "float" and ort < float(cl["t0"]) + float(cl["dur"]):
-				var c2: Dictionary = cl.duplicate()
-				c2["t0"] = int(float(cl["t0"]) - ort)
-				carry.append(c2)
-	_reel = Anim.plan(pre, a, evs, game.snapshot(), float(Anim.SPEEDS.get(anim_mode, 1.0)))
+	# a new step never waits, but what the cut-off reel was still doing does
+	# not snap: numbers keep flying and machines finish their walks
+	# (Anim.carry)
+	var nr2 := Anim.plan(pre, a, evs, game.snapshot(), float(Anim.SPEEDS.get(anim_mode, 1.0)))
+	_reel = Anim.carry(_reel, ort, nr2)
 	_reel_pre = pre
 	_reel_evs = evs
-	if not carry.is_empty():
-		_reel["clips"].append_array(carry)
-		for c2 in carry:
-			_reel["len"] = maxi(int(_reel["len"]), int(c2["t0"]) + int(c2["dur"]))
 	_reel_ms = _now()
 	_spawn_banners(evs, _reel.get("ev_t", []))
 
