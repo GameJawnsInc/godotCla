@@ -6,9 +6,9 @@ The shell boots to a main menu: PLAY (fresh run), RESUME (when a run is
 live), the run-setup rows (see *Setting up a run*), TUTORIAL, SETTINGS,
 QUIT. Settings persist to `user://tender.cfg`: hold-to-inspect delay, run
 seed mode (random / daily — everyone playing a daily gets the same run),
-intro-tips frequency and animation speed (full / quick / off, see
-*Animations*), alongside the run choices the title screen makes
-(difficulty, loadout, package, mutator). The sheet also prints where
+intro-card frequency, animation speed (full / quick / off, see
+*Animations*) and the camera's zoom (see *The camera*), alongside the run
+choices the title screen makes (difficulty, loadout, package, mutator). The sheet also prints where
 finished run logs are kept. The `=` button in the status strip returns
 to the menu mid-run without losing the run.
 
@@ -32,6 +32,47 @@ tile may be ash.
 A thin Godot scene over the sim (style guide §1/§4): it draws `snapshot()`
 with runtime-rasterized SVG sprites and forwards input as `step()` actions.
 The sim has no idea it exists.
+
+## Text, briefly
+
+The owner's ask: no walls of text, and a warm solarpunk voice. The rules
+that keep it that way:
+
+- **Say it where it is met.** The intro card is two lines of why and six
+  rules with the thing each is about drawn beside it (`INTRO_STORY`,
+  `INTRO_RULES` in `shell/main.gd`) - it used to be 18 rules at whatever size
+  each could be squeezed to. Everything else is one hold away from the thing
+  it explains: hold the health, charge or bloom readout, the skies bar, the
+  green count, the elements strip, the camera or lens button
+  (`_info_lines`), or any tile, card, ability or satchel slot.
+- **Two lines, one size.** A guide step is at most two lines, drawn at one
+  size (per-line shrinking read as two voices); the tutorial's last card is
+  three. A legend blurb is one unshrunk line.
+- **One line of news.** The log no longer fills the space under the map (the
+  camera uses it): the context line carries the step's one notable event -
+  a room blooming, a vent sealed, a drag, a drained charge - for a couple of
+  seconds (`TOAST_EVENTS`), and the full log is a tap on that line. Damage
+  and deaths are left to the animations, which already show every number.
+- **The voice.** Machines are *scrapped*, never killed; a lost run *wilts*
+  ("felled by a Drill Bot · Every sprout gets another spring"); the forge
+  *recycles* the ability it scraps; refusals say what to do next ("out of
+  charge - END refills it", "your kit is full", "not enough bloom yet",
+  "Solar Lance needs 2 charge - END refills it") instead of listing every
+  possible reason.
+
+`tests/test_shell.gd` `_check_tutorial_text`, `_check_intro_text` and
+`_check_legend_text` hold these on every phone shape the card gate sweeps.
+`tests/capture_screens.gd` renders every one of these screens from the real
+shell, for eyes:
+
+```
+SCREENS=intro,tutorial SCREENS_OUT=/tmp/screens \
+  xvfb-run -a -s "-screen 0 540x1200x24" godot --rendering-driver opengl3 \
+  --path . --resolution 540x1200 --script tests/capture_screens.gd
+```
+
+(`SCREENS=all|menu,intro,tutorial,play,tooltip,camera,shop,draft,legend,log,won,died`,
+`SCREENS_SEED`, `SCREENS_STEPS`.)
 
 ## Running
 
@@ -57,31 +98,42 @@ scene.
 | R (shop sheet open) | reroll the shrine counter (Spinning Shrine mutator only) — outside the sheet R still restarts the seed |
 | 1–5 / 0 (draft sheet) | take that offer / skip the draft — a skip arms one extra affinity offer on the next descent |
 | SPACE / ENTER | end turn |
-| ESC | back: close a sheet, cancel an aim, or leave the run for the menu (see *The Back button*) |
+| Z | peek at the whole floor (until your next action) |
+| + / - , mouse wheel | zoom the camera in / out (saved) |
+| drag on the map | look around (until your next action) |
+| ESC | back: close a sheet, cancel an aim, end a peek, or leave the run for the menu (see *The Back button*) |
 | R | restart the same seed |
 | N | next seed |
 
 Red-tinted tiles are telegraphed damage for the coming enemy turn (attack,
-slam cross, quake ring) — the intent-visibility pillar, drawn. The right
-panel lists every enemy's exact intent; the strip below the map is the
-event log. Elites wear a gold ring, bosses show HP bars, your buffs ring
-the player sprite (brown = anchored, green = thorns).
+slam cross, quake ring) — the intent-visibility pillar, drawn — and standing
+on one turns the context line red: *Incoming! Step off the red tile*.
+Holding an enemy names its exact intent; the context line is also the event
+log's button (the list mark at its end). Elites wear a gold ring, bosses
+show HP bars, your buffs ring the player sprite (brown = anchored, green =
+thorns).
 
-Holding an enemy adds an `avoids: fire` line when its `Content.ENEMIES` row
-carries an avoid list — it paths around those tiles unless the way round is
-far. When smoke swallows a telegraphed drain / gum / drag, the log says so
+Holding an enemy adds an `avoids fire when it can` line when its
+`Content.ENEMIES` row carries an avoid list — it paths around those tiles
+unless the way round is far. When smoke swallows a telegraphed drain / gum / drag, the log says so
 (`Tar Spitter's tar is lost in the smoke`), so a screened intent reads as
 something you did rather than as the enemy skipping a turn.
 
 ## Touch controls (Android / any touchscreen)
 
-Portrait layout: map on top, log + status in the middle, D-pad and action
-buttons at the bottom. Everything is tappable — no keyboard needed:
+Portrait layout: status on top, the map, the ability bar and the context
+line in the middle, D-pad and action buttons at the bottom. Everything is
+tappable — no keyboard needed:
 
 - D-pad arrows: move (into an enemy = strike); center END button ends turn
 - tap an adjacent tile: same as a D-pad press; tap your own tile: end turn
 - **hold your finger on any tile**: tooltip naming what's there, its HP,
-  and exactly what it will do next turn
+  and exactly what it will do next turn. Holding a HUD readout (health,
+  charge, bloom, the skies bar, the green count, the elements strip) or a
+  button explains it
+- **pinch** the map to zoom, **drag** it to look around; the camera button
+  (top-left of the D-pad) peeks at the whole floor. A peek or a look ends on
+  your next move (see *The camera*)
 - tap a kit line to cast — aim with the D-pad / adjacent tap for
   directional abilities, or tap a highlighted tile for tile abilities
 - **cancelling an aim is free**: tap the same kit line again, press any
@@ -94,7 +146,8 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
 ## Why CLEANSE refused
 
 `CLEANSE` reaches a tile **beside** you, and only corruption. Its refusal
-used to be "no corruption beside you" in every case, which is a lie in the
+used to be "no corruption beside you" in every case (it now says "nothing to
+cleanse beside you" when that is the truth), which is a lie in the
 two that actually happen — and both read as a dead end, because a player
 standing next to the thing the game just told them to clean is out of ideas.
 `shell/main.gd` `_cleanse_hint` names the real reason:
@@ -103,7 +156,7 @@ standing next to the thing the game just told them to clean is out of ideas.
 | --- | --- |
 | you are standing on the slick | `you're standing on it - step off first` |
 | the slick is on fire | `still burning - wait for the ash` |
-| nothing corrupt within reach | `no corruption beside you` |
+| nothing corrupt within reach | `nothing to cleanse beside you` |
 
 Fire is not corruption; ash is. `tests/test_shell.gd` `_check_cleanse_hint`
 drives all three and then checks that the ash the second one promises really
@@ -124,12 +177,51 @@ disagree about what back means:
 | the forge's keep / scrap / fork step | one step back, ending on the shrine sheet |
 | the draft's drop sheet | back to the offer cards, nothing dropped |
 | aiming an ability | cancels the aim — free, no turn, no strike |
-| the room camera (zoom) | back out to the whole floor |
+| a whole-floor peek, or a look-around (drag) | back to the tender |
 | normal play, the descent draft, the game-over sheet, the tutorial | the menu |
 | the menu | quits (the root; `ESC` here does nothing) |
 
 Leaving a live run for the menu costs nothing: every action is already on
 disk and RESUME replays it byte-exact (*Run persistence* below).
+
+## The camera
+
+There is ONE view, and it is never a mode to toggle. There used to be two -
+the whole floor, and a crop of the current room behind the camera button -
+and play was a steady back-and-forth between them: the floor view's tiles
+were too small to read or tap, the room crop lost the stairs and the next
+room, and every switch was a jump in scale.
+
+- **It follows.** The camera frames the room you stand in (its walls and
+  doorways included) when the room fits, else it centres on you, and it
+  **glides** there (`CAM_GLIDE_MS`) instead of jumping. It never shows past
+  the floor's edge; a floor shorter than the view sits at the top so the
+  slack under it still shows the log.
+- **Zoom is yours.** Pinch (or the mouse wheel, or `+`/`-`) anywhere from
+  close - seven tiles across - out to the whole floor, or step through
+  SETTINGS → Camera (near / normal / far / whole floor). The choice is saved
+  (`cam_cols` in `tender.cfg`), so a player who liked the old whole-floor view
+  picks it once and keeps it.
+- **Looking is free.** Drag the map to look around; tap the camera button
+  (or `Z`) to **peek** at the whole floor. Both end on your next action, and
+  on Back - so a look never has to be switched back off.
+- **It helps you aim.** A tile ability's aim frames every tile it can land
+  on, zooming out as far as the whole floor if it must.
+- **Off screen is not out of mind.** The stairs, a stocked shrine, the
+  nearest corruption (while the floor still needs greening and none is in
+  view) and the machines near you get a marker on the view's edge pointing
+  at them. Markers never take a tap; the tile under one still answers.
+
+The rules live in `shell/main.gd` `_cam_target` - a pure read of the shell's
+state, so `tests/test_shell.gd` `_check_camera` asks it directly over real
+optimizer play on four seeds: the tender is on screen at every step, the view
+never passes the floor's edge, and every room that fits is framed whole.
+`_check_camera_gestures` drives pinch, drag and wheel through the real input
+handler, the way Android delivers them (touch 0 also arrives as an emulated
+mouse press), and asserts the release of a pinch or a drag is never read as a
+tap. Map sprites are rasterised at `_raster` and drawn scaled to the live
+tile size: exact at rest, a fixed ladder of sizes during a pinch, so zooming
+never rasterises (and caches) every size in between.
 
 ## Setting up a run
 
@@ -378,7 +470,7 @@ game-over sheet waits for the killing blow to finish, and a tap or key
 during it finishes the reel instead of starting a new run.
 
 While a reel plays, nothing it changes shows early: the telegraphs on the
-map (and `! INCOMING`) are the ones being carried out — the pre-step board
+map (and the context line's *Incoming!* warning) are the ones being carried out — the pre-step board
 minus attackers whose death or stagger has landed — and the next turn's
 appear when the reel ends; status and buff overlays keep their pre-step
 value until each pop reaches its hand-off (`Paint.HANDOFF`), and a status
@@ -529,7 +621,7 @@ The same readout appears on the three sheets where the count can move:
   two fire-tagged grafts)
 
 The game-over sheet names what the run ended up resonating
-(`resonating: Cinder Grip`), and the intro card says the rule in one line.
+(`resonating: Cinder Grip`), and holding the strip explains the rule.
 
 ## Choice cards
 
@@ -628,18 +720,19 @@ The three slots are always dealt in that order (Wide Draft adds a fourth,
 wild; Upgrades Only makes every card an upgrade), so the sheet asks the
 same three questions every floor and the labels say which is which.
 
-The skip button is the draft's answer to a bad hand - it reads
-`skip - next draft: +1 affinity offer` (and `skip - focus armed again`
-on a sheet whose roll spent a focus). Skipping pays no Bloom:
-it arms one extra build-matching offer on the next descent, spent by that
-draft whether you take a card or not, and the log line
-(`Took nothing - the next draft adds a focus offer`) is what carries that
-promise across the floor.
+The skip button is the draft's answer to a bad hand - it reads **SKIP**
+(**SKIP AGAIN** on a sheet whose roll spent a focus) over a small
+`+1 FOCUS offer next floor`: the whole sentence used to be squeezed into
+the button at a third of the size. Skipping pays no Bloom: it arms one extra
+build-matching offer on the next descent, spent by that draft whether you
+take a card or not, and the log line
+(`Skipped - next draft adds a focus offer`) is what carries that promise
+across the floor.
 
 A focus slot can find nothing left to offer - under Upgrades Only a
 three-ability kit has exactly three upgrade candidates and the ordinary slots take
 them all - and then the roll spends the focus and deals no FOCUS card. The
-sheet says so ("Your skip found nothing left to focus on") rather than
+sheet says so ("Nothing left to focus on this time") rather than
 reading as an ordinary draft: it takes that from the `draft_offer` event's
 `focus` flag, since the cards alone cannot tell the two apart.
 

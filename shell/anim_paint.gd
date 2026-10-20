@@ -935,5 +935,7 @@ static func silhouette(id: String, size: int) -> Texture2D:
 		_sil[key] = null
 		return null
 	var out := ImageTexture.create_from_image(img)
+	if _sil.size() >= 320:
+		_sil.clear()  # bounded like Art's cache: a continuous zoom asks for many sizes
 	_sil[key] = out
 	return out

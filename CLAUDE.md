@@ -133,10 +133,15 @@ architecture below is designed to bend rather than block.
   - `godot --headless --path . --script tests/test_meta.gd` — career unlocks, profile io,
     mutator invariants, package pools
   - `godot --headless --path . --script tests/test_shell.gd` — shell smoke test
-    (the shell reads the sim, so a sim change can break it), plus the two
+    (the shell reads the sim, so a sim change can break it), plus the
     player-facing gates: `_check_card_text` holds every shipped description
-    to a readable size on the tightest shrine card, and `_check_cleanse_hint`
-    holds CLEANSE's refusal to the truth
+    to a readable size on the tightest shrine card, `_check_cleanse_hint`
+    holds CLEANSE's refusal to the truth, `_check_tutorial_text` /
+    `_check_intro_text` / `_check_legend_text` hold the text budgets (no
+    walls of text), and `_check_camera` / `_check_camera_gestures` hold the
+    camera (the tender on screen at every step of real bot play, never a view
+    past the floor's edge, a room that fits framed whole, a pinch or a drag
+    never read as a tap)
   - `godot --headless --path . --script tests/test_anim.gd` — the step
     animations: every effect op and enemy intent type has a builder, and a
     reel for every staged scene (`tests/anim_scenes.gd`: the tender's verbs,
@@ -598,7 +603,7 @@ architecture below is designed to bend rather than block.
   `offers_by_slot` / `picks_by_slot` / `focus_drafts` and prints one `draft:`
   line (picks/offers by slot, focus drafts of drafts, skips); the shell's
   draft sheet labels each card with its role and its skip button reads
-  "skip - next draft: +1 affinity offer"; the sheet learns whether the ROLL
+  "SKIP" over "+1 FOCUS offer next floor"; the sheet learns whether the ROLL
   spent a focus from the `draft_offer` event (`_draft_focus_spent`), not from
   the cards, so a focus slot that dealt nothing says "your skip found nothing
   left to focus on" instead of reading as an ordinary draft. `tests/test_content.gd` lints
@@ -1268,8 +1273,29 @@ architecture below is designed to bend rather than block.
   headless; `tests/render_frame.gd` renders any game state as a standalone
   SVG screenshot and `tests/render_sheet.gd` does the same for a shrine or
   draft SHEET (`SHEET=shop|draft|drop`), which is where the reading happens —
-  both are the agent's way to see the shell. Sprites are hand-written
-  SVG strings in `shell/svg_art.gd`. The sim must never depend on the shell.
+  both are the agent's way to see the shell. `tests/capture_screens.gd` renders
+  the REAL shell full-screen to PNGs under `xvfb-run` (menu, intro, every
+  tutorial step, a live floor, the camera's states, the sheets, both end
+  cards) - the way to judge text density and the camera by eye. Sprites are
+  hand-written SVG strings in `shell/svg_art.gd`. The sim must never depend on
+  the shell.
+- The camera is ONE view, never a mode (`docs/SHELL.md` "The camera";
+  `shell/main.gd` `_cam_target`, a pure read of shell state). It frames the
+  tender's room (grown by one) when the room fits, else the tender, at the zoom
+  the player picked (`cam_cols`, tiles across, saved in `tender.cfg`), and
+  GLIDES (`_cam_step`, `CAM_GLIDE_MS`); never past the floor's edge, a short
+  floor top-aligned so its slack still feeds the log. Pinch, the wheel and
+  +/- zoom from close (`CAM_COLS_MIN`) to the whole floor; a one-finger drag
+  looks around (`cam_pan`); the camera button / Z is a whole-floor PEEK
+  (`cam_overview`). Peek and look-around both end on the next action
+  (`_cam_follow`) and on Back, so neither is a mode to leave - the old
+  whole-floor/room-crop toggle was. A tile aim widens the frame to every
+  target. Off-screen stairs, a stocked shrine, the nearest corruption (while
+  the floor is not green and none is on screen) and nearby machines get an
+  edge marker (`_edge_pois`). Map sprites rasterise at `_raster` and draw
+  scaled to `_ts`: exact at rest, one of `RASTER_LADDER` during a pinch, so a
+  zoom never rasterises every in-between size. The map is drawn BEFORE the
+  status strip, which masks the half tile a glide can show above the zone.
 - Step animations (`docs/SHELL.md` "Animations") are presentation only and
   never a rule: `shell/anim.gd` plans each step into a reel from (pre
   snapshot, action, events, post snapshot) alone, the verb families
@@ -1327,13 +1353,28 @@ architecture below is designed to bend rather than block.
   it fitted each line to one `_txt_fit` line, so the ABILITY_DESC row a card
   shows at 34px landed there at 25px, and because the lines share one size the
   widest one dragged the enemy's name and HP down with it.
-- `! INCOMING` in the status strip is `_txt_fit` into the gap left by the
-  RIGHT-ALIGNED floor and green readouts, which have to be measured first: it
-  used to start at a fixed x with no width budget and ran ~280px through them
-  at 1080x2400, on the one line that is telling you something is about to hit.
+- The "you are standing on a red tile" warning is the CONTEXT LINE's top
+  priority after a flash (`_incoming`: "Incoming! Step off the red tile", in
+  red). It used to be `! INCOMING` in the status strip, `_txt_fit` into the
+  gap between the skies bar and the right-aligned floor/green readouts - a gap
+  so narrow on a phone that the line telling you something is about to hit
+  was drawn at about 9px.
+- Text budgets (`docs/SHELL.md` "Text, briefly"): the owner asked for no
+  walls of text and a warm solarpunk voice. The intro card is
+  `shell/main.gd` `INTRO_STORY` (two lines) + `INTRO_RULES` (six icon rows) -
+  it was 18 rules; the rest are said where they are met, by a HOLD on the
+  readout they are about (`_info_lines`: health, charge, bloom, shield,
+  skies, green, elements, the camera and lens buttons). A guide step is at
+  most `TUT_LINES` (2) lines, all drawn at ONE size; a legend blurb is one
+  unshrunk line; the log under the map is gone from the main screen (the
+  camera fills the zone) and the context line carries the step's one notable
+  event for `TOAST_MS` instead (`TOAST_EVENTS`). Machines are "scrapped", a
+  lost run "wilts", forge scraps are "recycled". `tests/test_shell.gd`
+  `_check_tutorial_text` / `_check_intro_text` / `_check_legend_text` hold the
+  budgets on every phone shape the card gate uses.
 - CLEANSE reaches a tile BESIDE the tender, and only corruption. Its refusal
   is `shell/main.gd` `_cleanse_hint`, because "no corruption beside you" was
-  the only answer and it is a LIE in the two cases that happen: standing ON
+  the only answer (it reads "nothing to cleanse beside you" now) and it is a LIE in the two cases that happen: standing ON
   the slick, and a slick the tender's own lance set alight (fire is not
   corruption until it burns down to ash, which IS). Both read as a soft lock
   from the player's seat - the tutorial's last cleanse step allows no ability,
@@ -1349,8 +1390,8 @@ architecture below is designed to bend rather than block.
   comments, NOT `#`, which are silently swallowed along with the line after
   them), ESC reaches it from `_key`, and the sheets' own BACK/CLOSE tags
   reach the same tap tags it calls. It goes UP ONE LEVEL per press - tooltip,
-  then sheet, then the forge's three taps one at a time, then an aim, then the
-  room camera, then the menu - and only the MENU quits, only for Back
+  then sheet, then the forge's three taps one at a time, then an aim, then a
+  camera peek or look-around, then the menu - and only the MENU quits, only for Back
   (`quit_at_root`), never for ESC. Aims are cancelled through `_cancel_aim`,
   which the Back button, a D-pad press in a tile aim and a second tap on the
   aiming slot all share: entering an aim costs nothing, so leaving one costs

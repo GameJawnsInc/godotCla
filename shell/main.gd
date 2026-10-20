@@ -49,6 +49,7 @@ const COL_TEXT := Color("d8e0d4")
 const COL_DIM_TEXT := Color("97a29a")
 const COL_GOLD := Color("e8c840")
 const COL_RED := Color("e04b3a")
+const COL_ROSE := Color("e08a6e")  # a lost run's title: warm, never alarm-red
 const COL_BTN := Color(0.16, 0.22, 0.18)
 const COL_SHEET := Color(0.04, 0.07, 0.05, 1.0)
 
@@ -63,37 +64,57 @@ const BIOME_PAL := {
 		"wt": Color("5e463a"), "s1": Color("9a5c30"), "s2": Color(0.42, 0.38, 0.35)},
 }
 
-## sprite id, display name, one-line blurb — legend sheet and hold-tooltips
+## sprite id, display name, one-line blurb — legend sheet and hold-tooltips.
+## A blurb is a phrase, not a manual: what the thing is for YOU, in a few
+## words (tests/test_shell.gd _check_legend_text holds each to one unshrunk
+## line on the legend sheet).
 const LEGEND := [
-	["player", "You, the Tender", "descend, cleanse, survive"],
-	["stairs", "Stairs", "the way down"],
+	["player", "You, the Tender", "grow the valley back"],
+	["stairs", "Stairs", "the way down - wakes on a green floor"],
 	["shrine", "Shrine", "stand here to shop"],
-	["vent", "Vent", "releases enemies as the smog rises"],
-	["supply", "Supply pod", "step on it to stock your satchel (2 slots)"],
-	["oil", "Oil", "corruption - cleanse from beside it for bloom. Burns"],
-	["goo", "Goo", "corruption - cleanse for bloom. Hurts to step in"],
-	["rich_goo", "Rich goo", "corruption - cleanse for extra bloom. Hurts to step in"],
-	["ash", "Ash", "corruption from burnt oil - cleanse for bloom. Never shields the core"],
-	["growth", "Growth", "stand on it: heal 1 HP a turn"],
-	["fire", "Fire", "burns whoever stands in it. Leaves ash"],
-	["smoke", "Smoke", "blocks beams. Screens tar/drain/grapple from 2+ tiles away"],
-	["roots", "Roots", "blocks enemies for a while"],
-	["drill_bot", "Drill Bot", "melee - shows its strike a turn ahead"],
-	["oil_sludge", "Oil Sludge", "slow, leaves oil, splits when killed"],
-	["sludgeling", "Sludgeling", "weak spawn"],
-	["leech_drone", "Leech Drone", "drains banked charge from range"],
-	["tar_spitter", "Tar Spitter", "gums one of your abilities"],
-	["coal_golem", "Coal Golem", "SPIKED: melee costs you 1 HP. Bursts into smoke"],
-	["welded_hulk", "Welded Hulk", "two drill bots welded - spiked and heavy"],
-	["extractor_engine", "Extractor", "summons sludgelings - kill it first"],
-	["rust_hound", "Rust Hound", "SPIKED - moves twice"],
-	["cinder_mite", "Cinder Mite", "ignites oil"],
-	["pump_jack", "Pump Jack", "pumps fresh oil"],
-	["smokestack", "Smokestack", "speeds up the smog clock"],
-	["magnet_crane", "Magnet Crane", "drags you toward it every turn"],
-	["furnace_core", "Furnace Core", "floor 7 boss"],
-	["overseer", "The Overseer", "floor 7 boss"],
+	["vent", "Vent", "machines climb out as smog rises"],
+	["supply", "Supply pod", "walk over it to fill your satchel"],
+	["oil", "Oil", "cleanse it for bloom. Burns, too"],
+	["goo", "Goo", "cleanse it for bloom. Stings to step in"],
+	["rich_goo", "Rich goo", "cleanse it for extra bloom. Stings"],
+	["ash", "Ash", "burnt oil - cleanse it for bloom"],
+	["growth", "Growth", "stand on it to heal 1 a turn"],
+	["fire", "Fire", "burns whoever stands in it, then ash"],
+	["smoke", "Smoke", "blocks beams; hides you from far tricks"],
+	["roots", "Roots", "machines can't pass for a while"],
+	["drill_bot", "Drill Bot", "shows its strike a turn ahead"],
+	["oil_sludge", "Oil Sludge", "slow, leaves oil, splits when scrapped"],
+	["sludgeling", "Sludgeling", "small and weak"],
+	["leech_drone", "Leech Drone", "sips your banked charge from afar"],
+	["tar_spitter", "Tar Spitter", "gums up one of your abilities"],
+	["coal_golem", "Coal Golem", "SPIKED: punching it costs 1 HP"],
+	["welded_hulk", "Welded Hulk", "two drill bots fused - spiked, tough"],
+	["extractor_engine", "Extractor", "makes sludgelings - stop it first"],
+	["rust_hound", "Rust Hound", "SPIKED, and moves twice"],
+	["cinder_mite", "Cinder Mite", "sets oil alight"],
+	["pump_jack", "Pump Jack", "pumps out fresh oil"],
+	["smokestack", "Smokestack", "speeds up the smog"],
+	["magnet_crane", "Magnet Crane", "drags you toward it each turn"],
+	["furnace_core", "Furnace Core", "the heart of it all - floor 7"],
+	["overseer", "The Overseer", "the combine's boss - floor 7"],
 	["the_dredge", "The Dredge", "floor 7 boss - eats your growth"],
+]
+
+## The intro card a new run opens on: two lines of why, six rules with the
+## thing each one is about drawn beside it. Everything else a new player needs
+## is said where they meet it - a hold on a readout, the guide, a card - so
+## the card stays a glance (it was 18 lines; _check_intro_text keeps it short).
+const INTRO_STORY := [
+	"The machines left. Their mess stayed.",
+	"Tend the valley back to green.",
+]
+const INTRO_RULES := [
+	["player", "Move with the D-pad. Bump to strike."],
+	["red", "Red tiles get hit next turn."],
+	["oil", "Cleanse oil and goo for bloom."],
+	["stairs", "A green floor wakes the stairs."],
+	["smoke", "Smog rises each turn - keep moving."],
+	["ic_lens", "Hold anything to learn about it."],
 ]
 
 const DIRS4 := {
@@ -137,8 +158,32 @@ var log_lines: Array = []  # persistent readable history
 var tut_step := 0
 var tut_done := false
 var help_page := 0
-var zoom_room := false     # camera toggle: fit the current room, not the floor
 var inspect_live := false  # magnifier toggle: hover/drag shows tooltips instantly
+## The camera (see "the camera" below _vis): the zoom the player picked, as
+## tiles across the map zone, saved in tender.cfg; the whole-floor peek; and
+## a drag's look-around in tiles. The peek and the look-around both end on the
+## next action.
+const CAM_COLS_DEFAULT := 12.0
+const CAM_COLS_MIN := 7.0
+const CAM_COLS_MAX := 40.0
+const CAM_GLIDE_MS := 110.0  # the glide's time constant: ~95% there in a third of a second
+var cam_cols := CAM_COLS_DEFAULT
+var cam_overview := false
+var cam_pan := Vector2.ZERO
+var _cam: Dictionary = {}  # the camera as drawn: {cx, cy, ts}; empty = snap to the target
+var _cam_ms := 0
+## The zone the camera last framed - the only place a press reaches the map.
+## Before the first frame it is everywhere: a headless shell never draws, and
+## its taps reach the map exactly as they always did.
+var _cam_zone := Rect2(-1e9, -1e9, 2e9, 2e9)
+var _cam_settled := true
+var _raster := 40          # the size map sprites are rasterised at (drawn at _ts)
+var _touches := {}         # touch index -> position, for the pinch
+var _pinch_d0 := 0.0
+var _pinch_cols0 := 0.0
+var _gesture := false      # a pinch or a drag owns this press: its release is no tap
+var _panning := false
+var _mouse_down := false
 var _game_is_run := false  # current `game` is a real run (RESUME-able)
 var save_lost := false     # a saved run was discarded by a version bump (menu notice)
 ## Where finished run logs are archived. A var, not a const, so a test can
@@ -212,6 +257,16 @@ var _run_recorded := false
 var _run_unlocks: Array = []
 var _banner: Array = []
 var _banner_ms := -99999
+## One line of news in the context line after a step: the notable event the
+## step's animation does not already say (a room blooming, a vent sealing, a
+## drag), for TOAST_MS. Damage, deaths and the like are left to the reel.
+var _toast := ""
+var _toast_ms := -99999
+const TOAST_MS := 2600
+const TOAST_EVENTS := ["room_bloom", "item_pickup", "satchel_full", "stairs_dormant",
+	"quota_reclamp", "seal_burst", "assimilate", "smog_dim", "undim", "reinforcement",
+	"gummed", "screened", "drain", "drag", "choke", "boss_phase", "vents_clogged",
+	"core_shielded", "dredge", "summon", "ignite_all", "flood", "resisted"]
 var _run_save: FileAccess = null  # open append handle for the live run's log
 
 
@@ -287,7 +342,10 @@ func _run_config() -> Dictionary:
 
 ## A new Game object never inherits the last one's reel: a finished reel's
 ## poses (a dead tender, a tile the last run moved to) would draw over it.
+## Nor its camera: a new board is framed at once, never glided onto.
 func _reset_reel() -> void:
+	_cam_reset()
+	_toast = ""
 	_reel = {}
 	_reel_ms = -99999
 	_chain_next = false
@@ -460,6 +518,7 @@ func _load_settings() -> void:
 		anim_mode = String(cf.get_value("ui", "anim", "full"))
 		if not Anim.SPEEDS.has(anim_mode):
 			anim_mode = "full"
+		cam_cols = clampf(float(cf.get_value("ui", "cam_cols", CAM_COLS_DEFAULT)), CAM_COLS_MIN, CAM_COLS_MAX)
 		sel_tier = int(cf.get_value("ui", "tier", 0))
 		sel_loadout = String(cf.get_value("ui", "loadout", "tender"))
 		sel_package = String(cf.get_value("ui", "package", ""))
@@ -474,6 +533,7 @@ func _save_settings() -> void:
 	cf.set_value("ui", "sfx_on", sfx_on)
 	cf.set_value("ui", "music_on", music_on)
 	cf.set_value("ui", "anim", anim_mode)
+	cf.set_value("ui", "cam_cols", cam_cols)
 	cf.set_value("ui", "tier", sel_tier)
 	cf.set_value("ui", "loadout", sel_loadout)
 	cf.set_value("ui", "package", sel_package)
@@ -494,9 +554,10 @@ func _act(a: Dictionary) -> void:
 		# player to walk somewhere first opt into free navigation (allow_nav).
 		var nav_ok: bool = st.get("allow_nav", false) and kind in ["move", "end_turn", "strike"]
 		if not advances and not nav_ok:
-			_flash("follow the guide for now")
+			_flash("one step at a time - follow the guide")
 			return
 		var tevs: Array = game.step(a)
+		_cam_follow()
 		_start_reel(pre, a, tevs, prev_floor)
 		_play_events(tevs)
 		if advances:
@@ -520,6 +581,7 @@ func _act(a: Dictionary) -> void:
 	# a purchase or a reroll made from the sheet reopens it
 	var keep_shop := mode == "shop" and ["buy", "reroll"].has(String(a.get("type", "")))
 	var evs: Array = game.step(a)
+	_cam_follow()
 	if _game_is_run and _run_save != null:
 		_run_save.store_line(var_to_str(a).replace("\n", " "))
 		_run_save.flush()
@@ -593,6 +655,7 @@ func _play_events(evs: Array) -> void:
 ## walks.
 func _start_reel(pre: Dictionary, a: Dictionary, evs: Array, prev_floor: int) -> void:
 	if game.floor_num != prev_floor:
+		_cam_reset()  # a new floor is framed at once; the fade covers the cut
 		_reel = {}
 		_floor_fade_ms = _now()
 		_spawn_banners(evs, [])
@@ -652,7 +715,14 @@ func _spawn_banners(evs: Array, ev_t: Array) -> void:
 	for i in evs.size():
 		var ev: Dictionary = evs[i]
 		var at := _now() + (int(ev_t[i]) if i < ev_t.size() else 0)
-		match String(ev.get("t", "")):
+		var et := String(ev.get("t", ""))
+		if TOAST_EVENTS.has(et):
+			# the latest notable event wins the context line, on its own beat
+			var words := _ev_text(ev)
+			if words != "" and at >= _toast_ms:
+				_toast = words
+				_toast_ms = at
+		match et:
 			"stairs_awaken":
 				_banner = ["THE STAIRS AWAKEN"]
 				_banner_ms = at
@@ -779,10 +849,13 @@ func _back(quit_at_root: bool = false) -> String:
 		# the pending draft and RESUME comes back to this same sheet
 		_tap("menu")
 		return "menu"
-	if zoom_room:
-		zoom_room = false  # back out to the whole-floor camera first
+	if cam_overview or cam_pan != Vector2.ZERO:
+		# a peek or a look-around is a view state: Back returns to the tender
+		# before it leaves the run
+		cam_overview = false
+		cam_pan = Vector2.ZERO
 		queue_redraw()
-		return "zoom"
+		return "camera"
 	_tap("menu")
 	return "menu"
 
@@ -801,27 +874,59 @@ func _cancel_aim() -> void:
 func _unhandled_input(ev: InputEvent) -> void:
 	if ev is InputEventKey and ev.pressed and not ev.echo:
 		_key(ev.keycode)
+	elif ev is InputEventScreenTouch:
+		_touch(ev)
+	elif ev is InputEventScreenDrag:
+		_touch_drag(ev)
+	elif ev is InputEventMagnifyGesture:
+		if _map_live():
+			_zoom_by(ev.factor)  # a trackpad pinch
+	elif ev is InputEventMouseButton and ev.pressed and _map_live() \
+			and (ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN):
+		_zoom_by(1.12 if ev.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.12)
 	elif ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT:
 		if ev.pressed:
 			_press_pos = ev.position
 			_press_ms = _now()
 			_held = true
+			_mouse_down = true
+			# a fresh press starts clean; a second finger landing later turns
+			# it into a pinch (_touch)
+			_gesture = _touches.size() >= 2
+			_panning = false
 			queue_redraw()  # pressed-state shading on buttons
 		else:
 			var had_tip := not tooltip.is_empty() and not inspect_live
 			_held = false
+			_mouse_down = false
 			if had_tip:
 				tooltip = []
-			elif _now() - _press_ms < hold_ms:
+			elif not _gesture and not _panning and _now() - _press_ms < hold_ms:
 				_click(ev.position)
+			_panning = false
 			queue_redraw()
 	elif ev is InputEventMouseMotion:
 		if inspect_live and screen != "menu" and game != null and not game.over and mode == "normal":
 			var t := _map_tile(ev.position)
 			if t != tooltip_tile:
 				_show_tooltip(ev.position)  # only replaces when there is something to say
+		elif _mouse_down and not _gesture and _map_live() and _cam_zone.has_point(_press_pos):
+			# a drag that starts on the map looks around; past the slop it is
+			# a drag, not a tap, so the release must not move the tender
+			if not _panning and ev.position.distance_to(_press_pos) > _pan_slop():
+				_panning = true
+				_held = false
+				tooltip = []
+			if _panning:
+				_pan_by(ev.relative)
 		if _held and ev.position.distance_to(_press_pos) > 30.0:
 			_held = false
+
+
+## How far a press may wander and still be a tap (Android's touch slop is
+## about 8dp; this is a little more forgiving on a phone).
+func _pan_slop() -> float:
+	return maxf(24.0, get_viewport_rect().size.y * 0.011) if is_inside_tree() else 24.0
 
 
 func _process(_dt: float) -> void:
@@ -841,9 +946,14 @@ func _process(_dt: float) -> void:
 	if game != null and game.over:
 		animating = true  # win/loss screens drift
 	var idling: bool = game != null and anim_mode != "off" and mode in ["normal", "target_dir", "target_tile", "cleanse"]
+	# the context line's news comes and goes on its own (an idle-rate redraw
+	# is enough to take it down on time)
+	var newsy: bool = _toast != "" and _now() - _toast_ms < TOAST_MS + 100
+	if not _cam_settled:
+		animating = true  # the camera is gliding
 	if animating:
 		queue_redraw()
-	elif (smoggy or idling) and _now() - _idle_draw_ms >= IDLE_FRAME_MS:
+	elif (smoggy or idling or newsy) and _now() - _idle_draw_ms >= IDLE_FRAME_MS:
 		# between moves only slow things move - the idle loops, the smog haze
 		# drifting, fires flickering: ~20 fps is smooth enough for them and
 		# spares a phone's battery (smog is up on nearly every turn of a floor)
@@ -852,7 +962,9 @@ func _process(_dt: float) -> void:
 
 
 func _map_tile(pos: Vector2) -> Vector2i:
-	return Vector2i(int((pos.x - _mox) / _ts), int((pos.y - _moy) / _ts))
+	# floori, not int(): int() truncates toward zero, so a press just left of
+	# (or above) the floor read as column (row) 0
+	return Vector2i(floori((pos.x - _mox) / _ts), floori((pos.y - _moy) / _ts))
 
 
 func _legend_of(id: String) -> Array:
@@ -865,31 +977,26 @@ func _legend_of(id: String) -> Array:
 func _show_tooltip(pos: Vector2) -> void:
 	if mode == "intro" or mode == "help" or mode == "log" or game.over:
 		return
-	# holding an ability button explains the ability
+	# holding a button explains it: an item, an ability, a HUD readout or a
+	# view toggle - the long rules the intro card used to carry live here now,
+	# one hold away from the thing they are about
 	for hsp in hotspots:
-		if hsp["rect"].has_point(pos) and String(hsp["tag"]).begins_with("item:"):
-			var islot := int(String(hsp["tag"]).get_slice(":", 1))
-			if islot < game.player["items"].size():
-				var idef: Dictionary = Content.ITEMS[game.player["items"][islot]]
-				tooltip = ["%s - tap to use (no turn)" % idef["name"], idef["desc"]]
-				tooltip_tile = Vector2i(-1, -1)
-				queue_redraw()
-				return
-		if hsp["rect"].has_point(pos) and String(hsp["tag"]).begins_with("ability:"):
-			var slot := int(String(hsp["tag"]).get_slice(":", 1))
-			var aid: String = game.player["kit"][slot]
-			var adef: Dictionary = Content.ABILITIES[aid]
-			var tc: int = game.ability_cost(aid)
-			var thdr := "%s - %d charge" % [adef["name"], tc]
-			# Game._surges, not a cost comparison: since Block D1 a surge may be a
-			# STAT bump with no discount (Grow Spike +1 dmg, Water Jet +1 push) and
-			# it still spends the tile - the old test said nothing about those
-			if game._surges(adef):
-				thdr += "  ·  surges, spends the tile"
-			tooltip = [thdr, _ability_desc(aid)]
-			tooltip_tile = Vector2i(-1, -1)
-			queue_redraw()
-			return
+		if not hsp["rect"].has_point(pos):
+			continue
+		var tag := String(hsp["tag"])
+		var info := _info_lines(tag)
+		if info.is_empty():
+			continue
+		tooltip = info
+		tooltip_tile = Vector2i(-1, -1)
+		queue_redraw()
+		return
+	# a sheet covers the map: a hold on it must not read the tile behind it;
+	# and only the map ZONE is the map - the camera crops the floor, so a hold
+	# in the empty space between the buttons would otherwise read a tile that
+	# is not on screen
+	if not _map_live() or not _cam_zone.has_point(pos):
+		return
 	var snap: Dictionary = game.snapshot()
 	var t := _map_tile(pos)
 	if t.x < 0 or t.y < 0 or t.x >= int(snap["map"]["w"]) or t.y >= int(snap["map"]["h"]):
@@ -898,18 +1005,20 @@ func _show_tooltip(pos: Vector2) -> void:
 	for e in snap["enemies"]:
 		if e["pos"] == t:
 			var row := _legend_of(e["kind"])
-			lines.append("%s - hp %d%s" % [_ename(e["kind"]), e["hp"], "  ELITE" if e.get("elite", false) else ""])
+			lines.append("%s - HP %d%s" % [_ename(e["kind"]), e["hp"], "  ELITE" if e.get("elite", false) else ""])
 			lines.append(_intent_words(e))
-			if e["traits"].has("spiked") or e.get("elite", false):
-				lines.append("SPIKED - melee costs you 1 HP")
+			var spiked: bool = e["traits"].has("spiked") or e.get("elite", false)
+			if spiked:
+				lines.append("SPIKED: punching it costs 1 HP")
 			# what the row refuses to walk through, straight off the data
 			var avoid: Array = Content.ENEMIES.get(e["kind"], {}).get("avoid", [])
 			if not avoid.is_empty():
-				lines.append("avoids: %s - detours, unless the way round is long" % ", ".join(avoid))
-			if not row.is_empty():
+				lines.append("avoids %s when it can" % ", ".join(avoid))
+			# the blurb, unless it only repeats the spike line above
+			if not row.is_empty() and not (spiked and String(row[2]).begins_with("SPIKED")):
 				lines.append(row[2])
 	if lines.is_empty() and snap["player"]["pos"] == t:
-		lines = ["You - HP %d/%d" % [snap["player"]["hp"], snap["player"]["max_hp"]], "tap yourself to end the turn"]
+		lines = ["You - HP %d/%d" % [snap["player"]["hp"], snap["player"]["max_hp"]], "tap yourself to end your turn"]
 	if lines.is_empty():
 		var id := ""
 		if snap["terrain"].has(t):
@@ -928,6 +1037,62 @@ func _show_tooltip(pos: Vector2) -> void:
 	tooltip = lines
 	tooltip_tile = t
 	queue_redraw()
+
+
+## What holding a button says: [title, line] for every hotspot that has
+## something to explain, [] for the rest (map taps, sheet cards). Items and
+## abilities describe themselves; the HUD readouts and the view toggles carry
+## the rules a new player meets them by.
+func _info_lines(tag: String) -> Array:
+	if game == null:
+		return []
+	var pl: Dictionary = game.player
+	if tag.begins_with("item:"):
+		var islot := int(tag.get_slice(":", 1))
+		if islot < pl["items"].size():
+			var idef: Dictionary = Content.ITEMS[pl["items"][islot]]
+			return ["%s - tap to use, takes no turn" % idef["name"], idef["desc"]]
+		return ["Satchel slot", "supply pods and shrines fill it"]
+	if tag.begins_with("ability:"):
+		var slot := int(tag.get_slice(":", 1))
+		if slot >= pl["kit"].size():
+			return []
+		var aid: String = pl["kit"][slot]
+		var adef: Dictionary = Content.ABILITIES[aid]
+		var thdr := "%s - %d charge" % [adef["name"], game.ability_cost(aid)]
+		# Game._surges, not a cost comparison: since Block D1 a surge may be a
+		# STAT bump with no discount (Grow Spike +1 dmg, Water Jet +1 push) and
+		# it still spends the tile - the old test said nothing about those
+		if game._surges(adef):
+			thdr += "  ·  growth boosts it"
+		return [thdr, _ability_desc(aid)]
+	match tag:
+		"info:hp":
+			return ["Health %d/%d" % [pl["hp"], pl["max_hp"]], "growth heals you, and so do shrines"]
+		"info:shield":
+			return ["Shield %d" % pl["shield"], "soaks hits before your health does"]
+		"info:charge":
+			return ["Charge %d" % pl["charge"], "moving and casting spend it; it refills each turn"]
+		"info:bloom":
+			return ["Bloom %d" % game.bloom, "earn it by cleansing; spend it at shrines"]
+		"info:skies":
+			return ["Skies", "smog rises each turn. Past a sun, charge refills slower; at the skull, it hurts"]
+		"info:green":
+			return ["Green %d/%d" % [game.greened, game.green_need], "cleanse this many to wake the stairs"]
+		"info:elements":
+			var out: Array = []
+			for r in _resonance_state(game.snapshot()):
+				if int(r["count"]) > 0:
+					out.append("%s  ·  %s %d/%d" % [r["name"], r["tag"], r["count"], r["need"]])
+					out.append(String(r["desc"]))
+			if not out.is_empty():
+				out.append("hold enough cards of one element and it works all run")
+			return out
+		"zoom":
+			return ["Whole floor", "tap to see it all; your next move zooms back. Pinch or drag the map to look around"]
+		"inspect":
+			return ["Inspect", "while on, slide a finger over the map to read everything"]
+	return []
 
 
 func _dir_from_key(k: int) -> Vector2i:
@@ -1016,6 +1181,10 @@ func _key(k: int) -> void:
 			_ability_press(k - KEY_1)
 		KEY_Z:
 			_tap("zoom")
+		KEY_EQUAL, KEY_PLUS, KEY_KP_ADD:
+			_zoom_by(1.12)
+		KEY_MINUS, KEY_KP_SUBTRACT:
+			_zoom_by(1.0 / 1.12)
 		KEY_I:
 			_tap("inspect")
 		KEY_R:
@@ -1064,7 +1233,7 @@ func _cleanse_at(target: Vector2i) -> void:
 	var corrupt: bool = Content.is_corruption(kind)
 	if corrupt and absi(target.x - pp.x) + absi(target.y - pp.y) == 1:
 		if screen == "tutorial":
-			_flash("out of charge - press END to refill")
+			_flash("out of charge - END refills it")
 			return
 		_act({"type": "end_turn"})
 		if game.over:
@@ -1085,14 +1254,14 @@ func _cleanse_at(target: Vector2i) -> void:
 ## ability, so a player told there is nothing there has nothing left to try.
 func _cleanse_hint() -> String:
 	if game == null:
-		return "no corruption beside you"
+		return "nothing to cleanse beside you"
 	var here := String(game.terrain.get(game.player["pos"], {}).get("kind", ""))
 	if Content.is_corruption(here):
 		return "you're standing on it - step off first"
 	for d in DIRS4.values():
 		if String(game.terrain.get(game.player["pos"] + d, {}).get("kind", "")) == "fire":
 			return "still burning - wait for the ash"
-	return "no corruption beside you"
+	return "nothing to cleanse beside you"
 
 
 func _move_or_strike(d: Vector2i) -> void:
@@ -1107,7 +1276,7 @@ func _move_or_strike(d: Vector2i) -> void:
 	# in the tutorial, running dry is the lesson - never auto-end a turn there,
 	# because the synthetic end_turn would advance "end your turn" steps
 	if screen == "tutorial":
-		_flash("out of charge - press END to refill")
+		_flash("out of charge - END refills it")
 		return
 	# the way is open but charge ran dry: end the turn, then go
 	var m: Dictionary = game.map
@@ -1131,18 +1300,36 @@ func _move_or_strike(d: Vector2i) -> void:
 		if not then.is_empty():
 			_act_chained(then)
 		return
-	_flash("blocked")
+	_flash("can't go that way")
 
 
 ## Buy heal / ability / item. A full kit has no room for the ability card:
-## the sim stops offering it, so the tap just says so.
+## the sim stops offering it, so the tap just says so - and says WHICH wall
+## it hit, because "can't buy that" left the player guessing between a full
+## kit and a thin purse.
 func _buy(item: String) -> void:
 	for a in _legal_of("buy"):
 		if String(a.get("item", "")) != item:
 			continue
 		_act(a)
 		return
-	_flash("can't buy that")
+	_flash(_buy_refusal(item))
+
+
+## Why a shrine card did not sell, read off the state the sim's own rule
+## reads (kit size against the kit cap, purse against the price).
+func _buy_refusal(item: String, id: String = "") -> String:
+	if game == null:
+		return "can't buy that"
+	if item == "ability" and game.player["kit"].size() >= game._kit_max():
+		return "your kit is full"
+	if item == "heal" and int(game.player["hp"]) >= int(game.player["max_hp"]):
+		return "you're already at full health"
+	if item == "item" and game.player["items"].size() >= Content.ITEM_CAP:
+		return "your satchel is full"
+	if int(game.bloom) < game.shop_cost(item, id):
+		return "not enough bloom yet"
+	return "can't buy that"
 
 
 ## The shrine offers two grafts and sells one; `pick` indexes shop.grafts.
@@ -1151,7 +1338,9 @@ func _buy_graft(pick: int) -> void:
 		if String(a.get("item", "")) == "graft" and int(a.get("pick", -1)) == pick:
 			_act(a)
 			return
-	_flash("can't buy that")
+	var offers: Array = game.shop.get("grafts", []) if game != null else []
+	_flash(_buy_refusal("graft", String(offers[pick])) if pick >= 0 and pick < offers.size()
+		else "can't buy that")
 
 
 ## Redraw the shrine counter (Block D2). Every rule - on the shrine, a
@@ -1205,7 +1394,7 @@ func _ability_press(slot: int) -> void:
 				can_keep = true
 				break
 		if not can_keep:
-			_flash("that one can't be forged further")
+			_flash("that one can't grow any further")
 			return
 		mode_pick = slot
 		mode = "up_scrap"
@@ -1213,7 +1402,7 @@ func _ability_press(slot: int) -> void:
 		return
 	if mode == "up_scrap":
 		if slot == mode_pick:
-			_flash("pick a DIFFERENT one to scrap")
+			_flash("pick a different one to recycle")
 			return
 		# Block D6: the sim lists one forge action per (keep, scrap, VARIANT)
 		# triple, so a forked base offers two. One match acts at once (a package
@@ -1229,16 +1418,16 @@ func _ability_press(slot: int) -> void:
 			queue_redraw()
 			return
 		if _is_mobility(String(game.player["kit"][slot])):
-			_flash("can't scrap your mobility ability")
+			_flash("your mobility ability can't be recycled")
 		else:
-			_flash("can't scrap that")
+			_flash("can't recycle that")
 		return
 	var acts: Array = []
 	for a in _legal_of("ability"):
 		if int(a["slot"]) == slot:
 			acts.append(a)
 	if acts.is_empty():
-		_flash("%s: no target / no charge / gummed" % Content.ABILITIES[game.player["kit"][slot]]["name"])
+		_flash(_cast_refusal(slot))
 		return
 	var aid: String = game.player["kit"][slot]
 	var ttype: String = Content.ABILITIES[aid]["target"]
@@ -1247,7 +1436,7 @@ func _ability_press(slot: int) -> void:
 		mode_slot = slot
 		# the flash names the way OUT as well as the way in: on a phone there
 		# is no ESC key, so the cancel has to be written on the screen
-		_flash("AIM %s: D-pad or tap beside you  ·  slot cancels" % Content.ABILITIES[aid]["name"])
+		_flash("%s: pick a direction  ·  tap it again to cancel" % Content.ABILITIES[aid]["name"])
 	elif acts.size() == 1:
 		_act(acts[0])
 	else:
@@ -1256,8 +1445,22 @@ func _ability_press(slot: int) -> void:
 		mode_targets = []
 		for a in acts:
 			mode_targets.append(a["target"])
-		_flash("AIM %s: tap a green tile  ·  D-pad or slot cancels" % Content.ABILITIES[aid]["name"])
+		_flash("%s: tap a green tile  ·  tap it again to cancel" % Content.ABILITIES[aid]["name"])
 	queue_redraw()
+
+
+## Why a kit slot would not cast - the one reason that applies, instead of
+## all three at once ("no target / no charge / gummed").
+func _cast_refusal(slot: int) -> String:
+	var aid := String(game.player["kit"][slot])
+	var nm := String(Content.ABILITIES[aid]["name"])
+	if game.player["gummed"].has(slot):
+		return "%s is gummed up for %d more turn%s" % [nm, int(game.player["gummed"][slot]),
+			"" if int(game.player["gummed"][slot]) == 1 else "s"]
+	var cost: int = game.ability_cost(aid)
+	if int(game.player["charge"]) < cost:
+		return "%s needs %d charge - END refills it" % [nm, cost]
+	return "%s has nothing to aim at here" % nm
 
 
 func _try_ability_target(slot: int, target) -> void:
@@ -1265,7 +1468,7 @@ func _try_ability_target(slot: int, target) -> void:
 		if int(a["slot"]) == slot and a["target"] == target:
 			_act(a)
 			return
-	_flash("not a legal target")
+	_flash("can't aim there")
 	mode = "normal"
 	queue_redraw()
 
@@ -1313,6 +1516,11 @@ func _click(pos: Vector2) -> void:
 		return
 	if game.phase == "draft":
 		return
+	# only the map ZONE is the map: the camera crops the floor, and a tap in the
+	# gap between the ability bar's buttons used to read as the tile under it -
+	# a step down off the bottom of the view
+	if not _cam_zone.has_point(pos):
+		return
 	var t := _map_tile(pos)
 	var pp: Vector2i = game.player["pos"]
 	match mode:
@@ -1333,6 +1541,8 @@ func _click(pos: Vector2) -> void:
 
 
 func _tap(tag: String) -> void:
+	if tag.begins_with("info:"):
+		return  # a readout explains itself on a HOLD; a tap is no command
 	if audio != null:
 		audio.play("tap")
 	if tag.begins_with("ability:"):
@@ -1408,7 +1618,10 @@ func _tap(tag: String) -> void:
 			mode = "shop"
 			queue_redraw()
 	elif tag == "zoom":
-		zoom_room = not zoom_room
+		# the whole-floor PEEK: on until the next action (or this button) -
+		# a look, never a mode to remember to leave
+		cam_overview = not cam_overview
+		cam_pan = Vector2.ZERO
 		queue_redraw()
 	elif tag == "inspect":
 		inspect_live = not inspect_live
@@ -1476,6 +1689,15 @@ func _tap(tag: String) -> void:
 				intro_mode = {"once": "always", "always": "never", "never": "once"}.get(intro_mode, "once")
 			"anim":
 				anim_mode = {"full": "quick", "quick": "off", "off": "full"}.get(anim_mode, "full")
+			"camera":
+				# the next preset out from wherever a pinch left it, wrapping
+				# from the whole floor back to near
+				var nxt: float = float(CAM_PRESETS[0][0])
+				for p in CAM_PRESETS:
+					if float(p[0]) > cam_cols + 0.01:
+						nxt = float(p[0])
+						break
+				cam_cols = nxt
 		_save_settings()
 		queue_redraw()
 
@@ -1587,6 +1809,16 @@ func _ename_by_id(id) -> String:
 	return "Something"
 
 
+## The name of the machine standing on `tile` now, or `fallback` (a log
+## rebuilt on resume reads events long after the machine has moved on).
+func _ename_at(tile, fallback: String) -> String:
+	if game != null:
+		for e in game.enemies:
+			if e["pos"] == tile:
+				return _ename(String(e["kind"]))
+	return fallback
+
+
 ## What a screened intent is called in the log. The raw type is the fallback,
 ## so a new Content.SCREENED_INTENTS entry still reads as a sentence.
 func _screen_word(itype: String) -> String:
@@ -1611,78 +1843,121 @@ func _shop_name(item: String, id: String) -> String:
 	return id if id != "" else item
 
 
+## How a run ended, in a few gentle words: what felled the tender, never a
+## raw id ("cause: drill_bot" was what the sheet used to say).
+func _cause_words(src: String) -> String:
+	var base := src.get_slice(":", 0)
+	if Content.ENEMIES.has(base):
+		return "felled by %s" % _with_article(base)
+	match base:
+		"smog": return "lost in the smog"
+		"fire": return "caught in the fire"
+		"goo", "rich_goo": return "stuck in the goo"
+		"spikes": return "worn down by spikes"
+		"": return "the light went out"
+	return "felled by %s" % _src_name(base)
+
+
+## A machine's name as the end of a sentence: "a Drill Bot", "an Oil Sludge",
+## and "the" for the one-of-a-kind bosses (a name that already says "The"
+## keeps it).
+func _with_article(kind: String) -> String:
+	var nm := _ename(kind)
+	if nm.begins_with("The "):
+		return nm
+	if Content.ENEMIES.get(kind, {}).get("traits", []).has("boss"):
+		return "the " + nm
+	return ("an " if "AEIOU".contains(nm.left(1)) else "a ") + nm
+
+
+## A damage or death source in words: an enemy kind reads as its name, a
+## graft or resonance hook as ITS name, and a qualified source
+## ("fire:solar_lance") as the bare source. Everything else is already a word
+## (fire, goo, smog, spikes).
+func _src_name(src: String) -> String:
+	var ci := src.find(":")
+	if ci >= 0:
+		src = src.substr(0, ci)
+	if Content.ENEMIES.has(src):
+		return _ename(src)
+	if Content.GRAFTS.has(src):
+		return String(Content.GRAFTS[src]["name"])
+	if Content.RESONANCES.has(src):
+		return String(Content.RESONANCES[src]["name"])
+	return src.replace("_", " ")
+
+
+## The log in words: one short line per event, said the way the tender would
+## tell it. Machines are SCRAPPED, never killed; a lost run WILTS.
 func _ev_text(ev: Dictionary) -> String:
 	match String(ev.get("t", "")):
 		"damage":
 			if ev.get("who", "") == "player":
-				# defensive: qualified sources ("fire:solar_lance") read as "fire"
-				var src := String(ev.get("src", "?"))
-				var ci := src.find(":")
-				return "You take %d dmg (%s)" % [ev["amt"], src.substr(0, ci) if ci >= 0 else src]
+				return "You take %d (%s)" % [ev["amt"], _src_name(String(ev.get("src", "?")))]
 			return "%s takes %d" % [_ename(ev["who"]), ev["amt"]]
 		"death":
-			return "%s destroyed" % _ename(ev["who"])
+			return "%s scrapped" % _ename(ev["who"])
 		"player_death":
-			return "You die (%s)" % ev.get("cause", "?")
+			return "You wilt (%s)" % _src_name(String(ev.get("cause", "?")))
 		"heal":
 			return "Growth heals you +%d" % ev["amt"]
 		"cleanse":
-			return "Cleansed +bloom - the air thins"
+			return "Cleansed - growth takes root"
 		"room_bloom":
-			return "Room BLOOMS - +%d bloom and a supply pod" % ev.get("bonus", 2)
+			return "The room blooms! +%d bloom, a supply pod" % ev.get("bonus", 2)
 		"item_pickup":
-			return "Picked up %s" % Content.ITEMS[ev["id"]]["name"]
+			return "Got %s" % Content.ITEMS[ev["id"]]["name"]
 		"item_use":
-			return "%s used" % Content.ITEMS[ev["id"]]["name"]
+			return "Used %s" % Content.ITEMS[ev["id"]]["name"]
 		"satchel_full":
-			return "Satchel full (2 slots)"
+			return "Your satchel is full (2 slots)"
 		"stairs_dormant":
-			return "Stairs dormant - green the floor (%d/%d)" % [ev.get("have", 0), ev.get("need", 0)]
+			return "The stairs sleep - green %d/%d" % [ev.get("have", 0), ev.get("need", 0)]
 		"stairs_awaken":
-			return "The floor greens - THE STAIRS AWAKEN"
+			return "The floor is green - the stairs wake!"
 		"quota_reclamp":
-			return "Corruption burned away - gate now needs %d" % ev.get("need", 0)
+			return "Less to tend now - the stairs need %d" % ev.get("need", 0)
 		"seal_burst":
-			return "Overgrown vent chokes - spawn absorbed"
+			return "Growth seals a vent - nothing gets out"
 		"floor_restored":
-			return "FLOOR RESTORED - skies clear (+%d bloom)" % ev.get("bonus", 5)
+			return "Floor restored! Clear skies, +%d bloom" % ev.get("bonus", 5)
 		"verdant":
-			return "Verdant surge - the growth feeds your cast"
+			return "Growth powers up your cast"
 		"assimilate":
-			return "The machines WELD into a hulk"
+			return "Two machines weld into a hulk!"
 		"upcycle":
-			return "Upcycled: %s" % Content.ITEMS[ev["id"]]["name"]
+			return "Pressed into %s" % Content.ITEMS[ev["id"]]["name"]
 		"upcycle_ability":
 			return "Forged %s" % Content.ABILITIES[ev["id"]]["name"]
 		"upcycle_scrap":
-			return "Scrapped %s for parts" % Content.ABILITIES[ev["id"]]["name"]
+			return "Recycled %s for parts" % Content.ABILITIES[ev["id"]]["name"]
 		"choke":
-			return "The smog chokes you"
+			return "The smog stings - keep moving"
 		"smog_dim":
-			return "Skies dim - charge regen drops"
+			return "Skies dim - charge refills slower"
 		"reinforcement":
-			return "A vent releases a drill bot"
+			return "%s climbs out of a vent" % _ename_at(ev.get("tile", Vector2i(-1, -1)), "A machine")
 		"gummed":
 			return "Tar gums up an ability"
 		"screened":
 			return "%s's %s is lost in the smoke" % [
 				_ename_by_id(ev.get("id", -1)), _screen_word(String(ev.get("intent", "")))]
 		"drain":
-			return "Drone drains %d banked charge" % ev["amt"]
+			return "%s sips %d banked charge" % [_ename_by_id(ev.get("id", -1)), ev["amt"]]
 		"drag":
-			return "You are dragged"
+			return "%s drags you closer" % _ename_by_id(ev.get("id", -1))
 		"stoke":
-			return "Smokestack thickens the smog"
+			return "A smokestack thickens the smog"
 		"boss_phase":
 			return "BOSS PHASE %d" % ev["phase"]
 		"vents_clogged":
 			return "The boss clogs the vents with goo"
 		"core_shielded":
-			return "Core shielded - cleanse the corruption round it"
+			return "Core shielded - cleanse around it"
 		"dredge":
 			return "The Dredge eats %d growth and heals" % ev["tiles"]
 		"summon":
-			return "The extractor summons a sludgeling"
+			return "The extractor makes a sludgeling"
 		"split":
 			return "The sludge splits"
 		"ignite_all":
@@ -1699,7 +1974,7 @@ func _ev_text(ev: Dictionary) -> String:
 		"reroll":
 			return "Rerolled (-%d bloom)" % int(ev.get("cost", 0))
 		"draft_upgrade":
-			return "Upgraded to %s" % str(ev["id"])
+			return "Grew into %s" % String(Content.ABILITIES.get(String(ev["id"]), {}).get("name", ev["id"]))
 		"draft_skip":
 			return "Skipped - next draft adds a focus offer"
 		"shield":
@@ -1709,17 +1984,17 @@ func _ev_text(ev: Dictionary) -> String:
 		"anchor":
 			return "Anchored - drags can't move you"
 		"undim":
-			return "Air clears - regen recovers"
+			return "The air clears - charge refills faster"
 		"immune":
 			return "The boss shrugs it off"
 		"stunned":
-			return "Enemy stunned"
+			return "Stunned!"
 		"staggered":
-			return "Staggered - wind-up lost"
+			return "Staggered - its wind-up is lost"
 		"rooted":
-			return "Enemy rooted in place"
+			return "Rooted in place"
 		"resisted":
-			return "Root cooldown - the snare slides off"
+			return "Roots slide off - not yet"
 		"ash":
 			return "The fire burns down to ash"
 		"floor":
@@ -1739,13 +2014,13 @@ func _intent_words(e: Dictionary) -> String:
 		"quake":
 			return "will QUAKE all around it for %d" % it["dmg"]
 		"move":
-			return "moving toward you"
+			return "heading your way"
 		"drain":
 			return "will drain %d banked charge" % it["amount"]
 		"gum":
 			return "will gum an ability"
 		"fuse":
-			return "WELDING - kill or shove one of the pair"
+			return "WELDING - scrap or shove one of them"
 		"summon":
 			return "summons in %d" % it["in"]
 		"ooze":
@@ -1773,15 +2048,350 @@ func _vis(p: Vector2i) -> bool:
 	return p.x >= _vx0 and p.x <= _vx1 and p.y >= _vy0 and p.y <= _vy1
 
 
-## The room the player stands in (grown by one for its doorways), or a small
-## window around them when they're in a corridor.
-func _room_view(m: Dictionary) -> Rect2i:
-	var pp: Vector2i = game.player["pos"]
+# --- the camera ----------------------------------------------------------------
+# ONE view, never a mode to toggle (docs/SHELL.md "The camera"). There used to
+# be two - the whole floor, and a crop of the current room behind a button -
+# and play was a steady back-and-forth between them: the floor view's tiles
+# were too small to read and tap, the room crop lost the stairs and the next
+# room, and each switch was a jump in scale. Now:
+#   - the camera FRAMES the room the tender stands in (the corridor around
+#     them between rooms) at the zoom the player picked, and GLIDES there
+#   - pinch, the mouse wheel and +/- zoom it, anywhere from close to the
+#     whole floor; the choice is saved
+#   - a one-finger drag looks around; the camera button peeks at the whole
+#     floor. Both END on the next action, so neither is ever a mode to leave
+#   - things that matter but sit off screen get a marker at the edge
+
+## Map sprites are rasterised at one of a fixed ladder of sizes while the zoom
+## is moving and drawn scaled to the live tile size: a pinch passes through
+## dozens of sizes, and rasterising (and caching) each one would stutter a
+## phone and grow the sprite cache without bound. At rest the raster is the
+## exact tile size, so a still map is as crisp as it ever was.
+const RASTER_LADDER := [16, 20, 24, 28, 32, 38, 45, 54, 64, 76, 90, 108, 128, 152, 180, 216, 256]
+
+
+## The part of the floor on screen, in pixels: the floor's rect cut to the
+## map zone (a camera that shows half a tile at an edge is not showing the
+## rest of it).
+func _shown_rect(zone: Rect2) -> Rect2:
+	var fr := Rect2(_mox, _moy, float(game.map["w"]) * _ts, float(game.map["h"]) * _ts)
+	return fr.intersection(zone)
+
+
+## Is the map what a press lands on? (no sheet over it, a live board)
+func _map_live() -> bool:
+	if screen == "menu" or game == null or game.over:
+		return false
+	if game.phase == "draft" and screen != "tutorial":
+		return false
+	return mode in ["normal", "target_dir", "target_tile", "cleanse", "up_keep", "up_scrap"]
+
+
+## The map zone: under the status strip, above the ability bar. In the
+## tutorial the guide banner covers its foot, so the camera frames above it.
+func _map_zone(vw: float, vh: float) -> Rect2:
+	var top := _status_end + vh * 0.004
+	var bottom := vh * Z_MAP_END
+	if screen == "tutorial" and not tut_done:
+		bottom -= _tut_banner_h(vh) + vh * 0.004
+	return Rect2(0.0, top, vw, maxf(bottom - top, vh * 0.1))
+
+
+## The tile size that shows the whole floor in `zone` (never more than an
+## eighth of the width, so a tiny staged floor is not drawn in giant tiles).
+static func _cam_fit_ts(w: int, h: int, zone: Rect2) -> float:
+	return minf(minf(zone.size.x * 0.996 / float(w), zone.size.y / float(h)), zone.size.x / 8.0)
+
+
+## Where the camera wants to be: {cx, cy, ts} - the tile-space point drawn at
+## the zone's centre, and the pixel size of a tile. A pure read of the shell's
+## state (no clock), so the headless suite asks it directly.
+##   zoom      cam_cols tiles across the zone (height-limited on a short zone),
+##             never closer than 6 tiles in the short dimension, never further
+##             out than the whole floor. The peek and the tutorial ARE the
+##             whole floor.
+##   framing   per axis: the tender's room (grown by one, so its doorways and
+##             walls show) when it fits, else the tender. A tile aim widens the
+##             frame to every tile the cast can land on - zooming out, as far as
+##             the whole floor, when it has to: an untappable target is no target.
+##   bounds    never past the floor's edge; a floor narrower than the view is
+##             centred, and one shorter than it is TOP-aligned, so the slack
+##             below a short floor still feeds the log
+func _cam_target(snap: Dictionary, zone: Rect2) -> Dictionary:
+	var m: Dictionary = snap["map"]
+	var w := int(m["w"])
+	var h := int(m["h"])
+	var fit := _cam_fit_ts(w, h, zone)
+	var close := maxf(minf(zone.size.x, zone.size.y) / 6.0, fit)
+	var ts := clampf(minf(zone.size.x, zone.size.y * 1.15) / maxf(cam_cols, 1.0), fit, close)
+	if cam_overview or screen == "tutorial":
+		ts = fit
+	var pt: Vector2i = snap["player"]["pos"]
+	var pc := Vector2(pt) + Vector2(0.5, 0.5)
+	var focus := Rect2(Vector2(pt), Vector2.ONE)
 	for r in m.get("rooms", []):
-		var rr: Rect2i = r
-		if rr.grow(1).has_point(pp):
-			return rr.grow(1)
-	return Rect2i(pp.x - 4, pp.y - 3, 9, 7)
+		var rr: Rect2i = (r as Rect2i).grow(1)
+		if rr.has_point(pt):
+			focus = Rect2(Vector2(rr.position), Vector2(rr.size))
+			break
+	if mode == "target_tile" and not mode_targets.is_empty():
+		var tb := Rect2(Vector2(pt), Vector2.ONE)
+		for t in mode_targets:
+			tb = tb.merge(Rect2(Vector2(t), Vector2.ONE))
+		ts = maxf(minf(ts, minf(zone.size.x / tb.size.x, zone.size.y / tb.size.y)), fit)
+		focus = tb
+	var vw_t := zone.size.x / ts
+	var vh_t := zone.size.y / ts
+	var c := Vector2(focus.get_center().x if focus.size.x <= vw_t else pc.x,
+		focus.get_center().y if focus.size.y <= vh_t else pc.y) + cam_pan
+	# top-aligned so a short floor's slack feeds the log - except in the
+	# tutorial, whose guide banner owns that space: there the room is centred
+	return {"cx": _cam_clamp(c.x, vw_t, float(w), false),
+		"cy": _cam_clamp(c.y, vh_t, float(h), screen != "tutorial"), "ts": ts}
+
+
+## Keep `view` tiles of a floor `size` tiles long on screen, centred at `c`:
+## a floor smaller than the view is centred (or top-aligned), a bigger one is
+## never shown past either edge.
+static func _cam_clamp(c: float, view: float, size: float, top_align: bool) -> float:
+	if view >= size:
+		return view / 2.0 if top_align else size / 2.0
+	return clampf(c, view / 2.0, size - view / 2.0)
+
+
+## What deserves a marker at the edge of the view when it is off screen, most
+## important first: the stairs, a stocked shrine, the nearest corruption while
+## the floor still needs greening (only when none is on screen), and the
+## machines near enough to matter. [{at, icon, ring}] in tile space. Nothing
+## in the tutorial, a peek, or a view that already shows the whole floor.
+func _edge_pois(snap: Dictionary, zone: Rect2) -> Array:
+	var out: Array = []
+	if screen == "tutorial" or cam_overview or _ts <= 0.0:
+		return out
+	var m: Dictionary = snap["map"]
+	var shown := Rect2((zone.position.x - _mox) / _ts, (zone.position.y - _moy) / _ts,
+		zone.size.x / _ts, zone.size.y / _ts)
+	if shown.encloses(Rect2(0, 0, float(m["w"]), float(m["h"]))):
+		return out
+	var inside := func(t: Vector2i) -> bool:
+		return shown.grow(-0.2).has_point(Vector2(t) + Vector2(0.5, 0.5))
+	var pp: Vector2i = snap["player"]["pos"]
+	if m["stairs"] != Vector2i(-1, -1) and not inside.call(m["stairs"]):
+		var awake: bool = int(snap["greened"]) >= int(snap["green_need"])
+		out.append({"at": m["stairs"], "icon": "stairs", "ring": COL_GOLD if awake else COL_DIM_TEXT})
+	if m["shrine"] != Vector2i(-1, -1) and not snap.get("shop", {}).is_empty() and not inside.call(m["shrine"]):
+		out.append({"at": m["shrine"], "icon": "shrine", "ring": COL_CREAM})
+	if int(snap["greened"]) < int(snap["green_need"]):
+		var best := Vector2i(-1, -1)
+		var bd := 1 << 30
+		var any_shown := false
+		for t in snap["terrain"].keys():
+			if not Content.is_corruption(String(snap["terrain"][t]["kind"])):
+				continue
+			if inside.call(t):
+				any_shown = true
+				break
+			var d: int = absi(t.x - pp.x) + absi(t.y - pp.y)
+			if d < bd:
+				bd = d
+				best = t
+		if not any_shown and best != Vector2i(-1, -1):
+			out.append({"at": best, "icon": String(snap["terrain"][best]["kind"]), "ring": Color(0.72, 0.55, 0.82)})
+	var near: Array = []
+	for e in snap["enemies"]:
+		var ep: Vector2i = e["pos"]
+		var boss: bool = Content.ENEMIES.get(String(e["kind"]), {}).get("traits", []).has("boss")
+		var d2: int = absi(ep.x - pp.x) + absi(ep.y - pp.y)
+		if not inside.call(ep) and (boss or d2 <= 9):
+			near.append([d2, e])
+	near.sort_custom(func(a, b): return int(a[0]) < int(b[0]))
+	for pair in near.slice(0, 5):
+		out.append({"at": pair[1]["pos"], "icon": String(pair[1]["kind"]), "ring": COL_RED})
+	return out
+
+
+## Off-screen markers: a disc on the view's edge in the direction of the
+## thing, its sprite inside and a notch pointing at it. Markers never take a
+## tap - the tile under one still answers - and one that would sit on another
+## is dropped (the list is in importance order).
+func _draw_edge_markers(snap: Dictionary, zone: Rect2, vh: float) -> void:
+	var pois := _edge_pois(snap, zone)
+	if pois.is_empty():
+		return
+	var r := clampf(vh * 0.017, 11.0, 40.0)
+	var inner := zone.grow(-(r + 6.0))
+	var c0 := inner.get_center()
+	var placed: Array = []
+	for poi in pois:
+		var tc := Vector2(_mox, _moy) + (Vector2(poi["at"]) + Vector2(0.5, 0.5)) * _ts
+		var d := tc - c0
+		if d.length() < 1.0:
+			continue
+		var k := INF
+		if absf(d.x) > 0.001:
+			k = minf(k, (inner.size.x / 2.0) / absf(d.x))
+		if absf(d.y) > 0.001:
+			k = minf(k, (inner.size.y / 2.0) / absf(d.y))
+		var at := c0 + d * minf(k, 1.0)
+		var clash := false
+		for q in placed:
+			if (q as Vector2).distance_to(at) < r * 1.7:
+				clash = true
+				break
+		if clash:
+			continue
+		placed.append(at)
+		var dir := d.normalized()
+		var ring: Color = poi["ring"]
+		var tip := at + dir * (r + 7.0)
+		var side := Vector2(-dir.y, dir.x) * r * 0.42
+		draw_colored_polygon(PackedVector2Array([tip, at + dir * r * 0.7 + side, at + dir * r * 0.7 - side]), ring)
+		draw_circle(at, r, Color(0.04, 0.07, 0.05, 0.86))
+		draw_arc(at, r, 0.0, TAU, 28, ring, 2.0)
+		var isz := int(r * 1.45)
+		var itx := Art.tex(String(poi["icon"]), isz)
+		if itx != null:
+			draw_texture(itx, at - Vector2(isz, isz) / 2.0)
+
+
+## The camera as drawn this frame: it eases toward _cam_target, so a room
+## change, a zoom or a peek glides instead of jumping. It snaps on the first
+## frame of a floor or a game (the floor fade covers that), and with
+## animations off, where nothing slides.
+func _cam_step(snap: Dictionary, zone: Rect2) -> Dictionary:
+	var tgt := _cam_target(snap, zone)
+	var now := _now()
+	if _cam.is_empty() or anim_mode == "off":
+		_cam = tgt.duplicate()
+	else:
+		var k := 1.0 - exp(-clampf(float(now - _cam_ms), 0.0, 250.0) / CAM_GLIDE_MS)
+		for key in ["cx", "cy", "ts"]:
+			_cam[key] = lerpf(float(_cam[key]), float(tgt[key]), k)
+		if absf(float(_cam["cx"]) - float(tgt["cx"])) < 0.004 and absf(float(_cam["cy"]) - float(tgt["cy"])) < 0.004 \
+				and absf(float(_cam["ts"]) - float(tgt["ts"])) < 0.05:
+			_cam = tgt.duplicate()
+	_cam_ms = now
+	_cam_zone = zone
+	_cam_settled = _cam == tgt
+	# the raster size: exact at rest. While the zoom moves it only ever GROWS
+	# (to the bigger end, so every in-between frame downscales and stays
+	# crisp), and during a pinch it climbs the ladder instead of every size
+	var pinching := _touches.size() >= 2
+	if _cam_settled and not pinching:
+		_raster = maxi(int(round(float(_cam["ts"]))), 1)
+	else:
+		var want := maxf(float(_cam["ts"]), float(tgt["ts"]))
+		var r := int(round(want))
+		if pinching:
+			r = int(RASTER_LADDER.back())
+			for size in RASTER_LADDER:
+				if float(size) >= want:
+					r = int(size)
+					break
+		_raster = maxi(_raster, r)
+	return _cam
+
+
+## Step the camera and lay the floor out under it: tile size, pixel origin
+## and the visible tile range every draw call and every tap reads.
+func _layout_map(snap: Dictionary, zone: Rect2) -> void:
+	var w := int(snap["map"]["w"])
+	var h := int(snap["map"]["h"])
+	var cam := _cam_step(snap, zone)
+	_ts = float(cam["ts"])
+	_mox = zone.position.x + zone.size.x / 2.0 - float(cam["cx"]) * _ts
+	_moy = zone.position.y + zone.size.y / 2.0 - float(cam["cy"]) * _ts
+	# every tile the zone shows any part of (a glide or a drag shows halves)
+	_vx0 = clampi(floori((zone.position.x - _mox) / _ts), 0, w - 1)
+	_vx1 = clampi(ceili((zone.end.x - _mox) / _ts) - 1, 0, w - 1)
+	_vy0 = clampi(floori((zone.position.y - _moy) / _ts), 0, h - 1)
+	_vy1 = clampi(ceili((zone.end.y - _moy) / _ts) - 1, 0, h - 1)
+
+
+## Forget the drawn camera: the next frame frames its target at once. A new
+## floor, a new game and the tutorial start here.
+func _cam_reset() -> void:
+	_cam = {}
+	cam_overview = false
+	cam_pan = Vector2.ZERO
+
+
+## An action was taken: the camera goes back to following the tender. A peek
+## or a look-around is a glance, and the next move is the end of it.
+func _cam_follow() -> void:
+	cam_overview = false
+	cam_pan = Vector2.ZERO
+
+
+## The zoom the camera is showing, as tiles across the zone: where a pinch or a
+## wheel notch starts from, so zooming in from the whole floor responds at once
+## even when the saved choice is further out than this floor can go.
+func _cam_cols_now() -> float:
+	if _cam_zone.size.x <= 0.0 or _cam.is_empty():
+		return cam_cols
+	return minf(_cam_zone.size.x, _cam_zone.size.y * 1.15) / maxf(float(_cam["ts"]), 1.0)
+
+
+## Zoom to `cols` tiles across (a pinch, a wheel notch, +/-). Ends a peek: the
+## player is choosing a zoom, and the zoom they choose is the one that stays.
+func _set_zoom(cols: float) -> void:
+	cam_overview = false
+	cam_cols = clampf(cols, CAM_COLS_MIN, CAM_COLS_MAX)
+	queue_redraw()
+
+
+## One wheel notch / key press: f > 1 zooms in.
+func _zoom_by(f: float) -> void:
+	_set_zoom(_cam_cols_now() / f)
+	_save_settings()
+
+
+## A drag of `rel` pixels moves the view the other way, kept inside the floor
+## (a drag past the edge stops there rather than banking travel to undo).
+func _pan_by(rel: Vector2) -> void:
+	if game == null or _cam.is_empty() or _cam_zone.size.x <= 0.0:
+		return
+	cam_pan -= rel / maxf(float(_cam["ts"]), 1.0)
+	var snap: Dictionary = game.snapshot()
+	var keep := cam_pan
+	cam_pan = Vector2.ZERO
+	var base := _cam_target(snap, _cam_zone)
+	cam_pan = keep
+	var tgt := _cam_target(snap, _cam_zone)
+	cam_pan = Vector2(float(tgt["cx"]) - float(base["cx"]), float(tgt["cy"]) - float(base["cy"]))
+	queue_redraw()
+
+
+## The two-finger pinch. Touch 0 also arrives as the emulated mouse, so a
+## pinch marks the press as a gesture: its release is not a tap, and the
+## tooltip a resting finger was about to raise is dropped.
+func _touch(ev: InputEventScreenTouch) -> void:
+	if ev.pressed:
+		_touches[ev.index] = ev.position
+	else:
+		_touches.erase(ev.index)
+	if _touches.size() >= 2:
+		var ps: Array = _touches.values()
+		_pinch_d0 = maxf((ps[0] as Vector2).distance_to(ps[1]), 1.0)
+		_pinch_cols0 = _cam_cols_now()
+		_gesture = true
+		_held = false
+		_panning = false
+		tooltip = []
+	elif _pinch_d0 > 0.0:
+		_pinch_d0 = 0.0
+		_save_settings()  # the zoom a pinch settles on is the one that stays
+	queue_redraw()
+
+
+func _touch_drag(ev: InputEventScreenDrag) -> void:
+	if not _touches.has(ev.index):
+		return
+	_touches[ev.index] = ev.position
+	if _touches.size() >= 2 and _pinch_d0 > 0.0 and _map_live():
+		var ps: Array = _touches.values()
+		var d := maxf((ps[0] as Vector2).distance_to(ps[1]), 1.0)
+		_set_zoom(_pinch_cols0 * _pinch_d0 / d)
 
 
 ## The snapshot whose telegraphs to draw now: the live one, or while a reel
@@ -1834,9 +2444,9 @@ func _tile_rect_f(p: Vector2) -> Rect2:
 
 
 func _sprite_f(id: String, p: Vector2) -> void:
-	var tx := Art.tex(id, int(_ts))
+	var tx := Art.tex(id, _raster)
 	if tx != null:
-		draw_texture(tx, Vector2(_mox + p.x * _ts, _moy + p.y * _ts))
+		draw_texture_rect(tx, _tile_rect_f(p), false)
 
 
 func _shadow_f(p: Vector2) -> void:
@@ -1847,9 +2457,9 @@ func _shadow_f(p: Vector2) -> void:
 
 
 func _sprite(id: String, p: Vector2i) -> void:
-	var tx := Art.tex(id, int(_ts))
+	var tx := Art.tex(id, _raster)
 	if tx != null:
-		draw_texture(tx, Vector2(_mox + p.x * _ts, _moy + p.y * _ts))
+		draw_texture_rect(tx, _tile_rect(p), false)
 
 
 ## Soft ground shadow that lifts creatures off the tiles.
@@ -1915,14 +2525,17 @@ func _draw_body(id: String, ps: Dictionary, idl: Dictionary) -> Rect2:
 	var sx := float(ps["sx"]) * float(idl.get("sx", 1.0))
 	var sy := float(ps["sy"]) * float(idl.get("sy", 1.0))
 	var rot := float(ps["rot"]) + float(idl.get("rot", 0.0))
-	var tx := Art.tex(id, int(_ts))
-	var at := Vector2(-_ts / 2.0, -_ts * 0.92)
+	# the sprite is rasterised at _raster and drawn at _ts: the transform
+	# carries the ratio, so `at` is in raster pixels
+	var tx := Art.tex(id, _raster)
+	var rs := _ts / float(_raster)
+	var at := Vector2(-float(_raster) / 2.0, -float(_raster) * 0.92)
 	var aura: Color = ps.get("aura", Color(1, 1, 1, 0))
 	var wash: Color = ps.get("wash", Color(1, 1, 1, 0))
 	var fl := clampf(float(ps["flash"]), 0.0, 1.0)
 	var sil: Texture2D = null
 	if tx != null and (aura.a > 0.02 or wash.a > 0.02 or fl > 0.02):
-		sil = Paint.silhouette(id, int(_ts))
+		sil = Paint.silhouette(id, _raster)
 	if aura.a > 0.02:
 		# the wind-up: a soft halo, and the body's own outline lit in the colour
 		var mid := feet + Vector2(0, -_ts * 0.46 * sy)
@@ -1930,9 +2543,9 @@ func _draw_body(id: String, ps: Dictionary, idl: Dictionary) -> Rect2:
 		draw_circle(mid, _ts * 0.62, Color(aura.r, aura.g, aura.b, 0.12 * aura.a * alpha))
 		draw_circle(mid, _ts * 0.44, Color(aura.r, aura.g, aura.b, 0.16 * aura.a * alpha))
 		if sil != null:
-			draw_set_transform(feet + Vector2(0, _ts * 0.05), rot, Vector2(sx * 1.16, sy * 1.12))
+			draw_set_transform(feet + Vector2(0, _ts * 0.05), rot, Vector2(sx * 1.16, sy * 1.12) * rs)
 			draw_texture(sil, at, Color(aura.r, aura.g, aura.b, 0.8 * aura.a * alpha))
-	draw_set_transform(feet, rot, Vector2(sx, sy))
+	draw_set_transform(feet, rot, Vector2(sx, sy) * rs)
 	if tx != null:
 		var tint: Color = ps["tint"]
 		draw_texture(tx, at, Color(tint.r, tint.g, tint.b, alpha))
@@ -2084,8 +2697,13 @@ func _draw() -> void:
 		return
 	var snap: Dictionary = game.snapshot()
 
-	_draw_status(snap, vw, vh)
+	# the map first: the camera may show half a tile past the zone's top and
+	# foot, and the strip and the bar are drawn over clean ground on top of it
+	_status_end = _status_height(snap, vh)
 	_draw_map(snap, vw, vh)
+	draw_rect(Rect2(0, 0, vw, _status_end + vh * 0.004), COL_BG)
+	draw_rect(Rect2(0, vh * Z_MAP_END, vw, vh * (1.0 - Z_MAP_END)), COL_BG)
+	_draw_status(snap, vw, vh)
 	_draw_ability_bar(snap, vw, vh)
 	_draw_context(snap, vw, vh)
 	_draw_controls(snap, vw, vh)
@@ -2196,20 +2814,23 @@ func _draw_settings(vw: float, vh: float) -> void:
 	hotspots.clear()
 	var y := _sheet(vw, vh, "SETTINGS")
 	var bw := vw * 0.88
-	var bh := vh * 0.08
+	var bh := vh * 0.07
+	var gap := vh * 0.02
 	var names := {300: "short", 420: "normal", 650: "long"}
-	_button(Rect2(vw * 0.06, y, bw, bh), "Hold delay:  %s" % names.get(hold_ms, "normal"), "set:hold", int(bh * 0.3))
-	y += bh + vh * 0.025
-	_button(Rect2(vw * 0.06, y, bw, bh), "Run seed:  %s" % ("random every run" if seed_mode == "random" else "daily (same for all)"), "set:seed", int(bh * 0.28))
-	y += bh + vh * 0.025
-	_button(Rect2(vw * 0.06, y, bw, bh), "Intro tips:  %s" % intro_mode, "set:intro", int(bh * 0.3))
-	y += bh + vh * 0.025
-	_button(Rect2(vw * 0.06, y, bw, bh), "Sound effects:  %s" % ("on" if sfx_on else "off"), "set:sfx", int(bh * 0.3))
-	y += bh + vh * 0.025
-	_button(Rect2(vw * 0.06, y, bw, bh), "Music:  %s" % ("on" if music_on else "off"), "set:music", int(bh * 0.3))
-	y += bh + vh * 0.025
-	_button(Rect2(vw * 0.06, y, bw, bh), "Animations:  %s" % anim_mode, "set:anim", int(bh * 0.3))
-	y += bh + vh * 0.03
+	for row in [
+		["Hold delay:  %s" % names.get(hold_ms, "normal"), "set:hold"],
+		["Run seed:  %s" % ("random every run" if seed_mode == "random" else "daily (same for all)"), "set:seed"],
+		["Intro card:  %s" % intro_mode, "set:intro"],
+		["Sound effects:  %s" % ("on" if sfx_on else "off"), "set:sfx"],
+		["Music:  %s" % ("on" if music_on else "off"), "set:music"],
+		["Animations:  %s" % anim_mode, "set:anim"],
+		# the pinch's zoom, for a player who never pinches (or a desktop
+		# without a wheel): the same saved value, in four steps
+		["Camera:  %s" % _cam_zoom_name(), "set:camera"],
+	]:
+		_button(Rect2(vw * 0.06, y, bw, bh), String(row[0]), String(row[1]), int(bh * 0.32))
+		y += bh + gap
+	y += vh * 0.005
 	# the globalized path is absolute, so the whole line used to shrink to the
 	# 9px _fit_size floor whatever the label said - the tail is the useful half
 	var rp := ProjectSettings.globalize_path(runs_dir)
@@ -2219,7 +2840,32 @@ func _draw_settings(vw: float, vh: float) -> void:
 	_txt_fit(Vector2(vw * 0.06, y + vh * 0.02), "runs saved to %s" % rp,
 		COL_DIM_TEXT, int(vh * 0.018), bw)
 	y += vh * 0.05
-	_button(Rect2(vw * 0.06, y, bw, bh), "BACK", "close", int(bh * 0.34))
+	_button(Rect2(vw * 0.06, _sheet_button_y(y, bh, vh), bw, bh), "BACK", "close", int(bh * 0.38))
+
+
+## The settings row's four steps over cam_cols (tiles across the view).
+const CAM_PRESETS := [[9.0, "near"], [12.0, "normal"], [17.0, "far"], [40.0, "whole floor"]]
+
+
+func _cam_zoom_name() -> String:
+	for p in CAM_PRESETS:
+		if cam_cols <= float(p[0]) + 0.01:
+			return String(p[1])
+	return "whole floor"
+
+
+## The guide banner's height: room for the label row and TUT_LINES lines.
+## Fixed rather than per step, so the camera above it never shifts as the
+## guide talks (and _check_tutorial_text holds every step to TUT_LINES).
+const TUT_LINES := 2
+
+
+func _tut_banner_h(vh: float) -> float:
+	return TUT_LINES * _tut_font(vh) * 1.5 + vh * 0.045
+
+
+func _tut_font(vh: float) -> int:
+	return int(vh * 0.0215)
 
 
 func _draw_tut_banner(vw: float, vh: float) -> void:
@@ -2227,16 +2873,20 @@ func _draw_tut_banner(vw: float, vh: float) -> void:
 		return
 	var st: Dictionary = Tutorial.STEPS[tut_step]
 	var lines: Array = st["say"]
-	var fsz := int(vh * 0.0215)
-	var lh := fsz * 1.5
-	var bh := lines.size() * lh + vh * 0.045
+	var fsz := _tut_font(vh)
+	# one size for every line: per-line fitting drew a long line smaller than
+	# its neighbour, which reads as two voices
+	for line in lines:
+		fsz = mini(fsz, _fit_size(String(line), fsz, vw * 0.9))
+	var lh := _tut_font(vh) * 1.5
+	var bh := _tut_banner_h(vh)
 	var by := vh * Z_MAP_END - bh - vh * 0.004
 	draw_rect(Rect2(vw * 0.02, by, vw * 0.96, bh), Color(0.05, 0.09, 0.06, 0.97))
 	draw_rect(Rect2(vw * 0.02, by, vw * 0.96, bh), COL_GOLD, false, 2.0)
 	_txt(Vector2(vw * 0.05, by + vh * 0.028), "GUIDE  %d/%d" % [tut_step + 1, Tutorial.STEPS.size()], COL_GOLD, int(vh * 0.016))
 	var ty := by + vh * 0.03 + lh * 0.8
 	for line in lines:
-		_txt_fit(Vector2(vw * 0.05, ty), line, COL_TEXT, fsz, vw * 0.9)
+		_txt(Vector2(vw * 0.05, ty), String(line), COL_TEXT, fsz)
 		ty += lh
 	var xr := Rect2(vw * 0.86, by + vh * 0.008, vw * 0.11, vh * 0.032)
 	_button(xr, "EXIT", "menu", int(vh * 0.016))
@@ -2250,24 +2900,35 @@ func _draw_tut_banner(vw: float, vh: float) -> void:
 func _draw_tut_done(vw: float, vh: float) -> void:
 	hotspots.clear()
 	draw_rect(Rect2(0, 0, vw, vh), COL_SHEET)
-	_txt_c(vw / 2.0, vh * 0.22, "TUTORIAL COMPLETE", COL_GOLD, int(vh * 0.04))
-	var y := vh * 0.32
+	var pt := Art.tex("player", int(vh * 0.07))
+	if pt != null:
+		draw_texture(pt, Vector2(vw / 2.0 - vh * 0.035, vh * 0.12))
+	_txt_c_fit(vw / 2.0, vh * 0.25, "TUTORIAL COMPLETE", COL_GOLD, int(vh * 0.04), vw * 0.9)
+	# one size for the whole card, the size its longest line fits at
+	var fsz := int(vh * 0.026)
 	for line in Tutorial.DONE:
-		if line != "":
-			_txt_c_fit(vw / 2.0, y, line, COL_TEXT, int(vh * 0.023), vw * 0.92)
-		y += vh * 0.04
+		fsz = mini(fsz, _fit_size(String(line), fsz, vw * 0.88))
+	var y := vh * 0.33
+	for i in Tutorial.DONE.size():
+		_txt_c(vw / 2.0, y, String(Tutorial.DONE[i]), COL_GOLD if i == 0 else COL_TEXT, fsz)
+		y += vh * 0.045
 	y += vh * 0.05
 	_button(Rect2(vw * 0.19, y, vw * 0.62, vh * 0.072), "BACK TO MENU", "menu", int(vh * 0.028), COL_GOLD)
 
 
-func _chip(x: float, ypos: float, icon: String, value: String, vw: float, vh: float, col: Color = COL_TEXT) -> float:
+## One HUD readout: icon and value. `tag` makes it holdable (_info_lines).
+func _chip(x: float, ypos: float, icon: String, value: String, vw: float, vh: float,
+		col: Color = COL_TEXT, tag: String = "") -> float:
 	var isz := vh * 0.032
 	var tx := Art.tex(icon, int(isz))
 	if tx != null:
 		draw_texture(tx, Vector2(x, ypos - isz * 0.78))
 	var fsz := int(vh * 0.026)
 	_txt(Vector2(x + isz + vw * 0.008, ypos), value, col, fsz)
-	return x + isz + vw * 0.008 + font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x + vw * 0.035
+	var nx := x + isz + vw * 0.008 + font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x + vw * 0.035
+	if tag != "":
+		_hot(Rect2(x - vw * 0.01, ypos - isz, nx - x - vw * 0.015, isz * 1.35), tag)
+	return nx
 
 
 ## Block D5 resonance readout, one entry per Content.RESONANCES row in table
@@ -2383,6 +3044,25 @@ func _config_line(snap: Dictionary) -> String:
 	return " · ".join(parts)
 
 
+## How tall the status strip is: the vitals row, the skies bar and the line
+## under it, plus the elements strip while the run holds a resonating card.
+## Measured BEFORE the map is drawn (the map zone starts under it) and drawn
+## after it (the strip covers whatever half-tile the camera puts above the
+## zone).
+func _status_height(snap: Dictionary, vh: float) -> float:
+	var end := _safe_top(vh) + vh * 0.036 * 1.35 + vh * 0.024 + vh * 0.022
+	if _show_elements(snap):
+		end += vh * 0.0155
+	return end
+
+
+## The elements strip shows while the run holds any card of a resonating
+## element - but never in the tutorial, which does not teach elements and
+## whose kit happens to hold a fire card.
+func _show_elements(snap: Dictionary) -> bool:
+	return screen != "tutorial" and _resonance_line(snap) != ""
+
+
 func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	var pl: Dictionary = snap["player"]
 	var pad := _safe_top(vh)
@@ -2394,12 +3074,13 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	# every chip holds its value until the beat that changes it lands
 	var pmax := Anim.hud_shown(_reel, "max_hp", _reel_t(), int(pl["max_hp"]))
 	php = clampi(php, 0, maxi(pmax, 1))
-	x = _chip(x, y, "ic_hp", "%d/%d" % [php, pmax], vw, vh, COL_TEXT if php > 3 else COL_RED)
+	x = _chip(x, y, "ic_hp", "%d/%d" % [php, pmax], vw, vh, COL_TEXT if php > 3 else COL_RED, "info:hp")
 	var pshield := Anim.hud_shown(_reel, "shield", _reel_t(), int(pl["shield"]))
 	if pshield > 0:
-		x = _chip(x, y, "ic_shield", str(pshield), vw, vh)
-	x = _chip(x, y, "ic_charge", "%d" % pl["charge"], vw, vh)
-	x = _chip(x, y, "ic_bloom", str(Anim.hud_shown(_reel, "bloom", _reel_t(), int(snap["bloom"]))), vw, vh)
+		x = _chip(x, y, "ic_shield", str(pshield), vw, vh, COL_TEXT, "info:shield")
+	x = _chip(x, y, "ic_charge", "%d" % pl["charge"], vw, vh, COL_TEXT, "info:charge")
+	x = _chip(x, y, "ic_bloom", str(Anim.hud_shown(_reel, "bloom", _reel_t(), int(snap["bloom"]))), vw, vh,
+		COL_TEXT, "info:bloom")
 	var btn_h := row_h * 1.05
 	_button(Rect2(vw - vw * 0.095, pad, vw * 0.075, btn_h), "?", "help", int(vh * 0.024))
 	_button(Rect2(vw - vw * 0.185, pad, vw * 0.075, btn_h), "=", "menu", int(vh * 0.024))
@@ -2413,9 +3094,16 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	var mw := vw * 0.5
 	var span := choke * 1.15
 	var frac: float = clampf(snap["smog"] / span, 0.0, 1.0)
-	_txt(Vector2(mx, y2 + mh + vh * 0.0155), "SKIES", COL_DIM_TEXT, int(vh * 0.0125))
-	_txt_fit(Vector2(mx + vw * 0.075, y2 + mh + vh * 0.0155), _config_line(snap),
-		COL_DIM_TEXT, int(vh * 0.0125), vw * 0.55)
+	# the labels are MEASURED: the value used to start at a fixed offset that
+	# the label itself was wider than, so "SKIES" ran into the loadout name
+	var lsz := int(vh * 0.0125)
+	var lgap := vw * 0.018
+	var sky_lw := font.get_string_size("SKIES", HORIZONTAL_ALIGNMENT_LEFT, -1, lsz).x
+	_txt(Vector2(mx, y2 + mh + vh * 0.0155), "SKIES", COL_DIM_TEXT, lsz)
+	if screen != "tutorial":
+		_txt_fit(Vector2(mx + sky_lw + lgap, y2 + mh + vh * 0.0155), _config_line(snap),
+			COL_DIM_TEXT, lsz, vw * 0.55 - sky_lw)
+	_hot(Rect2(mx, y2 - vh * 0.004, mw, mh + vh * 0.022), "info:skies")
 	draw_rect(Rect2(mx, y2, mw, mh), Color("6fae9c"))
 	draw_rect(Rect2(mx, y2, mw, mh * 0.45), Color("8cc7ae"))
 	draw_circle(Vector2(mx + mw * 0.93, y2 + mh * 0.42), mh * 0.30, Color("f2e4a0"))
@@ -2444,83 +3132,49 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	if snap["smog"] >= choke:
 		var pulse := 0.45 + 0.35 * sin(_now() / 180.0)
 		draw_rect(Rect2(mx - 2, y2 - 2, mw + 4, mh + 4), Color(0.88, 0.29, 0.23, pulse), false, 2.0)
-	# the floor and green readouts are RIGHT-aligned, so they have to be measured
-	# before "! INCOMING" is drawn - it used to start at a fixed x with no width
-	# budget at all and ran straight through them (~280px of overlap at
-	# 1080x2400, on the one line that is telling you something is about to hit)
 	var fl := "floor %d/7" % snap["floor"]
 	var fsz := int(vh * 0.02)
 	var fw := font.get_string_size(fl, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x
 	_txt(Vector2(vw - fw - vw * 0.025, y2 + mh), fl, COL_GOLD, fsz)
-	var right_edge := vw - fw - vw * 0.045
 	if int(snap["green_need"]) > 0:
 		var gl := "green %d/%d" % [snap["greened"], snap["green_need"]]
 		var done: bool = int(snap["greened"]) >= int(snap["green_need"])
 		var gw := font.get_string_size(gl, HORIZONTAL_ALIGNMENT_LEFT, -1, int(vh * 0.016)).x
 		_txt(Vector2(vw - fw - gw - vw * 0.055, y2 + mh), gl,
 			Color(0.6, 0.85, 0.55) if not done else COL_DIM_TEXT, int(vh * 0.016))
-		right_edge = vw - fw - gw - vw * 0.075
-	# the tile the tender is DRAWN on, against the telegraphs being carried out
-	var shown_at: Vector2i = pl["pos"]
-	if Anim.playing(_reel, _reel_t()):
-		shown_at = Vector2i((Anim.pos_at(_reel, "player", _reel_t(), Vector2(pl["pos"]))).round())
-	if _threat_tiles(_threat_snap(snap)).has(shown_at):
-		var ix := mx + mw + vw * 0.02
-		_txt_fit(Vector2(ix, y2 + mh), "! INCOMING", COL_RED, int(vh * 0.021),
-			maxf(right_edge - ix, vw * 0.06))
-	_status_end = pad + row_h * 1.35 + mh + vh * 0.022
+		_hot(Rect2(vw - fw - gw - vw * 0.065, y2 - vh * 0.004, gw + vw * 0.02, mh + vh * 0.01), "info:green")
+	_status_end = _status_height(snap, vh)
 	# Block D5: the elements strip, drawn under the config line - a lit tag in
 	# caps, a tag still short of its threshold in lower case with its count.
 	# Nothing is drawn (and no space is taken) while the run holds no card of
-	# any resonating element.
-	var rline := _resonance_line(snap)
-	if rline != "":
-		_txt(Vector2(mx, y2 + mh + vh * 0.031), "ELEMENTS", COL_DIM_TEXT, int(vh * 0.0125))
-		_txt_fit(Vector2(mx + vw * 0.075, y2 + mh + vh * 0.031), rline,
+	# any resonating element. Holding it explains it (_info_lines).
+	if _show_elements(snap):
+		var rline := _resonance_line(snap)
+		var el_lw := font.get_string_size("ELEMENTS", HORIZONTAL_ALIGNMENT_LEFT, -1, lsz).x
+		_txt(Vector2(mx, y2 + mh + vh * 0.031), "ELEMENTS", COL_DIM_TEXT, lsz)
+		_txt_fit(Vector2(mx + el_lw + lgap, y2 + mh + vh * 0.031), rline,
 			COL_GOLD if not snap.get("resonances", []).is_empty() else COL_DIM_TEXT,
-			int(vh * 0.0125), vw * 0.85)
-		_status_end += vh * 0.0155
+			lsz, vw * 0.9 - el_lw - lgap)
+		_hot(Rect2(mx, y2 + mh + vh * 0.018, vw * 0.9, vh * 0.018), "info:elements")
 
 
 func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	var m: Dictionary = snap["map"]
 	var w: int = m["w"]
 	var h: int = m["h"]
-	var zone_y := _status_end + vh * 0.004
-	var zone_h := vh * Z_MAP_END - zone_y
-	var vx0 := 0
-	var vy0 := 0
-	var vtw := w
-	var vth := h
-	if zoom_room:
-		var vp := _room_view(m)
-		vtw = mini(maxi(vp.size.x, 9), w)
-		vth = mini(maxi(vp.size.y, 7), h)
-		var pp0: Vector2i = game.player["pos"]
-		vx0 = clampi(vp.get_center().x - vtw / 2, 0, w - vtw)
-		vy0 = clampi(vp.get_center().y - vth / 2, 0, h - vth)
-		vx0 = clampi(vx0, maxi(0, pp0.x - vtw + 1), mini(pp0.x, w - vtw))
-		vy0 = clampi(vy0, maxi(0, pp0.y - vth + 1), mini(pp0.y, h - vth))
-	_vx0 = vx0
-	_vy0 = vy0
-	_vx1 = vx0 + vtw - 1
-	_vy1 = vy0 + vth - 1
-	_ts = minf(minf(vw * 0.996 / vtw, zone_h / vth), vw / 8.0)
-	if int(_ts) != _warm_ts:
-		# the tile size changed (a new floor, the room camera): rasterise the
-		# sprites and their hit-flash silhouettes now, so no cold raster lands
-		# on the frame a blow does
-		_warm_ts = int(_ts)
+	var zone := _map_zone(vw, vh)
+	_layout_map(snap, zone)
+	if _raster != _warm_ts:
+		# the raster size changed (a new floor, a zoom): rasterise the sprites
+		# and their hit-flash silhouettes now, so no cold raster lands on the
+		# frame a blow does
+		_warm_ts = _raster
 		var ids := {"player": true}
 		for e0 in snap["enemies"]:
 			ids[String(e0["kind"])] = true
 		for id in ids:
 			Art.tex(id, _warm_ts)
 			Paint.silhouette(id, _warm_ts)
-	_mox = (vw - vtw * _ts) / 2.0 - vx0 * _ts
-	_moy = zone_y + (zone_h - vth * _ts) / 2.0 - vy0 * _ts
-	if not zoom_room:
-		_moy = zone_y  # anchored under the status strip; slack below feeds the log
 	var rt := _reel_t()
 	# a finished reel is history: its last poses (a wilted tender, a path's
 	# end) must never override the live board
@@ -2589,16 +3243,19 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 				if y > 0 and m["tiles"][(y - 1) * w + x] == 1:
 					draw_rect(Rect2(r.position, Vector2(_ts, maxf(_ts * 0.1, 2))), wtc)
 
-	# recent events fill whatever space this floor leaves under the map
-	var log_top := _moy + (_vy1 + 1) * _ts + vh * 0.012
-	var log_space := vh * Z_MAP_END - log_top
+	# recent events fill whatever space this floor leaves under the map - which
+	# is none while the camera fills the zone, and the slack of a zoomed-out
+	# floor otherwise (the tutorial's guide banner owns that space instead)
+	var log_top := _moy + h * _ts + vh * 0.012
+	var log_space := zone.end.y - log_top
 	var lfs := int(vh * 0.018)
 	var fit := int(log_space / (lfs * 1.4))
-	if fit > 0 and not log_lines.is_empty():
+	if fit > 0 and not log_lines.is_empty() and screen != "tutorial":
 		var start: int = maxi(0, log_lines.size() - fit)
 		var ly := log_top + lfs
 		for i in range(start, log_lines.size()):
-			_txt(Vector2(vw * 0.025, ly), log_lines[i], COL_TEXT if i == log_lines.size() - 1 else COL_DIM_TEXT, lfs)
+			_txt_fit(Vector2(vw * 0.025, ly), log_lines[i], COL_TEXT if i == log_lines.size() - 1 else COL_DIM_TEXT,
+				lfs, vw * 0.95)
 			ly += lfs * 1.4
 
 	for t in terr.keys():
@@ -2612,9 +3269,9 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 				var gph := float(t.x * 7 + t.y * 11)
 				var ctr := _tile_rect(t).get_center()
 				draw_set_transform(ctr, sin(_now() / 900.0 + gph) * 0.055, Vector2.ONE)
-				var gtx := Art.tex("growth", int(_ts))
+				var gtx := Art.tex("growth", _raster)
 				if gtx != null:
-					draw_texture(gtx, Vector2(-_ts / 2.0, -_ts / 2.0))
+					draw_texture_rect(gtx, Rect2(-_ts / 2.0, -_ts / 2.0, _ts, _ts), false)
 				draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 				if ((t.x * 73856093) ^ (t.y * 19349663)) % 4 == 0:
 					draw_circle(ctr + Vector2(_ts * 0.26, -_ts * 0.18), _ts * 0.055, Color(0.91, 0.70, 0.82))
@@ -2723,8 +3380,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	# ambient haze drifts across the world once the skies dim
 	var dimlvl: int = Anim.dim_shown(_reel, rt, int(snap["dim"]))
 	if dimlvl > 0:
-		var hz := Rect2(_mox + _vx0 * _ts, _moy + _vy0 * _ts,
-			(_vx1 - _vx0 + 1) * _ts, (_vy1 - _vy0 + 1) * _ts)
+		var hz := _shown_rect(zone)
 		var hsec := _now() / 1000.0
 		var choked: bool = int(snap["smog"]) >= int(game.floor_def(game.floor_num).get("smog_choke", 40))
 		for i in 6:
@@ -2776,8 +3432,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			draw_rect(_tile_rect(snap["player"]["pos"] + d).grow(-1), COL_TARGET, false, 2.0)
 
 	# soft vignette around the tile field for depth
-	var mr := Rect2(_mox + _vx0 * _ts, _moy + _vy0 * _ts,
-		float(_vx1 - _vx0 + 1) * _ts, float(_vy1 - _vy0 + 1) * _ts)
+	var mr := _shown_rect(zone)
 	var vd := _ts * 0.9
 	var vc := Color(0, 0, 0, 0.28)
 	var v0 := Color(0, 0, 0, 0.0)
@@ -2793,6 +3448,8 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	draw_polygon(PackedVector2Array([Vector2(mr.position.x, mr.end.y), Vector2(mr.position.x + vd, mr.end.y - vd),
 		Vector2(mr.end.x - vd, mr.end.y - vd), mr.end]),
 		PackedColorArray([vc, v0, v0, vc]))
+
+	_draw_edge_markers(snap, zone, vh)
 
 	# boss banner: name and a real health bar across the top of the map
 	for e in snap["enemies"]:
@@ -2914,16 +3571,16 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 		# sheet carries its own BACK. Android's Back button walks the same
 		# steps (_back), one level per press.
 		"up_keep":
-			msg = "Tap the ability to grow  ·  SHRINE SHOP backs out"
+			msg = "Pick one to grow  ·  SHRINE SHOP backs out"
 			col = COL_GOLD
 		"up_scrap":
-			msg = "Tap the one to SCRAP  ·  SHRINE SHOP backs out"
+			msg = "Pick one to recycle  ·  SHRINE SHOP backs out"
 			col = COL_GOLD
 		"up_variant":
-			msg = "Which way does it grow?  ·  BACK to redo the scrap"
+			msg = "Which way does it grow?  ·  BACK to change"
 			col = COL_GOLD
 		"cleanse":
-			msg = "Tap corruption beside you (or D-pad)"
+			msg = "Tap the tile to cleanse (or use the D-pad)"
 			col = COL_TARGET
 		"target_dir":
 			msg = flash
@@ -2935,17 +3592,54 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 			if flash != "":
 				msg = flash
 				col = COL_GOLD
+			elif _incoming(snap):
+				# the one warning that cannot wait. It used to live in the status
+				# strip, squeezed between the skies bar and the floor counter to
+				# about 9px on a phone - the line that was telling you something
+				# is about to hit was the hardest one on screen to read
+				msg = "Incoming! Step off the red tile"
+				col = COL_RED
+			elif _toast_live():
+				# the step's one notable event, for a moment, where the objective
+				# sits - the log that used to fill the space under the map is a
+				# tap away, and the animations already show every number
+				msg = _toast
+				col = COL_CREAM
 			elif screen == "tutorial":
 				msg = ""
 			elif snap["floor"] == 7:
-				msg = "DESTROY THE BOSS  ·  tap for log"
+				msg = "Defeat the boss to cool the Furnace"
 			elif int(snap["greened"]) < int(snap["green_need"]):
-				msg = "Stairs dormant - cleanse %d/%d to green the floor" % [snap["greened"], snap["green_need"]]
+				var left := int(snap["green_need"]) - int(snap["greened"])
+				msg = "Cleanse %d more to wake the stairs" % left
 				col = Color(0.6, 0.85, 0.55)
 			else:
-				msg = "Reach the gold-ringed stairs  ·  tap for log"
-	_txt_fit(Vector2(vw * 0.025, y), msg, col, int(vh * 0.022), vw * 0.95)
+				msg = "The stairs are awake - head down when ready"
+	# the line is the log's button: a small list mark at its end says so
+	# where "tap for log" used to be spelled out on every turn
+	var lx := vw * 0.955
+	var lw := vw * 0.03
+	var ly := y - vh * 0.012
+	for i in 3:
+		draw_line(Vector2(lx - lw, ly + i * vh * 0.006), Vector2(lx, ly + i * vh * 0.006), COL_DIM_TEXT, 2.0)
+	_txt_fit(Vector2(vw * 0.025, y), msg, col, int(vh * 0.022), vw * 0.88)
 	_hot(Rect2(0, vh * Z_AB_END, vw, vh * (Z_CTX_END - Z_AB_END)), "log")
+
+
+## Is the tile the tender is DRAWN on (mid-hop, the one it is landing on)
+## under a telegraph being carried out?
+func _incoming(snap: Dictionary) -> bool:
+	var shown_at: Vector2i = snap["player"]["pos"]
+	if Anim.playing(_reel, _reel_t()):
+		shown_at = Vector2i((Anim.pos_at(_reel, "player", _reel_t(), Vector2(shown_at))).round())
+	return _threat_tiles(_threat_snap(snap)).has(shown_at)
+
+
+## The context line's moment of news: set from a step's events as each one
+## lands in the reel (_spawn_banners), shown for TOAST_MS.
+func _toast_live() -> bool:
+	var age := _now() - _toast_ms
+	return _toast != "" and age >= 0 and age < TOAST_MS
 
 
 func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
@@ -2962,7 +3656,7 @@ func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
 	_arrow_button(Rect2(dx + b + gap, dy + (b + gap) * 2, b, b), "down")
 	# the D-pad's empty top corners host the view toggles; the bottom corners
 	# are the satchel - one-tap consumables (hold for what they do)
-	_icon_button(Rect2(dx, dy, b, b), "ic_camera", "zoom", zoom_room)
+	_icon_button(Rect2(dx, dy, b, b), "ic_camera", "zoom", cam_overview)
 	_icon_button(Rect2(dx + (b + gap) * 2, dy, b, b), "ic_lens", "inspect", inspect_live)
 	var items: Array = game.player["items"]
 	for i in 2:
@@ -3246,7 +3940,7 @@ func _shop_cards(snap: Dictionary) -> Array:
 			"upcycle:%d" % k, game.shop_cost("press"), 0])
 	if not _legal_of("upcycle_ability").is_empty():
 		cards.append(["ab_default", "Forge an ability",
-			"Grow one ability, scrap another. Once per floor",
+			"Grow one ability, recycle another. Once a floor",
 			"forge", game.shop_cost("forge"), 0])
 	# the repeatable sink: the card shows while a re-drawable slot is stocked
 	# (a bought-out counter can never be redrawn) and prices itself from the
@@ -3344,7 +4038,7 @@ func _draw_forge_variants(vw: float, vh: float) -> void:
 	var acts := _forge_actions(mode_pick, mode_scrap)
 	var kid := String(kit[mode_pick]) if mode_pick >= 0 and mode_pick < kit.size() else ""
 	var sid := String(kit[mode_scrap]) if mode_scrap >= 0 and mode_scrap < kit.size() else ""
-	_txt_fit(Vector2(vw * 0.06, y), "Scrap %s, grow %s. Pick one:" % [
+	_txt_fit(Vector2(vw * 0.06, y), "Recycle %s to grow %s into:" % [
 		Content.ABILITIES.get(sid, {}).get("name", sid),
 		Content.ABILITIES.get(kid, {}).get("name", kid)],
 		COL_TEXT, int(vh * 0.024), vw * 0.88)
@@ -3367,11 +4061,14 @@ func _draw_forge_variants(vw: float, vh: float) -> void:
 
 func _draw_logsheet(vw: float, vh: float) -> void:
 	hotspots.clear()
-	var y := _sheet(vw, vh, "EVENT LOG  (tap to close)")
+	var y := _sheet(vw, vh, "EVENT LOG")
+	_txt_c(vw / 2.0, vh * 0.952, "tap to close", COL_DIM_TEXT, int(vh * 0.018))
 	var fsz := int(vh * 0.021)
-	var start: int = maxi(0, log_lines.size() - 28)
+	# as many as fit above the footer: a fixed 28 ran past the screen's foot
+	var start: int = maxi(0, log_lines.size() - int((vh * 0.93 - y) / (fsz * 1.45)))
 	for i in range(start, log_lines.size()):
-		_txt(Vector2(vw * 0.06, y), log_lines[i], COL_TEXT if i == log_lines.size() - 1 else COL_DIM_TEXT, fsz)
+		_txt_fit(Vector2(vw * 0.06, y), log_lines[i], COL_TEXT if i == log_lines.size() - 1 else COL_DIM_TEXT,
+			fsz, vw * 0.88)
 		y += fsz * 1.45
 
 
@@ -3387,47 +4084,12 @@ func _draw_logsheet(vw: float, vh: float) -> void:
 func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 	hotspots.clear()
 	var y := _sheet(vw, vh, "DESCENT DRAFT")
-	var slots: Array = snap.get("draft_slots", [])
-	# a FOCUS card on the sheet vs a focus the roll spent: the second is the
-	# truth about the skip, and only the draft_offer event carries it
-	var focused: bool = slots.has("focus")
-	var spent: bool = focused or _draft_focus_spent
-	# the head names the labels the sheet actually carries: Upgrades Only deals
-	# nothing but UPGRADE cards, and pointing at AFFINITY there would be a lie
-	var head := "Take one down with you:"
-	if focused:
-		head = "Your skip bought the FOCUS offer:"
-	elif spent:
-		head = "Nothing left to focus on - no extra offer:"
-	elif slots.has("affinity"):
-		head = "Take one down with you. AFFINITY matches your build:"
-	_txt_fit(Vector2(vw * 0.06, y), head, COL_TEXT, int(vh * 0.024), vw * 0.88); y += vh * 0.038
-	# the run's elements, so the counts a card moves are on the same sheet as
-	# the cards (Block D5). Nothing is drawn - and the head keeps exactly its
-	# old spacing - when no element is started, and the drop sheet skips the
-	# strip because it is the taller of the two (five kit cards) and its cards
-	# carry the BREAKS badge anyway.
-	var rline := _resonance_line(snap)
-	if rline != "" and mode != "draft_drop":
-		_txt_fit(Vector2(vw * 0.06, y), "ELEMENTS  %s" % rline,
-			COL_GOLD if not snap.get("resonances", []).is_empty() else COL_DIM_TEXT,
-			int(vh * 0.019), vw * 0.88)
-		y += vh * 0.028
-	else:
-		y += vh * 0.017
 	var bh := vh * 0.105
-	if mode != "draft_drop":
-		for c in _draft_cards(snap):
-			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), String(c[0]), String(c[1]), String(c[2]),
-				String(c[3]), vh, String(c[4]), int(c[5]), -1, true, bool(c[6]))
-			y += bh + vh * 0.02
-		y += vh * 0.015
-		_button(Rect2(vw * 0.25, _sheet_button_y(y, bh * 0.65, vh), vw * 0.5, bh * 0.65),
-			"skip again - +1 affinity next draft" if spent
-				else "skip - +1 affinity offer next draft",
-			"skip_draft", int(bh * 0.24))
-	else:
-		_txt_fit(Vector2(vw * 0.06, y), "Kit full - tap what to DROP:", COL_RED, int(vh * 0.024), vw * 0.88); y += vh * 0.05
+	if mode == "draft_drop":
+		# the swap's second half: one line, the cards, and the way back
+		_txt_fit(Vector2(vw * 0.06, y), "Your kit is full - pick one to swap out:",
+			COL_GOLD, int(vh * 0.024), vw * 0.88)
+		y += vh * 0.045
 		for c in _drop_cards(snap):
 			_card(Rect2(vw * 0.05, y, vw * 0.9, bh), String(c[0]), String(c[1]), String(c[2]),
 				String(c[3]), vh, String(c[4]), int(c[5]), -1, true, bool(c[6]))
@@ -3435,6 +4097,49 @@ func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 		y += vh * 0.02
 		_button(Rect2(vw * 0.25, _sheet_button_y(y, bh * 0.65, vh), vw * 0.5, bh * 0.65),
 			"BACK", "draft_back", int(bh * 0.26))
+		return
+	var slots: Array = snap.get("draft_slots", [])
+	# a FOCUS card on the sheet vs a focus the roll spent: the second is the
+	# truth about the skip, and only the draft_offer event carries it
+	var focused: bool = slots.has("focus")
+	var spent: bool = focused or _draft_focus_spent
+	# the head names the labels the sheet actually carries: Upgrades Only deals
+	# nothing but UPGRADE cards, and pointing at AFFINITY there would be a lie
+	var head := "Take one with you:"
+	if focused:
+		head = "Your skip earned a FOCUS offer:"
+	elif spent:
+		head = "Nothing left to focus on this time:"
+	elif slots.has("affinity"):
+		head = "Take one with you. AFFINITY fits your build."
+	_txt_fit(Vector2(vw * 0.06, y), head, COL_TEXT, int(vh * 0.024), vw * 0.88); y += vh * 0.038
+	# the run's elements, so the counts a card moves are on the same sheet as
+	# the cards (Block D5). Nothing is drawn - and the head keeps exactly its
+	# old spacing - when no element is started, and the drop sheet skips the
+	# strip because it is the taller of the two (five kit cards) and its cards
+	# carry the BREAKS badge anyway.
+	var rline := _resonance_line(snap)
+	if rline != "":
+		_txt_fit(Vector2(vw * 0.06, y), "ELEMENTS  %s" % rline,
+			COL_GOLD if not snap.get("resonances", []).is_empty() else COL_DIM_TEXT,
+			int(vh * 0.019), vw * 0.88)
+		y += vh * 0.028
+	else:
+		y += vh * 0.017
+	for c in _draft_cards(snap):
+		_card(Rect2(vw * 0.05, y, vw * 0.9, bh), String(c[0]), String(c[1]), String(c[2]),
+			String(c[3]), vh, String(c[4]), int(c[5]), -1, true, bool(c[6]))
+		y += bh + vh * 0.02
+	y += vh * 0.015
+	# SKIP in letters a thumb can read, what it buys underneath in small: the
+	# whole sentence used to be squeezed into the button at a third the size
+	var sr := Rect2(vw * 0.25, _sheet_button_y(y, bh * 0.72, vh), vw * 0.5, bh * 0.72)
+	_box(sr, _sb)
+	_txt_c_fit(sr.get_center().x, sr.position.y + sr.size.y * 0.47, "SKIP AGAIN" if spent else "SKIP",
+		COL_TEXT, int(bh * 0.26), sr.size.x * 0.9)
+	_txt_c_fit(sr.get_center().x, sr.position.y + sr.size.y * 0.8, "+1 FOCUS offer next floor",
+		COL_DIM_TEXT, int(bh * 0.15), sr.size.x * 0.9)
+	_hot(sr, "skip_draft")
 
 
 func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
@@ -3456,13 +4161,22 @@ func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 		for i in 5:  # the smog closes over the screen
 			var drift := fposmod(tsec * (0.02 + 0.01 * float(i % 2)) + float(i) * 0.23, 1.2) - 0.1
 			draw_circle(Vector2(vw * drift, vh * (0.08 + 0.06 * float(i))), vw * 0.16, Color(0.42, 0.36, 0.32, 0.08))
-		var skt := Art.tex("ic_choke", int(vh * 0.055))
-		if skt != null:
-			draw_texture(skt, Vector2(vw / 2.0 - vh * 0.0275, vh * 0.165))
+		# the sprout rests, drooping, rather than a skull: a run ends, the
+		# tender does not
+		var wt := Art.tex("player", int(vh * 0.07))
+		if wt != null:
+			draw_set_transform(Vector2(vw / 2.0, vh * 0.235), -0.32, Vector2.ONE)
+			draw_texture(wt, Vector2(-vh * 0.035, -vh * 0.07), Color(0.72, 0.68, 0.6, 0.9))
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	var oy := vh * 0.30
-	_txt_c(vw / 2.0, oy, "THE FURNACE IS COLD" if won else "YOU DIED", COL_GOLD if won else COL_RED, int(vh * 0.042))
+	_txt_c_fit(vw / 2.0, oy, "THE FURNACE IS COLD" if won else "YOU WILTED", COL_GOLD if won else COL_ROSE,
+		int(vh * 0.042), vw * 0.92)
 	oy += vh * 0.055
-	_txt_c_fit(vw / 2.0, oy, "the valley breathes again" if won else "cause: %s" % snap["death_cause"], COL_TEXT, int(vh * 0.024), vw * 0.9)
+	_txt_c_fit(vw / 2.0, oy, "the valley breathes again" if won else _cause_words(String(snap["death_cause"])),
+		COL_TEXT, int(vh * 0.024), vw * 0.9)
+	if not won:
+		oy += vh * 0.038
+		_txt_c_fit(vw / 2.0, oy, "Every sprout gets another spring.", COL_CREAM, int(vh * 0.021), vw * 0.9)
 	oy += vh * 0.07
 	_txt_c(vw / 2.0, oy, "floor %d · turn %d · bloom %d" % [snap["floor"], snap["turn"], snap["bloom"]], COL_TEXT, int(vh * 0.024))
 	oy += vh * 0.04
@@ -3491,50 +4205,49 @@ func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 		_txt_c_fit(vw / 2.0, oy, label, COL_GOLD, int(vh * 0.021), vw * 0.92)
 		oy += vh * 0.032
 	oy = maxf(oy + vh * 0.03, vh * 0.64)
-	_txt_c(vw / 2.0, oy, "- tap anywhere for a new run -", COL_GOLD, int(vh * 0.026))
+	_txt_c(vw / 2.0, oy, "- tap for a new run -", COL_GOLD, int(vh * 0.026))
 	_button(Rect2(vw * 0.3, oy + vh * 0.05, vw * 0.4, vh * 0.06), "MENU", "menu", int(vh * 0.024))
 
 
 func _draw_intro(vw: float, vh: float) -> void:
 	hotspots.clear()
 	draw_rect(Rect2(0, 0, vw, vh), COL_SHEET)
-	var x := vw * 0.07
-	var y := vh * 0.1
+	var x := vw * 0.08
+	var y := vh * 0.11
 	draw_circle(Vector2(vw * 0.82, vh * 0.085), vw * 0.09, Color(0.95, 0.88, 0.55, 0.10))
 	draw_circle(Vector2(vw * 0.82, vh * 0.085), vw * 0.055, Color("f2e4a0"))
 	var pt := Art.tex("player", int(vh * 0.055))
 	if pt != null:
 		draw_texture(pt, Vector2(vw * 0.66, vh * 0.055))
-	_txt(Vector2(x, y), "TENDER", COL_GOLD, int(vh * 0.05)); y += vh * 0.07
-	for pair in [
-		["The combine poisoned the world. You are a Tender.", COL_TEXT],
-		["Descend all 7 floors and shut down the Furnace.", COL_TEXT],
-		["", COL_TEXT],
-		["MOVE with the D-pad, or tap a tile beside you.", COL_TEXT],
-		["Move into an enemy to attack it.", COL_TEXT],
-		["RED tiles are incoming damage. Stay off.", COL_TEXT],
-		["The GOLD-RINGED stairs are the way down.", COL_TEXT],
-		["", COL_TEXT],
-		["Smog rises every turn. Deep smog kills - move fast.", COL_GOLD],
-		["", COL_TEXT],
-		["CLEANSE oil and goo: bloom AND thinner smog.", COL_TEXT],
-		["Shrines offer TWO grafts at their own prices - take one only.", COL_TEXT],
-		["Cleanse a WHOLE room: bonus bloom and a supply pod.", COL_TEXT],
-		["The stairs stay DORMANT until you green the floor.", COL_GOLD],
-		["Cast FROM growth: it surges the ability, and the tile is spent.", COL_TEXT],
-		["Punching SPIKED enemies costs you 1 HP. Use abilities.", COL_TEXT],
-		["Shrines UPCYCLE: press 2 items into 1, forge an ability into a variant.", COL_TEXT],
-		["Drill bots in pairs WELD into hulks - split them up.", COL_RED],
-		["Growth heals you while you stand on it.", COL_TEXT],
-		# the intro is exactly as long as the screen: this line took the blank
-		# that used to sit above the HOLD line rather than adding a 22nd row
-		["ELEMENTS: enough cards of one and it RESONATES all run.", COL_GOLD],
-		["HOLD anything to see what it is.", COL_GOLD],
-	]:
-		if pair[0] != "":
-			_txt_fit(Vector2(x, y), pair[0], pair[1], int(vh * 0.0235), vw * 0.88)
-		y += vh * 0.037
-	y += vh * 0.04
+	_txt(Vector2(x, y), "TENDER", COL_GOLD, int(vh * 0.05))
+	y += vh * 0.065
+	# one size for the card: the size its widest line fits at
+	var fsz := int(vh * 0.024)
+	var icon := vh * 0.042
+	var text_x := x + icon + vw * 0.04
+	for line in INTRO_STORY:
+		fsz = mini(fsz, _fit_size(String(line), fsz, vw * 0.86))
+	for rule in INTRO_RULES:
+		fsz = mini(fsz, _fit_size(String(rule[1]), fsz, vw * 0.94 - text_x))
+	for line in INTRO_STORY:
+		_txt(Vector2(x, y), String(line), COL_CREAM, fsz)
+		y += vh * 0.036
+	y += vh * 0.045
+	for rule in INTRO_RULES:
+		var cy := y - fsz * 0.35
+		var id := String(rule[0])
+		if id == "red":
+			# the telegraph itself: a floor tile washed in the threat red
+			var rr := Rect2(x, cy - icon / 2.0, icon, icon)
+			draw_rect(rr, COL_FLOOR)
+			draw_rect(rr, Color(0.88, 0.25, 0.15, 0.55))
+		else:
+			var tx := Art.tex(id, int(icon))
+			if tx != null:
+				draw_texture(tx, Vector2(x, cy - icon / 2.0))
+		_txt(Vector2(text_x, y), String(rule[1]), COL_TEXT, fsz)
+		y += vh * 0.072
+	y += vh * 0.03
 	_txt_c(vw / 2.0, y, "- tap to begin -", COL_GOLD, int(vh * 0.03))
 
 
@@ -3549,10 +4262,11 @@ func _draw_help(vw: float, vh: float) -> void:
 	hotspots.clear()
 	var pages := _help_pages()
 	var next_hint := "tap for more" if help_page < pages - 1 else "tap to close"
-	var y := _sheet(vw, vh, "LEGEND  %d/%d  (%s)" % [help_page + 1, pages, next_hint])
+	var y := _sheet(vw, vh, "LEGEND  %d/%d" % [help_page + 1, pages])
+	_txt_c(vw / 2.0, vh * 0.952, next_hint, COL_DIM_TEXT, int(vh * 0.018))
 	var start := help_page * HELP_PAGE_SIZE
 	var count := mini(HELP_PAGE_SIZE, LEGEND.size() - start)
-	var row_h := (vh - y - vh * 0.03) / HELP_PAGE_SIZE
+	var row_h := (vh * 0.93 - y) / HELP_PAGE_SIZE
 	for i in count:
 		var row: Array = LEGEND[start + i]
 		var yy := y + i * row_h

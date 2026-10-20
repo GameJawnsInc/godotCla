@@ -111,7 +111,10 @@ func _capture(sc: Dictionary, out_dir: String) -> bool:
 	shell.tooltip = []
 	shell.flash = ""
 	shell.log_lines = []
-	shell.zoom_room = false
+	# the whole floor, as these strips have always been framed: zoomed all the
+	# way out is a zoom that holds across the step (a peek would end on it)
+	shell._cam_reset()
+	shell.cam_cols = shell.CAM_COLS_MAX
 	shell.anim_mode = _env("CAPTURE_SPEED", "full")
 	shell._reel = {}
 	var t0 := 1000000

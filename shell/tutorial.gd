@@ -43,75 +43,78 @@ const KIT := ["solar_lance", "seed_bomb", "mycelium_dash"]
 ## Tutorial floor pacing: no reinforcements, sky never dims, choke far away.
 const FDEF := {"smog_spawn": [999], "smog_spawn_every": 0, "smog_dim": [900, 950], "smog_choke": 999, "green_need": 2}
 
+## Every `say` is at most two short lines (tests/test_shell.gd
+## _check_tutorial_text holds each one to the banner's size on the narrowest
+## phone, unshrunk): one idea per step, said warmly, in the player's own verbs.
 const STEPS := [
 	{
-		"say": ["This sprout is you.", "Press the D-pad RIGHT to move."],
+		"say": ["This little sprout is you!", "Tap RIGHT on the D-pad to move."],
 		"expect": {"type": "move", "dir": Vector2i(1, 0)},
 	},
 	{
-		"say": ["Moving costs 1 charge (the bolt up top).", "Charge refills each turn. Move RIGHT again."],
+		"say": ["Moving costs 1 charge (the bolt).", "It refills each turn. RIGHT again."],
 		"expect": {"type": "move", "dir": Vector2i(1, 0)},
 	},
 	{
-		"say": ["That machine ahead is a Drill Bot.", "End your turn (END button) and watch it."],
+		"say": ["A Drill Bot! Tap END to pass", "the turn and see what it does."],
 		"expect": {"type": "end_turn"},
 	},
 	{
-		"say": ["It moved toward you. The tile it will hit", "glows RED a full turn ahead.", "End turn again."],
+		"say": ["It came closer. RED marks where", "it will strike next. END again."],
 		"expect": {"type": "end_turn"},
 	},
 	{
-		"say": ["Step off a RED tile, or fight.", "Walk INTO the drill bot to strike it."],
+		"say": ["Step off the red - or be brave:", "walk INTO the bot to strike it."],
 		"expect": {"type": "strike"},
 		"allow_nav": true,
 		"do": null,
 	},
 	{
-		"say": ["Hit it again. A strike costs 1, deals 1.", "Your abilities below hit harder."],
+		"say": ["Nice! A strike deals 1.", "Strike again."],
 		"expect": {"type": "strike"},
 		"allow_nav": true,
 		"do": null,
 	},
 	{
-		"say": ["Finish it: strike again, or tap ability 1", "(Solar Lance) and aim at it."],
+		"say": ["Finish it off: strike again,", "or tap SOLAR LANCE and aim."],
 		"expect": {},
 		"free": true,
 		"until_dead": "drill_bot",
 		"do": null,
 	},
 	{
-		"say": ["Scrapped. Now the Coal Golem - it is SPIKED,", "so punching it costs you 1 HP.", "Line up its row, tap SOLAR LANCE, aim."],
+		"say": ["Scrapped! The golem is SPIKED, so", "punches hurt. LANCE it from afar."],
 		"expect": {"type": "ability", "slot": 0},
 		"allow_nav": true,
 		"until_dead": "coal_golem",
 		"do": null,
 	},
 	{
-		"say": ["Those dark puddles are OIL - the combine's.", "The stairs stay DORMANT until you green the", "floor ('green 0/2' up top). Stand NEXT to one,", "press CLEANSE, aim. It pays bloom, leaves GROWTH."],
+		"say": ["Oil! Stand beside it, tap CLEANSE", "and aim. It pays bloom, leaves growth."],
 		"expect": {"type": "cleanse"},
 		"allow_nav": true,
 		"do": null,
 	},
 	{
-		"say": ["Growth heals you, and fuels your casts.", "Stand ON growth, then cast SEED BOMB", "(ability 2): it surges, and spends the tile."],
+		"say": ["Growth heals you. Stand ON it, then", "cast SEED BOMB: growth powers it up."],
 		"expect": {"type": "ability", "slot": 1},
 		"allow_nav": true,
 		"do": null,
 	},
 	{
-		"say": ["Now cleanse the last of it. A fully tended", "room BLOOMS: bonus bloom and a supply pod -", "and THE STAIRS AWAKEN."],
+		"say": ["Cleanse the last of it. A tended room", "BLOOMS - and the stairs wake up!"],
 		"expect": {"type": "cleanse"},
 		"allow_nav": true,
 		"do": null,
 	},
 	{
-		"say": ["Walk over the pod to pocket the item, then", "TAP the satchel slot by the D-pad to use it.", "Items cost no turn."],
+		"say": ["A supply pod! Walk over it, then", "tap your satchel slot. It's free!"],
 		"expect": {"type": "use_item"},
 		"allow_nav": true,
 		"do": null,
 	},
 	{
-		"say": ["Bloom is money: shrines sell heals, abilities,", "grafts and items, and the smog keeps rising.", "Every floor: green it, wake the stairs, descend.", "Stand on them."],
+		"say": ["Spend bloom at shrines later. Now", "stand on the stairs and DESCEND."],
 		"expect": {"type": "descend"},
 		"allow_nav": true,
 		"do": null,
@@ -120,11 +123,9 @@ const STEPS := [
 ]
 
 const DONE := [
-	"That's the loop: read the red tiles, green each",
-	"floor to wake its stairs, cast from your garden,",
-	"and stay ahead of the smog.",
-	"",
-	"Seven floors down, the Furnace waits.",
+	"You're a natural!",
+	"Green each floor, wake its stairs,",
+	"and cool the Furnace far below.",
 ]
 
 const GLYPH_TERRAIN := {"~": "oil", "\"": "growth", ";": "goo", "&": "rich_goo", "*": "fire", "%": "smoke", "8": "roots"}

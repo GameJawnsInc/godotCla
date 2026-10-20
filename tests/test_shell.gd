@@ -103,10 +103,22 @@ func _init() -> void:
 	_check(shell.screen == "game", "RESUME returns to the live run")
 	shell._tap("set:hold")
 	_check(shell.hold_ms in [300, 420, 650], "settings cycle hold delay")
+	# the camera row walks the four presets and wraps, starting from wherever
+	# a pinch left the zoom
+	var keep_cols: float = shell.cam_cols
+	shell.cam_cols = 10.5
+	var seen: Array = []
+	for i in 4:
+		shell._tap("set:camera")
+		seen.append(shell._cam_zoom_name())
+	_check(seen == ["normal", "far", "whole floor", "near"], "the camera row cycles near/normal/far/whole floor (%s)" % str(seen))
+	shell.cam_cols = keep_cols
+	shell._save_settings()
 	shell._tap("zoom")
-	_check(shell.zoom_room, "camera button toggles room zoom")
+	_check(shell.cam_overview, "the camera button peeks at the whole floor")
 	_check(not shell.game.map.get("rooms", []).is_empty(), "generated floors expose rooms")
 	shell._tap("zoom")
+	_check(not shell.cam_overview, "...and a second tap ends the peek")
 	shell._tap("inspect")
 	_check(shell.inspect_live, "magnifier button toggles live inspect")
 	shell._tap("inspect")
@@ -177,7 +189,7 @@ func _init() -> void:
 	shell3._ability_press(2)  # mycelium_dash: the mobility slot is never scrap
 	_check(shell3.game.player["kit"].size() == ksz and shell3.mode == "up_scrap",
 		"the forge refuses to scrap the mobility ability")
-	_check(shell3.flash == "can't scrap your mobility ability", "...and says why")
+	_check(shell3.flash == "your mobility ability can't be recycled", "...and says why")
 	shell3._ability_press(1)
 	# Block D6: solar_lance is a FORKED base, so the sim lists one forge action
 	# per (keep, scrap, variant) triple and the scrap tap opens the fork sheet
@@ -359,7 +371,7 @@ func _init() -> void:
 	shop3._tap("shop")
 	shop3._tap("buy:ability")
 	_check(shop3.mode == "shop", "a full kit leaves the sheet open on the ability card")
-	_check(shop3.flash == "can't buy that", "...and says the card is not for sale")
+	_check(shop3.flash == "your kit is full", "...and says why the card is not for sale (%s)" % shop3.flash)
 	_check(shop3.game.player["kit"] == kit_before, "the full kit is untouched")
 	_check(shop3.game.bloom == bloom_before, "no bloom is spent")
 	_check(shop3.game.shop.has("ability"), "the ability card stays stocked")
@@ -396,9 +408,16 @@ func _init() -> void:
 	var evsh = _bare_shell()
 	evsh.game = Game.new(1, {})
 	_check(evsh._ev_text({"t": "damage", "who": "player", "amt": 2, "src": "fire:solar_lance"})
-		== "You take 2 dmg (fire)", "a qualified damage source reads as the bare source")
+		== "You take 2 (fire)", "a qualified damage source reads as the bare source")
 	_check(evsh._ev_text({"t": "damage", "who": "player", "amt": 1, "src": "goo"})
-		== "You take 1 dmg (goo)", "an unqualified source is untouched")
+		== "You take 1 (goo)", "an unqualified source is untouched")
+	_check(evsh._ev_text({"t": "damage", "who": "player", "amt": 2, "src": "drill_bot"})
+		== "You take 2 (Drill Bot)", "a machine source reads as its name, never its id")
+	_check(evsh._ev_text({"t": "draft_upgrade", "id": "solar_lance+noon"}) == "Grew into Noon Lance",
+		"an upgrade names the variant, never its id")
+	_check(evsh._cause_words("drill_bot") == "felled by a Drill Bot" and evsh._cause_words("oil_sludge") == "felled by an Oil Sludge"
+			and evsh._cause_words("overseer") == "felled by The Overseer" and evsh._cause_words("smog") == "lost in the smog",
+		"the over sheet names what ended the run in words (%s)" % evsh._cause_words("drill_bot"))
 	_check(evsh._ev_text({"t": "damage", "who": "drill_bot", "amt": 3}) == "Drill Bot takes 3",
 		"enemy damage lines never show a source")
 	_check(evsh._ev_text({"t": "buy", "item": "graft", "id": "bloom_surge", "discarded": "carapace"})
@@ -628,6 +647,11 @@ func _init() -> void:
 	_check_cleanse_hint()
 	_check_card_text()
 	_check_tier_clamp()
+	_check_tutorial_text()
+	_check_intro_text()
+	_check_legend_text()
+	_check_camera()
+	_check_camera_gestures()
 
 	shell.free()
 	shell2.free()
@@ -666,7 +690,7 @@ func _check_cleanse_hint() -> void:
 			g.terrain.erase(t)
 	# a) nothing anywhere near: the plain answer, unchanged
 	sh._tap("cleanse")
-	_check(sh.mode != "cleanse" and sh.flash == "no corruption beside you",
+	_check(sh.mode != "cleanse" and sh.flash == "nothing to cleanse beside you",
 		"CLEANSE with nothing beside you says so (got %s)" % sh.flash)
 	# b) standing ON it - the case that reads as a dead end
 	g.terrain[p] = {"kind": "oil"}
@@ -815,6 +839,343 @@ func _check_card_text() -> void:
 	sh.free()
 
 
+## --- no walls of text ------------------------------------------------------------
+## The owner's ask was "make sure we're not overloading screens with walls of
+## text". The intro card was 18 rules at whatever size each one could be
+## squeezed to, and tutorial steps ran to four lines that shrank one by one.
+## These hold the line where it was redrawn: a guide step is at most
+## Shell.TUT_LINES lines that fit the banner nearly unshrunk on every phone
+## shape, the intro is two lines of story and six rules, and a legend blurb is
+## one line at its own size.
+func _check_tutorial_text() -> void:
+	var sh = _bare_shell()
+	var worst := 1.0
+	var worst_at := ""
+	for st in Tutorial.STEPS:
+		_check(st["say"].size() <= Shell.TUT_LINES,
+			"a guide step says at most %d lines (%s)" % [Shell.TUT_LINES, str(st["say"])])
+	_check(Tutorial.DONE.size() <= 4, "the tutorial's last card is at most four lines")
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		var nominal: int = sh._tut_font(vh)
+		for st in Tutorial.STEPS:
+			for line in st["say"]:
+				var f: int = sh._fit_size(String(line), nominal, vw * 0.9)
+				if float(f) / nominal < worst:
+					worst = float(f) / nominal
+					worst_at = "'%s' at %dx%d" % [line, int(vw), int(vh)]
+	# measured on the tree first: every step is 100% on 9:16 and 9:20 and the
+	# longest line drops to 93% on a 9:22 phone
+	_check(worst >= 0.9, "a guide line shrinks to %.0f%% of the banner size (%s)" % [worst * 100.0, worst_at])
+	print("tutorial text: %d steps, worst line at %.0f%% of the banner size (%s)" % [
+		Tutorial.STEPS.size(), worst * 100.0, worst_at])
+	sh.free()
+
+
+func _check_intro_text() -> void:
+	var sh = _bare_shell()
+	_check(Shell.INTRO_STORY.size() <= 2 and Shell.INTRO_RULES.size() <= 6,
+		"the intro card is two lines of story and at most six rules (%d + %d)" % [
+			Shell.INTRO_STORY.size(), Shell.INTRO_RULES.size()])
+	for rule in Shell.INTRO_RULES:
+		_check(String(rule[0]) == "red" or Art.ART.has(String(rule[0])), "intro rule icon %s has art" % rule[0])
+	var worst := 1.0
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		# _draw_intro's own arithmetic: one size, the one its widest line fits at
+		var fsz := int(vh * 0.024)
+		var text_x := vw * 0.08 + vh * 0.042 + vw * 0.04
+		for line in Shell.INTRO_STORY:
+			fsz = mini(fsz, sh._fit_size(String(line), fsz, vw * 0.86))
+		for rule in Shell.INTRO_RULES:
+			fsz = mini(fsz, sh._fit_size(String(rule[1]), fsz, vw * 0.94 - text_x))
+		worst = minf(worst, float(fsz) / vh)
+	# the card shares one size; it must still read at a glance. Measured on
+	# the tree first: 1.63% on a 9:22 phone, 1.79% at 1080x2400 - the card
+	# description gate's floor is 1.15%, and this one is well above it
+	_check(worst >= 0.015, "the intro card's text drops to %.2f%% of viewport height" % (worst * 100.0))
+	sh.free()
+
+
+func _check_legend_text() -> void:
+	var sh = _bare_shell()
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		# _draw_help's row arithmetic
+		var row_h := (vh * 0.93 - vh * 0.16) / Shell.HELP_PAGE_SIZE
+		var isz := int(minf(row_h * 0.72, vh * 0.038))
+		var text_x := vw * 0.05 + isz * 1.35
+		var bsz := int(minf(vh * 0.0165, row_h * 0.27))
+		for row in Shell.LEGEND:
+			_check(sh._fit_size(String(row[2]), bsz, vw * 0.95 - text_x) == bsz,
+				"legend blurb for %s fits its row unshrunk at %dx%d ('%s')" % [row[0], int(vw), int(vh), row[2]])
+	sh.free()
+
+
+## --- the camera -------------------------------------------------------------------
+## One view that follows the tender (shell/main.gd "the camera"). Its rules,
+## asked of _cam_target / _layout_map directly: the tender is always on screen,
+## the view never shows past the floor's edge, a room that fits is framed
+## whole, the whole floor is one pinch (or one peek) away, a tile aim frames
+## every target, and a peek or a drag ends on the next action.
+const CAM_VP := Vector2(1080, 2400)
+
+func _cam_shell(seed_v: int, cfg: Dictionary = {}):
+	var sh = _bare_shell()
+	sh.game = Game.new(seed_v, cfg)
+	sh.cam_cols = Shell.CAM_COLS_DEFAULT
+	sh.anim_mode = "off"  # the camera snaps: these ask where it IS, not how it glides
+	sh._status_end = sh._status_height(sh.game.snapshot(), CAM_VP.y)
+	return sh
+
+
+## [view rect in tiles, zone] for the camera's current target.
+func _cam_view(sh) -> Array:
+	var zone: Rect2 = sh._map_zone(CAM_VP.x, CAM_VP.y)
+	var t: Dictionary = sh._cam_target(sh.game.snapshot(), zone)
+	var ts := float(t["ts"])
+	var vwt := zone.size.x / ts
+	var vht := zone.size.y / ts
+	return [Rect2(float(t["cx"]) - vwt / 2.0, float(t["cy"]) - vht / 2.0, vwt, vht), zone, ts]
+
+
+func _check_camera() -> void:
+	var bad_in := 0
+	var bad_edge := 0
+	var steps := 0
+	var framed := 0
+	var in_room := 0
+	var R := preload("res://bots/roster.gd")
+	for seed_v in [3, 11, 42, 4242]:
+		var sh = _cam_shell(seed_v)
+		var bot = R.make("optimizer", seed_v)
+		for i in 160:
+			var g = sh.game
+			if g.over:
+				break
+			if g.phase == "play":
+				var cv := _cam_view(sh)
+				var view: Rect2 = cv[0]
+				var pp: Vector2i = g.player["pos"]
+				steps += 1
+				if not view.grow(0.001).encloses(Rect2(Vector2(pp), Vector2.ONE)):
+					bad_in += 1
+				var w := float(g.map["w"])
+				var h := float(g.map["h"])
+				# never past the floor on an axis the floor is bigger than the view
+				if (w > view.size.x and (view.position.x < -0.001 or view.end.x > w + 0.001)) \
+						or (h > view.size.y and (view.position.y < -0.001 or view.end.y > h + 0.001)):
+					bad_edge += 1
+				for r in g.map.get("rooms", []):
+					var rr: Rect2i = (r as Rect2i).grow(1)
+					if rr.has_point(pp) and rr.size.x <= view.size.x and rr.size.y <= view.size.y:
+						in_room += 1
+						if view.grow(0.001).encloses(Rect2(Vector2(rr.position), Vector2(rr.size))):
+							framed += 1
+						break
+			sh._act(bot.choose_action(g.snapshot(), g.legal_actions()))
+		sh.free()
+	_check(steps > 300, "the camera sweep saw real play (%d steps)" % steps)
+	_check(bad_in == 0, "the tender is on screen at every step (%d of %d off)" % [bad_in, steps])
+	_check(bad_edge == 0, "the view never shows past the floor's edge (%d of %d)" % [bad_edge, steps])
+	_check(framed == in_room and in_room > 50, "a room that fits is framed whole (%d of %d)" % [framed, in_room])
+	print("camera: %d steps, tender always on screen, %d room frames all whole" % [steps, in_room])
+	# the default zoom is a real zoom: bigger tiles than the whole floor gave
+	var sz = _cam_shell(4242)
+	var zone: Rect2 = sz._map_zone(CAM_VP.x, CAM_VP.y)
+	var fit: float = Shell._cam_fit_ts(int(sz.game.map["w"]), int(sz.game.map["h"]), zone)
+	var t0: Dictionary = sz._cam_target(sz.game.snapshot(), zone)
+	_check(float(t0["ts"]) > fit * 1.4, "the default view is closer than the whole floor (%.0f vs %.0f px)" % [
+		float(t0["ts"]), fit])
+	# the peek is the whole floor; a pinch all the way out is too, and stays
+	sz.cam_overview = true
+	var t1: Dictionary = sz._cam_target(sz.game.snapshot(), zone)
+	_check(is_equal_approx(float(t1["ts"]), fit), "the peek shows the whole floor")
+	sz._act({"type": "end_turn"})
+	_check(not sz.cam_overview, "the next action ends the peek")
+	sz._set_zoom(Shell.CAM_COLS_MAX)
+	sz._act({"type": "end_turn"})
+	var t2: Dictionary = sz._cam_target(sz.game.snapshot(), zone)
+	_check(is_equal_approx(float(t2["ts"]), fit), "zoomed all the way out IS the whole floor, and it stays")
+	sz._set_zoom(1.0)
+	var t3: Dictionary = sz._cam_target(sz.game.snapshot(), zone)
+	_check(float(t3["ts"]) <= minf(zone.size.x, zone.size.y) / 6.0 + 0.01 and sz.cam_cols == Shell.CAM_COLS_MIN,
+		"zooming in stops at the closest view (%.0f px)" % float(t3["ts"]))
+	# a tile aim frames every tile it can land on, as far out as it must
+	sz._set_zoom(Shell.CAM_COLS_MIN)
+	sz.mode = "target_tile"
+	var m: Dictionary = sz.game.map
+	sz.mode_targets = [Vector2i(1, 1), Vector2i(int(m["w"]) - 2, int(m["h"]) - 2)]
+	var av: Array = _cam_view(sz)
+	var aim_ok := true
+	for tt in sz.mode_targets:
+		if not (av[0] as Rect2).grow(0.001).encloses(Rect2(Vector2(tt), Vector2.ONE)):
+			aim_ok = false
+	_check(aim_ok, "a tile aim frames every target, corner to corner")
+	sz.mode = "normal"
+	sz.mode_targets = []
+	# the tutorial shows its whole room, above the guide banner
+	sz.screen = "tutorial"
+	sz.tut_step = 0
+	sz.tut_done = false
+	sz.game = Game.new(1, Tutorial.game_config())
+	sz._status_end = sz._status_height(sz.game.snapshot(), CAM_VP.y)
+	var tz: Rect2 = sz._map_zone(CAM_VP.x, CAM_VP.y)
+	var tt0: Dictionary = sz._cam_target(sz.game.snapshot(), tz)
+	_check(float(tt0["ts"]) * float(sz.game.map["h"]) <= tz.size.y + 0.01
+			and tz.end.y <= CAM_VP.y * Shell.Z_MAP_END - sz._tut_banner_h(CAM_VP.y),
+		"the tutorial room fits whole above the guide banner")
+	# off-screen markers: the stairs get one when they are out of view, and a
+	# peek (which shows them) takes them all away
+	sz.screen = "game"
+	sz.game = Game.new(4242, {})
+	sz._cam_reset()
+	sz._status_end = sz._status_height(sz.game.snapshot(), CAM_VP.y)
+	sz.cam_cols = Shell.CAM_COLS_MIN
+	var mz: Rect2 = sz._map_zone(CAM_VP.x, CAM_VP.y)
+	sz._layout_map(sz.game.snapshot(), mz)
+	var pois: Array = sz._edge_pois(sz.game.snapshot(), mz)
+	var st: Vector2i = sz.game.map["stairs"]
+	var stairs_seen: bool = Rect2((mz.position.x - sz._mox) / sz._ts, (mz.position.y - sz._moy) / sz._ts,
+		mz.size.x / sz._ts, mz.size.y / sz._ts).grow(-0.2).has_point(Vector2(st) + Vector2(0.5, 0.5))
+	var stairs_marked := false
+	for poi in pois:
+		if String(poi["icon"]) == "stairs":
+			stairs_marked = true
+	_check(stairs_seen != stairs_marked, "the stairs are on screen or marked at the edge, never both or neither")
+	sz.cam_overview = true
+	sz._layout_map(sz.game.snapshot(), mz)
+	_check(sz._edge_pois(sz.game.snapshot(), mz).is_empty(), "a peek needs no edge markers")
+	# at rest the sprites are rasterised at the exact tile size
+	_check(sz._raster == int(round(sz._ts)), "a still camera rasterises at the exact tile size (%d vs %.1f)" % [
+		sz._raster, sz._ts])
+	sz.free()
+
+
+## Pinch, wheel and drag go through the real input handler, the way Android
+## delivers them: touch 0 arrives as an emulated mouse press too, so the
+## checks below assert the release of a pinch or a drag is NOT a tap - no move,
+## no strike, no turn.
+func _check_camera_gestures() -> void:
+	# a pinch and a wheel notch save the zoom: put the player's settings back
+	var cfg_keep := FileAccess.get_file_as_string(Shell.CFG_PATH) if FileAccess.file_exists(Shell.CFG_PATH) else ""
+	var sh = _cam_shell(4242)
+	sh.anim_mode = "full"
+	sh.clock_override = 1000
+	var zone: Rect2 = sh._map_zone(CAM_VP.x, CAM_VP.y)
+	sh._layout_map(sh.game.snapshot(), zone)
+	var g = sh.game
+	var pos0: Vector2i = g.player["pos"]
+	var turn0: int = g.total_turns
+	# a finger lands beside the tender (so a tap there WOULD move it)...
+	var d := _open_dir(g)
+	var p0: Vector2 = sh._tile_rect(pos0 + d).get_center()
+	var mb := InputEventMouseButton.new()
+	mb.button_index = MOUSE_BUTTON_LEFT
+	mb.pressed = true
+	mb.position = p0
+	sh._unhandled_input(mb)
+	var t0 := InputEventScreenTouch.new()
+	t0.index = 0
+	t0.pressed = true
+	t0.position = p0
+	sh._unhandled_input(t0)
+	# ...a second finger joins, and the two spread to twice the distance
+	var t1 := InputEventScreenTouch.new()
+	t1.index = 1
+	t1.pressed = true
+	t1.position = p0 + Vector2(200, 0)
+	sh._unhandled_input(t1)
+	var cols0: float = sh.cam_cols
+	var dr := InputEventScreenDrag.new()
+	dr.index = 1
+	dr.position = p0 + Vector2(400, 0)
+	sh._unhandled_input(dr)
+	_check(sh.cam_cols < cols0 * 0.6, "spreading two fingers zooms in (%.1f -> %.1f cols)" % [cols0, sh.cam_cols])
+	t1.pressed = false
+	sh._unhandled_input(t1)
+	t0.pressed = false
+	sh._unhandled_input(t0)
+	mb.pressed = false
+	sh._unhandled_input(mb)
+	_check(g.player["pos"] == pos0 and g.total_turns == turn0, "a pinch's release is not a tap: nothing moved")
+	var saved := ConfigFile.new()
+	saved.load(Shell.CFG_PATH)
+	_check(is_equal_approx(float(saved.get_value("ui", "cam_cols", -1.0)), sh.cam_cols),
+		"the zoom a pinch settles on is saved")
+	# a one-finger drag looks around, and its release is not a tap either
+	sh._layout_map(g.snapshot(), zone)
+	mb.pressed = true
+	mb.position = p0
+	sh._unhandled_input(mb)
+	var mm := InputEventMouseMotion.new()
+	mm.position = p0 + Vector2(-260, 0)
+	mm.relative = Vector2(-260, 0)
+	sh._unhandled_input(mm)
+	_check(sh._panning and sh.cam_pan != Vector2.ZERO, "a drag on the map looks around (%s)" % str(sh.cam_pan))
+	mb.pressed = false
+	mb.position = mm.position
+	sh._unhandled_input(mb)
+	_check(g.player["pos"] == pos0 and g.total_turns == turn0, "a drag's release is not a tap: nothing moved")
+	# a drag far past the floor's edge stops at the edge: the travel is not banked
+	for i in 30:
+		sh._pan_by(Vector2(-400, 0))
+	var far: Vector2 = sh.cam_pan
+	sh._pan_by(Vector2(80, 0))
+	_check(sh.cam_pan.x < far.x, "dragging back from the edge moves at once (%s -> %s)" % [str(far), str(sh.cam_pan)])
+	sh._act({"type": "end_turn"})
+	_check(sh.cam_pan == Vector2.ZERO, "the next action brings the camera back to the tender")
+	# the wheel zooms both ways, and a plain tap still moves
+	sh._set_zoom(Shell.CAM_COLS_DEFAULT)
+	sh._layout_map(g.snapshot(), zone)
+	var c1: float = sh.cam_cols
+	var wh := InputEventMouseButton.new()
+	wh.button_index = MOUSE_BUTTON_WHEEL_UP
+	wh.pressed = true
+	wh.position = p0
+	sh._unhandled_input(wh)
+	_check(sh.cam_cols < c1, "the mouse wheel zooms in (%.2f -> %.2f)" % [c1, sh.cam_cols])
+	sh._layout_map(g.snapshot(), zone)
+	var c2: float = sh.cam_cols
+	wh.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	sh._unhandled_input(wh)
+	_check(sh.cam_cols > c2, "...and out (%.2f -> %.2f)" % [c2, sh.cam_cols])
+	sh._layout_map(g.snapshot(), zone)
+	var pos1: Vector2i = g.player["pos"]
+	var tap_at: Vector2 = sh._tile_rect(pos1 + _open_dir(g)).get_center()
+	mb.pressed = true
+	mb.position = tap_at
+	sh._unhandled_input(mb)
+	mb.pressed = false
+	sh._unhandled_input(mb)
+	_check(g.player["pos"] != pos1 or g.total_turns != turn0, "a plain tap beside the tender still acts")
+	# only the map ZONE is the map: the camera crops the floor, so a tap in the
+	# empty space between the buttons below it must not read as the tile that
+	# lies, unseen, under that spot
+	sh._layout_map(g.snapshot(), zone)
+	var pos2: Vector2i = g.player["pos"]
+	var turn2: int = g.total_turns
+	var below: Vector2 = sh._tile_rect(pos2 + _open_dir(g)).get_center()
+	sh._cam_zone = Rect2(below + Vector2(0, -9000), Vector2(1, 1))  # the zone sits elsewhere
+	mb.pressed = true
+	mb.position = below
+	sh._unhandled_input(mb)
+	mb.pressed = false
+	sh._unhandled_input(mb)
+	_check(g.player["pos"] == pos2 and g.total_turns == turn2, "a tap outside the map zone never reaches the map")
+	sh.clock_override = -1
+	sh.free()
+	if cfg_keep == "":
+		DirAccess.remove_absolute(Shell.CFG_PATH)
+	else:
+		var cf := FileAccess.open(Shell.CFG_PATH, FileAccess.WRITE)
+		cf.store_string(cfg_keep)
+		cf.close()
+
+
 ## --- the Back button ---------------------------------------------------------
 ## Android's Back button (and gesture) used to KILL the app from any screen:
 ## application/config/quit_on_go_back defaults to true and nothing in the
@@ -862,10 +1223,14 @@ func _check_back() -> void:
 		"...and the next frame does not put it straight back (%s)" % str(bk.tooltip))
 	_check(bk._back(true) != "tooltip", "...so the next Back is not eaten by it too")
 	bk.screen = "game"
-	# the room camera is a view state, so Back zooms out before it leaves
-	bk.zoom_room = true
-	_check(bk._back(true) == "zoom" and not bk.zoom_room and bk.screen == "game",
-		"Back leaves the room camera before it leaves the run")
+	# a peek or a look-around is a view state, so Back returns the camera to
+	# the tender before it leaves the run
+	bk.cam_overview = true
+	_check(bk._back(true) == "camera" and not bk.cam_overview and bk.screen == "game",
+		"Back ends a whole-floor peek before it leaves the run")
+	bk.cam_pan = Vector2(3, 1)
+	_check(bk._back(true) == "camera" and bk.cam_pan == Vector2.ZERO and bk.screen == "game",
+		"Back ends a look-around before it leaves the run")
 	# the draft's drop sheet returns to the offer cards, having picked nothing
 	bk.mode = "draft_drop"
 	bk.mode_pick = 1
@@ -1137,8 +1502,9 @@ func _dir_files(path: String) -> Array:
 	return out
 
 
-## Pick the action that makes progress on the tutorial's current step.
-func _solve(shell) -> Dictionary:
+## Pick the action that makes progress on the tutorial's current step. Static,
+## so tests/capture_screens.gd walks the tutorial with the same solver.
+static func _solve(shell) -> Dictionary:
 	var g = shell.game
 	var st: Dictionary = Tutorial.STEPS[shell.tut_step]
 	var expect: Dictionary = st.get("expect", {})
@@ -1206,7 +1572,7 @@ func _solve(shell) -> Dictionary:
 	return {"type": "end_turn"}
 
 
-func _approach(g, goal: Vector2i) -> Dictionary:
+static func _approach(g, goal: Vector2i) -> Dictionary:
 	if goal == Vector2i(-1, -1):
 		return {"type": "end_turn"}
 	var best := {}
@@ -1225,14 +1591,14 @@ func _approach(g, goal: Vector2i) -> Dictionary:
 	return best
 
 
-func _enemy_pos_at(g, p: Vector2i) -> bool:
+static func _enemy_pos_at(g, p: Vector2i) -> bool:
 	for e in g.enemies:
 		if e["pos"] == p:
 			return true
 	return false
 
 
-func _nearest_enemy(g) -> Vector2i:
+static func _nearest_enemy(g) -> Vector2i:
 	var pp: Vector2i = g.player["pos"]
 	var best := Vector2i(-1, -1)
 	var bd := 9999
@@ -1244,7 +1610,7 @@ func _nearest_enemy(g) -> Vector2i:
 	return best
 
 
-func _nearest_corruption(g) -> Vector2i:
+static func _nearest_corruption(g) -> Vector2i:
 	var pp: Vector2i = g.player["pos"]
 	var best := Vector2i(-1, -1)
 	var bd := 9999

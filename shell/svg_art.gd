@@ -96,6 +96,7 @@ static var ART := {
 
 
 static var _cache := {}
+const CACHE_MAX := 640
 
 
 ## Rasterize an SVG sprite at the given pixel size (cached).
@@ -108,5 +109,10 @@ static func tex(id: String, size: int) -> ImageTexture:
 	var img := Image.new()
 	img.load_svg_from_string(ART[id], float(size) / 32.0)
 	var t := ImageTexture.create_from_image(img)
+	if _cache.size() >= CACHE_MAX:
+		# the camera zooms continuously, so the sizes asked for are not a fixed
+		# few any more: past the cap the cache starts over (the next frames
+		# re-rasterise only what they draw) rather than growing for ever
+		_cache.clear()
 	_cache[key] = t
 	return t
