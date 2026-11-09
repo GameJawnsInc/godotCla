@@ -991,8 +991,22 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (14
-  today: Block D5 — one resonance per element. ONE `Content.RESONANCES` row
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (15
+  today: the floor-2 clock. One `Content.FLOORS` row moved — Strip Mine II
+  carried the tightest smog clock of floors 1-4 (spawn `[9, 17]` every 10, dim
+  `[12, 20]`, choke 36) on the floor that introduces the first drain/gum
+  roster, and the noob persona's deaths piled there (sprout 54/200 on floor 2,
+  its modal death floor). It now sits between its neighbours (`[10, 19]` every
+  11, dim `[14, 22]`, choke 37): sprout floor-2 deaths 54 -> 38 of 200 and avg
+  floor 3.7 -> 4.0, optimizer 53 -> 55 of 100 and the magpie canary 16 -> 19
+  of 200, both inside noise (`docs/BALANCE.md` 2026-11-09). A stored log
+  diverges at floor 2's first smog threshold and at nothing earlier. 83 of 96
+  records are stamp-only; all 20 bot logs were re-recorded and 13 changed
+  (the wanderers, `det_fanatic_s42` and all three deeproot logs came back
+  byte-identical); `tests/test_economy.gd`'s floor-entry pins
+  (`RNG_FLOOR_ENTRY_BUMP15`) moved on 4 of 10 seeds, every row identical
+  through at least the floor-2 entry.
+  Bump 14 was Block D5 — one resonance per element. ONE `Content.RESONANCES` row
   ships, `cinder_grip` (fire 3 -> an ignite hook that roots), and it changes
   what happens in PLAY the moment a run's kit and grafts reach fire 3, so a
   stored log diverges at its FIRST IGNITION after that and at nothing else —
@@ -1301,6 +1315,35 @@ architecture below is designed to bend rather than block.
   by the owner as "wasn't able to clean up the second oil spill".
   `tests/test_shell.gd` `_check_cleanse_hint` drives all three refusals and
   then checks the ash the burning one promises really does open the aim.
+- An armed aim PREVIEWS its result (`shell/main.gd` `_preview_aim` /
+  `_preview_labels`): every legal cast of the armed slot is stepped on a
+  `clone()` of the sim and its own events are folded per enemy, so the map
+  labels `-3` / `KILL` / `-2 rooted` on each enemy a direction aim reaches and
+  the total on each target tile of a tile aim. It is exact (riders, surges,
+  collisions and hooks run on the copy) and leaks nothing, because a cast
+  draws no rng and only `end_turn` resolves the turn — a future op that DID
+  roll the main rng on cast would make the preview an oracle, and is the
+  thing to re-check here. The labels are data before they are drawn, and
+  `tests/test_shell.gd` `_check_aim_preview` holds them to the truth: the
+  label equals what the cast then deals, a lethal cast reads `KILL`, and
+  arming an aim leaves the live game's `state_hash()` untouched.
+- The payoff layer is on screen (`_spawn_fx`): `status`, `staggered`,
+  `resisted`, `screened`, `rider`, `surge`, `hook` and `ignite` events each
+  draw a floating word or burst where they happened (`ROOTED`, `STAGGER`,
+  `COMBO +2`, `SURGE`, the graft or resonance NAME via `_source_name`), all
+  but `ignite` have a `_ev_text` log line, and a collision hit shakes the
+  camera. Before this pass a rider or hook firing drew nothing and logged
+  nothing. Words landing on one tile fan out in time through the shared
+  `stack` counter (`_fx_word`). Haptics ride the same events: `_buzz(ms)`
+  keeps the strongest request and `_spawn_fx` fires ONE
+  `Input.vibrate_handheld` per step (`permissions/vibrate=true` in
+  `export_presets.cfg`; Settings -> Vibration, cfg key `haptics_on`).
+  `_check_payoff_fx` drives one of each event.
+- The APK is two commands on a fresh container: `tools/setup_android_export.sh`
+  (range-fetches the debug template, installs Ubuntu's `apksigner` package,
+  builds an SDK-shaped stub dir, a debug keystore and the editor settings)
+  and then the export line in `docs/SHELL.md`. The keystore is per container,
+  so a build will not install over an earlier session's: uninstall first.
 - Going back is ONE function (`shell/main.gd` `_back(quit_at_root)`), and it is
   the only place in the shell that implements "back". Android's Back button
   reaches it through `_notification(NOTIFICATION_WM_GO_BACK_REQUEST)` (with
