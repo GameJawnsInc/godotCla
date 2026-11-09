@@ -644,6 +644,8 @@ func _init() -> void:
 	_check_back()
 	_check_aim_cancel()
 	_check_modal_dpad()
+	_check_aim_preview()
+	_check_haptics()
 	_check_cleanse_hint()
 	_check_card_text()
 	_check_tier_clamp()
@@ -1357,6 +1359,128 @@ func _check_aim_cancel() -> void:
 	sw.free()
 
 
+## --- the aim preview tells the truth ------------------------------------------
+## Arming an aim reads each legal cast off a clone() of the sim and labels what
+## it would do. Two things are worth a gate: the label has to MATCH the cast
+## (a preview that is off by one is worse than none), and computing it must
+## never touch the live game - an aim costs nothing, so neither does looking.
+func _check_aim_preview() -> void:
+	var sh = _bare_shell()
+	sh.game = Game.new(4242, {})
+	var g = sh.game
+	g.player["charge"] = 5
+	var d := _open_dir(g)
+	var en: Dictionary = _park_enemy(g, g.player["pos"] + d)
+	en["hp"] = 5
+	var h0: String = g.state_hash()
+	sh._ability_press(0)  # solar_lance: 2 dmg down a line
+	_check(sh.mode == "target_dir", "preview: the lance arms a direction aim (%s)" % sh.mode)
+	_check(g.state_hash() == h0, "preview: arming an aim leaves the live game byte-identical")
+	var labels: Array = sh._preview_labels()
+	var mine: Array = labels.filter(func(l): return l["tile"] == en["pos"])
+	_check(mine.size() == 1 and String(mine[0]["text"]) == "-2" and not mine[0]["kill"],
+		"preview: the lance labels the body it would hit with its damage (%s)" % str(labels))
+	sh._dir_input(d)
+	_check(int(en["hp"]) == 3, "preview: and the cast then deals exactly that (hp %d)" % int(en["hp"]))
+	# a lethal cast reads KILL, not a number
+	en["hp"] = 2
+	g.player["charge"] = 5
+	sh._ability_press(0)
+	var kl: Array = sh._preview_labels().filter(func(l): return l["tile"] == en["pos"])
+	_check(kl.size() == 1 and String(kl[0]["text"]) == "KILL" and kl[0]["kill"],
+		"preview: a lethal lance reads KILL (%s)" % str(kl))
+	sh._cancel_aim()
+	_check(sh.mode == "normal", "preview: cancel leaves the aim")
+	_check(sh._aim_preview.is_empty() and sh._preview_labels().is_empty(),
+		"preview: a cancelled aim keeps no labels")
+	# an aim with nothing in reach promises nothing
+	en["pos"] = Vector2i(-9, -9)
+	sh._ability_press(0)
+	_check(sh.mode == "target_dir", "preview: the lance still arms with nobody in reach (%s)" % sh.mode)
+	_check(sh._preview_labels().is_empty(), "preview: an aim that reaches nobody labels nobody")
+	sh.free()
+	# the two other LINE shapes. Both were uncastable from the shell before
+	# this pass - the whip ("enemy_line") lists enemy positions and was handed
+	# a unit vector, the rake ("dir_enemy") fell through to a tile aim whose
+	# "tiles" were unit vectors - so the preview would have promised damage
+	# the next input could not deal.
+	for aid in ["vine_whip", "vine_whip+rake"]:
+		var sw = _bare_shell()
+		sw.game = Game.new(4242, {"kit": [aid, "seed_bomb", "mycelium_dash"]})
+		var gw = sw.game
+		gw.player["charge"] = 5
+		var pw: Vector2i = gw.player["pos"]
+		var dw := _open_run(gw, 2)
+		for e in gw.enemies:
+			e["pos"] = Vector2i(-9, -9)
+		var e1: Dictionary = gw.enemies[0]
+		e1["pos"] = pw + dw * 2
+		e1["hp"] = 9
+		# a second legal direction, so the press arms an aim instead of casting
+		var e2: Dictionary = gw.enemies[1]
+		var d2 := _open_run(gw, 2, dw)
+		e2["pos"] = pw + d2 * 2
+		e2["hp"] = 9
+		sw._ability_press(0)
+		_check(sw.mode == "target_dir", "preview: %s arms a direction aim (%s)" % [aid, sw.mode])
+		var wl: Array = sw._preview_labels().filter(func(l): return l["tile"] == e1["pos"])
+		_check(wl.size() == 1 and String(wl[0]["text"]) == "-2",
+			"preview: %s labels the body on its line (%s)" % [aid, str(sw._preview_labels())])
+		sw._dir_input(dw)
+		_check(int(e1["hp"]) == 7 and int(e2["hp"]) == 9,
+			"preview: a D-pad press casts %s down that line and deals what was shown (hp %d / %d, flash '%s')" % [
+				aid, int(e1["hp"]), int(e2["hp"]), sw.flash])
+		sw.free()
+	# a TILE aim labels the target tile: two snare targets, each reads rooted
+	var st = _bare_shell()
+	st.game = Game.new(4242, {"kit": ["sap_snare", "seed_bomb", "mycelium_dash"]})
+	var gt = st.game
+	gt.player["charge"] = 5
+	var pt: Vector2i = gt.player["pos"]
+	var dt := _open_run(gt, 2)
+	for e in gt.enemies:
+		e["pos"] = Vector2i(-9, -9)
+	gt.enemies[0]["pos"] = pt + dt
+	gt.enemies[1]["pos"] = pt + dt * 2
+	var ht: String = gt.state_hash()
+	st._ability_press(0)
+	_check(st.mode == "target_tile", "preview: two snare targets arm a tile aim (%s)" % st.mode)
+	_check(gt.state_hash() == ht, "preview: a tile aim leaves the live game byte-identical")
+	var tl: Array = st._preview_labels()
+	var tiles: Array = tl.map(func(l): return l["tile"])
+	_check(tl.size() == 2 and tiles.has(pt + dt) and tiles.has(pt + dt * 2)
+			and tl.all(func(l): return String(l["text"]) == "rooted" and st.mode_targets.has(l["tile"])),
+		"preview: each snare target tile reads 'rooted' (%s)" % str(tl))
+	st._try_ability_target(0, pt + dt)
+	_check(str(gt.enemies[0]).contains("root"),
+		"preview: and the snare then roots that body (%s)" % str(gt.enemies[0]))
+	st.free()
+
+
+## --- haptics ----------------------------------------------------------------
+## One vibration per step, the strongest any of its events asks for, and none
+## for a quiet step. (What a payoff LOOKS like is shell/anim.gd's job.)
+func _check_haptics() -> void:
+	var sh = _bare_shell()
+	sh.game = Game.new(4242, {})
+	var en: Dictionary = sh.game.enemies[0]
+	sh._buzz_events([
+		{"t": "damage", "who": en["kind"], "id": en["id"], "amt": 3, "src": "collision:water_jet"},
+		{"t": "rider", "id": "grow_spike", "kind": "per", "amt": 2},
+		{"t": "staggered", "id": en["id"]},
+	])
+	_check(sh._buzz_ms == 30, "haptics: one buzz a step, the strongest asked for (%d)" % sh._buzz_ms)
+	sh._buzz_events([{"t": "damage", "who": "player", "amt": 2, "src": "drill_bot"}])
+	_check(sh._buzz_ms == 70, "haptics: a hit on the tender scales with the damage (%d)" % sh._buzz_ms)
+	sh._buzz_events([{"t": "move", "who": "player"}])
+	_check(sh._buzz_ms == 0, "haptics: a quiet step asks for no buzz")
+	sh.haptics_on = true
+	sh._tap("set:haptics")
+	_check(not sh.haptics_on, "haptics: the vibration setting toggles")
+	sh._tap("set:haptics")  # and back on: the tap persists to user://tender.cfg
+	sh.free()
+
+
 ## --- a direction in a modal state ---------------------------------------------
 ## The forge is a three-tap modal choice, and its two SELECTION steps draw no
 ## sheet - so the D-pad and the arrow keys are still live right beside the
@@ -1446,6 +1570,26 @@ func _open_dir(g) -> Vector2i:
 		var t: Vector2i = pp + d
 		if t.x >= 0 and t.y >= 0 and t.x < int(m["w"]) and t.y < int(m["h"]) \
 				and int(m["tiles"][t.y * int(m["w"]) + t.x]) == 1:
+			return d
+	return Vector2i(1, 0)
+
+
+## A direction with `n` open floor tiles in a row from the tender, skipping
+## `avoid` - room to park a body at range.
+func _open_run(g, n: int, avoid := Vector2i.ZERO) -> Vector2i:
+	var m: Dictionary = g.map
+	var pp: Vector2i = g.player["pos"]
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if d == avoid:
+			continue
+		var ok := true
+		for k in range(1, n + 1):
+			var t: Vector2i = pp + d * k
+			if t.x < 0 or t.y < 0 or t.x >= int(m["w"]) or t.y >= int(m["h"]) \
+					or int(m["tiles"][t.y * int(m["w"]) + t.x]) != 1 or g.terrain.has(t):
+				ok = false
+				break
+		if ok:
 			return d
 	return Vector2i(1, 0)
 

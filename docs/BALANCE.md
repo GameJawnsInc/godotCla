@@ -22,7 +22,7 @@ Reference numbers for TENDER's difficulty, and the discipline for changing them.
 | optimizer | 45–65% wins             | skilled play should win often but never be safe (raised from 30–50 after the tempo fix — the old band measured a bot flaw). **2026-09-08 (D5) reads 16/30 = 53% [36, 70]** at 30 seeds, identical to the pre-D5 tree on the same seeds |
 | fanatic   | every build > 0 at 100 seeds (hard); 20–40% total (soft) | committing to a niche build must stay viable; the total tracks content difficulty and moves when content does |
 | magpie    | 0–5% design target, top bloom; gate trips at a 10% CI lower bound | full greed loses to the current game almost always; a RISE means greed got cheap (canary, like turtle). Under instrument v2 the recorded baseline is 10/100 [6, 17] (2026-09-07d reads 7/100 [3, 14], a fall inside noise); a 100-seed lower bound clearing 17% is the signal — see 2026-09-05d. **2026-09-07e (the D2 shrine reroll) is the first reading to fail the merge gate**: 7/30 CI [12, 41] at 30 seeds, 13/100 [8, 21] in sample and 18/100 [12, 27] out of sample, pooled 31/200 = 15.5% [11, 21] against 16/200 = 8% [5, 13] before, paired sign p = 0.0026 — the sink shipped behind the `spinning_shrine` mutator, so the default-config reading is 07d's 7/100 [3, 14] again. Bump 12 (D4, 2026-09-07g) re-reads it at 8/100 [4, 15] wins - unmoved from 07f - with stall floors 71 against 59 (1.20x, inside the 1.25x limit and the highest recorded) |
-| sprout    | avg depth 3.5–5, wins rare | noobs feel progress; full clears are earned |
+| sprout    | avg depth 3.5–5, wins rare (gate: Wilson lower bound <= 5%, re-derived 2026-11-09) | noobs feel progress; full clears are earned. **2026-11-09 (bump 16) reads avg floor 4.0 at 200 seeds** against 3.7 before, with floor-2 deaths 38/200 against 54/200 |
 | wanderer  | dies floor 1–2, 0 wins  | the world must punish random play |
 | all       | zero timeouts/softlocks | every run ends in win or death |
 
@@ -9476,3 +9476,97 @@ deeproot 26/30 -> 27/30 (CI [74%, 97%]); optimizer 16/30, magpie 3/30,
 sprout 1/30, wanderer 0 unchanged; optimizer bloom earned 44.7 -> 45.0/run.
 All gates pass. The shift is inside noise; not verified at 30+ seeds per
 persona beyond this run.
+
+## 2026-11-09 - bump 16: the floor-2 clock
+
+**Finding.** `Content.FLOORS[1]` (Strip Mine II) carried the tightest smog
+spawn and dim clock of floors 1-4 (its choke only tied floor 3 and was looser
+than floor 4's) - spawn `[9, 17]` every 10, dim `[12, 20]`, choke 36,
+against floor 1's `[10, 20]`/12/`[14, 22]`/38, floor 3's
+`[10, 18]`/11/`[14, 22]`/36 and floor 4's `[12, 22]`/12/`[14, 22]`/34 - on
+the floor that also raises the quota from 2 to 3 and introduces the first
+drain and gum enemies. No entry in this file gives a reason for the dip, and
+the Targets section asks for deaths that "spread across floors rather than
+piling on one wall". The noob persona's did not:
+
+| sprout, base tree | f1 | f2 | f3 | f4 | f5 | f6 | f7 |
+|---|---|---|---|---|---|---|---|
+| deaths, seeds 1..200 | 15 | **54** | 27 | 28 | 41 | 18 | 12 |
+
+157 of the 195 (81%) were smog deaths. Floor 2 was the modal death floor for sprout AND magpie
+(51/200), the standing watch item "magpie deaths cluster on floor 2".
+
+**Change.** One row: spawn `[10, 19]` every 11, dim `[14, 22]`, choke 37 -
+between its neighbours on every key, so the clock no longer dips at floor 2
+on the way from floor 1 to floor 3. No rule changed.
+
+**Measurement** (`PLAYTEST_BOTS=... PLAYTEST_SEEDS=200 PLAYTEST_GATE=0
+tests/playtest.gd`, tier 0, config `{}`, seeds 1..200, the same seeds on the
+pre-change tree in a worktree; optimizer at seeds 1..100):
+
+| persona | before | after |
+|---|---|---|
+| sprout floor-2 deaths | 54/200 = 27% | **38/200 = 19%** (seeds 1..100: 28 -> 18; 101..200: 26 -> 20) |
+| sprout avg floor | 3.7 | **4.0** (band 3.5-5) |
+| sprout deaths by floor | 15/54/27/28/41/18/12 | 15/38/31/23/48/25/13 |
+| sprout wins | 3/200 [1, 4] | 4/200 [1, 5] |
+| magpie wins (canary) | 16/200 = 8% [5, 13] | 19/200 = 9.5% [6, 14] (1..100: 9 -> 8; 101..200: 7 -> 11) |
+| magpie stall floors | 136 | 153 (1.125x, inside the 1.25x limit) |
+| optimizer wins | 53/100 [43, 62] | 55/100 [45, 64] (band 45-65) |
+| optimizer deaths by floor (3..7) | 2/6/12/16/11 | 2/5/14/14/10 |
+
+The unpaired two-proportion test on sprout's floor-2 deaths
+is z = 1.9, p = 0.06 - the direction holds in both halves of the seed range,
+the size is not pinned tighter than "about a third fewer".
+
+Re-measured on the merged tree, after main's bump 15 ("tending by any
+means") landed underneath it, against main as the control: every cell in the
+table above read the same on both sides (sprout 54 -> 38 floor-2 deaths and
+3 -> 4 wins of 200, magpie 16 -> 19 of 200, optimizer 53 -> 55 of 100).
+
+**Reading.** The relief lands where it was aimed (the noob), does not reach
+skilled play (optimizer +2 inside noise) and does not move the greed canary
+outside its interval - but magpie's out-of-sample half read +4 and its stall
+floors are the highest recorded, so **the next 100-seed canary reading is
+compared against [6, 17] as before, and a rise is first looked for here.**
+The deaths did not vanish, they moved one wall down: sprout's floor-5 count
+went 41 -> 48 and floor 6 18 -> 25. Floor 5 (Pipeworks: pump jack,
+smokestack, choke 32) now kills 48 of the at most 93 sprouts that reach it (about half) and is
+the persona's modal death floor; that is the designed ramp doing its job
+later in the run, and it is the next place to look if the noob curve is
+revisited.
+
+**Corpus.** `SIM_VERSION` 15 -> 16 (main took 15 for "tending by any means" while this
+was measured; the row was re-recorded on the merged tree). 84 of 97 records are stamp-only
+(`sim_version` the single differing key). All 20 bot logs were re-recorded on
+their personas: 13 changed and 7 came back byte-identical (same actions,
+same final hash) - the three wanderers, which never leave floor 1,
+`det_fanatic_s42` and all three deeproot logs.
+`tests/test_economy.gd`'s floor-entry rng pins moved on 4 of 10 seeds, every
+row identical through at least the floor-2 entry.
+
+**The sprout gate was re-derived (owner decision, 2026-11-09).** The
+30-seed playtest on this tree read `FAIL sprout wins rare (<= 1 per 30
+seeds): 2/30`. The line was a raw count sitting on its own edge: the baseline
+read exactly 1/30, two of the first 30 seeds died on floor 7, and three
+milder variants of the row (floor 3's row copied; dim `[13, 21]`; the dim
+change alone) read 2/30, 2/30 and 3/30 - any relief on floor 2 tips one of
+them. The same rule scaled to its own larger sample passed throughout (2/100
+before, 3/100 after; 3/200 before, 4/200 = 2% [1, 5] after - one more win
+at every sample size). It is now a Wilson line
+like the magpie canary's (`SPROUT_MAX_LOWER` 0.05): it trips when the lower
+bound clears 5% - from 4/30, 10/100 or 17/200 up. This is the 2026-09-05d
+move again ("a line that flips on one win"), and it LOOSENS the 30-seed gate
+from 1 win to 3; the target row above is unchanged ("wins rare"), and a
+100-seed sprout reading above 5/100 is still the thing to look at.
+
+### Not done, and why
+
+- **`water_jet+pin` and `vine_whip+lash`** (riders that fire ~0 times for
+  heuristic play) were the other balance candidates. Both need a decision
+  the watch list already frames (row, bot or board) and a deeproot
+  locked-kit measurement; neither is a one-row fix and neither was touched.
+- **Bloom overhang.** Every persona ends a run with 24-44 bloom unspent
+  (optimizer earns 50, spends 17). The one repeatable sink is held behind
+  `spinning_shrine` on the canary; a human can forge and press where no bot
+  does, so the bots cannot price this. Recorded, not patched.

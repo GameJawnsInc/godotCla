@@ -1366,7 +1366,7 @@ const FLOORS := [
 		"name": "Strip Mine II", "biome": "strip_mine", "w": 24, "h": 15, "rooms": 5,
 		"enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1},
 		"oil": 6, "goo": 3, "vents": 2, "green_need": 3, "vaults": ["old_garden"],
-		"smog_spawn": [9, 17], "smog_spawn_every": 10, "smog_dim": [12, 20], "smog_choke": 36,
+		"smog_spawn": [10, 19], "smog_spawn_every": 11, "smog_dim": [14, 22], "smog_choke": 37,
 	},
 	{
 		"name": "Refinery Gate", "biome": "refinery", "w": 26, "h": 16, "rooms": 5,

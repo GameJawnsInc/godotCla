@@ -60,7 +60,7 @@ extends SceneTree
 ##     rng.state untouched; and a Game subclass that swaps only the two D3
 ##     entry points back (the reference BFS for _chase_step, _screened false)
 ##     drives the optimizer over seeds 1..10 to the rng.state recorded at
-##     every floor entry (RNG_FLOOR_ENTRY_BUMP14) - so nothing outside those
+##     every floor entry (RNG_FLOOR_ENTRY_BUMP16) - so nothing outside those
 ##     two functions moved a draw
 ##  n) Block D4 (bump 12): the draft draws moved on purpose (exactly one
 ##     main-rng draw per slot, see tests/test_grammar.gd (d)), so the
@@ -75,7 +75,7 @@ extends SceneTree
 ##     and listing or forging spends no main-rng draw. The floor-entry pins
 ##     were re-recorded again: the draw COUNT per draft slot is still one, but
 ##     the universe now holds both siblings of every held base, so each index
-##     resolves differently (see the note on RNG_FLOOR_ENTRY_BUMP14)
+##     resolves differently (see the note on RNG_FLOOR_ENTRY_BUMP16)
 ##  p) Block D5 (bump 14): a resonance is a passive SOURCE, so it must not
 ##     touch the main rng - firing the shipped ignite hook, and a stat row,
 ##     leaves rng.state where it was, and so do _resonances / snapshot /
@@ -150,11 +150,18 @@ const RNG_STATE_BUMP8 := [
 ## row: the fire row and the persona's new drop guard together change nothing
 ## these ten runs can see, which is the strongest form of "adds no draw".
 ## From here on, anything that moves one of these is a stray main-rng draw.
-const RNG_FLOOR_ENTRY_BUMP14 := [
-	[5089575408282122190, -184513544007953650, 8759944363161018601, 2868822161275640310, -8152873371107847509],
-	[-1543445859615755461, -8411093148249300473, 1787517375204971321, 8582635207152789512],
-	[5249088221260300708, -8668300741929293400, 4694250479173219183, 5574227338355628461, -3061484965246952852, -1172107250573503496],
-	[-7365291246896200391, 9118581067688907677, 4174390183580078064, -5937068460318379825, 516707025151674802, -3494329032662390890, 3201227568282568284],
+## Bump 16 (the floor-2 clock) re-stamped the rows whose runs cross floor 2's
+## moved thresholds:
+## Strip Mine II's smog thresholds moved, the clock's vent spawns draw from
+## the main rng, and the persona plays a different run from that floor on.
+## Every row is identical to its bump-14 row through AT LEAST the floor-2
+## entry - nothing before the changed floor moved a draw - and six rows are
+## byte-identical end to end (the constant was renamed, so `git show` it).
+const RNG_FLOOR_ENTRY_BUMP16 := [
+	[5089575408282122190, -184513544007953650, 8759944363161018601, 2868822161275640310, 3937219494565775732, 3539856330929230112, 109341832312744600],
+	[-1543445859615755461, -8411093148249300473, 6431007824064540393, 5383934907921248555, 975509274548734484, -2134773163254049076, -6926263913968380732],
+	[5249088221260300708, -8668300741929293400, 4694250479173219183, -6470395114759174281, -3012881572387084823],
+	[-7365291246896200391, 9118581067688907677, 4174390183580078064, -1769302175855516454, 8580300391172121205, 2216684603156017793, -6524984188267776030],
 	[-4307724339993763098, -3504797669898524666, 6961354990307791117, 464051487255323640, -4057801299652768257, 7021950593982289331, -3832266116403619108],
 	[-5880482361733646265, -808239912685928521, -4338090631578911018, -8046437620736313008, 4196872015560688783, -422735934883274349, -1941129409381335253],
 	[-2810552436854674636, 5839575857474482460, 4565013434687613195, -1843283859693427995, -7995792451489974632, -174968855415995460],
@@ -1602,7 +1609,7 @@ func _check_d3_rng_untouched() -> void:
 	var seeds_checked := 0
 	var floors_checked := 0
 	var moved := 0
-	for i in range(RNG_FLOOR_ENTRY_BUMP14.size()):
+	for i in range(RNG_FLOOR_ENTRY_BUMP16.size()):
 		var s := i + 1
 		var rg = RefGame.new(s)
 		var bot = Roster.make("optimizer", s)
@@ -1619,7 +1626,7 @@ func _check_d3_rng_untouched() -> void:
 				last_floor = rg.floor_num
 				states.append(rg.rng.state)
 		seeds_checked += 1
-		var want: Array = RNG_FLOOR_ENTRY_BUMP14[i]
+		var want: Array = RNG_FLOOR_ENTRY_BUMP16[i]
 		if states.size() != want.size():
 			moved += 1
 			failures.append("floor-entry pins: seed %d reached %d floors, the pinned run reached %d" % [s, states.size(), want.size()])
@@ -1630,7 +1637,7 @@ func _check_d3_rng_untouched() -> void:
 				moved += 1
 				if moved <= 3:
 					failures.append("floor-entry pins: seed %d floor %d state %d, pinned %d" % [s, f + 1, int(states[f]), int(want[f])])
-	_ok(moved == 0, "RefGame optimizer run: rng.state at every floor entry matches the bump-13 pins (%d seeds, %d floor entries, %d moved)" % [seeds_checked, floors_checked, moved])
+	_ok(moved == 0, "RefGame optimizer run: rng.state at every floor entry matches the bump-16 pins (%d seeds, %d floor entries, %d moved)" % [seeds_checked, floors_checked, moved])
 	_ok(RefGame.new(1).rng.state == int(RNG_STATE_BUMP8[0]) and Game.new(1).rng.state == int(RNG_STATE_BUMP8[0]), "RefGame and Game share the Game.new pins")
 	print("d3 rng: floor-entry pins %d seeds / %d entries, %d moved" % [seeds_checked, floors_checked, moved])
 

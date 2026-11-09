@@ -1006,8 +1006,26 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (15
-  today: tending by any means. The room bloom (bonus + supply pod) and the
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (16
+  today: the floor-2 clock. One `Content.FLOORS` row moved — Strip Mine II
+  carried the tightest smog spawn and dim clock of floors 1-4 (spawn `[9, 17]`
+  every 10, dim `[12, 20]`; its choke 36 only tied floor 3) on the floor that introduces the first drain/gum
+  roster, and the noob persona's deaths piled there (sprout 54/200 on floor 2,
+  its modal death floor). It now sits between its neighbours (`[10, 19]` every
+  11, dim `[14, 22]`, choke 37): sprout floor-2 deaths 54 -> 38 of 200 and avg
+  floor 3.7 -> 4.0, optimizer 53 -> 55 of 100 and the magpie canary 16 -> 19
+  of 200, both inside noise (`docs/BALANCE.md` 2026-11-09). A stored log
+  can diverge at floor 2's first moved smog threshold and at nothing earlier.
+  The sprout gate in `tests/playtest.gd` was re-derived with it, by owner
+  decision: the raw count "<= 1 win per 30" sat on its own edge (2/30 here,
+  4/200 against 3/200) and is now a Wilson line like the canary's
+  (`SPROUT_MAX_LOWER` 0.05, trips from 4/30, 10/100 or 17/200). 84 of 97
+  records are stamp-only; all 20 bot logs were re-recorded and 13 changed
+  (the wanderers, `det_fanatic_s42` and all three deeproot logs came back
+  byte-identical); `tests/test_economy.gd`'s floor-entry pins
+  (`RNG_FLOOR_ENTRY_BUMP16`) moved on 4 of 10 seeds, every row identical
+  through at least the floor-2 entry.
+  Bump 15 was tending by any means. The room bloom (bonus + supply pod) and the
   floor restore used to live inside `_act_cleanse` alone, so a Reclaimer Bomb
   convert or a Water Jet wash that took a room's or the floor's last
   corruption paid neither (owner report). `Game.step` now snapshots the
@@ -1382,6 +1400,40 @@ architecture below is designed to bend rather than block.
   by the owner as "wasn't able to clean up the second oil spill".
   `tests/test_shell.gd` `_check_cleanse_hint` drives all three refusals and
   then checks the ash the burning one promises really does open the aim.
+- An armed aim PREVIEWS its result (`shell/main.gd` `_preview_aim` /
+  `_preview_labels`): every legal cast of the armed slot is stepped on a
+  `clone()` of the sim and its own events are folded per enemy, so the map
+  labels `-3` / `KILL` / `-2 rooted` on each enemy a direction aim reaches and
+  the total on each target tile of a tile aim. It is exact (riders, surges,
+  collisions and hooks run on the copy) and leaks nothing, because a cast
+  draws no rng and only `end_turn` resolves the turn — a future op that DID
+  roll the main rng on cast would make the preview an oracle, and is the
+  thing to re-check here. The labels are data before they are drawn, and
+  `tests/test_shell.gd` `_check_aim_preview` holds them to the truth: the
+  label equals what the cast then deals, a lethal cast reads `KILL`, and
+  arming an aim leaves the live game's `state_hash()` untouched.
+- Every LINE shape is a direction aim in the shell: `_ability_press` routes
+  `dir`, `dir_enemy` (through `Game._is_dir_shape`) and `enemy_line` to
+  `target_dir`, and `_try_ability_target` resolves a direction to the nearest
+  legal body along it for `enemy_line`, whose legal targets are enemy
+  POSITIONS. Before this the whip answered every D-pad press with "not a
+  legal target" and the rake armed a tile aim whose "tiles" were unit
+  vectors - neither could be cast from a phone at all, and it was the aim
+  preview's review that found it. `_check_aim_preview` casts both.
+- Haptics (`shell/main.gd` `_buzz_events`, called from `_play_events`): ONE
+  `Input.vibrate_handheld` per step, the strongest any of its events asks for
+  (rider 20 ms, kill/stagger 25, collision 30, a hit on the tender 40-100,
+  boss beats 90, death 250), fired when the step is taken rather than on each
+  reel beat. `permissions/vibrate=true` in `export_presets.cfg`; Settings ->
+  Vibration, cfg key `haptics_on`. `tests/test_shell.gd` `_check_haptics`.
+  (This branch also carried floating payoff words in the old `_spawn_fx`;
+  main's animation reel already draws statuses, riders, surges and hooks, so
+  that half was dropped at the merge instead of ported.)
+- The APK is two commands on a fresh container: `tools/setup_android_export.sh`
+  (range-fetches the debug template, installs Ubuntu's `apksigner` package,
+  builds an SDK-shaped stub dir, a debug keystore and the editor settings)
+  and then the export line in `docs/SHELL.md`. The keystore is per container,
+  so a build will not install over an earlier session's: uninstall first.
 - Going back is ONE function (`shell/main.gd` `_back(quit_at_root)`), and it is
   the only place in the shell that implements "back". Android's Back button
   reaches it through `_notification(NOTIFICATION_WM_GO_BACK_REQUEST)` (with

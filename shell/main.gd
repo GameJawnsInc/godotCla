@@ -117,6 +117,9 @@ const INTRO_RULES := [
 	["ic_lens", "Hold anything to learn about it."],
 ]
 
+## What a landed status reads as in an aim preview label.
+const STATUS_FX := {"root": "ROOTED", "stun": "STUNNED", "spore": "SPORED"}
+
 const DIRS4 := {
 	"up": Vector2i(0, -1), "down": Vector2i(0, 1),
 	"left": Vector2i(-1, 0), "right": Vector2i(1, 0),
@@ -196,6 +199,13 @@ var seed_mode := "random"  # random | daily
 var intro_mode := "once"   # once | always | never
 var sfx_on := true
 var music_on := true
+var haptics_on := true     # phone buzz on hits, kills and payoffs (Input.vibrate_handheld)
+var _buzz_ms := 0          # the buzz the last step asked for (0 = none), read by the test
+# Aim preview: what each legal aim of the armed slot WOULD do, read off a
+# clone() of the sim - exact, because a cast never rolls the main rng and never
+# resolves the turn. One row per legal action:
+# {target, dmg: {enemy id: int}, kills: [ids], status: {enemy id: name}}
+var _aim_preview: Array = []
 
 var audio: Node
 
@@ -514,6 +524,7 @@ func _load_settings() -> void:
 		seed_mode = String(cf.get_value("ui", "seed_mode", "random"))
 		intro_mode = String(cf.get_value("ui", "intro_mode", "once"))
 		sfx_on = bool(cf.get_value("ui", "sfx_on", true))
+		haptics_on = bool(cf.get_value("ui", "haptics_on", true))
 		music_on = bool(cf.get_value("ui", "music_on", true))
 		anim_mode = String(cf.get_value("ui", "anim", "full"))
 		if not Anim.SPEEDS.has(anim_mode):
@@ -531,6 +542,7 @@ func _save_settings() -> void:
 	cf.set_value("ui", "seed_mode", seed_mode)
 	cf.set_value("ui", "intro_mode", intro_mode)
 	cf.set_value("ui", "sfx_on", sfx_on)
+	cf.set_value("ui", "haptics_on", haptics_on)
 	cf.set_value("ui", "music_on", music_on)
 	cf.set_value("ui", "anim", anim_mode)
 	cf.set_value("ui", "cam_cols", cam_cols)
@@ -608,6 +620,7 @@ func _act(a: Dictionary) -> void:
 
 ## Map a step's events to at most three synthesized sounds, worst first.
 func _play_events(evs: Array) -> void:
+	_buzz_events(evs)
 	if audio == null:
 		return
 	var picks: Array = []
@@ -645,6 +658,28 @@ func _play_events(evs: Array) -> void:
 		picks = ["death"]
 	for i in mini(3, picks.size()):
 		audio.play(picks[i])
+
+
+## Haptics: ONE vibration per step, the strongest any of its events asks for -
+## a step can hold a dozen events and a phone that buzzes for each is noise.
+## 20 ms for a combo tick up to 250 ms for the tender's death.
+func _buzz_events(evs: Array) -> void:
+	_buzz_ms = 0
+	for ev in evs:
+		var ms := 0
+		match String(ev.get("t", "")):
+			"player_death": ms = 250
+			"boss_phase", "ignite_all", "flood", "smoke_burst": ms = 90
+			"damage":
+				if ev.get("who", "") == "player":
+					ms = 40 + mini(int(ev.get("amt", 0)) * 15, 60)
+				elif String(ev.get("src", "")).begins_with("collision"):
+					ms = 30
+			"death", "staggered": ms = 25
+			"rider": ms = 20
+		_buzz_ms = maxi(_buzz_ms, ms)
+	if haptics_on and _buzz_ms > 0:
+		Input.vibrate_handheld(_buzz_ms)
 
 
 ## Plan the step just taken into a reel (shell/anim.gd) and start playing it.
@@ -864,6 +899,7 @@ func _back(quit_at_root: bool = false) -> String:
 ## nothing, so leaving one must cost nothing either: ESC, the Back button, a
 ## D-pad press and a second tap on the aiming slot all land here.
 func _cancel_aim() -> void:
+	_aim_preview = []
 	mode = "normal"
 	mode_targets = []
 	mode_slot = -1
@@ -1431,7 +1467,11 @@ func _ability_press(slot: int) -> void:
 		return
 	var aid: String = game.player["kit"][slot]
 	var ttype: String = Content.ABILITIES[aid]["target"]
-	if ttype == "dir" or ttype == "enemy_line":
+	_aim_preview = _preview_aim(acts)
+	# every LINE shape is a direction aim. "dir_enemy" (the rake) used to fall
+	# through to the tile aim with unit vectors as its "tiles" - green boxes in
+	# the map's corner and nothing tappable - so it could not be cast at all.
+	if Game._is_dir_shape(Content.ABILITIES[aid]) or ttype == "enemy_line":
 		mode = "target_dir"
 		mode_slot = slot
 		# the flash names the way OUT as well as the way in: on a phone there
@@ -1463,11 +1503,114 @@ func _cast_refusal(slot: int) -> String:
 	return "%s has nothing to aim at here" % nm
 
 
+## What each of these legal casts would do, read off a clone of the sim: the
+## cast is stepped on the copy and its own events are folded per enemy. It is
+## exact rather than an estimate - riders, surges, collisions and hooks all
+## run on the copy - and it leaks nothing, because a cast draws no rng and
+## does not resolve the turn (only end_turn runs the enemies). The live game
+## is never touched: tests assert its hash is unchanged by arming an aim.
+func _preview_aim(acts: Array) -> Array:
+	var out: Array = []
+	for a in acts:
+		var g = game.clone()
+		var row := {"target": a.get("target"), "dmg": {}, "kills": [], "status": {}}
+		for ev in g.step(a):
+			var id = ev.get("id", null)
+			match String(ev.get("t", "")):
+				"damage":
+					if ev.get("who", "") != "player" and id != null:
+						row["dmg"][id] = int(row["dmg"].get(id, 0)) + int(ev["amt"])
+				"death":
+					if id != null and not row["kills"].has(id):
+						row["kills"].append(id)
+				"status":
+					if id != null:
+						row["status"][id] = String(ev.get("status", ""))
+		out.append(row)
+	return out
+
+
+## The label an aim preview draws for one enemy: a kill outranks a number,
+## and a status rides beside either.
+func _preview_text(dmg: int, killed: bool, status: String) -> String:
+	var parts: Array = []
+	if killed:
+		parts.append("KILL")
+	elif dmg > 0:
+		parts.append("-%d" % dmg)
+	if status != "" and not killed:
+		parts.append(String(STATUS_FX.get(status, status)).to_lower())
+	return " ".join(parts)
+
+
+## Every label the armed aim should draw, as data: [{tile, text, kill}]. A
+## direction aim labels the ENEMIES each direction would reach (the four
+## lines never share a body, bar a shove into a neighbour, which stacks); a
+## tile aim labels each TARGET tile with the total it would deal, because
+## there the bodies overlap between targets and the tile is the choice.
+func _preview_labels() -> Array:
+	var out: Array = []
+	if game == null or _aim_preview.is_empty():
+		return out
+	var where := {}
+	for e in game.enemies:
+		where[e["id"]] = e["pos"]
+	for row in _aim_preview:
+		if mode == "target_tile":
+			var total := 0
+			for id in row["dmg"]:
+				total += int(row["dmg"][id])
+			var st := ""
+			for id in row["status"]:
+				st = String(row["status"][id])
+			var kills: int = row["kills"].size()
+			var txt := _preview_text(total, false, st)
+			if kills > 0:
+				txt = "KILL" if kills == 1 else "KILL x%d" % kills
+			if txt != "" and row["target"] is Vector2i:
+				out.append({"tile": row["target"], "text": txt, "kill": kills > 0})
+		elif mode == "target_dir":
+			var ids := {}
+			for id in row["dmg"]:
+				ids[id] = true
+			for id in row["status"]:
+				ids[id] = true
+			for id in row["kills"]:
+				ids[id] = true
+			for id in ids:
+				if not where.has(id):
+					continue
+				var t2 := _preview_text(int(row["dmg"].get(id, 0)), row["kills"].has(id),
+					String(row["status"].get(id, "")))
+				if t2 != "":
+					out.append({"tile": where[id], "text": t2, "kill": row["kills"].has(id)})
+	return out
+
+
 func _try_ability_target(slot: int, target) -> void:
+	# "enemy_line" (the whip) lists enemy POSITIONS as its legal targets while
+	# a direction aim hands over a unit vector, so the two never matched and
+	# the whip answered every D-pad press with "not a legal target". A
+	# direction resolves to the nearest legal body along it.
+	var pp: Vector2i = game.player["pos"]
+	var best = null
+	var best_d := 1 << 30
 	for a in _legal_of("ability"):
-		if int(a["slot"]) == slot and a["target"] == target:
+		if int(a["slot"]) != slot:
+			continue
+		if a["target"] == target:
 			_act(a)
 			return
+		if mode == "target_dir" and a["target"] is Vector2i and target is Vector2i:
+			var dl: Vector2i = a["target"] - pp
+			var dist := absi(dl.x) + absi(dl.y)
+			if (dl.x == 0 or dl.y == 0) and dl != Vector2i.ZERO \
+					and Vector2i(signi(dl.x), signi(dl.y)) == target and dist < best_d:
+				best = a
+				best_d = dist
+	if best != null:
+		_act(best)
+		return
 	_flash("can't aim there")
 	mode = "normal"
 	queue_redraw()
@@ -1670,6 +1813,10 @@ func _tap(tag: String) -> void:
 			"sfx":
 				sfx_on = not sfx_on
 				audio.sfx_on = sfx_on
+			"haptics":
+				haptics_on = not haptics_on
+				if haptics_on:
+					Input.vibrate_handheld(30)
 			"music":
 				music_on = not music_on
 				audio.set_music(music_on)
@@ -2814,8 +2961,8 @@ func _draw_settings(vw: float, vh: float) -> void:
 	hotspots.clear()
 	var y := _sheet(vw, vh, "SETTINGS")
 	var bw := vw * 0.88
-	var bh := vh * 0.07
-	var gap := vh * 0.02
+	var bh := vh * 0.062   # eight rows, the path line and BACK have to fit the panel
+	var gap := vh * 0.016
 	var names := {300: "short", 420: "normal", 650: "long"}
 	for row in [
 		["Hold delay:  %s" % names.get(hold_ms, "normal"), "set:hold"],
@@ -2823,6 +2970,7 @@ func _draw_settings(vw: float, vh: float) -> void:
 		["Intro card:  %s" % intro_mode, "set:intro"],
 		["Sound effects:  %s" % ("on" if sfx_on else "off"), "set:sfx"],
 		["Music:  %s" % ("on" if music_on else "off"), "set:music"],
+		["Vibration:  %s" % ("on" if haptics_on else "off"), "set:haptics"],
 		["Animations:  %s" % anim_mode, "set:anim"],
 		# the pinch's zoom, for a player who never pinches (or a desktop
 		# without a wheel): the same saved value, in four steps
@@ -3430,6 +3578,25 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	elif mode == "target_dir" or mode == "cleanse":
 		for d in DIRS4.values():
 			draw_rect(_tile_rect(snap["player"]["pos"] + d).grow(-1), COL_TARGET, false, 2.0)
+	# aim preview: what the cast would do, before it is spent
+	if mode == "target_tile" or mode == "target_dir":
+		var seen := {}
+		var psz := int(_ts * 0.36)
+		for lb in _preview_labels():
+			var lt2: Vector2i = lb["tile"]
+			if not _vis(lt2):
+				continue
+			var nth := int(seen.get(lt2, 0))
+			seen[lt2] = nth + 1
+			var lr := _tile_rect(lt2)
+			var ls := String(lb["text"])
+			var lw := font.get_string_size(ls, HORIZONTAL_ALIGNMENT_LEFT, -1, psz).x
+			var lx := lr.get_center().x - lw / 2.0
+			var ly := lr.position.y + psz * 0.95 + float(nth) * psz * 1.1
+			draw_rect(Rect2(lx - 3, ly - psz * 0.9, lw + 6, psz * 1.15), Color(0, 0, 0, 0.72))
+			draw_string(font, Vector2(lx, ly), ls, HORIZONTAL_ALIGNMENT_LEFT, -1, psz,
+				COL_GOLD if lb["kill"] else COL_CREAM)
+
 
 	# soft vignette around the tile field for depth
 	var mr := _shown_rect(zone)

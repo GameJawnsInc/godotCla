@@ -32,7 +32,15 @@ const BANDS := {"deeproot": Vector2(0.70, 0.90), "optimizer": Vector2(0.35, 0.65
 ## number a real rise is judged against.
 const MAGPIE_MAX_LOWER := 0.10
 const WANDERER_MAX_FLOOR := 2.0
-const SPROUT_WINS_PER_30 := 1  # "wins rare": at most 1 win per 30 seeds
+## "Wins rare" for the noob persona, as a Wilson line like every other gate
+## here: it trips when the LOWER bound clears 5%. The old form was a raw count
+## (<= 1 win per 30 seeds) sitting on its own edge - the baseline read exactly
+## 1/30, so one near-miss seed flipping failed it while the same rule scaled to
+## 100 and 200 seeds passed (3/100, 4/200). Bump 16's floor-2 clock was that
+## case: 2/30 at 30 seeds, 4/200 = 2% [1, 5] against 3/200 before. Owner
+## decision, 2026-11-09 (BALANCE.md). At 30 seeds this fails from 4/30 up, at
+## 100 from 10/100, at 200 from 17/200.
+const SPROUT_MAX_LOWER := 0.05
 const NO_TIMEOUT := ["optimizer", "deeproot"]
 
 
@@ -179,8 +187,8 @@ func _gate(stats: Dictionary, seeds: int) -> int:
 			fails += _verdict(w == 0 and st["avg_floor"] <= WANDERER_MAX_FLOOR, "wanderer 0 wins, avg floor <= %.0f: %d wins, avg floor %.2f" % [
 				WANDERER_MAX_FLOOR, w, st["avg_floor"]])
 		if bot_name == "sprout":
-			var max_wins: int = SPROUT_WINS_PER_30 * int(ceil(n / 30.0))
-			fails += _verdict(w <= max_wins, "sprout wins rare (<= %d per %d seeds): %d/%d" % [max_wins, n, w, n])
+			fails += _verdict(ci.x <= SPROUT_MAX_LOWER, "sprout wins rare (<= %d%%): %d/%d CI %s (fails when the lower bound clears the trip line)" % [
+				roundi(SPROUT_MAX_LOWER * 100), w, n, Sweep.fmt_ci(ci)])
 		if NO_TIMEOUT.has(bot_name):
 			fails += _verdict(int(st["timeouts"]) == 0, "%s timeouts == 0: %d" % [bot_name, int(st["timeouts"])])
 		fails += _verdict(int(st["illegal"]) == 0, "%s illegal actions == 0: %d" % [bot_name, int(st["illegal"])])
