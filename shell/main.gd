@@ -507,9 +507,12 @@ func _act(a: Dictionary) -> void:
 	_spawn_fx(evs, prev)
 	if game.over and _game_is_run and not _run_recorded:
 		_record_finished_run()
-	for ev in evs:
+	for li in evs.size():
+		var ev: Dictionary = evs[li]
 		if String(ev.get("t", "")) == "draft_offer":
 			_draft_focus_spent = bool(ev.get("focus", false))
+		if String(ev.get("t", "")) == "hook" and not _hook_landed(evs, li):
+			continue  # a hook that landed nothing "triggered" nothing
 		var s := _ev_text(ev)
 		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
 			log_lines.append(s)
@@ -572,7 +575,8 @@ func _spawn_fx(evs: Array, prev: Dictionary) -> void:
 	var now := Time.get_ticks_msec()
 	var stack := {}  # tile -> count, so numbers landing together fan out in time
 	_buzz_ms = 0
-	for ev in evs:
+	for ei in evs.size():
+		var ev: Dictionary = evs[ei]
 		match String(ev.get("t", "")):
 			"damage":
 				var p := _fx_pos(ev, prev)
@@ -614,7 +618,10 @@ func _spawn_fx(evs: Array, prev: Dictionary) -> void:
 			"surge":
 				_fx_word({"who": "player"}, prev, stack, now, "SURGE", Color(0.55, 0.9, 0.45))
 			"hook":
-				if ev.has("tile"):
+				# a hook event is emitted BEFORE its effects run, so a row
+				# that fired on an empty tile would still float its name:
+				# only a hook that landed something is worth a word
+				if ev.has("tile") and _hook_landed(evs, ei):
 					var hp := Vector2(ev["tile"])
 					var hk := str(hp)
 					stack[hk] = int(stack.get(hk, -1)) + 1
@@ -665,6 +672,31 @@ func _spawn_fx(evs: Array, prev: Dictionary) -> void:
 		_fx = _fx.slice(_fx.size() - 40)
 	if haptics_on and _buzz_ms > 0:
 		Input.vibrate_handheld(_buzz_ms)
+
+
+## Did the hook event at evs[i] do anything? Game._hook emits {t: "hook"}
+## and THEN runs the row's effects, so what a hook landed is whatever follows
+## it before the next hook: its own damage (src is the source id), a status,
+## or terrain written on the hook tile. A collision that killed the body, or
+## an ignite under nobody, leaves nothing - and reads as nothing.
+func _hook_landed(evs: Array, i: int) -> bool:
+	var id := String(evs[i].get("id", ""))
+	for j in range(i + 1, evs.size()):
+		var e: Dictionary = evs[j]
+		match String(e.get("t", "")):
+			"hook", "hook_capped":
+				return false
+			"damage":
+				if String(e.get("src", "")) == id:
+					return true
+			"status":
+				return true
+			"terrain":
+				if e.get("tile") == evs[i].get("tile"):
+					return true
+			_:
+				return false
+	return false
 
 
 ## Ask for a buzz this step. A step can hold a dozen events, so the phone
@@ -862,6 +894,7 @@ func _back(quit_at_root: bool = false) -> String:
 ## nothing, so leaving one must cost nothing either: ESC, the Back button, a
 ## D-pad press and a second tap on the aiming slot all land here.
 func _cancel_aim() -> void:
+	_aim_preview = []
 	mode = "normal"
 	mode_targets = []
 	mode_slot = -1
@@ -1307,7 +1340,10 @@ func _ability_press(slot: int) -> void:
 	var aid: String = game.player["kit"][slot]
 	var ttype: String = Content.ABILITIES[aid]["target"]
 	_aim_preview = _preview_aim(acts)
-	if ttype == "dir" or ttype == "enemy_line":
+	# every LINE shape is a direction aim. "dir_enemy" (the rake) used to fall
+	# through to the tile aim with unit vectors as its "tiles" - green boxes in
+	# the map's corner and nothing tappable - so it could not be cast at all.
+	if Game._is_dir_shape(Content.ABILITIES[aid]) or ttype == "enemy_line":
 		mode = "target_dir"
 		mode_slot = slot
 		# the flash names the way OUT as well as the way in: on a phone there
@@ -1410,10 +1446,29 @@ func _preview_labels() -> Array:
 
 
 func _try_ability_target(slot: int, target) -> void:
+	# "enemy_line" (the whip) lists enemy POSITIONS as its legal targets while
+	# a direction aim hands over a unit vector, so the two never matched and
+	# the whip answered every D-pad press with "not a legal target". A
+	# direction resolves to the nearest legal body along it.
+	var pp: Vector2i = game.player["pos"]
+	var best = null
+	var best_d := 1 << 30
 	for a in _legal_of("ability"):
-		if int(a["slot"]) == slot and a["target"] == target:
+		if int(a["slot"]) != slot:
+			continue
+		if a["target"] == target:
 			_act(a)
 			return
+		if mode == "target_dir" and a["target"] is Vector2i and target is Vector2i:
+			var dl: Vector2i = a["target"] - pp
+			var dist := absi(dl.x) + absi(dl.y)
+			if (dl.x == 0 or dl.y == 0) and dl != Vector2i.ZERO \
+					and Vector2i(signi(dl.x), signi(dl.y)) == target and dist < best_d:
+				best = a
+				best_d = dist
+	if best != null:
+		_act(best)
+		return
 	_flash("not a legal target")
 	mode = "normal"
 	queue_redraw()

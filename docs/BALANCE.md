@@ -9464,7 +9464,8 @@ consumer, not a design tension.
 ## 2026-11-09 - bump 15: the floor-2 clock
 
 **Finding.** `Content.FLOORS[1]` (Strip Mine II) carried the tightest smog
-clock of floors 1-4 - spawn `[9, 17]` every 10, dim `[12, 20]`, choke 36,
+spawn and dim clock of floors 1-4 (its choke only tied floor 3 and was looser
+than floor 4's) - spawn `[9, 17]` every 10, dim `[12, 20]`, choke 36,
 against floor 1's `[10, 20]`/12/`[14, 22]`/38, floor 3's
 `[10, 18]`/11/`[14, 22]`/36 and floor 4's `[12, 22]`/12/`[14, 22]`/34 - on
 the floor that also raises the quota from 2 to 3 and introduces the first
@@ -9476,12 +9477,12 @@ piling on one wall". The noob persona's did not:
 |---|---|---|---|---|---|---|---|
 | deaths, seeds 1..200 | 15 | **54** | 27 | 28 | 41 | 18 | 12 |
 
-78% of them smog. Floor 2 was the modal death floor for sprout AND magpie
+157 of the 195 (81%) were smog deaths. Floor 2 was the modal death floor for sprout AND magpie
 (51/200), the standing watch item "magpie deaths cluster on floor 2".
 
 **Change.** One row: spawn `[10, 19]` every 11, dim `[14, 22]`, choke 37 -
-between its neighbours on every key, so the clock now tightens monotonically
-from floor 3 down instead of dipping at 2. No rule changed.
+between its neighbours on every key, so the clock no longer dips at floor 2
+on the way from floor 1 to floor 3. No rule changed.
 
 **Measurement** (`PLAYTEST_BOTS=... PLAYTEST_SEEDS=200 PLAYTEST_GATE=0
 tests/playtest.gd`, tier 0, config `{}`, seeds 1..200, the same seeds on the
@@ -9509,7 +9510,7 @@ floors are the highest recorded, so **the next 100-seed canary reading is
 compared against [6, 17] as before, and a rise is first looked for here.**
 The deaths did not vanish, they moved one wall down: sprout's floor-5 count
 went 41 -> 48 and floor 6 18 -> 25. Floor 5 (Pipeworks: pump jack,
-smokestack, choke 32) now kills 48 of the 114 sprouts that reach it and is
+smokestack, choke 32) now kills 48 of the at most 93 sprouts that reach it (about half) and is
 the persona's modal death floor; that is the designed ramp doing its job
 later in the run, and it is the next place to look if the noob curve is
 revisited.
@@ -9528,8 +9529,9 @@ seeds): 2/30`. The line was a raw count sitting on its own edge: the baseline
 read exactly 1/30, two of the first 30 seeds died on floor 7, and three
 milder variants of the row (floor 3's row copied; dim `[13, 21]`; the dim
 change alone) read 2/30, 2/30 and 3/30 - any relief on floor 2 tips one of
-them. The same rule scaled to its own larger sample passed throughout (3/100
-before and after; 4/200 = 2% [1, 5] against 3/200). It is now a Wilson line
+them. The same rule scaled to its own larger sample passed throughout (2/100
+before, 3/100 after; 3/200 before, 4/200 = 2% [1, 5] after - one more win
+at every sample size). It is now a Wilson line
 like the magpie canary's (`SPROUT_MAX_LOWER` 0.05): it trips when the lower
 bound clears 5% - from 4/30, 10/100 or 17/200 up. This is the 2026-09-05d
 move again ("a line that flips on one win"), and it LOOSENS the 30-seed gate

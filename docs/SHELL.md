@@ -101,7 +101,7 @@ map then draws a label over each result:
 
 | aim | where the label sits | what it says |
 | --- | --- | --- |
-| direction (lance, jet, whip) | on each **enemy** a direction reaches | `-3`, `KILL`, `-2 rooted` |
+| direction (lance, jet, whip, rake) | on each **enemy** a direction reaches | `-3`, `KILL`, `-2 rooted` |
 | tile (bombs, flares, snares) | on each **target tile** | the total it deals from there, or `KILL x2` |
 
 It is exact, not an estimate - riders, surges, collisions and hooks all run
@@ -118,8 +118,9 @@ A build's payoffs draw on the map as they happen (`_spawn_fx`): a landed
 status floats `ROOTED` / `STUNNED` / `SPORED` over the body, an interrupted
 wind-up `STAGGER`, a rider `COMBO` (`COMBO +2` when it added damage), a stat
 surge `SURGE`, a graft or resonance hook its own name on the tile it fired
-on, an ignition an orange burst, and a wall-slam shakes the camera. Each has
-a log line too. Words landing on one tile are fanned out in time behind the
+on (only when it landed something - a hook that fired on an empty tile says
+nothing), an ignition an orange burst, and a wall-slam shakes the camera.
+Each but the ignition has a log line too. Words landing on one tile are fanned out in time behind the
 damage number, never overprinted.
 
 On a phone the same events buzz (`Input.vibrate_handheld`, the `VIBRATE`

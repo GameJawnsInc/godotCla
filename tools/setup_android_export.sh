@@ -51,19 +51,21 @@ if [ ! -f "$KS" ]; then
     -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
 fi
 
-# 5. point the editor settings at all of it
-if [ ! -f "$CFG" ]; then
-  mkdir -p "$(dirname "$CFG")"
-  JAVA_HOME_DIR="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"
-  cat > "$CFG" <<TRES
-[gd_resource type="EditorSettings" format=3]
-
-[resource]
-export/android/java_sdk_path = "$JAVA_HOME_DIR"
-export/android/android_sdk_path = "$SDK"
-export/android/debug_keystore = "$KS"
-export/android/debug_keystore_user = "androiddebugkey"
-export/android/debug_keystore_pass = "android"
-TRES
-fi
+# 5. point the editor settings at all of it: create the file when it is
+#    absent, otherwise replace just these keys (an existing file may point at
+#    another SDK, and "ready" must not be said over that)
+JAVA_HOME_DIR="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"
+mkdir -p "$(dirname "$CFG")"
+[ -f "$CFG" ] || printf '[gd_resource type="EditorSettings" format=3]\n\n[resource]\n' > "$CFG"
+set_key() {
+  sed -i "\\|^export/android/$1 = |d" "$CFG"
+  sed -i "/^\\[resource\\]/a export/android/$1 = \"$2\"" "$CFG"
+}
+set_key debug_keystore_pass "android"
+set_key debug_keystore_user "androiddebugkey"
+set_key debug_keystore "$KS"
+set_key android_sdk_path "$SDK"
+set_key java_sdk_path "$JAVA_HOME_DIR"
+grep -qF "export/android/android_sdk_path = \"$SDK\"" "$CFG" \
+  || { echo "editor settings at $CFG do not point at $SDK" >&2; exit 1; }
 echo "android export ready"

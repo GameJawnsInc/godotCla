@@ -1025,14 +1025,71 @@ func _check_aim_preview() -> void:
 	_check(kl.size() == 1 and String(kl[0]["text"]) == "KILL" and kl[0]["kill"],
 		"preview: a lethal lance reads KILL (%s)" % str(kl))
 	sh._cancel_aim()
-	_check(sh._preview_labels().is_empty() or sh.mode == "normal",
-		"preview: a cancelled aim draws no labels")
+	_check(sh.mode == "normal", "preview: cancel leaves the aim")
+	_check(sh._aim_preview.is_empty() and sh._preview_labels().is_empty(),
+		"preview: a cancelled aim keeps no labels")
 	# an aim with nothing in reach promises nothing
 	en["pos"] = Vector2i(-9, -9)
 	sh._ability_press(0)
-	_check(sh.mode != "target_dir" or sh._preview_labels().is_empty(),
-		"preview: an aim that reaches nobody labels nobody")
+	_check(sh.mode == "target_dir", "preview: the lance still arms with nobody in reach (%s)" % sh.mode)
+	_check(sh._preview_labels().is_empty(), "preview: an aim that reaches nobody labels nobody")
 	sh.free()
+	# the two other LINE shapes. Both were uncastable from the shell before
+	# this pass - the whip ("enemy_line") lists enemy positions and was handed
+	# a unit vector, the rake ("dir_enemy") fell through to a tile aim whose
+	# "tiles" were unit vectors - so the preview would have promised damage
+	# the next input could not deal.
+	for aid in ["vine_whip", "vine_whip+rake"]:
+		var sw = _bare_shell()
+		sw.game = Game.new(4242, {"kit": [aid, "seed_bomb", "mycelium_dash"]})
+		var gw = sw.game
+		gw.player["charge"] = 5
+		var pw: Vector2i = gw.player["pos"]
+		var dw := _open_run(gw, 2)
+		for e in gw.enemies:
+			e["pos"] = Vector2i(-9, -9)
+		var e1: Dictionary = gw.enemies[0]
+		e1["pos"] = pw + dw * 2
+		e1["hp"] = 9
+		# a second legal direction, so the press arms an aim instead of casting
+		var e2: Dictionary = gw.enemies[1]
+		var d2 := _open_run(gw, 2, dw)
+		e2["pos"] = pw + d2 * 2
+		e2["hp"] = 9
+		sw._ability_press(0)
+		_check(sw.mode == "target_dir", "preview: %s arms a direction aim (%s)" % [aid, sw.mode])
+		var wl: Array = sw._preview_labels().filter(func(l): return l["tile"] == e1["pos"])
+		_check(wl.size() == 1 and String(wl[0]["text"]) == "-2",
+			"preview: %s labels the body on its line (%s)" % [aid, str(sw._preview_labels())])
+		sw._dir_input(dw)
+		_check(int(e1["hp"]) == 7 and int(e2["hp"]) == 9,
+			"preview: a D-pad press casts %s down that line and deals what was shown (hp %d / %d, flash '%s')" % [
+				aid, int(e1["hp"]), int(e2["hp"]), sw.flash])
+		sw.free()
+	# a TILE aim labels the target tile: two snare targets, each reads rooted
+	var st = _bare_shell()
+	st.game = Game.new(4242, {"kit": ["sap_snare", "seed_bomb", "mycelium_dash"]})
+	var gt = st.game
+	gt.player["charge"] = 5
+	var pt: Vector2i = gt.player["pos"]
+	var dt := _open_run(gt, 2)
+	for e in gt.enemies:
+		e["pos"] = Vector2i(-9, -9)
+	gt.enemies[0]["pos"] = pt + dt
+	gt.enemies[1]["pos"] = pt + dt * 2
+	var ht: String = gt.state_hash()
+	st._ability_press(0)
+	_check(st.mode == "target_tile", "preview: two snare targets arm a tile aim (%s)" % st.mode)
+	_check(gt.state_hash() == ht, "preview: a tile aim leaves the live game byte-identical")
+	var tl: Array = st._preview_labels()
+	var tiles: Array = tl.map(func(l): return l["tile"])
+	_check(tl.size() == 2 and tiles.has(pt + dt) and tiles.has(pt + dt * 2)
+			and tl.all(func(l): return String(l["text"]) == "rooted" and st.mode_targets.has(l["tile"])),
+		"preview: each snare target tile reads 'rooted' (%s)" % str(tl))
+	st._try_ability_target(0, pt + dt)
+	_check(str(gt.enemies[0]).contains("root"),
+		"preview: and the snare then roots that body (%s)" % str(gt.enemies[0]))
+	st.free()
 
 
 ## --- the payoff layer is on screen --------------------------------------------
@@ -1052,7 +1109,12 @@ func _check_payoff_fx() -> void:
 		{"t": "rider", "id": "grow_spike", "kind": "per", "amt": 2},
 		{"t": "rider", "id": "seed_bomb+tangle", "kind": "then", "amt": 1},
 		{"t": "surge", "id": "grow_spike", "keys": ["dmg"]},
+		{"t": "resisted", "id": en["id"], "status": "root"},
+		{"t": "screened", "id": en["id"], "intent": "gum"},
 		{"t": "hook", "id": "cinder_grip", "on": "ignite", "tile": en["pos"]},
+		{"t": "status", "id": en["id"], "status": "root", "turns": 1},
+		# a hook is emitted BEFORE its effects: this one landed nothing
+		{"t": "hook", "id": "ember_sap", "on": "ignite", "tile": en["pos"]},
 		{"t": "ignite", "tile": en["pos"]},
 	]
 	sh._fx = []
@@ -1061,8 +1123,11 @@ func _check_payoff_fx() -> void:
 	for f in sh._fx:
 		if String(f["kind"]) == "float":
 			words.append(String(f["text"]))
-	for want in ["-3", "ROOTED", "STAGGER", "COMBO +2", "COMBO", "SURGE", "Cinder Grip"]:
+	for want in ["-3", "ROOTED", "STAGGER", "COMBO +2", "COMBO", "SURGE", "RESIST", "MISS", "Cinder Grip"]:
 		_check(words.has(want), "payoff fx: '%s' floats (%s)" % [want, str(words)])
+	_check(not words.has("Ember Sap"), "payoff fx: a hook that landed nothing floats nothing (%s)" % str(words))
+	_check(sh._hook_landed(evs, 8) and not sh._hook_landed(evs, 10),
+		"payoff fx: _hook_landed reads what follows the hook event")
 	var on_enemy: Array = sh._fx.filter(func(f): return String(f["kind"]) == "float" \
 		and f["pos"] == Vector2(en["pos"]))
 	var t0s := {}
@@ -1071,7 +1136,7 @@ func _check_payoff_fx() -> void:
 	_check(t0s.size() == on_enemy.size(),
 		"payoff fx: words landing on one tile fan out in time instead of overprinting")
 	_check(sh._buzz_ms == 30, "payoff fx: one buzz a step, the strongest asked for (%d)" % sh._buzz_ms)
-	for ev in evs.slice(1, 7):  # ignite draws a burst; it is too common for the log
+	for ev in evs.slice(1, 9):  # ignite draws a burst; it is too common for the log
 		_check(sh._ev_text(ev) != "", "payoff fx: '%s' has a log line" % String(ev["t"]))
 	sh._spawn_fx([{"t": "move", "who": "player"}], {})
 	_check(sh._buzz_ms == 0, "payoff fx: a quiet step asks for no buzz")
@@ -1171,6 +1236,26 @@ func _open_dir(g) -> Vector2i:
 		var t: Vector2i = pp + d
 		if t.x >= 0 and t.y >= 0 and t.x < int(m["w"]) and t.y < int(m["h"]) \
 				and int(m["tiles"][t.y * int(m["w"]) + t.x]) == 1:
+			return d
+	return Vector2i(1, 0)
+
+
+## A direction with `n` open floor tiles in a row from the tender, skipping
+## `avoid` - room to park a body at range.
+func _open_run(g, n: int, avoid := Vector2i.ZERO) -> Vector2i:
+	var m: Dictionary = g.map
+	var pp: Vector2i = g.player["pos"]
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if d == avoid:
+			continue
+		var ok := true
+		for k in range(1, n + 1):
+			var t: Vector2i = pp + d * k
+			if t.x < 0 or t.y < 0 or t.x >= int(m["w"]) or t.y >= int(m["h"]) \
+					or int(m["tiles"][t.y * int(m["w"]) + t.x]) != 1 or g.terrain.has(t):
+				ok = false
+				break
+		if ok:
 			return d
 	return Vector2i(1, 0)
 

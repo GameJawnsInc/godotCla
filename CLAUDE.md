@@ -993,14 +993,18 @@ architecture below is designed to bend rather than block.
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
 - `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (15
   today: the floor-2 clock. One `Content.FLOORS` row moved — Strip Mine II
-  carried the tightest smog clock of floors 1-4 (spawn `[9, 17]` every 10, dim
-  `[12, 20]`, choke 36) on the floor that introduces the first drain/gum
+  carried the tightest smog spawn and dim clock of floors 1-4 (spawn `[9, 17]`
+  every 10, dim `[12, 20]`; its choke 36 only tied floor 3) on the floor that introduces the first drain/gum
   roster, and the noob persona's deaths piled there (sprout 54/200 on floor 2,
   its modal death floor). It now sits between its neighbours (`[10, 19]` every
   11, dim `[14, 22]`, choke 37): sprout floor-2 deaths 54 -> 38 of 200 and avg
   floor 3.7 -> 4.0, optimizer 53 -> 55 of 100 and the magpie canary 16 -> 19
   of 200, both inside noise (`docs/BALANCE.md` 2026-11-09). A stored log
-  diverges at floor 2's first smog threshold and at nothing earlier. 83 of 96
+  can diverge at floor 2's first moved smog threshold and at nothing earlier.
+  The sprout gate in `tests/playtest.gd` was re-derived with it, by owner
+  decision: the raw count "<= 1 win per 30" sat on its own edge (2/30 here,
+  4/200 against 3/200) and is now a Wilson line like the canary's
+  (`SPROUT_MAX_LOWER` 0.05, trips from 4/30, 10/100 or 17/200). 83 of 96
   records are stamp-only; all 20 bot logs were re-recorded and 13 changed
   (the wanderers, `det_fanatic_s42` and all three deeproot logs came back
   byte-identical); `tests/test_economy.gd`'s floor-entry pins
@@ -1327,10 +1331,20 @@ architecture below is designed to bend rather than block.
   `tests/test_shell.gd` `_check_aim_preview` holds them to the truth: the
   label equals what the cast then deals, a lethal cast reads `KILL`, and
   arming an aim leaves the live game's `state_hash()` untouched.
+- Every LINE shape is a direction aim in the shell: `_ability_press` routes
+  `dir`, `dir_enemy` (through `Game._is_dir_shape`) and `enemy_line` to
+  `target_dir`, and `_try_ability_target` resolves a direction to the nearest
+  legal body along it for `enemy_line`, whose legal targets are enemy
+  POSITIONS. Before this the whip answered every D-pad press with "not a
+  legal target" and the rake armed a tile aim whose "tiles" were unit
+  vectors - neither could be cast from a phone at all, and it was the aim
+  preview's review that found it. `_check_aim_preview` casts both.
 - The payoff layer is on screen (`_spawn_fx`): `status`, `staggered`,
   `resisted`, `screened`, `rider`, `surge`, `hook` and `ignite` events each
   draw a floating word or burst where they happened (`ROOTED`, `STAGGER`,
-  `COMBO +2`, `SURGE`, the graft or resonance NAME via `_source_name`), all
+  `COMBO +2`, `SURGE`, the graft or resonance NAME via `_source_name` — and
+  only when `_hook_landed` finds the hook's own damage, status or terrain
+  after it, because the sim emits `hook` BEFORE the row's effects run), all
   but `ignite` have a `_ev_text` log line, and a collision hit shakes the
   camera. Before this pass a rider or hook firing drew nothing and logged
   nothing. Words landing on one tile fan out in time through the shared

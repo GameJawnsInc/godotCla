@@ -163,14 +163,15 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## held by the injected _ResProbe rows in tests/test_grammar.gd and
 ## tests/test_economy.gd alone.
 ## SIM_VERSION 15 (floor-2 clock): one Content.FLOORS row moved. Strip Mine II
-## carried the tightest smog clock of floors 1-4 (spawn [9, 17] every 10, dim
-## [12, 20], choke 36 - tighter than floor 3's AND floor 4's) on the floor that
+## carried the tightest smog spawn and dim clock of floors 1-4 (spawn [9, 17]
+## every 10, dim [12, 20] - tighter than floor 3's AND floor 4's; its choke 36
+## tied floor 3 and was looser than floor 4's 34) on the floor that
 ## also introduces the first drain/gum roster, and the noob persona's deaths
-## piled there: sprout 28/100 on floor 2 against 11-20 on every other floor.
+## piled there: sprout 28/100 on floor 2 against 4-20 on every other floor.
 ## It now sits between its neighbours (spawn [10, 19] every 11, dim [14, 22],
-## choke 37). Every stored log that reaches floor 2 diverges at that floor's
-## first smog threshold and at nothing earlier; a log that ends on floor 1
-## replays byte for byte. No rule, op or key changed. Numbers in BALANCE.md
+## choke 37). A stored log can diverge at floor 2's first moved smog
+## threshold and at nothing earlier; a log that ends on floor 1, or leaves
+## floor 2 before the smog gets there, replays byte for byte. No rule, op or key changed. Numbers in BALANCE.md
 ## (2026-11-09).
 const SIM_VERSION := 15
 
