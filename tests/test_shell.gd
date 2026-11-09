@@ -1431,6 +1431,41 @@ func _check_aim_preview() -> void:
 			"preview: a D-pad press casts %s down that line and deals what was shown (hp %d / %d, flash '%s')" % [
 				aid, int(e1["hp"]), int(e2["hp"]), sw.flash])
 		sw.free()
+	# the direction resolver is for the whip's POSITION targets only. The
+	# rake's targets are unit vectors, and read as positions they line up with
+	# a tender standing in column 1 or row 1: an illegal direction then cast
+	# the rake down a different, legal one.
+	var sr = _bare_shell()
+	sr.game = Game.new(4242, {"kit": ["vine_whip+rake", "seed_bomb", "mycelium_dash"]})
+	var gr = sr.game
+	var edge := Vector2i(-1, -1)
+	for yy in range(2, int(gr.map["h"]) - 2):
+		if int(gr.map["tiles"][yy * int(gr.map["w"]) + 1]) == 1 \
+				and int(gr.map["tiles"][yy * int(gr.map["w"]) + 2]) == 1 \
+				and int(gr.map["tiles"][yy * int(gr.map["w"]) + 3]) == 1:
+			edge = Vector2i(1, yy)
+			break
+	if edge.x < 0:
+		# no floor in column 1 on this map: force one, the resolver only reads positions
+		edge = Vector2i(1, 3)
+		for xx in [1, 2, 3]:
+			gr.map["tiles"][3 * int(gr.map["w"]) + xx] = 1
+			gr.terrain.erase(Vector2i(xx, 3))
+	gr.player["pos"] = edge
+	gr.player["charge"] = 5
+	for e in gr.enemies:
+		e["pos"] = Vector2i(-9, -9)
+	gr.enemies[0]["pos"] = edge + Vector2i(2, 0)
+	gr.enemies[0]["hp"] = 9
+	sr.mode = "target_dir"
+	sr.mode_slot = 0
+	# from (1, y) the legal target (1, 0) minus the tender's position is
+	# (0, -y): "up", an illegal direction with nobody on it
+	sr._try_ability_target(0, Vector2i(0, -1))
+	_check(int(gr.enemies[0]["hp"]) == 9 and int(gr.player["charge"]) == 5,
+		"preview: an illegal rake direction casts nothing, even from column 1 (hp %d, charge %d)" % [
+			int(gr.enemies[0]["hp"]), int(gr.player["charge"])])
+	sr.free()
 	# a TILE aim labels the target tile: two snare targets, each reads rooted
 	var st = _bare_shell()
 	st.game = Game.new(4242, {"kit": ["sap_snare", "seed_bomb", "mycelium_dash"]})

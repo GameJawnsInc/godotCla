@@ -664,6 +664,9 @@ func _play_events(evs: Array) -> void:
 ## a step can hold a dozen events and a phone that buzzes for each is noise.
 ## 20 ms for a combo tick up to 250 ms for the tender's death.
 func _buzz_events(evs: Array) -> void:
+	# a chained second step must not cut short a stronger buzz the first
+	# step of the same input already asked for
+	var prev := _buzz_ms if _chain_next else 0
 	_buzz_ms = 0
 	for ev in evs:
 		var ms := 0
@@ -678,6 +681,9 @@ func _buzz_events(evs: Array) -> void:
 			"death", "staggered": ms = 25
 			"rider": ms = 20
 		_buzz_ms = maxi(_buzz_ms, ms)
+	if _buzz_ms <= prev:
+		_buzz_ms = prev
+		return
 	if haptics_on and _buzz_ms > 0:
 		Input.vibrate_handheld(_buzz_ms)
 
@@ -1595,13 +1601,18 @@ func _try_ability_target(slot: int, target) -> void:
 	var pp: Vector2i = game.player["pos"]
 	var best = null
 	var best_d := 1 << 30
+	# ONLY for that shape: a "dir"/"dir_enemy" target is itself a unit vector,
+	# and read as a position it can line up with a tender in column or row 1 -
+	# an illegal direction would then cast the rake down a different one
+	var by_pos: bool = slot < game.player["kit"].size() \
+		and String(Content.ABILITIES[game.player["kit"][slot]].get("target", "")) == "enemy_line"
 	for a in _legal_of("ability"):
 		if int(a["slot"]) != slot:
 			continue
 		if a["target"] == target:
 			_act(a)
 			return
-		if mode == "target_dir" and a["target"] is Vector2i and target is Vector2i:
+		if by_pos and mode == "target_dir" and a["target"] is Vector2i and target is Vector2i:
 			var dl: Vector2i = a["target"] - pp
 			var dist := absi(dl.x) + absi(dl.y)
 			if (dl.x == 0 or dl.y == 0) and dl != Vector2i.ZERO \

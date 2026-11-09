@@ -6,7 +6,7 @@ The shell boots to a main menu: PLAY (fresh run), RESUME (when a run is
 live), the run-setup rows (see *Setting up a run*), TUTORIAL, SETTINGS,
 QUIT. Settings persist to `user://tender.cfg`: hold-to-inspect delay, run
 seed mode (random / daily — everyone playing a daily gets the same run),
-intro-card frequency, animation speed (full / quick / off, see
+intro-card frequency, vibration (see *Vibration*), animation speed (full / quick / off, see
 *Animations*) and the camera's zoom (see *The camera*), alongside the run
 choices the title screen makes (difficulty, loadout, package, mutator). The sheet also prints where
 finished run logs are kept. The `=` button in the status strip returns

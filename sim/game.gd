@@ -162,6 +162,12 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## or mod row, no replay can observe either passive loop, and that rule is
 ## held by the injected _ResProbe rows in tests/test_grammar.gd and
 ## tests/test_economy.gd alone.
+## SIM_VERSION 15 (tending by any means): the room bloom (bonus + supply pod)
+## and the floor restore follow the corruption, not the CLEANSE action. step()
+## records _corrupt_rooms() before any non-end_turn play action and
+## _settle_tending() pays every room that action emptied, so a convert or a
+## wash now blooms the room and can restore the floor. See CLAUDE.md and
+## BALANCE.md (2026-09-27).
 ## SIM_VERSION 16 (floor-2 clock): one Content.FLOORS row moved. Strip Mine II
 ## carried the tightest smog spawn and dim clock of floors 1-4 (spawn [9, 17]
 ## every 10, dim [12, 20] - tighter than floor 3's AND floor 4's; its choke 36
