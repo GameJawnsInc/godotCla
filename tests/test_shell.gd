@@ -625,6 +625,8 @@ func _init() -> void:
 	_check_back()
 	_check_aim_cancel()
 	_check_modal_dpad()
+	_check_aim_preview()
+	_check_payoff_fx()
 	_check_cleanse_hint()
 	_check_card_text()
 	_check_tier_clamp()
@@ -990,6 +992,94 @@ func _check_aim_cancel() -> void:
 	_check(sw.mode == "target_dir" and sw.mode_slot == 0,
 		"tapping another slot re-aims instead of cancelling (%s %d)" % [sw.mode, sw.mode_slot])
 	sw.free()
+
+
+## --- the aim preview tells the truth ------------------------------------------
+## Arming an aim reads each legal cast off a clone() of the sim and labels what
+## it would do. Two things are worth a gate: the label has to MATCH the cast
+## (a preview that is off by one is worse than none), and computing it must
+## never touch the live game - an aim costs nothing, so neither does looking.
+func _check_aim_preview() -> void:
+	var sh = _bare_shell()
+	sh.game = Game.new(4242, {})
+	var g = sh.game
+	g.player["charge"] = 5
+	var d := _open_dir(g)
+	var en: Dictionary = _park_enemy(g, g.player["pos"] + d)
+	en["hp"] = 5
+	var h0: String = g.state_hash()
+	sh._ability_press(0)  # solar_lance: 2 dmg down a line
+	_check(sh.mode == "target_dir", "preview: the lance arms a direction aim (%s)" % sh.mode)
+	_check(g.state_hash() == h0, "preview: arming an aim leaves the live game byte-identical")
+	var labels: Array = sh._preview_labels()
+	var mine: Array = labels.filter(func(l): return l["tile"] == en["pos"])
+	_check(mine.size() == 1 and String(mine[0]["text"]) == "-2" and not mine[0]["kill"],
+		"preview: the lance labels the body it would hit with its damage (%s)" % str(labels))
+	sh._dir_input(d)
+	_check(int(en["hp"]) == 3, "preview: and the cast then deals exactly that (hp %d)" % int(en["hp"]))
+	# a lethal cast reads KILL, not a number
+	en["hp"] = 2
+	g.player["charge"] = 5
+	sh._ability_press(0)
+	var kl: Array = sh._preview_labels().filter(func(l): return l["tile"] == en["pos"])
+	_check(kl.size() == 1 and String(kl[0]["text"]) == "KILL" and kl[0]["kill"],
+		"preview: a lethal lance reads KILL (%s)" % str(kl))
+	sh._cancel_aim()
+	_check(sh._preview_labels().is_empty() or sh.mode == "normal",
+		"preview: a cancelled aim draws no labels")
+	# an aim with nothing in reach promises nothing
+	en["pos"] = Vector2i(-9, -9)
+	sh._ability_press(0)
+	_check(sh.mode != "target_dir" or sh._preview_labels().is_empty(),
+		"preview: an aim that reaches nobody labels nobody")
+	sh.free()
+
+
+## --- the payoff layer is on screen --------------------------------------------
+## Riders, hooks, surges and statuses are what a build is, and none of them
+## used to draw anything. This drives _spawn_fx with one of each and checks a
+## floating word lands where the event happened, that every one has a log
+## line, and that a step asks for at most ONE buzz, the strongest.
+func _check_payoff_fx() -> void:
+	var sh = _bare_shell()
+	sh.game = Game.new(4242, {})
+	var g = sh.game
+	var en: Dictionary = _park_enemy(g, g.player["pos"] + _open_dir(g))
+	var evs := [
+		{"t": "damage", "who": en["kind"], "id": en["id"], "amt": 3, "src": "collision:water_jet"},
+		{"t": "status", "id": en["id"], "status": "root", "turns": 1},
+		{"t": "staggered", "id": en["id"]},
+		{"t": "rider", "id": "grow_spike", "kind": "per", "amt": 2},
+		{"t": "rider", "id": "seed_bomb+tangle", "kind": "then", "amt": 1},
+		{"t": "surge", "id": "grow_spike", "keys": ["dmg"]},
+		{"t": "hook", "id": "cinder_grip", "on": "ignite", "tile": en["pos"]},
+		{"t": "ignite", "tile": en["pos"]},
+	]
+	sh._fx = []
+	sh._spawn_fx(evs, {})
+	var words: Array = []
+	for f in sh._fx:
+		if String(f["kind"]) == "float":
+			words.append(String(f["text"]))
+	for want in ["-3", "ROOTED", "STAGGER", "COMBO +2", "COMBO", "SURGE", "Cinder Grip"]:
+		_check(words.has(want), "payoff fx: '%s' floats (%s)" % [want, str(words)])
+	var on_enemy: Array = sh._fx.filter(func(f): return String(f["kind"]) == "float" \
+		and f["pos"] == Vector2(en["pos"]))
+	var t0s := {}
+	for f in on_enemy:
+		t0s[int(f["t0"])] = true
+	_check(t0s.size() == on_enemy.size(),
+		"payoff fx: words landing on one tile fan out in time instead of overprinting")
+	_check(sh._buzz_ms == 30, "payoff fx: one buzz a step, the strongest asked for (%d)" % sh._buzz_ms)
+	for ev in evs.slice(1, 7):  # ignite draws a burst; it is too common for the log
+		_check(sh._ev_text(ev) != "", "payoff fx: '%s' has a log line" % String(ev["t"]))
+	sh._spawn_fx([{"t": "move", "who": "player"}], {})
+	_check(sh._buzz_ms == 0, "payoff fx: a quiet step asks for no buzz")
+	sh.haptics_on = true
+	sh._tap("set:haptics")
+	_check(not sh.haptics_on, "payoff fx: the vibration setting toggles")
+	sh._tap("set:haptics")  # and back on: the tap persists to user://tender.cfg
+	sh.free()
 
 
 ## --- a direction in a modal state ---------------------------------------------

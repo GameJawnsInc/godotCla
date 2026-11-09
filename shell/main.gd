@@ -93,6 +93,9 @@ const LEGEND := [
 	["the_dredge", "The Dredge", "floor 7 boss - eats your growth"],
 ]
 
+## What a landed status reads as when it floats over the body it landed on.
+const STATUS_FX := {"root": "ROOTED", "stun": "STUNNED", "spore": "SPORED"}
+
 const DIRS4 := {
 	"up": Vector2i(0, -1), "down": Vector2i(0, 1),
 	"left": Vector2i(-1, 0), "right": Vector2i(1, 0),
@@ -148,6 +151,13 @@ var seed_mode := "random"  # random | daily
 var intro_mode := "once"   # once | always | never
 var sfx_on := true
 var music_on := true
+var haptics_on := true     # phone buzz on hits, kills and payoffs (Input.vibrate_handheld)
+var _buzz_ms := 0          # the strongest buzz asked for this step, for the test and the cap
+# Aim preview: what each legal aim of the armed slot WOULD do, read off a
+# clone() of the sim - exact, because a cast never rolls the main rng and never
+# resolves the turn. One row per legal action:
+# {target, dmg: {enemy id: int}, kills: [ids], status: {enemy id: name}}
+var _aim_preview: Array = []
 
 var audio: Node
 
@@ -425,6 +435,7 @@ func _load_settings() -> void:
 		seed_mode = String(cf.get_value("ui", "seed_mode", "random"))
 		intro_mode = String(cf.get_value("ui", "intro_mode", "once"))
 		sfx_on = bool(cf.get_value("ui", "sfx_on", true))
+		haptics_on = bool(cf.get_value("ui", "haptics_on", true))
 		music_on = bool(cf.get_value("ui", "music_on", true))
 		sel_tier = int(cf.get_value("ui", "tier", 0))
 		sel_loadout = String(cf.get_value("ui", "loadout", "tender"))
@@ -438,6 +449,7 @@ func _save_settings() -> void:
 	cf.set_value("ui", "seed_mode", seed_mode)
 	cf.set_value("ui", "intro_mode", intro_mode)
 	cf.set_value("ui", "sfx_on", sfx_on)
+	cf.set_value("ui", "haptics_on", haptics_on)
 	cf.set_value("ui", "music_on", music_on)
 	cf.set_value("ui", "tier", sel_tier)
 	cf.set_value("ui", "loadout", sel_loadout)
@@ -559,6 +571,7 @@ func _play_events(evs: Array) -> void:
 func _spawn_fx(evs: Array, prev: Dictionary) -> void:
 	var now := Time.get_ticks_msec()
 	var stack := {}  # tile -> count, so numbers landing together fan out in time
+	_buzz_ms = 0
 	for ev in evs:
 		match String(ev.get("t", "")):
 			"damage":
@@ -573,6 +586,43 @@ func _spawn_fx(evs: Array, prev: Dictionary) -> void:
 				_fx.append({"kind": "flash", "pos": p, "col": Color(1, 1, 1), "t0": now})
 				if mine:
 					_shake(2.0 + minf(float(int(ev["amt"])) * 1.2, 6.0))
+					_buzz(40 + mini(int(ev["amt"]) * 15, 60))
+				elif String(ev.get("src", "")).begins_with("collision"):
+					# a body slammed into a wall or another body: the one
+					# enemy-side hit heavy enough to move the camera
+					_shake(3.5)
+					_buzz(30)
+			# the payoff layer. Riders, hooks, surges and statuses are what a
+			# build IS, and until this pass none of them drew anything: a
+			# rider that doubled a spike read exactly like one that did not.
+			"status":
+				_fx_word(ev, prev, stack, now, STATUS_FX.get(String(ev.get("status", "")),
+					String(ev.get("status", "")).to_upper()), Color("9fd0ff"))
+			"staggered":
+				_fx_word(ev, prev, stack, now, "STAGGER", COL_GOLD)
+				_buzz(25)
+			"resisted":
+				_fx_word(ev, prev, stack, now, "RESIST", COL_DIM_TEXT)
+			"screened":
+				_fx_word(ev, prev, stack, now, "MISS", Color(0.8, 0.82, 0.85))
+			"rider":
+				var rtxt := "COMBO"
+				if String(ev.get("kind", "")) != "then" and int(ev.get("amt", 0)) > 0:
+					rtxt = "COMBO +%d" % int(ev["amt"])
+				_fx_word({"who": "player"}, prev, stack, now, rtxt, COL_GOLD)
+				_buzz(20)
+			"surge":
+				_fx_word({"who": "player"}, prev, stack, now, "SURGE", Color(0.55, 0.9, 0.45))
+			"hook":
+				if ev.has("tile"):
+					var hp := Vector2(ev["tile"])
+					var hk := str(hp)
+					stack[hk] = int(stack.get(hk, -1)) + 1
+					_fx.append({"kind": "float", "pos": hp, "text": _source_name(String(ev.get("id", ""))),
+						"col": Color(0.95, 0.8, 0.45), "t0": now + int(stack[hk]) * 110})
+			"ignite":
+				if ev.has("tile"):
+					_fx.append({"kind": "burst", "pos": Vector2(ev["tile"]), "col": Color(1.0, 0.55, 0.2), "t0": now})
 			"heal":
 				_fx.append({"kind": "float", "pos": Vector2(game.player["pos"]),
 					"text": "+%d" % int(ev["amt"]), "col": Color("8fdc6a"), "t0": now})
@@ -588,6 +638,9 @@ func _spawn_fx(evs: Array, prev: Dictionary) -> void:
 				var dp := _fx_pos(ev, prev)
 				if dp.x > -0.5:
 					_fx.append({"kind": "puff", "pos": dp, "col": Color(0.62, 0.64, 0.66), "t0": now})
+				_buzz(25)
+			"player_death":
+				_buzz(250)
 			"room_bloom":
 				var bp := Vector2(game.player["pos"])
 				_fx.append({"kind": "burst", "pos": bp, "col": Color(0.91, 0.70, 0.82), "t0": now})
@@ -607,8 +660,39 @@ func _spawn_fx(evs: Array, prev: Dictionary) -> void:
 					_fx.append({"kind": "burst", "pos": Vector2(ev["tile"]), "col": Color(0.55, 0.9, 0.45), "t0": now})
 			"boss_phase", "ignite_all", "flood", "smoke_burst":
 				_shake(9.0)
+				_buzz(90)
 	if _fx.size() > 40:
 		_fx = _fx.slice(_fx.size() - 40)
+	if haptics_on and _buzz_ms > 0:
+		Input.vibrate_handheld(_buzz_ms)
+
+
+## Ask for a buzz this step. A step can hold a dozen events, so the phone
+## gets ONE vibration per step - the strongest asked for - never a queue.
+func _buzz(ms: int) -> void:
+	_buzz_ms = maxi(_buzz_ms, ms)
+
+
+## A floating word over an event's subject, fanned out in time behind whatever
+## already landed on that tile this step (the damage number goes first).
+func _fx_word(ev: Dictionary, prev: Dictionary, stack: Dictionary, now: int,
+		text: String, col: Color) -> void:
+	var p := _fx_pos(ev, prev)
+	if p.x < -0.5 or text == "":
+		return
+	var k := str(p)
+	stack[k] = int(stack.get(k, -1)) + 1
+	_fx.append({"kind": "float", "pos": p, "text": text, "col": col,
+		"t0": now + int(stack[k]) * 110})
+
+
+## Display name of a hook source id: a graft, a resonance or (for a kit hook)
+## an ability - the three tables Game._hook scans, in that order.
+func _source_name(id: String) -> String:
+	for table in [Content.GRAFTS, Content.RESONANCES, Content.ABILITIES]:
+		if table.has(id):
+			return String(table[id].get("name", id))
+	return id
 
 
 ## Best-known tile for an event's subject: the player, a live enemy, or the
@@ -1222,6 +1306,7 @@ func _ability_press(slot: int) -> void:
 		return
 	var aid: String = game.player["kit"][slot]
 	var ttype: String = Content.ABILITIES[aid]["target"]
+	_aim_preview = _preview_aim(acts)
 	if ttype == "dir" or ttype == "enemy_line":
 		mode = "target_dir"
 		mode_slot = slot
@@ -1238,6 +1323,90 @@ func _ability_press(slot: int) -> void:
 			mode_targets.append(a["target"])
 		_flash("AIM %s: tap a green tile  ·  D-pad or slot cancels" % Content.ABILITIES[aid]["name"])
 	queue_redraw()
+
+
+## What each of these legal casts would do, read off a clone of the sim: the
+## cast is stepped on the copy and its own events are folded per enemy. It is
+## exact rather than an estimate - riders, surges, collisions and hooks all
+## run on the copy - and it leaks nothing, because a cast draws no rng and
+## does not resolve the turn (only end_turn runs the enemies). The live game
+## is never touched: tests assert its hash is unchanged by arming an aim.
+func _preview_aim(acts: Array) -> Array:
+	var out: Array = []
+	for a in acts:
+		var g = game.clone()
+		var row := {"target": a.get("target"), "dmg": {}, "kills": [], "status": {}}
+		for ev in g.step(a):
+			var id = ev.get("id", null)
+			match String(ev.get("t", "")):
+				"damage":
+					if ev.get("who", "") != "player" and id != null:
+						row["dmg"][id] = int(row["dmg"].get(id, 0)) + int(ev["amt"])
+				"death":
+					if id != null and not row["kills"].has(id):
+						row["kills"].append(id)
+				"status":
+					if id != null:
+						row["status"][id] = String(ev.get("status", ""))
+		out.append(row)
+	return out
+
+
+## The label an aim preview draws for one enemy: a kill outranks a number,
+## and a status rides beside either.
+func _preview_text(dmg: int, killed: bool, status: String) -> String:
+	var parts: Array = []
+	if killed:
+		parts.append("KILL")
+	elif dmg > 0:
+		parts.append("-%d" % dmg)
+	if status != "" and not killed:
+		parts.append(String(STATUS_FX.get(status, status)).to_lower())
+	return " ".join(parts)
+
+
+## Every label the armed aim should draw, as data: [{tile, text, kill}]. A
+## direction aim labels the ENEMIES each direction would reach (the four
+## lines never share a body, bar a shove into a neighbour, which stacks); a
+## tile aim labels each TARGET tile with the total it would deal, because
+## there the bodies overlap between targets and the tile is the choice.
+func _preview_labels() -> Array:
+	var out: Array = []
+	if game == null or _aim_preview.is_empty():
+		return out
+	var where := {}
+	for e in game.enemies:
+		where[e["id"]] = e["pos"]
+	for row in _aim_preview:
+		if mode == "target_tile":
+			var total := 0
+			for id in row["dmg"]:
+				total += int(row["dmg"][id])
+			var st := ""
+			for id in row["status"]:
+				st = String(row["status"][id])
+			var kills: int = row["kills"].size()
+			var txt := _preview_text(total, false, st)
+			if kills > 0:
+				txt = "KILL" if kills == 1 else "KILL x%d" % kills
+			if txt != "" and row["target"] is Vector2i:
+				out.append({"tile": row["target"], "text": txt, "kill": kills > 0})
+		elif mode == "target_dir":
+			var ids := {}
+			for id in row["dmg"]:
+				ids[id] = true
+			for id in row["status"]:
+				ids[id] = true
+			for id in row["kills"]:
+				ids[id] = true
+			for id in ids:
+				if not where.has(id):
+					continue
+				var t2 := _preview_text(int(row["dmg"].get(id, 0)), row["kills"].has(id),
+					String(row["status"].get(id, "")))
+				if t2 != "":
+					out.append({"tile": where[id], "text": t2, "kill": row["kills"].has(id)})
+	return out
 
 
 func _try_ability_target(slot: int, target) -> void:
@@ -1435,6 +1604,10 @@ func _tap(tag: String) -> void:
 			"sfx":
 				sfx_on = not sfx_on
 				audio.sfx_on = sfx_on
+			"haptics":
+				haptics_on = not haptics_on
+				if haptics_on:
+					Input.vibrate_handheld(30)
 			"music":
 				music_on = not music_on
 				audio.set_music(music_on)
@@ -1692,6 +1865,19 @@ func _ev_text(ev: Dictionary) -> String:
 			return "Enemy stunned"
 		"staggered":
 			return "Staggered - wind-up lost"
+		"status":
+			return "%s is %s" % [_ename_by_id(ev.get("id", -1)),
+				String(STATUS_FX.get(String(ev.get("status", "")), String(ev.get("status", "")))).to_lower()]
+		"rider":
+			var rn := String(Content.ABILITIES.get(String(ev.get("id", "")), {}).get("name", "Ability"))
+			if String(ev.get("kind", "")) != "then" and int(ev.get("amt", 0)) > 0:
+				return "Combo: %s hits for +%d" % [rn, int(ev["amt"])]
+			return "Combo: %s pays off" % rn
+		"surge":
+			return "Verdant surge: %s grows stronger" % String(
+				Content.ABILITIES.get(String(ev.get("id", "")), {}).get("name", "the cast"))
+		"hook":
+			return "%s triggers" % _source_name(String(ev.get("id", "")))
 		"rooted":
 			return "Enemy rooted in place"
 		"resisted":
@@ -2072,6 +2258,8 @@ func _draw_settings(vw: float, vh: float) -> void:
 	_button(Rect2(vw * 0.06, y, bw, bh), "Sound effects:  %s" % ("on" if sfx_on else "off"), "set:sfx", int(bh * 0.3))
 	y += bh + vh * 0.025
 	_button(Rect2(vw * 0.06, y, bw, bh), "Music:  %s" % ("on" if music_on else "off"), "set:music", int(bh * 0.3))
+	y += bh + vh * 0.025
+	_button(Rect2(vw * 0.06, y, bw, bh), "Vibration:  %s" % ("on" if haptics_on else "off"), "set:haptics", int(bh * 0.3))
 	y += bh + vh * 0.03
 	# the globalized path is absolute, so the whole line used to shrink to the
 	# 9px _fit_size floor whatever the label said - the tail is the useful half
@@ -2082,7 +2270,7 @@ func _draw_settings(vw: float, vh: float) -> void:
 	_txt_fit(Vector2(vw * 0.06, y + vh * 0.02), "runs saved to %s" % rp,
 		COL_DIM_TEXT, int(vh * 0.018), bw)
 	y += vh * 0.05
-	_button(Rect2(vw * 0.06, y, bw, bh), "BACK", "close", int(bh * 0.34))
+	_button(Rect2(vw * 0.06, _sheet_button_y(y, bh, vh), bw, bh), "BACK", "close", int(bh * 0.34))
 
 
 func _draw_tut_banner(vw: float, vh: float) -> void:
@@ -2635,6 +2823,24 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	elif mode == "target_dir" or mode == "cleanse":
 		for d in DIRS4.values():
 			draw_rect(_tile_rect(snap["player"]["pos"] + d).grow(-1), COL_TARGET, false, 2.0)
+	# aim preview: what the cast would do, before it is spent
+	if mode == "target_tile" or mode == "target_dir":
+		var seen := {}
+		var psz := int(_ts * 0.36)
+		for lb in _preview_labels():
+			var lt2: Vector2i = lb["tile"]
+			if not _vis(lt2):
+				continue
+			var nth := int(seen.get(lt2, 0))
+			seen[lt2] = nth + 1
+			var lr := _tile_rect(lt2)
+			var ls := String(lb["text"])
+			var lw := font.get_string_size(ls, HORIZONTAL_ALIGNMENT_LEFT, -1, psz).x
+			var lx := lr.get_center().x - lw / 2.0
+			var ly := lr.position.y + psz * 0.95 + float(nth) * psz * 1.1
+			draw_rect(Rect2(lx - 3, ly - psz * 0.9, lw + 6, psz * 1.15), Color(0, 0, 0, 0.72))
+			draw_string(font, Vector2(lx, ly), ls, HORIZONTAL_ALIGNMENT_LEFT, -1, psz,
+				COL_GOLD if lb["kill"] else COL_CREAM)
 
 	# soft vignette around the tile field for depth
 	var mr := Rect2(_mox + _vx0 * _ts, _moy + _vy0 * _ts,

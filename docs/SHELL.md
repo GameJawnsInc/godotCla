@@ -83,12 +83,49 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
   and exactly what it will do next turn
 - tap a kit line to cast — aim with the D-pad / adjacent tap for
   directional abilities, or tap a highlighted tile for tile abilities
+- **an armed aim previews its result**: damage, kills and statuses are
+  labelled on the map before you commit (see "The aim preview")
 - **cancelling an aim is free**: tap the same kit line again, press any
   D-pad arrow, or press Back. None of them move you, strike anything, or
   cost a turn, and the aim line on screen says so
 - CLEANSE / DESCEND / HELP buttons bottom-right
 - tap shop cards at a shrine, draft options between floors
 - after a run: tap anywhere for the next seed
+
+## The aim preview
+
+Arming an aim shows what each legal cast **would do, before the charge is
+spent**. `shell/main.gd` `_preview_aim` steps every legal action of the armed
+slot on a `clone()` of the sim and folds the cast's own events per enemy; the
+map then draws a label over each result:
+
+| aim | where the label sits | what it says |
+| --- | --- | --- |
+| direction (lance, jet, whip) | on each **enemy** a direction reaches | `-3`, `KILL`, `-2 rooted` |
+| tile (bombs, flares, snares) | on each **target tile** | the total it deals from there, or `KILL x2` |
+
+It is exact, not an estimate - riders, surges, collisions and hooks all run
+on the copy - and it reveals nothing the player could not work out, because
+a cast draws no rng and never resolves the turn. A direction that reaches
+nobody, or a tile that deals nothing (a seed bomb), carries no label.
+`tests/test_shell.gd` `_check_aim_preview` holds it to the truth: the label
+must equal what the cast then deals, a lethal cast must read `KILL`, and
+arming an aim must leave the live game's `state_hash()` untouched.
+
+## Payoff feedback and vibration
+
+A build's payoffs draw on the map as they happen (`_spawn_fx`): a landed
+status floats `ROOTED` / `STUNNED` / `SPORED` over the body, an interrupted
+wind-up `STAGGER`, a rider `COMBO` (`COMBO +2` when it added damage), a stat
+surge `SURGE`, a graft or resonance hook its own name on the tile it fired
+on, an ignition an orange burst, and a wall-slam shakes the camera. Each has
+a log line too. Words landing on one tile are fanned out in time behind the
+damage number, never overprinted.
+
+On a phone the same events buzz (`Input.vibrate_handheld`, the `VIBRATE`
+permission in `export_presets.cfg`): one vibration per step - the strongest
+asked for - scaled from a 20 ms combo tick to 250 ms for the tender's death.
+**Settings -> Vibration** turns it off.
 
 ## Why CLEANSE refused
 
@@ -199,9 +236,17 @@ views (`tests/autopsy.gd`, `tests/playtest.gd`) print.
 `com.gamejawns.tender`). `build/` is gitignored and absent, so:
 
 ```
+tools/setup_android_export.sh   # once per fresh container, about a minute
 mkdir -p build
 godot --headless --path . --export-debug "Android" build/tender.apk
 ```
+
+`tools/setup_android_export.sh` does everything the two sections below
+describe - the range-fetched debug template, an SDK-shaped directory, a debug
+keystore and the editor settings - and signs with **Ubuntu's own `apksigner`
+package** (`apt-get install apksigner`, 31.0.2), which is the real tool and
+needs no shim. The keystore is generated per container, so an APK built in
+one session will not install over one built in another: uninstall first.
 
 Measured on a fresh container: **29.2 MB, signed v2+v3, zipalign verified,
 about 20 seconds.**
@@ -237,7 +282,8 @@ curl -sSL -r 0-125820715 -o /tmp/dbg.bin \
 # then strip the 30+name+extra local header and zlib.decompressobj(-15) the rest
 ```
 
-Signing goes through an `apksigner` shim over patrickfav/uber-apk-signer.
+**Superseded by the apt package above** - kept as the fallback if the distro
+ever drops it. Signing went through an `apksigner` shim over patrickfav/uber-apk-signer.
 The real `com.android.apksigner.ApkSignerTool` is NOT in that jar, so the
 shim has to translate — Godot calls `apksigner --version`, then
 `sign --verbose --ks <KS> --ks-pass pass:<PW> --ks-key-alias <ALIAS> <APK>`
