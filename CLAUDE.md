@@ -1473,5 +1473,15 @@ architecture below is designed to bend rather than block.
   profile) and clamps `unlocked_tier` to `Content.TIERS.size()`, the one unlock
   with no Content table to filter against - the shell bounds it a second time
   in `_max_tier()`, because an out-of-range tier read empties the whole menu.
-- Workflow: no PRs; commit on `claude/godot-setup-q6hk6p` and merge/push
-  straight to `main`.
+- Workflow: no PRs; work on the session's branch and merge/push straight to
+  `main`. **Before touching anything, `git fetch origin main` and compare:
+  `git log --oneline HEAD..origin/main`.** A session branch is cut from
+  wherever its base happened to be and can be weeks behind - if that log is
+  not empty, rebase onto (or restart the branch from) `origin/main` first.
+  The 2026-11-09 session skipped this, started 34 commits behind, and paid
+  for it: feedback floats built on code the animation reel had already
+  replaced (dropped at the merge), a floor-2 bump recorded as SIM_VERSION 15
+  when main had already used 15 (re-recorded as 16), balance numbers measured
+  on a stale tree, and an APK that had to be rebuilt. Fetch again before
+  merging, too. (`claude/godot-setup-q6hk6p`, the branch this note used to
+  name, is itself stale.)
