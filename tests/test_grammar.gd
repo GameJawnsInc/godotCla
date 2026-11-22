@@ -58,11 +58,22 @@ extends SceneTree
 ## that carried it was cut on the canary), so the _passive_stat machinery is
 ## driven through an injected fixture row instead.
 ## snapshot() carries the derived "resonances" list and state_hash() does not.
+## fq (fun pass, read-only sim queries): smog_forecast on hand-built floor-1
+## states (dims, choke, vents, stokers stunned / idle, a sealed vent, tier 1,
+## the tutorial's dead clock), telegraph's arms and blocks, end_turn_forecast
+## (death, shield, stun, smog, fire, over / draft zeros), core_shield_up and
+## the resonances() / tag_counts() aliases; then optimizer and sprout over
+## seeds 1..2: the forecast equals the real step on every end turn the bot
+## takes and is identical under a re-seeded clone rng, the enemy damage equals
+## the telegraph sum, smog_forecast matches an end-turn-only clone, and no
+## query moves state_hash or rng.state.
 ## Run: godot --headless --path . --script tests/test_grammar.gd
 
 const Content := preload("res://sim/content.gd")
 const Game := preload("res://sim/game.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const Roster := preload("res://bots/roster.gd")
+const Tutorial := preload("res://shell/tutorial.gd")
 
 ## 11 x 7 room, player at (5, 3). Every interior tile is floor.
 const ROOM := [
@@ -150,6 +161,12 @@ func _init() -> void:
 	_check_d5_cinder_grip()
 	_check_d5_stat_row()
 	_check_d5_toggle()
+	_check_fq_smog_forecast()
+	_check_fq_telegraph()
+	_check_fq_end_turn_forecast()
+	_check_fq_sweeps()
+	_check_fq_core_shield()
+	_check_fq_aliases()
 	if failures.is_empty():
 		print("grammar: OK (%d checks)" % checks)
 		quit(0)
@@ -4223,3 +4240,390 @@ func _check_d5_toggle() -> void:
 	g4._hook("ignite", {"tile": en["pos"], "by": "probe"})
 	_ok(int(en["status"].get("root", 0)) == 1 and _hooks(g4._step_events, "cinder_grip").size() == 1,
 		"d5 toggle: the surviving row still fires: %s" % str(en["status"]))
+
+
+# --- fq: fun-pass read-only queries ------------------------------------------
+## Game.smog_forecast / telegraph / end_turn_forecast (the danger forecasts),
+## core_shield_up and the resonances() / tag_counts() aliases. None of them
+## may change state, draw from either rng or emit an event, and the sim never
+## calls them; the bot sweeps below are what keep the forecasts honest as the
+## rules they mirror (_tick_smog, _execute_intent) and clone() evolve.
+
+static func _fq_clear(g) -> void:
+	g.enemies.clear()
+	g.terrain.clear()
+
+
+## The first open tile at manhattan distance >= minr from `near`.
+static func _fq_free_tile(g, near: Vector2i, minr: int) -> Vector2i:
+	var m: Dictionary = g.map
+	for r in range(minr, 12):
+		for y in int(m["h"]):
+			for x in int(m["w"]):
+				var p := Vector2i(x, y)
+				if absi(p.x - near.x) + absi(p.y - near.y) == r and g._open(p):
+					return p
+	return Vector2i(-1, -1)
+
+
+## A direction with n open floor tiles in a straight line from the tender.
+static func _fq_line_dir(g, n: int) -> Vector2i:
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var ok := true
+		for k in range(1, n + 1):
+			if not g._open(g.player["pos"] + d * k):
+				ok = false
+				break
+		if ok:
+			return d
+	return Vector2i.ZERO
+
+
+func _check_fq_smog_forecast() -> void:
+	# floor 1: dims [14, 22], choke 38, spawns [10, 20] then every 12
+	var g = Game.new(4242)
+	_fq_clear(g)
+	g.smog = 0
+	g.dim = 0
+	g.stoked = 0
+	var h0: String = g.state_hash()
+	var r0: int = g.rng.state
+	var f: Dictionary = g.smog_forecast()
+	_ok(f["dim_in"] == 14 and f["dim_at"] == 14 and f["dim_to"] == 1, "fq smog: floor 1 from 0 dims in 14 %s" % str(f))
+	_ok(f["spawn_in"] == 10 and f["spawn_at"] == 10, "fq smog: vents in 10 %s" % str(f))
+	_ok(f["choke_in"] == 38 and f["choke_dmg"] == 1 and not f["choking"], "fq smog: choke in 38 %s" % str(f))
+	_ok(f["spawn_open"] == g.map["vents"].size() and f["spawn_sealed"] == 0,
+		"fq smog: every vent open %s" % str(f))
+	g.telegraph()
+	g.end_turn_forecast()
+	_ok(g.state_hash() == h0 and g.rng.state == r0, "fq purity: the three queries leave hash and rng alone")
+	g.smog = 33
+	g.dim = 2
+	f = g.smog_forecast()
+	_ok(f["dim_in"] == -1 and f["choke_in"] == 5 and f["spawn_in"] == 11 and f["spawn_at"] == 44,
+		"fq smog: 33 at dim 2: no dim, choke 5, vent 11 at 44 %s" % str(f))
+	g.smog = 37
+	_ok(g.smog_forecast()["choke_in"] == 1, "fq smog: 37 chokes next turn")
+	g.smog = 38
+	f = g.smog_forecast()
+	_ok(f["choking"] and f["choke_in"] == 3 and f["choke_at"] == 41 and f["choke_dmg"] == 1,
+		"fq smog: 38 is choking, next chip in 3 at 41 %s" % str(f))
+	g.smog = 98
+	f = g.smog_forecast()
+	_ok(f["choke_in"] == 3 and f["choke_dmg"] == 2, "fq smog: 98 chips for 2 in 3 %s" % str(f))
+	g.smog = 33
+	g.stoked = 1
+	_ok(g.smog_forecast()["choke_in"] == 4, "fq smog: a pending stoke ticks twice on turn 1")
+	g.stoked = 0
+	g.smog = 30
+	var stack: Dictionary = g._spawn("smokestack", _fq_free_tile(g, g.player["pos"], 3))
+	stack["intent"] = {"type": "stoke", "in": 1}
+	stack["timer"] = 1
+	f = g.smog_forecast()
+	var calm: Dictionary = g.smog_forecast(60, false)
+	_ok(f["stoker"] and f["choke_in"] == 5 and calm["choke_in"] == 8 and not calm["stoker"],
+		"fq smog: a stoker due now: choke in 5, calm walk 8 (%d / %d)" % [f["choke_in"], calm["choke_in"]])
+	stack["status"] = {"stun": 2}
+	_ok(g.smog_forecast()["choke_in"] == 6, "fq smog: stunned 2 stoker: choke in 6 (%d)" % g.smog_forecast()["choke_in"])
+	stack["status"] = {}
+	stack["intent"] = {"type": "idle"}
+	_ok(g.smog_forecast()["choke_in"] == 6, "fq smog: idle stoker: choke in 6 (%d)" % g.smog_forecast()["choke_in"])
+	g.enemies.clear()
+	g.terrain[g.map["vents"][0]] = {"kind": "growth"}
+	f = g.smog_forecast()
+	_ok(f["spawn_sealed"] == 1 and f["spawn_open"] == g.map["vents"].size() - 1,
+		"fq smog: a growth-sealed vent counts sealed %s" % str(f))
+	var tg = Game.new(4242, {"tier": 1})
+	tg.enemies.clear()
+	_ok(tg.smog_forecast()["choke_in"] == 34, "fq smog: tier 1 chokes in 34 (%d)" % tg.smog_forecast()["choke_in"])
+	var tut = Game.new(1, Tutorial.game_config())
+	f = tut.smog_forecast()
+	_ok(f["dim_in"] == -1 and f["choke_in"] == -1 and f["spawn_in"] == -1, "fq smog: the tutorial clock is off %s" % str(f))
+
+
+func _check_fq_telegraph() -> void:
+	var g = Game.new(4242)
+	g.terrain.clear()
+	var pp: Vector2i = g.player["pos"]
+	var dl := _fq_line_dir(g, 3)
+	_ok(dl != Vector2i.ZERO, "fq telegraph: fixture has an open line of 3")
+	if dl == Vector2i.ZERO:
+		return
+	g.enemies.clear()
+	var a: Dictionary = g._spawn("drill_bot", pp + dl)
+	a["intent"] = {"type": "attack", "tile": pp, "dmg": 2}
+	var h0: String = g.state_hash()
+	var r0: int = g.rng.state
+	var t: Dictionary = g.telegraph()
+	_ok(g.state_hash() == h0 and g.rng.state == r0, "fq telegraph: pure")
+	_ok(int(t["tiles"].get(pp, 0)) == 2 and t["enemies"][0]["live"] and t["enemies"][0]["blocked"] == "",
+		"fq telegraph: attack 2 on the tender %s" % str(t))
+	a["status"] = {"stun": 1}
+	t = g.telegraph()
+	_ok(not t["tiles"].has(pp) and t["enemies"][0]["blocked"] == "stun" and not t["enemies"][0]["live"],
+		"fq telegraph: a stunned attacker paints nothing %s" % str(t))
+	a["status"] = {}
+	a["intent"] = {"type": "quake", "dmg": 2}
+	t = g.telegraph()
+	_ok(t["tiles"].size() == 4 and int(t["tiles"].get(pp, 0)) == 2, "fq telegraph: quake rings four tiles %s" % str(t["tiles"]))
+	a["intent"] = {"type": "slam", "tile": pp, "dmg": 3}
+	var b: Dictionary = g._spawn("drill_bot", pp - dl if g._open(pp - dl) else _fq_free_tile(g, pp, 2))
+	b["intent"] = {"type": "attack", "tile": pp, "dmg": 2}
+	t = g.telegraph()
+	_ok(int(t["tiles"].get(pp, 0)) == 5 and t["tiles"].size() == 5, "fq telegraph: slam 3 + attack 2 sum to 5 %s" % str(t["tiles"]))
+	g.enemies.clear()
+	var c: Dictionary = g._spawn("magnet_crane", pp + dl * 3)
+	c["intent"] = {"type": "drag"}
+	t = g.telegraph()
+	_ok(t["enemies"][0]["path"] == [pp + dl] and t["enemies"][0]["live"], "fq telegraph: a drag from 3 walks one %s" % str(t["enemies"][0]))
+	c["intent"] = {"type": "drag", "times": 2}
+	_ok(g.telegraph()["enemies"][0]["path"] == [pp + dl, pp + dl * 2], "fq telegraph: a drag x2 walks two")
+	g.player["anchor_turns"] = 1
+	t = g.telegraph()
+	_ok(t["enemies"][0]["blocked"] == "anchor" and not t["enemies"][0]["live"], "fq telegraph: anchored blocks the drag")
+	g.player["anchor_turns"] = 0
+	g.terrain[pp + Vector2i(dl.y, dl.x)] = {"kind": "smoke", "ttl": 3}
+	t = g.telegraph()
+	_ok(t["enemies"][0]["blocked"] == "screened" and not t["enemies"][0]["live"], "fq telegraph: smoke beside the tender screens the drag")
+	g.terrain.clear()
+	c["intent"] = {"type": "ignite_all"}
+	g.terrain[pp] = {"kind": "oil"}
+	g.terrain[pp + dl] = {"kind": "oil"}
+	t = g.telegraph()
+	_ok(t["enemies"][0]["marks"].size() == 2 and t["enemies"][0]["live"], "fq telegraph: ignite_all marks both oil tiles, live")
+
+
+func _check_fq_end_turn_forecast() -> void:
+	var g = Game.new(4242)
+	_fq_clear(g)
+	g.smog = 0
+	var pp: Vector2i = g.player["pos"]
+	var dl := _fq_line_dir(g, 2)
+	var a: Dictionary = g._spawn("drill_bot", pp + dl)
+	a["intent"] = {"type": "attack", "tile": pp, "dmg": 2}
+	g.player["hp"] = 2
+	var h0: String = g.state_hash()
+	var r0: int = g.rng.state
+	var fc: Dictionary = g.end_turn_forecast()
+	_ok(fc["dmg"] == 2 and fc["dies"] and fc["by_src"] == {"drill_bot": 2} and fc["cause"] == "drill_bot",
+		"fq forecast: hp 2 against a strike of 2 dies %s" % str(fc))
+	_ok(g.state_hash() == h0 and g.rng.state == r0 and not g.over, "fq forecast: the live game is untouched")
+	g.player["shield"] = 1
+	fc = g.end_turn_forecast()
+	_ok(fc["dmg"] == 2 and fc["absorbed"] == 1 and not fc["dies"] and fc["hp_after"] == 1,
+		"fq forecast: a shield of 1 survives on 1 %s" % str(fc))
+	g.player["shield"] = 0
+	a["status"] = {"stun": 1}
+	_ok(g.end_turn_forecast()["dmg"] == 0, "fq forecast: a stunned attacker brings nothing")
+	g.enemies.clear()
+	g.smog = 37
+	g.player["hp"] = 1
+	fc = g.end_turn_forecast()
+	_ok(fc["dmg"] == 1 and fc["by_src"] == {"smog": 1} and fc["dies"] and fc["cause"] == "smog",
+		"fq forecast: the smog chip at 37 kills on 1 %s" % str(fc))
+	g.smog = 0
+	g.player["hp"] = 5
+	g.terrain[pp] = {"kind": "fire", "ttl": 2}
+	fc = g.end_turn_forecast()
+	_ok(int(fc["by_src"].get("fire", 0)) == int(Content.terrain("fire", "tick_dmg_player", 0)) and fc["by_src"].has("fire"),
+		"fq forecast: standing in fire takes the tick %s" % str(fc))
+	var zero := {"dmg": 0, "absorbed": 0, "by_src": {}, "dies": false, "cause": ""}
+	g.over = true
+	fc = g.end_turn_forecast()
+	_ok(fc["dmg"] == 0 and fc["by_src"].is_empty() and not fc["dies"] and fc["cause"] == "", "fq forecast: over gives zeros %s" % str(fc))
+	g.over = false
+	g.phase = "draft"
+	fc = g.end_turn_forecast()
+	var keys_ok := true
+	for k in zero:
+		keys_ok = keys_ok and fc[k] == zero[k]
+	_ok(keys_ok and fc["hp_after"] == g.player["hp"] and fc["pos_after"] == pp, "fq forecast: draft gives zeros %s" % str(fc))
+
+
+## The bot sweeps. On every play decision of optimizer and sprout, seeds 1..2:
+## end_turn_forecast is identical under a re-seeded clone rng; where shield is
+## 0, no drag or fuse is telegraphed and the tender survives, the enemy part of
+## by_src equals telegraph().tiles on the tender's tile; on every end_turn the
+## bot actually takes, the forecast equals the real step (dmg, dies, hp_after,
+## pos_after). On every 4th decision smog_forecast(20) is compared against a
+## clone that only ends turns (a death truncates the comparison; a firing into
+## all-occupied vents emits nothing and counts as matched), and the three
+## queries leave state_hash and rng.state alone.
+func _check_fq_sweeps() -> void:
+	var states := 0
+	var rng_ok := 0
+	var cons_n := 0
+	var cons_ok := 0
+	var real_n := 0
+	var real_ok := 0
+	var oracle_n := 0
+	var oracle_ok := 0
+	var pure_n := 0
+	var pure_ok := 0
+	for bot_name in ["optimizer", "sprout"]:
+		for s in [1, 2]:
+			var gg = Game.new(s)
+			var bot = Roster.make(bot_name, s)
+			var guard := 0
+			while not gg.over and guard < 3000:
+				guard += 1
+				var act: Dictionary = bot.choose_action(gg.snapshot(), gg.legal_actions())
+				var ff: Dictionary = {}
+				if gg.phase == "play":
+					states += 1
+					ff = gg.end_turn_forecast()
+					var g2 = gg.clone()
+					g2.rng.seed = 1000003 + states
+					var ff2: Dictionary = g2.end_turn_forecast()
+					if ff2 == ff:
+						rng_ok += 1
+					elif failures.size() < 40:
+						failures.append("fq sweep: forecast moved under a re-seeded rng %s s%d: %s vs %s" % [bot_name, s, str(ff), str(ff2)])
+					var tset := {}
+					for e in gg.enemies:
+						tset[String(e["intent"].get("type", ""))] = true
+					if int(gg.player["shield"]) == 0 and not tset.has("drag") and not tset.has("fuse") and not ff["dies"]:
+						cons_n += 1
+						var en := 0
+						for k in ff["by_src"]:
+							if Content.ENEMIES.has(k):
+								en += int(ff["by_src"][k])
+						if en == int(gg.telegraph()["tiles"].get(gg.player["pos"], 0)):
+							cons_ok += 1
+						elif failures.size() < 40:
+							failures.append("fq sweep: enemy damage %d != telegraph %s on %s s%d" % [en, str(gg.telegraph()["tiles"]), bot_name, s])
+					if states % 4 == 0:
+						var h0: String = gg.state_hash()
+						var r0: int = gg.rng.state
+						var sf: Dictionary = gg.smog_forecast(20)
+						gg.telegraph()
+						gg.end_turn_forecast()
+						pure_n += 1
+						if gg.state_hash() == h0 and gg.rng.state == r0:
+							pure_ok += 1
+						var res := _fq_oracle(gg, sf, "%s s%d" % [bot_name, s])
+						oracle_n += res[0]
+						oracle_ok += res[1]
+				var evs: Array = gg.step(act)
+				if not ff.is_empty() and String(act.get("type", "")) == "end_turn":
+					real_n += 1
+					var dmg := 0
+					for ev in evs:
+						var et := String(ev.get("t", ""))
+						if (et == "damage" and String(ev.get("who", "")) == "player") or et == "shield_absorb":
+							dmg += int(ev["amt"])
+					var dies: bool = gg.over and not gg.won
+					if dmg == int(ff["dmg"]) and dies == bool(ff["dies"]) and int(gg.player["hp"]) == int(ff["hp_after"]) \
+							and gg.player["pos"] == ff["pos_after"]:
+						real_ok += 1
+					elif failures.size() < 40:
+						failures.append("fq sweep: forecast %s != real step (dmg %d, dies %s, hp %d, pos %s) on %s s%d"
+							% [str(ff), dmg, str(dies), int(gg.player["hp"]), str(gg.player["pos"]), bot_name, s])
+	_ok(states > 0 and real_n > 0 and oracle_n > 0, "fq sweep: the bots reached play states (%d), end turns (%d)" % [states, real_n])
+	_ok(rng_ok == states, "fq sweep: end_turn_forecast identical under a re-seeded rng: %d / %d" % [rng_ok, states])
+	_ok(cons_ok == cons_n, "fq sweep: enemy damage == telegraph on the tender's tile: %d / %d" % [cons_ok, cons_n])
+	_ok(real_ok == real_n, "fq sweep: forecast == the real end turn: %d / %d" % [real_ok, real_n])
+	_ok(oracle_ok == oracle_n, "fq sweep: smog_forecast matches an end-turn-only clone: %d / %d" % [oracle_ok, oracle_n])
+	_ok(pure_ok == pure_n, "fq sweep: the queries are pure: %d / %d" % [pure_ok, pure_n])
+	print("fq sweeps: %d play states, forecast == real end turn %d/%d, smog oracle %d/%d, telegraph %d/%d"
+		% [states, real_ok, real_n, oracle_ok, oracle_n, cons_ok, cons_n])
+
+
+## smog_forecast(20) against a clone that only ends turns. Returns
+## [comparisons, matches]; misses are recorded as failures.
+func _fq_oracle(gg, sf: Dictionary, label: String) -> Array:
+	var cc = gg.clone()
+	var seen := {"dim_in": -1, "choke_in": -1, "spawn_in": -1}
+	var blocked_at := {}
+	var alive_through := 20
+	for k in range(1, 21):
+		if cc.over:
+			alive_through = k - 2
+			break
+		var evs: Array = cc.step({"type": "end_turn"})
+		var bp := false
+		for ev in evs:
+			if String(ev.get("t", "")) == "boss_phase":
+				bp = true
+		for ev in evs:
+			var et := String(ev.get("t", ""))
+			if et == "smog_dim" and seen["dim_in"] < 0:
+				seen["dim_in"] = k
+			if et == "choke" and seen["choke_in"] < 0:
+				seen["choke_in"] = k
+			if (et == "reinforcement" or et == "seal_burst") and not bp and seen["spawn_in"] < 0:
+				seen["spawn_in"] = k
+		var allb := true
+		for v in cc.map["vents"]:
+			if cc._open(v):
+				allb = false
+		if allb:
+			blocked_at[k] = true
+	if cc.over and alive_through == 20:
+		alive_through = 19
+	var n := 0
+	var ok_n := 0
+	for key in ["dim_in", "choke_in", "spawn_in"]:
+		n += 1
+		var fv: int = int(sf[key])
+		var ov: int = int(seen[key])
+		var ok := fv == ov
+		if not ok and ov < 0 and (fv < 0 or fv > alive_through):
+			ok = true   # the clone died before the forecast turn
+		if not ok and key == "spawn_in" and fv > 0 and (ov < 0 or ov > fv) and blocked_at.has(fv):
+			ok = true   # every vent occupied: the firing emits nothing
+		if ok:
+			ok_n += 1
+		elif failures.size() < 40:
+			failures.append("fq oracle: %s %s forecast %d, seen %d (alive through %d)" % [label, key, fv, ov, alive_through])
+	return [n, ok_n]
+
+
+func _check_fq_core_shield() -> void:
+	var g = _game()
+	var tp: Vector2i = g.player["pos"]
+	var d := Vector2i(1, 0)
+	var b: Dictionary = g._spawn("overseer", tp + d)
+	b["hp"] = 5
+	b["intent"] = {"type": "idle"}
+	g.terrain[b["pos"] + Vector2i(1, 0)] = {"kind": "goo"}
+	var id := int(b["id"])
+	var h0: String = g.state_hash()
+	var r0: int = g.rng.state
+	_ok(g.core_shield_up(id), "fq core shield: overseer at 5 beside goo, no growth: up")
+	_ok(g.state_hash() == h0 and g.rng.state == r0, "fq core shield: the query is pure")
+	_ok(not g.core_shield_up(id + 999), "fq core shield: an unknown id is not shielded")
+	var evs: Array = g.step({"type": "strike", "dir": d})
+	_ok(_evs(evs, "core_shielded").size() == 1 and int(b["hp"]) == 5,
+		"fq core shield: a strike emits core_shielded and deals nothing %s" % str(evs))
+	g.terrain[b["pos"] + Vector2i(0, 1)] = {"kind": "growth"}
+	_ok(not g.core_shield_up(id), "fq core shield: growth beside it drops the shield")
+	var g2 = _game()
+	var b2: Dictionary = g2._spawn("overseer", g2.player["pos"] + d)
+	b2["hp"] = 6
+	g2.terrain[b2["pos"] + Vector2i(1, 0)] = {"kind": "goo"}
+	_ok(not g2.core_shield_up(int(b2["id"])), "fq core shield: above gate_hp it is down")
+	var g3 = _game()
+	var e3: Dictionary = g3._spawn("drill_bot", g3.player["pos"] + d)
+	e3["hp"] = 1
+	g3.terrain[e3["pos"] + Vector2i(1, 0)] = {"kind": "goo"}
+	_ok(not g3.core_shield_up(int(e3["id"])), "fq core shield: only a boss has a core")
+
+
+func _check_fq_aliases() -> void:
+	var cases := [
+		[["solar_lance", "seed_bomb", "mycelium_dash"], []],
+		[D5_FIRE3, ["oil_tithe"]],
+		[["solar_lance", "sun_flare+corona", "moss_filter", "seed_bomb"], ["oil_tithe"]],
+		[D5_DISPLACE2, ["undertow", "compost"]],
+	]
+	for c in cases:
+		var g = _game_g(c[0], c[1])
+		_ok(g.resonances() == g._resonances() and g.tag_counts() == g._tag_counts(),
+			"fq aliases: %s + %s: %s / %s" % [str(c[0]), str(c[1]), str(g.resonances()), str(g.tag_counts())])
+		var tc: Dictionary = g.tag_counts()
+		tc["fire"] = 99
+		_ok(int(g._tag_counts().get("fire", 0)) != 99, "fq aliases: tag_counts() is a copy")
+	var gf = _game_g(["solar_lance", "sun_flare+corona", "moss_filter", "seed_bomb"], ["oil_tithe"])
+	_ok(gf.resonances() == ["cinder_grip"] and int(gf.tag_counts().get("fire", 0)) == 3,
+		"fq aliases: the variant kit plus oil_tithe reads fire 3, cinder_grip lit")

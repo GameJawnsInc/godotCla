@@ -112,6 +112,12 @@ architecture below is designed to bend rather than block.
     toggle and the `stat` shape through an injected `_ResProbe` row (no
     shipped row carries `stat` or `mod`, so the probe plus its
     a-stat-row-shipped tripwire is that shape's only behaviour coverage)
+    — and the fq section, the fun-pass read-only queries: `smog_forecast`,
+    `telegraph`, `end_turn_forecast` on hand-built states, `core_shield_up`,
+    the `resonances()` / `tag_counts()` aliases, and optimizer + sprout sweeps
+    (seeds 1..2) holding the forecast equal to the real end turn, identical
+    under a re-seeded clone rng, the enemy damage equal to the telegraph sum,
+    `smog_forecast` equal to an end-turn-only clone, and every query pure
   - `godot --headless --path . --script tests/test_economy.gd` — shrine economy
     and quota: config-independent main rng, shop stock filters, graft/ability/
     press/forge purchase rules, the shrine reroll (legality, price escalation,
@@ -911,6 +917,30 @@ architecture below is designed to bend rather than block.
   from before bump 14 is comparable to one after it — and neither is a two-row
   bump-14 column comparable to a one-row one, because the optimizer drop guard
   has one fewer row to protect and its drafting moved; BALANCE.md says so.
+- Read-only sim queries (fun pass): six public `Game` functions the shell
+  and the tests read and NOTHING in the sim or the bots calls - `resonances()`
+  (= `_resonances()`), `tag_counts()` (a copy of `_tag_counts()`),
+  `core_shield_up(id)` (the boss core-shield rule, extracted verbatim from
+  `_damage_enemy` into `_core_shield_up(e)`, which `_damage_enemy` now calls:
+  same four conjuncts, same order, `core_shielded` still emitted before the
+  early return), and the three danger forecasts in their own section after
+  `_tick_smog`: `smog_forecast(horizon, count_stokers)` (dim / choke / vent
+  arrivals in end turns, every `*_in` the SOONEST it can come - relief only
+  pushes it later - `count_stokers=false` the calm walk), `telegraph()` (per
+  enemy: tiles, marks, drag path, the first blocking status / `screened` /
+  `anchor`, plus summed damage per tile) and `end_turn_forecast()` (steps a
+  `clone()` with one `end_turn` and reads back what reached the tender). The
+  contract: no state change, no rng draw (main or side), no event, so no
+  replay or hash can move. `smog_forecast` and `telegraph` MIRROR
+  `_tick_smog` and `_execute_intent` (their doc comments say so - change
+  together); `end_turn_forecast` is exact only because `clone()` is complete,
+  so a field `clone()` forgets makes the forecast lie. The fq sweeps in
+  `tests/test_grammar.gd` catch both kinds of drift. No rng is drawn between
+  the start of the enemy phase and the end of the smog tick, so the forecast
+  reveals nothing hidden (measured: 32,205/32,205 states identical under a
+  re-seeded rng, 3067/3067 bot end turns equal to reality). Bots must not read
+  them: a bot that did would change its play, which is a persona change with a
+  band re-gate.
 - Run summary and effective casts (C4): `Game.effective_uses` (base id -> int)
   counts a cast only when something happened — an effect outcome fired or a
   rider ran — while `player.uses` stays the raw count. It is copied by

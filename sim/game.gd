@@ -1037,6 +1037,7 @@ func _screened(e: Dictionary, itype: String) -> bool:
 	return false
 
 
+# shell/feedback.gd BOSS_PHASE_LINES says these phases in words - change both together.
 func _compute_boss_intent(e: Dictionary, edef: Dictionary) -> void:
 	var c: int = e.get("cycle", 0)
 	if edef["traits"].has("dredges"):
@@ -1428,6 +1429,274 @@ func _tick_smog() -> void:
 					var e := _spawn("drill_bot", v)
 					e["intent"] = {"type": "idle"}
 					_emit({"t": "reinforcement", "tile": v})
+
+
+# --- read-only forecasts (fun pass, phase 1) ----------------------------------
+## None of these changes state, draws from either rng, or emits an event, and
+## the sim never calls them - they exist for the shell (shell/danger.gd) and
+## the tests, so replay behaviour and state_hash are untouched by construction.
+## Bots do not read them (a bot that did would change its play: that is a
+## persona change with a band re-gate, not part of this block).
+## tests/test_grammar.gd "fq" pins every one of them, including the purity
+## (state_hash and rng.state unchanged after each call).
+
+## The active resonance ids (public read of _resonances(), the activation rule).
+func resonances() -> Array:
+	return _resonances()
+
+
+## The tag counts over the held kit and grafts (public read of _tag_counts(),
+## the count the activation rule uses); a copy, so a caller cannot write back.
+func tag_counts() -> Dictionary:
+	return _tag_counts().duplicate()
+
+
+## True while enemy `id` is a boss whose core shield is up (_core_shield_up):
+## a strike on it now emits core_shielded and deals nothing. False for an
+## unknown id.
+func core_shield_up(id: int) -> bool:
+	var e = _enemy_by_id(id)
+	return e != null and _core_shield_up(e)
+
+
+## Read-only smog clock forecast (fun pass, phase 1). Walks a COPY of the
+## counter through the same per-tick rules as _tick_smog - dim thresholds,
+## the choke chip every 3rd tick at or past smog_choke, the vent spawn list
+## then every smog_spawn_every - for up to `horizon` end turns, with every
+## live stoker's timer run forward the way _execute_intent runs it (a status
+## that blocks the stoke swallows that turn and ticks down; a slow stoker
+## idles on odd turns; turn 1 executes the intent actually standing).
+## Assumes no relief and that every stoker keeps standing, so every number is
+## the SOONEST the event can arrive: a cleanse, an item, a kill or a stun can
+## only push it later. A turn number N means "during the N-th end turn from
+## now" (1 = the coming enemy phase). -1: not within the horizon.
+## With nothing relieved the walk is exact: measured against a clone that only
+## ends turns, dim, choke and vent timing matched 9058/9058 decisions each
+## (a firing into all-occupied vents emits nothing and counts as matched).
+## Mirrors _tick_smog and the stoke arm of _execute_intent - change together.
+## No state changes, no rng, no events; the sim never calls it.
+func smog_forecast(horizon: int = 60, count_stokers: bool = true) -> Dictionary:
+	var fdef := floor_def(floor_num)
+	var choke: int = int(fdef.get("smog_choke", 0))
+	var dims: Array = fdef.get("smog_dim", [])
+	var spawns: Array = fdef.get("smog_spawn", [])
+	var last: int = int(spawns.back()) if not spawns.is_empty() else 0
+	var every: int = int(fdef.get("smog_spawn_every", 0))
+	var out := {
+		"dim_in": -1, "dim_at": -1, "dim_to": dim,
+		"choke_in": -1, "choke_at": -1, "choke_dmg": 0,
+		"choking": choke > 0 and smog >= choke,
+		"spawn_in": -1, "spawn_at": -1, "spawn_open": 0, "spawn_sealed": 0,
+		"stoker": false,
+	}
+	for v in map["vents"]:
+		if _open(v):
+			if _terrain_kind(v) == "growth":
+				out["spawn_sealed"] += 1
+			else:
+				out["spawn_open"] += 1
+	var stacks: Array = []
+	if count_stokers:
+		for e in enemies:
+			var edef: Dictionary = Content.ENEMIES[e["kind"]]
+			if not edef["traits"].has("stokes"):
+				continue
+			out["stoker"] = true
+			stacks.append({
+				"timer": int(e.get("timer", int(edef["stoke_cycle"]))),
+				"cycle": int(edef["stoke_cycle"]),
+				"status": e["status"].duplicate(),
+				"first": String(e["intent"].get("type", "idle")),
+				"slow": bool(edef["slow"]),
+			})
+	var s: int = smog
+	var d: int = dim
+	var pending: int = stoked
+	for k in range(1, horizon + 1):
+		for st in stacks:
+			var itype := "stoke"
+			if k == 1:
+				itype = String(st["first"])
+			elif st["slow"] and (turn + k - 1) % 2 == 1:
+				itype = "idle"
+			var swallowed := false
+			for sname in Content.STATUSES:
+				if int(st["status"].get(sname, 0)) <= 0:
+					continue
+				var blocks: Array = Content.STATUSES[sname].get("blocks", [])
+				if blocks.has("*") or blocks.has(itype):
+					st["status"][sname] = int(st["status"][sname]) - 1
+					swallowed = true
+					break
+			if swallowed or itype != "stoke":
+				continue
+			st["timer"] = int(st["timer"]) - 1
+			if int(st["timer"]) <= 0:
+				pending += 1
+				st["timer"] = int(st["cycle"])
+		var ticks := 1 + pending
+		pending = 0
+		for i in ticks:
+			s += 1
+			if dims.has(s) and d < 2:
+				d += 1
+				if int(out["dim_in"]) < 0:
+					out["dim_in"] = k
+					out["dim_at"] = s
+					out["dim_to"] = d
+			if choke > 0 and s >= choke and (s - choke) % 3 == 0 and int(out["choke_in"]) < 0:
+				out["choke_in"] = k
+				out["choke_at"] = s
+				out["choke_dmg"] = 1 + (s - choke) / 60
+			var spawn: bool = spawns.has(s)
+			if not spawn:
+				spawn = every > 0 and s > last and (s - last) % every == 0
+			if spawn and int(out["spawn_in"]) < 0:
+				out["spawn_in"] = k
+				out["spawn_at"] = s
+		if int(out["dim_in"]) >= 0 or d >= 2:
+			if int(out["choke_in"]) >= 0 and int(out["spawn_in"]) >= 0:
+				break
+	return out
+
+
+## Read-only per-enemy telegraph (fun pass, phase 1): what each standing
+## intent does to the board if the turn ended NOW, by the same rules
+## _execute_intent applies - the Content.STATUSES block (first blocking status
+## in table order), the smoke screen (_screened), the slam cross, the quake
+## ring, the drag walk. One entry per enemy, in enemy order:
+##   {id, kind, pos, type, dmg, tiles, marks, path, blocked, live}
+## tiles: the tiles the intent damages (dmg each); marks: the tiles a
+## non-damage intent changes (flood row, ignitable tiles, dredged growth, the
+## weld partner); path: the tiles a drag walks the tender through; blocked:
+## "" | a Content.STATUSES id | "screened" | "anchor"; live: the intent lands
+## on the tender as it stands. "tiles" (top level) sums dmg per tile over the
+## unblocked entries - the red tiles, with their numbers.
+## Mirrors _execute_intent's arms - change together.
+## No state changes, no rng, no events; the sim never calls it.
+func telegraph() -> Dictionary:
+	var pp: Vector2i = player["pos"]
+	var out := {"enemies": [], "tiles": {}}
+	for e in enemies:
+		var it: Dictionary = e["intent"]
+		var itype := String(it.get("type", "idle"))
+		var edef: Dictionary = Content.ENEMIES[e["kind"]]
+		var ent := {"id": e["id"], "kind": e["kind"], "pos": e["pos"], "type": itype,
+			"dmg": 0, "tiles": [], "marks": [], "path": [], "blocked": "", "live": false}
+		for sname in Content.STATUSES:
+			if int(e["status"].get(sname, 0)) <= 0:
+				continue
+			var blocks: Array = Content.STATUSES[sname].get("blocks", [])
+			if blocks.has("*") or blocks.has(itype):
+				ent["blocked"] = sname
+				break
+		if ent["blocked"] == "" and _screened(e, itype):
+			ent["blocked"] = "screened"
+		match itype:
+			"attack":
+				ent["dmg"] = int(it["dmg"])
+				ent["tiles"] = [it["tile"]]
+			"slam":
+				ent["dmg"] = int(it["dmg"])
+				var area: Array = [it["tile"]]
+				for dd in DIRS:
+					area.append(it["tile"] + dd)
+				ent["tiles"] = area
+			"quake":
+				ent["dmg"] = int(it["dmg"])
+				for dd in DIRS:
+					ent["tiles"].append(e["pos"] + dd)
+			"drag":
+				if player["anchor_turns"] > 0 and ent["blocked"] == "":
+					ent["blocked"] = "anchor"
+				var p := pp
+				for i in int(it.get("times", 1)):
+					var cd := _manhattan(e["pos"], p)
+					if cd <= 1 or cd > int(edef["drag_range"]):
+						break
+					var delta: Vector2i = e["pos"] - p
+					var step := Vector2i.ZERO
+					if delta.x != 0 and absi(delta.x) >= absi(delta.y):
+						step = Vector2i(signi(delta.x), 0)
+					elif delta.y != 0:
+						step = Vector2i(0, signi(delta.y))
+					var dest: Vector2i = p + step
+					if step == Vector2i.ZERO or _tile(dest) != MapGen.T_FLOOR or _enemy_at(dest) != null:
+						break
+					p = dest
+					ent["path"].append(dest)
+				ent["live"] = not ent["path"].is_empty()
+			"gum":
+				ent["live"] = _manhattan(e["pos"], pp) <= int(edef["gum_range"]) \
+					and int(it.get("slot", 0)) < player["kit"].size()
+			"drain":
+				ent["live"] = _manhattan(e["pos"], pp) <= int(edef["drain_range"])
+			"flood":
+				var row: int = int(it["row"])
+				for x in range(1, int(map["w"]) - 1):
+					var fp := Vector2i(x, row)
+					if _tile(fp) == MapGen.T_FLOOR and not terrain.has(fp) and _enemy_at(fp) == null and fp != pp:
+						ent["marks"].append(fp)
+			"ignite_all":
+				for t in terrain.keys():
+					if Content.terrain(String(terrain[t]["kind"]), "flammable", false):
+						ent["marks"].append(t)
+				ent["live"] = ent["marks"].has(pp)
+			"dredge":
+				for t in terrain.keys():
+					if String(terrain[t]["kind"]) == "growth" and _manhattan(t, e["pos"]) <= int(it.get("radius", 2)):
+						ent["marks"].append(t)
+			"fuse":
+				for o in enemies:
+					if o["id"] == it.get("with", -1):
+						ent["marks"] = [o["pos"]]
+		if not ent["tiles"].is_empty():
+			ent["live"] = ent["tiles"].has(pp)
+		if ent["blocked"] != "":
+			ent["live"] = false
+		else:
+			for t in ent["tiles"]:
+				out["tiles"][t] = int(out["tiles"].get(t, 0)) + int(ent["dmg"])
+		out["enemies"].append(ent)
+	return out
+
+
+## Read-only exact forecast of ending the turn where the tender stands (fun
+## pass, phase 1): steps a clone() with {"type": "end_turn"} and reads back
+## what reached the tender - enemy intents, a drag's landing, hazard ticks,
+## growth heal and the smog chip, in the order the sim resolves them. dmg is
+## everything that reached the tender (shield included) up to the blow that
+## drops them; by_src counts the HP part per damage source (enemy kind,
+## terrain kind, "smog"). No main-rng draw happens between the start of the
+## enemy phase and the end of the smog tick (the next intents roll after),
+## so the forecast reveals nothing the screen does not already show: it was
+## identical under a re-seeded clone rng in 32,205/32,205 states, and equal to
+## the real step (dmg, death, hp_after, pos_after) on 3067/3067 bot end turns;
+## tests/test_grammar.gd re-checks both on every run. It is only as true as
+## clone() is complete - a field clone() forgets makes it lie.
+## The live game is untouched: the clone is discarded.
+func end_turn_forecast() -> Dictionary:
+	var out := {"dmg": 0, "absorbed": 0, "by_src": {}, "dies": false, "cause": "",
+		"hp_after": player["hp"], "shield_after": player["shield"], "pos_after": player["pos"]}
+	if over or phase != "play":
+		return out
+	var g = clone()
+	for ev in g.step({"type": "end_turn"}):
+		match String(ev.get("t", "")):
+			"damage":
+				if String(ev.get("who", "")) == "player":
+					var src := String(ev.get("src", ""))
+					out["dmg"] += int(ev["amt"])
+					out["by_src"][src] = int(out["by_src"].get(src, 0)) + int(ev["amt"])
+			"shield_absorb":
+				out["dmg"] += int(ev["amt"])
+				out["absorbed"] += int(ev["amt"])
+	out["dies"] = g.over and not g.won
+	out["cause"] = g.death_cause if out["dies"] else ""
+	out["hp_after"] = g.player["hp"]
+	out["shield_after"] = g.player["shield"]
+	out["pos_after"] = g.player["pos"]
+	return out
 
 
 # --- player actions -----------------------------------------------------------
@@ -2999,13 +3268,24 @@ func _spawn(kind: String, pos: Vector2i) -> Dictionary:
 	return e
 
 
+## The boss core shield: a boss at or under its gate_hp with no growth beside
+## it and corruption beside it takes no damage. Pure read (the four conjuncts
+## in the order _damage_enemy has always tested them); _damage_enemy emits
+## core_shielded on true, and the public core_shield_up(id) lets the shell
+## draw the shield without re-deriving the rule.
+func _core_shield_up(e: Dictionary) -> bool:
+	var edef: Dictionary = Content.ENEMIES[e["kind"]]
+	return edef["traits"].has("boss") and e["hp"] <= int(edef.get("gate_hp", 6)) \
+		and not _growth_adjacent(e["pos"]) and _corruption_adjacent(e["pos"])
+
+
 ## Returns true when damage was applied (false: already gone, or the boss
 ## core is shielded).
 func _damage_enemy(e: Dictionary, amt: int, src: String) -> bool:
 	if not enemies.has(e):
 		return false
 	var edef: Dictionary = Content.ENEMIES[e["kind"]]
-	if edef["traits"].has("boss") and e["hp"] <= int(edef.get("gate_hp", 6)) 			and not _growth_adjacent(e["pos"]) and _corruption_adjacent(e["pos"]):
+	if _core_shield_up(e):
 		_emit({"t": "core_shielded", "id": e["id"]})
 		return false
 	e["hp"] -= amt
@@ -3030,6 +3310,7 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> bool:
 				if _tile(t) == MapGen.T_FLOOR and not terrain.has(t):
 					terrain[t] = {"kind": "smoke", "ttl": int(Content.terrain("smoke", "ttl", 3))}
 			_emit({"t": "smoke_burst", "tile": e["pos"]})
+	# shell/feedback.gd BOSS_PHASE_LINES says these phases in words - change both together.
 	elif edef["traits"].has("boss"):
 		if edef["traits"].has("mobile_boss"):
 			if e["hp"] <= 10 and not e.get("phase2_done", false):
