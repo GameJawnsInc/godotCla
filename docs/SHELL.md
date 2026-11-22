@@ -2,12 +2,16 @@
 
 ## Menu, settings, tutorial
 
-The shell boots to a main menu: PLAY (fresh run), RESUME (when a run is
-live), the run-setup rows (see *Setting up a run*), TUTORIAL, SETTINGS,
-QUIT. Settings persist to `user://tender.cfg`: hold-to-inspect delay, run
-seed mode (random / daily — everyone playing a daily gets the same run),
-and intro-tips frequency, alongside the run choices the title screen makes
-(difficulty, loadout, package, mutator). The sheet also prints where
+The shell boots to a main menu: RESUME (when a run is live), PLAY (a fresh
+career run), DAILY (see *Daily challenge*), the run-setup rows (see
+*Setting up a run*), and TUTORIAL / SETTINGS / QUIT sharing the last line.
+Settings persist to `user://tender.cfg`: hold-to-inspect delay, intro-tips
+frequency and the sound toggles, alongside the run choices the title screen
+makes (difficulty, loadout, package, mutator). (The old "Run seed" toggle is
+gone: PLAY is always a career run and the daily has its own entry. A cfg
+that still says daily keeps that key only until the next run starts — it
+files a run saved before the change — and the menu says once that the daily
+now has its own button.) The sheet also prints where
 finished run logs are kept. The `=` button in the status strip returns
 to the menu mid-run without losing the run.
 
@@ -57,8 +61,8 @@ scene.
 | 1–5 / 0 (draft sheet) | take that offer / skip the draft — a skip arms one extra affinity offer on the next descent |
 | SPACE / ENTER | end turn |
 | ESC | back: close a sheet, cancel an aim, or leave the run for the menu (see *The Back button*) |
-| R | restart the same seed |
-| N | next seed |
+| R | restart the same seed (in the tutorial: restart the tutorial) |
+| N | a new career run on the next seed (ignored in the tutorial) |
 
 Red-tinted tiles are telegraphed damage for the coming enemy turn (attack,
 slam cross, quake ring), read straight from the sim's own `Game.telegraph()`
@@ -152,7 +156,7 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
   cost a turn, and the aim line on screen says so
 - CLEANSE / DESCEND / HELP buttons bottom-right
 - tap shop cards at a shrine, draft options between floors
-- after a run: tap anywhere for the next seed
+- after a run: tap anywhere for a new career run (on a fresh seed, even after a daily)
 
 ## Feedback: callouts, kills, log and sound
 
@@ -238,7 +242,8 @@ disagree about what back means:
 | where you are | what Back does |
 |---|---|
 | a held tooltip | drops the tooltip (and the hold with it, so it stays gone) |
-| any sheet — legend, log, intro, shrine, settings | closes it, back to the map |
+| any sheet — legend, log, intro, shrine | closes it, back to the map |
+| the settings or DAILY sheet on the menu | closes it, back to the menu |
 | the forge's keep / scrap / fork step | one step back, ending on the shrine sheet |
 | the draft's drop sheet | back to the offer cards, nothing dropped |
 | aiming an ability | cancels the aim — free, no turn, no strike |
@@ -276,13 +281,45 @@ loadout, package)`, so the career gate lives in one place: a locked
 loadout falls back to Tender and a locked package to none, however the
 cfg file got written.
 
-In daily seed mode the three rows are replaced by a single line —
-`TODAY: <loadout> · <package> · <mutator>` — and PLAY uses exactly that.
+The menu is data first (`_menu_rows` -> `_menu_layout`), 0.80 of the
+screen wide, and every label is held to at least 1.5% of the screen height
+at every phone shape the card gate sweeps. A row with something new on it
+carries a small gold **NEW** badge until you cycle onto that thing: a
+difficulty, loadout, package or mutator the career just unlocked (a loadout
+still waiting on its package, like Skyrunner before Aeolian, earns none —
+there is nothing to cycle onto yet). The LOADOUT row instead reads **WON**
+or **WON D2** when the selected loadout has won (at that difficulty). The
+footer reads `runs · wins · best floor` once the career has a run.
+
+## Daily challenge
+
+DAILY opens the daily sheet: today's date, the day's loadout, package and
+mutator as cards, and what you have done with it — "No finish yet", "2
+tries, no finish yet", or "ranked: floor 4 · best: won in 133 turns · 3
+tries". The **first finish** of the day is the ranked one (kept in
+`daily_first`); later finishes only improve the day's best, so the sheet's
+button reads PLAY TODAY'S RUN until you finish and PLAY AGAIN · unranked
+after. While a try of today's daily is still in progress (you left it for
+the menu, or the tutorial displaced it) the button reads RESUME TODAY'S TRY
+and takes you back into that try instead of starting over; the menu's PLAY
+then reads TAP AGAIN TO ABANDON on the first tap, because a career start
+overwrites the one run save and the try is already counted. Every start
+counts as a try, a retry included. A streak line counts
+the days in a row you finished a daily (it stays alive until a whole day is
+missed) next to your longest, re-derived from the dates themselves.
+
 A daily's config is `Profile.daily_config(seed)`, derived from the seed
 alone over frozen lists in the profile, so today's challenge is the same
 for everyone and a content table that grows later cannot move an earlier
-date's run. Dailies ignore career unlocks entirely, and still score only
-to the daily board.
+date's run; the seed is `Profile.daily_seed_for(date)`, the one formula
+(`tests/daily_run.gd` uses it too). Dailies ignore career unlocks entirely
+and still score only to the daily board — no runs, records, unlocks or NEW
+badges. The run remembers what it is: its run save carries `"kind"`, so a
+resumed daily is filed as a daily, and R on the over sheet (or in a run)
+replays the same kind and seed while N starts a career run on the next seed;
+a tap anywhere on a finished daily's over sheet is a new career run too, never
+another daily try. BACK or the Back button closes the sheet; ENTER plays (or
+resumes).
 
 The status strip names the live run's config under the skies bar,
 right-aligned after the countdown chips — loadout, then package, then
@@ -420,7 +457,11 @@ The shell persists a career profile (`user://tender_profile.json`,
 win unlocks the difficulty ladder and a DIFFICULTY cycler appears on the
 menu (tiers from `Content.TIERS`, clamped to what is unlocked). Milestones
 also unlock packages, mutators and **loadouts** — the LOADOUT / PACKAGE /
-MUTATOR rows above are what a career spends its unlocks on. The win
+MUTATOR rows above are what a career spends its unlocks on, and each one
+carries a NEW badge until the new thing is cycled onto. Unlocks are named by
+`Profile.unlock_name` (never a raw id), and after a career run the profile
+works out the next goal (`Profile.next_goals`: "Land 30 Grow Spikes · 17/30",
+with what this run added). The win
 screen lists newly unlocked tiers/packages/mutators, and the menu footer
 shows runs / wins / best floor. Daily runs are scored but never counted
 toward the career: a finished daily is filed as that seed's best result

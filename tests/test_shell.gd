@@ -29,6 +29,10 @@ const TMP_SAVE := "user://test_import_run.save"
 const TEST_PROFILE := "user://test_shell_profile.json"
 ## every _bare_shell restores (and writes) its run save here, never the real one
 const TEST_RUN_SAVE := "user://test_shell_run.save"
+## ...and reads and writes its settings here, never the player's tender.cfg:
+## every set: tap saves them, and a test must not leave the player's
+## difficulty, loadout or package changed (nor drop a legacy seed_mode key)
+const TEST_CFG := "user://test_shell_settings.cfg"
 const TMP_JSON := "user://test_import_record.json"
 
 var fails := 0
@@ -95,7 +99,13 @@ func _init() -> void:
 
 	# 2. menu boots, PLAY starts a run, input handlers drive the sim
 	OS.set_environment("SHELL_SEED", "")
-	var shell = Shell.new()
+	# a clean scratch slot: no stale run, settings or career from a crashed run
+	for pth in [TEST_RUN_SAVE, TEST_CFG, TEST_PROFILE]:
+		DirAccess.remove_absolute(pth)
+	# ...and the player's own files, checked untouched at the very end: every
+	# shell this test builds reads and writes scratch paths only
+	var real_before := _real_files()
+	var shell = _iso_shell()
 	shell._ready()
 	_check(shell.screen == "menu", "boots to the menu")
 	shell._tap("play")
@@ -173,7 +183,7 @@ func _init() -> void:
 	_check(shell.screen == "menu", "tutorial returns to the menu")
 
 	# 4. a run reaches a draft and draft picking works
-	var shell2 = Shell.new()
+	var shell2 = _iso_shell()
 	shell2._ready()
 	shell2._tap("play")
 	shell2._key(KEY_SPACE)
@@ -188,7 +198,7 @@ func _init() -> void:
 		_check(shell2.game.player["kit"].size() >= kit0 or shell2.mode == "draft_drop",
 			"draft key picks or prompts for a drop")
 	# 5. upcycling flows through the shell (shrine press + ability forge)
-	var shell3 = Shell.new()
+	var shell3 = _iso_shell()
 	shell3._ready()
 	shell3._tap("play")
 	shell3._key(KEY_SPACE)
@@ -229,7 +239,7 @@ func _init() -> void:
 
 	# 5b. a PACKAGE base has ONE variant, so the scrap tap forges at once and
 	# the fork sheet never opens - the other half of the D6 forge branch
-	var shell3b = Shell.new()
+	var shell3b = _iso_shell()
 	shell3b._ready()
 	shell3b._tap("play")
 	shell3b._key(KEY_SPACE)
@@ -244,7 +254,7 @@ func _init() -> void:
 	shell3b.free()
 
 	# 6. a killed app resumes byte-exact: replay from the on-disk action log
-	var shell4 = Shell.new()
+	var shell4 = _iso_shell()
 	shell4._ready()
 	shell4._tap("play")
 	shell4._key(KEY_SPACE)
@@ -256,7 +266,7 @@ func _init() -> void:
 	var saved_hash: String = shell4.game.state_hash()
 	var saved_turns: int = shell4.game.total_turns
 	shell4.free()  # simulate Android reclaiming the app (no clean shutdown)
-	var shell5 = Shell.new()
+	var shell5 = _iso_shell()
 	shell5._ready()
 	_check(shell5.game != null and shell5._game_is_run, "killed run auto-restores on boot")
 	_check(shell5.game.total_turns == saved_turns, "restored run is at the same turn")
@@ -275,8 +285,8 @@ func _init() -> void:
 	_check(Shell.RUN_SAVE_VERSION == Game.SIM_VERSION, "the shell stamps Game.SIM_VERSION")
 	var export_path := OS.get_environment("SHELL_EXPORT_SAVE")
 	if export_path != "":
-		DirAccess.copy_absolute("user://tender_run.save", export_path)
-	var parsed := ImportRun.parse_save("user://tender_run.save")
+		DirAccess.copy_absolute(TEST_RUN_SAVE, export_path)
+	var parsed := ImportRun.parse_save(TEST_RUN_SAVE)
 	_check(bool(parsed.get("ok", false)), "import_run parses a real shell save (%s)" % parsed.get("err", ""))
 	if bool(parsed.get("ok", false)):
 		_check(parsed["actions"].size() == 7, "every action reached the log (%d)" % parsed["actions"].size())
@@ -292,7 +302,7 @@ func _init() -> void:
 			"the record round-trips through the regression codec")
 		_check(not back.has("_illegal"), "reporting-only keys stay out of the record")
 		DirAccess.remove_absolute(TMP_JSON)
-	DirAccess.remove_absolute("user://tender_run.save")
+	DirAccess.remove_absolute(TEST_RUN_SAVE)
 
 	# 6c. a log from an older sim is refused, and the loss is announced once
 	var sf := FileAccess.open(TMP_SAVE, FileAccess.WRITE)
@@ -302,11 +312,11 @@ func _init() -> void:
 	var stale := ImportRun.parse_save(TMP_SAVE)
 	_check(not bool(stale.get("ok", true)) and String(stale.get("err", "")).contains("sim_version"),
 		"import_run refuses a save from another sim version")
-	DirAccess.copy_absolute(TMP_SAVE, "user://tender_run.save")
-	var shell6 = Shell.new()
+	DirAccess.copy_absolute(TMP_SAVE, TEST_RUN_SAVE)
+	var shell6 = _iso_shell()
 	shell6._ready()
 	_check(shell6.save_lost, "a version-mismatched save raises the lost-run notice")
-	_check(not FileAccess.file_exists("user://tender_run.save"), "the stale save is discarded")
+	_check(not FileAccess.file_exists(TEST_RUN_SAVE), "the stale save is discarded")
 	shell6._tap("play")
 	_check(not shell6.save_lost, "a new run clears the notice")
 	if shell6._run_save != null:
@@ -314,7 +324,7 @@ func _init() -> void:
 		shell6._run_save = null
 	shell6.free()
 	DirAccess.remove_absolute(TMP_SAVE)
-	DirAccess.remove_absolute("user://tender_run.save")
+	DirAccess.remove_absolute(TEST_RUN_SAVE)
 
 	# 7. the shrine sheet: two graft offers, exactly one pick
 	var shop1 = _bare_shell()
@@ -503,7 +513,7 @@ func _init() -> void:
 	rec._game_is_run = true
 	rec._run_recorded = false
 	rec.run_tier = 0
-	rec.seed_mode = "random"
+	rec.run_kind = "career"
 	rec.game = Game.new(4242, {})
 	rec.game.over = true
 	rec._record_finished_run()
@@ -525,7 +535,12 @@ func _init() -> void:
 	_check(rec._run_report == rec.profile.last_report and rec._run_unlocks == rec._run_report["unlocks"],
 		"the unlocks come from the profile's report")
 	_check(FileAccess.file_exists(TEST_PROFILE), "the career is saved to the shell's profile_path")
-	rec.seed_mode = "daily"
+	_check(String(rec._run_summary.get("run_kind", "")) == "career" and not rec._run_summary.has("seed_mode"),
+		"the summary carries the run's own kind, not a global seed mode")
+	_check(rec.profile.last_report.has("next") and not rec.profile.last_report["next"].is_empty()
+		and rec.profile.last_report["next"][0].has("delta"),
+		"the report carries the next goal with its delta (%s)" % str(rec.profile.last_report.get("next", [])))
+	rec.run_kind = "daily"
 	rec._run_recorded = false
 	rec.game = Game.new(77, {})
 	rec.game.over = true
@@ -535,6 +550,8 @@ func _init() -> void:
 	_check(rec._run_unlocks.is_empty(), "a daily unlocks nothing")
 	_check(rec._over_prev.has("daily") and rec._over_prev["daily"].is_empty(),
 		"a first daily finish compares against no earlier best (%s)" % str(rec._over_prev))
+	_check(bool(rec._daily_report.get("ranked", false)) and rec.profile.daily_first.has("77"),
+		"a first daily finish is the ranked one (%s)" % str(rec._daily_report))
 	# a second daily on the same seed compares against the first result, read
 	# under the key record_daily writes (the game's seed) whatever seed_v says
 	var first_daily: Dictionary = rec.profile.daily_best["77"].duplicate()
@@ -567,16 +584,18 @@ func _init() -> void:
 				pf.close()
 
 	# 11. the title screen's run-setup rows (Block A): three cyclers gated by
-	# the career, the config PLAY builds out of them, the status line that
-	# names it, and the daily line that replaces the rows entirely
-	var cfg_before := FileAccess.get_file_as_string(Shell.CFG_PATH) if FileAccess.file_exists(Shell.CFG_PATH) else ""
+	# the career, the config PLAY builds out of them and the status line that
+	# names it; then the daily, which is its own menu entry and sheet now (the
+	# settings toggle that swapped the rows for a TODAY line is gone)
 	var menu = _bare_shell()
 	menu.profile = Profile.new()
-	menu.seed_mode = "random"
+	menu.run_kind = "career"
 	menu._clamp_selection()
 	var rows0 := _rows(menu)
 	_check(rows0.has("LOADOUT: Tender") and rows0.has("PACKAGE: none") and rows0.has("MUTATOR: none"),
 		"a fresh career shows tender / none / none (%s)" % str(rows0))
+	_check(rows0.has("DAILY") and not str(rows0).contains("TODAY"),
+		"the daily is a menu entry, not a TODAY line (%s)" % str(rows0))
 	menu._tap("set:loadout")
 	menu._tap("set:package")
 	menu._tap("set:mutator")
@@ -610,27 +629,134 @@ func _init() -> void:
 	menu.profile.unlocked_loadouts = []
 	menu._clamp_selection()
 	_check(menu.sel_loadout == "tender", "losing the unlock drops the selection back to tender")
-	# daily mode: the seed's own config replaces the three rows
+	# the settings sheet has no seed toggle left: PLAY is always a career run
+	var stags: Array = []
+	for r in menu._settings_rows():
+		stags.append(String(r[1]))
+	_check(not stags.has("set:seed") and stags.has("set:hold") and stags.has("set:intro"),
+		"the settings rows carry no seed toggle (%s)" % str(stags))
+	# the DAILY entry: its sheet names today's config, its PLAY is the daily
 	var day = _bare_shell()
 	day.profile = Profile.new()  # a daily needs nothing unlocked
-	day.seed_mode = "daily"
+	day.screen = "menu"
+	day.mode = "normal"
 	var dseed: int = day._daily_seed()
+	_check(dseed == Profile.daily_seed_for(Time.get_date_string_from_system(true)),
+		"the shell's daily seed is Profile.daily_seed_for(today) (%d)" % dseed)
+	day._tap("daily")
+	_check(day.mode == "daily" and day.screen == "menu", "DAILY opens the daily sheet (%s)" % day.mode)
 	var dc: Dictionary = Profile.daily_config(dseed)
-	var drows := _rows(day)
-	var today := ""
-	for label in drows:
-		if label.begins_with("TODAY: "):
-			today = label
-	_check(today != "", "daily mode shows the day's config line (%s)" % str(drows))
-	_check(today.contains(String(Content.LOADOUTS[dc["loadout"]]["name"])),
-		"...naming the daily's loadout (%s)" % today)
-	for label in drows:
-		_check(not label.begins_with("LOADOUT:") and not label.begins_with("PACKAGE:")
-			and not label.begins_with("MUTATOR:"), "daily mode hides the cyclers (%s)" % label)
-	day._roll_seed()  # what PLAY does first: in daily mode the date is the seed
-	_check(day.seed_v == dseed, "daily mode rolls the day's seed (%d)" % day.seed_v)
+	var sheet: Dictionary = day._daily_sheet(dseed)
+	var names_on: Array = []
+	for c in sheet["cards"]:
+		names_on.append(String(c[1]))
+	_check(names_on.has(String(Content.LOADOUTS[dc["loadout"]]["name"])),
+		"the sheet names the day's loadout (%s)" % str(names_on))
+	_check(String(dc["package"]) == "" or names_on.has(String(Content.PACKAGE_INFO[dc["package"]]["name"])),
+		"...its package (%s)" % str(names_on))
+	_check(String(dc["mutator"]) == "" or names_on.has(String(Content.MUTATORS[dc["mutator"]]["name"])),
+		"...and its mutator (%s)" % str(names_on))
+	_check(String(sheet["play"]) == "PLAY TODAY'S RUN" and String(sheet["result"]).begins_with("No finish yet"),
+		"an unplayed daily offers the ranked run (%s / %s)" % [sheet["play"], sheet["result"]])
+	day._tap("daily_play")
+	_check(day.run_kind == "daily" and day.screen == "game" and day.seed_v == dseed,
+		"the sheet's PLAY starts today's daily (%s, %d)" % [day.run_kind, day.seed_v])
 	_check(str(day._run_config()) == str(Profile.daily_game_config(dseed)),
-		"PLAY uses the daily config (%s)" % str(day._run_config()))
+		"...on the daily config (%s)" % str(day._run_config()))
+	_check(int(day.profile.daily_tries.get(Profile.daily_key(dseed), 0)) == 1,
+		"...and counts a try (%s)" % str(day.profile.daily_tries))
+	_check(String(day._daily_sheet(dseed)["result"]).begins_with("1 try"),
+		"a started daily reads as a try with no finish (%s)" % day._daily_sheet(dseed)["result"])
+	# back on the menu with that try still live, the sheet RESUMES it: a fresh
+	# start would overwrite the save and count a second try
+	var live_day = day.game
+	day.screen = "menu"
+	day._tap("daily")
+	var rsh: Dictionary = day._daily_sheet(dseed)
+	_check(String(rsh["play"]) == "RESUME TODAY'S TRY" and String(rsh["play_tag"]) == "daily_resume",
+		"a daily try in progress is offered as a resume (%s / %s)" % [rsh["play"], rsh["play_tag"]])
+	day._key(KEY_ENTER)
+	_check(day.screen == "game" and day.mode == "normal" and day.game == live_day
+		and int(day.profile.daily_tries.get(Profile.daily_key(dseed), 0)) == 1,
+		"...which re-enters the same try and counts no new one (%s)" % str(day.profile.daily_tries))
+	# the same from the run save alone (the tutorial displaced the live run)
+	var hold_game = day.game
+	day._game_is_run = false
+	_check(String(day._daily_sheet(dseed)["play_tag"]) == "daily_resume",
+		"...read from the run save's header when the live game is not the run")
+	_check(String(day._daily_sheet(dseed + 1)["play_tag"]) == "daily_play",
+		"...and only for that seed's daily")
+	day._game_is_run = true
+	day.game = hold_game
+	# R retries the daily (another try); N leaves it for a career run
+	day.mode = "normal"  # a first run opens on the intro, which eats a key
+	day._key(KEY_R)
+	_check(day.run_kind == "daily" and day.seed_v == dseed
+		and int(day.profile.daily_tries.get(Profile.daily_key(dseed), 0)) == 2,
+		"R retries the daily as another try (%s)" % str(day.profile.daily_tries))
+	day.mode = "normal"
+	day._key(KEY_N)
+	_check(day.run_kind == "career" and day.seed_v == dseed + 1, "N moves on to a career run on the next seed")
+	# a tap on a finished daily's over sheet is NEW RUN: a career run (C25),
+	# never another daily try on today's seed
+	day._start_run("daily", dseed)
+	var tries_now := int(day.profile.daily_tries.get(Profile.daily_key(dseed), 0))
+	day.game.over = true
+	day.mode = "normal"
+	day.hotspots.clear()
+	day._click(Vector2(-10, -10))
+	_check(day.run_kind == "career" and int(day.profile.daily_tries.get(Profile.daily_key(dseed), 0)) == tries_now,
+		"a tap on a daily's over sheet starts a career run and counts no try (%s, %s)" % [day.run_kind,
+			str(day.profile.daily_tries)])
+	day.screen = "menu"
+	day._tap("play")
+	_check(day.run_kind == "career", "PLAY is always a career run")
+	# with that career run live, the DAILY sheet warns that a start abandons it
+	# and PLAY takes a second tap (one save: a fresh daily overwrites it)
+	var live_career = day.game
+	var tries_before := int(day.profile.daily_tries.get(Profile.daily_key(dseed), 0))
+	day.screen = "menu"
+	day._tap("daily")
+	var ash: Dictionary = day._daily_sheet(dseed)
+	_check(bool(ash["note_warn"]) and String(ash["note"]).contains("abandons"),
+		"a live career run puts the abandon warning on the daily sheet (%s)" % ash["note"])
+	day._tap("daily_play")
+	_check(day.game == live_career and day.run_kind == "career" and day.mode == "daily"
+		and int(day.profile.daily_tries.get(Profile.daily_key(dseed), 0)) == tries_before,
+		"...the first PLAY tap starts nothing and counts no try")
+	_check(String(day._daily_sheet(dseed)["play"]) == "TAP AGAIN TO ABANDON",
+		"...and the button asks for a second tap (%s)" % day._daily_sheet(dseed)["play"])
+	day._tap("close")
+	day._tap("daily")
+	_check(String(day._daily_sheet(dseed)["play"]) != "TAP AGAIN TO ABANDON",
+		"...reopening the sheet disarms it")
+	day._tap("daily_play")
+	day._tap("daily_play")
+	_check(day.run_kind == "daily" and day.game != live_career and day.screen == "game",
+		"...and the second tap starts the daily (%s)" % day.run_kind)
+	# the menu's PLAY guards that live try the same way: its try is already
+	# counted, and a career start overwrites the one run save
+	var live_try = day.game
+	day.screen = "menu"
+	day.mode = "normal"
+	day._tap("play")
+	_check(day.game == live_try and day.run_kind == "daily" and day.screen == "menu"
+		and String(day._menu_rows().filter(func(r): return String(r[1]) == "play")[0][0]) == "TAP AGAIN TO ABANDON",
+		"PLAY over a live daily try starts nothing and asks for a second tap")
+	day._tap("settings")
+	day.mode = "normal"
+	_check(String(day._menu_rows().filter(func(r): return String(r[1]) == "play")[0][0]) == "PLAY",
+		"...any other tap disarms it")
+	day._tap("play")
+	day._tap("play")
+	_check(day.run_kind == "career" and day.game != live_try and day.screen == "game",
+		"...and the second tap starts a career run (%s)" % day.run_kind)
+	# the same warning off the run save's cached header when the live game is
+	# not a run: the header is re-read after every write of the save
+	day._start_run("career")
+	day._game_is_run = false
+	_check(bool(day._daily_sheet(dseed)["note_warn"]), "the header of a saved career run warns as well")
+	day._game_is_run = true
 	# a seed whose daily wants all three, played on a career that unlocked none
 	var dseed2 := 0
 	for s in range(1, 500):
@@ -641,25 +767,57 @@ func _init() -> void:
 	_check(dseed2 > 0, "some daily seed wants a package, a mutator and a non-tender loadout")
 	if dseed2 > 0:
 		var d3: Dictionary = Profile.daily_config(dseed2)
-		day.seed_v = dseed2
-		day._new_game()
+		_check(day._daily_sheet(dseed2)["cards"].size() == 3, "a full daily sheet shows three cards")
+		day.screen = "menu"
+		day._start_run("daily", dseed2)
 		_check(day.game.loadout == String(d3["loadout"]) and day.game.packages == [String(d3["package"])]
 			and day.game.mutators == [String(d3["mutator"])],
 			"a daily run carries the seed's own config with nothing unlocked (%s)" % str(Profile.daily_config(dseed2)))
 		_check(day.game.player["kit"] == Content.LOADOUTS[d3["loadout"]]["kit"],
 			"...including its starting kit")
-	for sh in [menu, day]:
+	# a run save written before the daily had its own button: no "kind" in
+	# its header, so the old cfg toggle routes it - and it files to the board
+	var lg = _bare_shell()
+	lg.profile = Profile.new()
+	lg.runs_dir = "user://test_shell_legacy_runs"
+	var lf2 := FileAccess.open(TEST_RUN_SAVE, FileAccess.WRITE)
+	lf2.store_line(var_to_str({"v": Shell.RUN_SAVE_VERSION, "seed": 31337, "tier": 0,
+		"config": Profile.daily_game_config(31337)}).replace("\n", " "))
+	lf2.store_line(var_to_str({"type": "end_turn"}))
+	lf2.close()
+	lg._legacy_seed_mode = "daily"
+	lg._load_run()
+	_check(lg.run_kind == "daily" and lg.game != null and lg.seed_v == 31337,
+		"a kind-less save resumes as a daily under the legacy toggle (%s)" % lg.run_kind)
+	lg.game.over = true
+	lg._game_is_run = true
+	lg._run_recorded = false
+	lg._record_finished_run()
+	_check(lg.profile.daily_best.has("31337") and lg.profile.runs == 0,
+		"...and files to the daily board, not the career (%s)" % str(lg.profile.daily_best.keys()))
+	for n in _dir_files(lg.runs_dir):
+		DirAccess.remove_absolute(lg.runs_dir + "/" + n)
+	DirAccess.remove_absolute(lg.runs_dir)
+	# ...while the same save under the default toggle is a career run
+	lg._legacy_seed_mode = "random"
+	var lf3 := FileAccess.open(TEST_RUN_SAVE, FileAccess.WRITE)
+	lf3.store_line(var_to_str({"v": Shell.RUN_SAVE_VERSION, "seed": 31338, "tier": 0, "config": {}}).replace("\n", " "))
+	lf3.close()
+	lg._load_run()
+	_check(lg.run_kind == "career", "a kind-less save with no legacy toggle resumes as a career run")
+	# and a save that names its kind wins over the legacy toggle
+	lg._legacy_seed_mode = "daily"
+	lg._start_run("career", 4242)
+	lg._run_save.close()
+	lg._run_save = null
+	lg._load_run()
+	_check(lg.run_kind == "career", "a header's own kind beats the legacy toggle")
+	for sh in [menu, day, lg]:
 		if sh._run_save != null:
 			sh._run_save.close()
 			sh._run_save = null
 		sh.free()
-	DirAccess.remove_absolute(TEST_RUN_SAVE)  # day._new_game wrote the scratch slot
-	if cfg_before == "":
-		DirAccess.remove_absolute(Shell.CFG_PATH)
-	else:
-		var cfgf := FileAccess.open(Shell.CFG_PATH, FileAccess.WRITE)
-		cfgf.store_string(cfg_before)
-		cfgf.close()
+	DirAccess.remove_absolute(TEST_RUN_SAVE)  # the runs above wrote the scratch slot
 
 	# --- Block D5: the resonance surface ------------------------------------
 	# The shell must never re-derive the threshold rule; _resonance_state only
@@ -728,13 +886,40 @@ func _init() -> void:
 	_check_danger_readouts()
 	_check_lethal_guard()
 	_check_intent_badges()
+	_check_new_badges()
+	_check_legacy_notice()
+	_check_tutorial_keys()
+	_check_menu_layout()
+	_check_daily_layout()
 
 	shell.free()
 	shell2.free()
+	_check(_real_files() == real_before,
+		"no test shell wrote the player's real settings, profile or run save")
 	DirAccess.remove_absolute(TEST_PROFILE)
 	DirAccess.remove_absolute(TEST_PROFILE + ".tmp")
+	DirAccess.remove_absolute(TEST_CFG)
 	print("FAILURES: %d" % fails if fails > 0 else "shell smoke: OK")
 	quit(1 if fails > 0 else 0)
+
+
+## A shell whose settings, career and run save all live at the scratch paths
+## (set before `_ready`, which loads from them). Unlike _bare_shell it deletes
+## nothing and keeps its live run, so one shell's save can restore in the next.
+func _iso_shell():
+	var sh = Shell.new()
+	sh.profile_path = TEST_PROFILE
+	sh.run_save_path = TEST_RUN_SAVE
+	sh.cfg_path = TEST_CFG
+	return sh
+
+
+## The player's real settings, profile and run save, as text ("" = absent).
+func _real_files() -> Array:
+	var out: Array = []
+	for pth in [Shell.CFG_PATH, Shell.PROFILE_PATH, Shell.RUN_SAVE_PATH]:
+		out.append(FileAccess.get_file_as_string(pth) if FileAccess.file_exists(pth) else "")
+	return out
 
 
 ## A shell with no live run attached: these tests drive `game` directly, so
@@ -743,6 +928,8 @@ func _bare_shell(keep_save := false):
 	var sh = Shell.new()
 	sh.profile_path = TEST_PROFILE  # before _ready: it loads from here
 	sh.run_save_path = TEST_RUN_SAVE  # ...and restores (or deletes) a run save from here
+	sh.cfg_path = TEST_CFG  # ...and its settings: every bare shell boots on the defaults
+	DirAccess.remove_absolute(TEST_CFG)
 	if not keep_save:
 		DirAccess.remove_absolute(TEST_RUN_SAVE)  # an earlier shell's run is not restored here
 	sh._ready()
@@ -918,6 +1105,47 @@ func _check_card_text() -> void:
 		"the last description line lands inside the card")
 	print("card text: %d strings x %d viewports x 10 card geometries, worst %.4f%% of vh (%s)" % [
 		rows.size(), CARD_VIEWPORTS.size(), worst * 100.0, worst_at])
+	# the career layer's cards (the DAILY sheet today) sit at the draft's
+	# geometry, h = 0.105vh, with their real icons, names and badges - and a
+	# meta card's NAME is held to the same floor as its description, because
+	# a name like "Skyrunner (needs Aeolian)" is the whole point of the card
+	var meta: Array = []
+	for sd in range(1, 31):
+		for c in sh._daily_sheet(sd)["cards"]:
+			meta.append(c)
+	var m_small := 0
+	var m_lines := 0
+	var m_name := 0
+	var m_col := 0
+	var m_worst := 9.9
+	var m_worst_at := ""
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		var r := Rect2(vw * 0.05, vh * 0.3, vw * 0.9, vh * 0.105)
+		for c in meta:
+			var L := sh._card_layout(r, String(c[0]), String(c[1]), String(c[2]), String(c[4]))
+			var dfrac: float = float(L["desc"]["size"]) / vh
+			var nfrac: float = float(L["name"]["size"]) / vh
+			if dfrac < CARD_MIN_VH:
+				m_small += 1
+			if L["desc"]["lines"].size() > CARD_MAX_LINES:
+				m_lines += 1
+			if nfrac < CARD_MIN_VH:
+				m_name += 1
+			if minf(dfrac, nfrac) < m_worst:
+				m_worst = minf(dfrac, nfrac)
+				m_worst_at = "%s at %dx%d" % [c[1], int(vw), int(vh)]
+			var end_x: float = float(L["name"]["pos"].x) + sh.font.get_string_size(String(c[1]),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, int(L["name"]["size"])).x
+			if L.has("badge") and end_x > float(L["badge"]["pos"].x):
+				m_col += 1
+	_check(m_small == 0, "%d meta card description(s) below %.2f%% vh" % [m_small, CARD_MIN_VH * 100.0])
+	_check(m_lines == 0, "%d meta card description(s) need more than %d lines" % [m_lines, CARD_MAX_LINES])
+	_check(m_name == 0, "%d meta card name(s) below %.2f%% vh (worst %s)" % [m_name, CARD_MIN_VH * 100.0, m_worst_at])
+	_check(m_col == 0, "%d meta card name(s) run into their badge" % m_col)
+	print("meta card text: %d daily cards x %d viewports, worst %.4f%% of vh (%s)" % [
+		meta.size(), CARD_VIEWPORTS.size(), m_worst * 100.0, m_worst_at])
 	sh.free()
 
 
@@ -1018,6 +1246,17 @@ func _check_back() -> void:
 	_check(bk.mode == "settings", "the settings sheet opens")
 	_check(bk._back(true) == "settings" and bk.mode == "normal" and bk.screen == "menu",
 		"Back closes the settings sheet instead of quitting")
+	bk._tap("daily")
+	_check(bk.mode == "daily", "the daily sheet opens")
+	var tries_b: Dictionary = bk.profile.daily_tries.duplicate()
+	bk._key(KEY_X)
+	_check(bk.mode == "daily", "a stray key leaves the daily sheet up")
+	_check(bk._back(true) == "daily" and bk.mode == "normal" and bk.screen == "menu"
+		and bk.profile.daily_tries == tries_b,
+		"Back closes the daily sheet instead of quitting, starting nothing")
+	bk._tap("daily")
+	bk._key(KEY_ESCAPE)
+	_check(bk.mode == "normal" and bk.screen == "menu", "ESC closes the daily sheet too")
 	_check(bk._back(false) == "root" and bk.screen == "menu", "ESC at the menu does not quit")
 	_check(bk._back(true) == "quit", "Back at the menu is the one press that quits")
 	# ESC is the same handler, so its gaps close with it: it used to page the
@@ -2294,7 +2533,7 @@ func _check_intent_badges() -> void:
 	for sname in Content.STATUSES:
 		if not Content.STATUSES[sname].get("blocks", []).is_empty():
 			_check(Danger.BLOCK_ICON.has(sname), "blocking status %s has a glyph" % sname)
-	var hp_sh = Shell.new()
+	var hp_sh = _iso_shell()
 	_check(hp_sh._help_pages() == 4, "the legend is four pages with the badge rows")
 	hp_sh.free()
 
@@ -2433,3 +2672,276 @@ class SfxSpy extends Node:
 
 	func play(id: String, _pitch := 1.0) -> void:
 		played.append(id)
+
+
+## --- NEW badges on the menu --------------------------------------------------
+## An unlock the player has not looked at yet badges its menu row NEW until
+## they cycle onto it; a loadout still waiting on its package earns no badge
+## (nothing to cycle onto); the LOADOUT row names a win with the selected kit.
+func _check_new_badges() -> void:
+	var nb = _bare_shell()
+	nb.screen = "menu"
+	nb.profile = Profile.new()
+	nb.profile.unlocked_loadouts = ["tidewarden"]
+	nb.profile.unseen = ["tidewarden"]
+	nb.sel_loadout = "tender"
+	DirAccess.remove_absolute(TEST_PROFILE)
+	_check(_badge_of(nb, "set:loadout") == "NEW", "an unseen loadout badges the LOADOUT row NEW (%s)" % _badge_of(nb, "set:loadout"))
+	nb._tap("set:loadout")
+	_check(nb.sel_loadout == "tidewarden" and _badge_of(nb, "set:loadout") == "",
+		"cycling onto it clears the badge (%s)" % _badge_of(nb, "set:loadout"))
+	_check(nb.profile.unseen.is_empty() and FileAccess.file_exists(TEST_PROFILE),
+		"...and the profile is saved to profile_path")
+	# a gated loadout: unlocked and unseen, but its package is not
+	nb.profile.unlocked_loadouts = ["tidewarden", "skyrunner"]
+	nb.profile.unseen = ["skyrunner"]
+	_check(_badge_of(nb, "set:loadout") != "NEW", "a Skyrunner waiting on Aeolian earns no badge")
+	nb.profile.unlocked_packages = ["aeolian"]
+	_check(_badge_of(nb, "set:loadout") == "NEW", "...until Aeolian opens it")
+	nb.profile.unseen = []
+	# wins with the selected loadout
+	nb.sel_loadout = "tidewarden"
+	nb.profile.records["loadouts"]["tidewarden"] = Profile._loadout_rec(7, 900, 0, 3, 1)
+	_check(_badge_of(nb, "set:loadout") == "WON", "a loadout won at the base run reads WON (%s)" % _badge_of(nb, "set:loadout"))
+	nb.profile.records["loadouts"]["tidewarden"] = Profile._loadout_rec(7, 900, 2, 3, 2)
+	_check(_badge_of(nb, "set:loadout") == "WON D2", "...and at a difficulty, WON D2 (%s)" % _badge_of(nb, "set:loadout"))
+	# the other cyclers: package, mutator and difficulty
+	nb.profile.unlocked_mutators = ["brittle"]
+	nb.profile.unlocked_tier = 2
+	nb.profile.unseen = ["brittle", "aeolian", "tier:2"]
+	_check(_badge_of(nb, "set:mutator") == "NEW" and _badge_of(nb, "set:package") == "NEW"
+		and _badge_of(nb, "set:tier") == "NEW", "unseen package, mutator and difficulty badge their rows")
+	nb.sel_tier = 0
+	nb._tap("set:tier")  # onto difficulty 1: tier 2 is still unseen
+	_check(_badge_of(nb, "set:tier") == "NEW", "difficulty 1 does not clear a NEW difficulty 2")
+	nb._tap("set:tier")
+	nb._tap("set:package")
+	nb._tap("set:mutator")
+	_check(_badge_of(nb, "set:tier") == "" and _badge_of(nb, "set:package") == ""
+		and _badge_of(nb, "set:mutator") == "" and nb.profile.unseen.is_empty(),
+		"cycling onto each clears its badge (%s)" % str(nb.profile.unseen))
+	nb.free()
+
+
+## The legacy notice ("the daily now has its own button") is said ONCE: it
+## used to come back on every boot, because only a settings change dropped the
+## old seed_mode key. A settings change must still carry the key forward while
+## it routes something, or a resumed header-less daily would file to the career.
+func _check_legacy_notice() -> void:
+	var ln = _bare_shell()
+	ln.profile = Profile.new()
+	ln.screen = "menu"
+	ln.mode = "normal"
+	var cf := ConfigFile.new()
+	cf.set_value("ui", "seed_mode", "daily")
+	cf.save(TEST_CFG)
+	ln._load_settings()
+	_check(ln._legacy_notice and ln._legacy_seed_mode == "daily", "an old daily cfg raises the notice")
+	ln.mode = "settings"
+	ln._tap("set:hold")
+	ln.mode = "normal"
+	var c1 := ConfigFile.new()
+	c1.load(TEST_CFG)
+	_check(str(c1.get_value("ui", "seed_mode", "")) == "daily",
+		"a settings change carries the legacy key forward while it still routes a save")
+	ln._load_settings()
+	_check(ln._legacy_notice, "...and does not dismiss the notice")
+	ln._tap("daily")
+	ln._load_settings()
+	_check(not ln._legacy_notice and ln._legacy_seed_mode == "daily",
+		"opening DAILY dismisses the notice for good, keeping the routing")
+	ln.mode = "normal"
+	ln._load_settings()
+	ln._legacy_notice = true  # a boot that never opened DAILY: PLAY dismisses it too
+	ln._start_run("career", 5151)
+	if ln._run_save != null:
+		ln._run_save.close()
+		ln._run_save = null
+	ln._load_settings()
+	var c2 := ConfigFile.new()
+	c2.load(TEST_CFG)
+	_check(not ln._legacy_notice and ln._legacy_seed_mode == "random" and not c2.has_section_key("ui", "seed_mode"),
+		"starting a run drops the legacy key: the notice never comes back")
+	ln.free()
+	DirAccess.remove_absolute(TEST_RUN_SAVE)
+	DirAccess.remove_absolute(TEST_CFG)
+
+
+## R and N mid-tutorial: R restarts the tutorial (as a tutorial death's R
+## does) and N does nothing. Both used to leave it for a run on the LAST run's
+## kind and seed - a daily try counted and the live run's save overwritten.
+func _check_tutorial_keys() -> void:
+	var tk = _bare_shell()
+	tk.profile = Profile.new()
+	tk.run_kind = "daily"
+	tk.seed_v = 777
+	tk._tap("tutorial")
+	tk.mode = "normal"
+	tk._key(KEY_N)
+	_check(tk.screen == "tutorial" and tk.run_kind == "daily" and tk.seed_v == 777 and tk.profile.daily_tries.is_empty(),
+		"N mid-tutorial stays in the tutorial (%s, %s)" % [tk.screen, str(tk.profile.daily_tries)])
+	tk.tut_step = 2
+	tk._key(KEY_R)
+	_check(tk.screen == "tutorial" and tk.tut_step == 0 and tk.seed_v == 777 and tk.profile.daily_tries.is_empty()
+		and not FileAccess.file_exists(TEST_RUN_SAVE),
+		"R mid-tutorial restarts the tutorial, no run started (%s, step %d)" % [tk.screen, tk.tut_step])
+	if tk._run_save != null:
+		tk._run_save.close()
+		tk._run_save = null
+	tk.free()
+	DirAccess.remove_absolute(TEST_RUN_SAVE)
+
+
+func _badge_of(sh, tag: String) -> String:
+	for row in sh._menu_rows():
+		if String(row[1]) == tag:
+			return String(row[3])
+	return "<no row>"
+
+
+## --- the menu stays readable on every phone ----------------------------------
+## With the most a career can put on it - RESUME, a named difficulty, a badge
+## on every cycler, the longest names - every label is at least 1.5% of the
+## screen height and every row lands inside the viewport, at every shape the
+## card gate sweeps. The labels used to sit in a 0.62vw block, where a long
+## difficulty name with a badge fell to ~1.06%.
+func _check_menu_layout() -> void:
+	var ml = _bare_shell()
+	ml.screen = "menu"
+	ml.profile = Profile.new()
+	ml.profile.unlocked_tier = Content.TIERS.size()
+	ml.profile.unlocked_packages = Content.PACKAGES.keys()
+	ml.profile.unlocked_mutators = Content.MUTATORS.keys()
+	ml.profile.unlocked_loadouts = Content.LOADOUTS.keys().filter(func(l): return l != "tender")
+	ml.profile.unseen = ["tier:%d" % Content.TIERS.size(), "spinning_shrine", "hydraulics", "skyrunner"]
+	# the longest name each cycler can show
+	var longest := func(ids: Array, name_of: Callable) -> String:
+		var best := ""
+		for id in ids:
+			if String(name_of.call(id)).length() > String(name_of.call(best)).length() or best == "":
+				best = id
+		return best
+	ml.sel_tier = 0
+	var tn := 0
+	for i in Content.TIERS.size():
+		if String(Content.TIERS[i]["name"]).length() > String(Content.TIERS[tn]["name"]).length():
+			tn = i
+	ml.sel_tier = tn + 1
+	ml.sel_mutator = longest.call(Content.MUTATORS.keys(), func(id): return Content.MUTATORS.get(id, {}).get("name", ""))
+	ml.sel_package = longest.call(Content.PACKAGES.keys(), func(id): return Profile.unlock_name(id) if id != "" else "")
+	ml.sel_loadout = "skyrunner"
+	# a live run on the shell makes RESUME show
+	ml.game = Game.new(4242, {})
+	ml._game_is_run = true
+	var tags: Array = []
+	for row in ml._menu_rows():
+		tags.append(String(row[1]))
+	_check(tags.has("resume") and tags.has("set:tier") and tags.has("daily"),
+		"the maxed menu shows RESUME, DIFFICULTY and DAILY (%s)" % str(tags))
+	var small := 0
+	var outside := 0
+	var worst := 9.9
+	var worst_at := ""
+	var badges := 0
+	var small_badge := 0
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		var view := Rect2(0, 0, vw, vh)
+		for m in ml._menu_layout(vw, vh):
+			var frac: float = float(m["size"]) / vh
+			if frac < 0.015:
+				small += 1
+			if frac < worst:
+				worst = frac
+				worst_at = "%s at %dx%d" % [m["label"], int(vw), int(vh)]
+			if not view.encloses(m["rect"]):
+				outside += 1
+			if String(m["badge"]) != "":
+				badges += 1
+				var lw: float = ml.font.get_string_size(String(m["label"]), HORIZONTAL_ALIGNMENT_LEFT, -1, int(m["size"])).x
+				var cx: float = (m["rect"].position.x + m["rect"].end.x - float(m["badge_w"])) / 2.0
+				var bw: float = ml.font.get_string_size(String(m["badge"]), HORIZONTAL_ALIGNMENT_LEFT, -1, int(m["badge_size"])).x
+				if cx + lw / 2.0 > m["rect"].end.x - bw - m["rect"].size.y * 0.12:
+					outside += 1
+				if float(m["badge_size"]) / vh < CARD_MIN_VH:
+					small_badge += 1
+	_check(small == 0, "%d menu label(s) below 1.5%% of the screen height (worst %s)" % [small, worst_at])
+	_check(outside == 0, "%d menu row(s) leave the viewport or run into their badge" % outside)
+	_check(badges >= 4 * CARD_VIEWPORTS.size(), "the maxed menu carries its badges (%d)" % badges)
+	_check(small_badge == 0, "%d menu badge(s) below %.2f%% of vh" % [small_badge, CARD_MIN_VH * 100.0])
+	print("menu layout: %d viewports, worst label %.4f%% of vh (%s)" % [CARD_VIEWPORTS.size(), worst * 100.0, worst_at])
+	ml.game = null
+	ml.free()
+
+
+## --- the DAILY sheet fits ----------------------------------------------------
+## Its lines stay readable, its cards stay inside the panel and its button row
+## goes through _sheet_button_y, for every state the sheet can be in (no try,
+## tries without a finish, finished with a streak) and every phone shape.
+func _check_daily_layout() -> void:
+	var dl = _bare_shell()
+	dl.screen = "menu"
+	dl.profile = Profile.new()
+	var today: int = dl._daily_seed()
+	var states: Array = []
+	states.append(dl._daily_sheet(today))
+	dl.profile.note_daily_try(today)
+	dl.profile.note_daily_try(today)
+	states.append(dl._daily_sheet(today))
+	dl.profile.record_daily({"won": false, "floor": 4, "turns": 120, "seed": today})
+	dl.profile.record_daily({"won": true, "floor": 7, "turns": 133, "seed": today})
+	dl._refresh_daily_info()
+	var fin: Dictionary = dl._daily_sheet(today)
+	states.append(fin)
+	# a live career run: the red abandon note, armed and unarmed
+	dl._start_run("career")
+	dl.screen = "menu"
+	dl._tap("daily")
+	var warn: Dictionary = dl._daily_sheet(today)
+	_check(bool(warn["note_warn"]), "a live career run warns on the daily sheet")
+	states.append(warn)
+	dl._tap("daily_play")
+	var armed: Dictionary = dl._daily_sheet(today)
+	_check(String(armed["play"]) == "TAP AGAIN TO ABANDON", "...and arms on the first tap (%s)" % armed["play"])
+	states.append(armed)
+	if dl._run_save != null:
+		dl._run_save.close()
+		dl._run_save = null
+	_check(String(fin["result"]) == "ranked: floor 4  ·  best: won in 133 turns  ·  2 tries",
+		"a finished daily reads ranked then best (%s)" % fin["result"])
+	_check(String(fin["play"]).contains("unranked") and String(fin["streak"]).begins_with("streak 1 day"),
+		"...offers an unranked replay and starts a streak (%s / %s)" % [fin["play"], fin["streak"]])
+	# the fullest daily the frozen lists can deal: three cards
+	for sd in range(1, 400):
+		var dcf: Dictionary = Profile.daily_config(sd)
+		if String(dcf["package"]) != "" and String(dcf["mutator"]) != "":
+			states.append(dl._daily_sheet(sd))
+			break
+	var bad := 0
+	var worst := 9.9
+	var worst_at := ""
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		for info in states:
+			var L: Dictionary = dl._daily_layout(vw, vh, info)
+			for ln in L["lines"]:
+				var f: float = float(ln["size"]) / vh
+				if f < worst:
+					worst = f
+					worst_at = "'%s' at %dx%d" % [ln["text"], int(vw), int(vh)]
+				if f < CARD_MIN_VH:
+					bad += 1
+			var last_card := 0.0
+			for c in L["cards"]:
+				last_card = maxf(last_card, c["rect"].end.y)
+			for b in L["buttons"]:
+				var br: Rect2 = b["rect"]
+				if br.end.y > vh * 0.955 + 0.01 or br.position.y < last_card \
+						or float(b["size"]) / vh < CARD_MIN_VH:
+					bad += 1
+	_check(bad == 0, "%d daily sheet piece(s) too small, overlapping or past vh*0.955 (worst line %s)" % [bad, worst_at])
+	print("daily sheet: %d states x %d viewports, worst line %.4f%% of vh (%s)" % [
+		states.size(), CARD_VIEWPORTS.size(), worst * 100.0, worst_at])
+	dl.free()

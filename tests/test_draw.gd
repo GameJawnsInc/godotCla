@@ -6,7 +6,8 @@ extends SceneTree
 ## would only ever show up on a phone. This hosts shell/main.gd inside a
 ## SubViewport that renders every frame, at several real phone and desktop
 ## sizes, and drives real frames through every screen the shell draws: the
-## menu and settings, tutorial steps, an optimizer game played through _act
+## menu and settings, the career menu (NEW / WON badges) and the DAILY sheet,
+## tutorial steps, an optimizer game played through _act
 ## with tooltips raised on every enemy, vent and the tender, a lethal state
 ## (vignette, outline, guard flash, escape glow), a danger board (tether, gum
 ## slots, SKIES chips), a kill (ghost, kill weight, streak flame), the boss
@@ -23,8 +24,9 @@ extends SceneTree
 ## _ready, which loads the one and restores the other), the run save handle is
 ## closed at once and _game_is_run stays false (so no run is recorded and no
 ## log archived), runs_dir points at scratch too, and SHELL_SEED is cleared so
-## _ready never starts a run. The settings file (user://tender.cfg) is read,
-## never written: no phase taps a settings row.
+## _ready never starts a run. The settings live at a scratch cfg_path too:
+## the DAILY tap saves them once when a legacy seed_mode notice is pending, and
+## the player's own tender.cfg must neither steer nor absorb a test run.
 
 const Shell := preload("res://shell/main.gd")
 const Game := preload("res://sim/game.gd")
@@ -34,6 +36,7 @@ const Danger := preload("res://shell/danger.gd")
 const Names := preload("res://shell/names.gd")
 const Feedback := preload("res://shell/feedback.gd")
 const Roster := preload("res://bots/roster.gd")
+const Profile := preload("res://meta/profile.gd")
 
 const ShellTest := preload("res://tests/test_shell.gd")
 
@@ -44,6 +47,7 @@ const NAMED_VIEWPORTS := [Vector2i(1080, 2400), Vector2i(720, 1600), Vector2i(14
 const SCRATCH_PROFILE := "user://test_draw_profile.json"
 const SCRATCH_RUNS := "user://test_draw_runs"
 const SCRATCH_RUN_SAVE := "user://test_draw_run.save"
+const SCRATCH_CFG := "user://test_draw_settings.cfg"
 ## optimizer actions on the first viewport, then on every other one (the
 ## first sweep is the long one; the rest re-check the same draw paths at
 ## their own sizes)
@@ -137,6 +141,8 @@ func _next_viewport() -> bool:
 	sh.profile_path = SCRATCH_PROFILE  # before _ready (add_child): it loads from here
 	sh.runs_dir = SCRATCH_RUNS
 	sh.run_save_path = SCRATCH_RUN_SAVE  # before _ready too: it restores (or deletes) a save it finds
+	sh.cfg_path = SCRATCH_CFG  # ...and its settings: boots on the defaults, saves nothing real
+	DirAccess.remove_absolute(SCRATCH_CFG)
 	vp.add_child(sh)
 	# silent: a sound still playing when the shell is freed leaks its playback
 	# at exit (engine cleanup noise, not a draw fault), and nothing here listens
@@ -206,6 +212,7 @@ func _finish() -> bool:
 	DirAccess.remove_absolute(SCRATCH_PROFILE)
 	DirAccess.remove_absolute(SCRATCH_PROFILE + ".tmp")
 	DirAccess.remove_absolute(SCRATCH_RUN_SAVE)
+	DirAccess.remove_absolute(SCRATCH_CFG)
 	var ms := Time.get_ticks_msec() - t_start
 	if not fx_seen.has("callout") or not fx_seen.has("ghost"):
 		fails.append("the frames never held a live callout and a ghost (%s)" % str(fx_seen.keys()))
@@ -297,6 +304,9 @@ func _build_phases() -> Array:
 	var rows: Array = [
 		["menu", 3, "_menu_setup", "_menu_check", "", null],
 		["settings", 2, "_settings_setup", "_settings_check", "", null],
+		["menu (career badges)", 3, "_menu_badges_setup", "_menu_badges_check", "", null],
+		["daily sheet", 2, "_daily_setup", "_daily_check", "", false],
+		["daily sheet (finished)", 2, "_daily_setup", "_daily_check", "", true],
 		["tutorial", 8, "_tutorial_setup", "_tutorial_check", "_tutorial_step", null],
 		["tutorial done", 2, "_tutorial_done_setup", "_tutorial_done_check", "", null],
 		["bot game", 100000, "_bot_setup", "_bot_check", "_bot_each", null],
@@ -353,8 +363,75 @@ func _settings_check() -> String:
 
 
 func _tutorial_setup() -> void:
+	if saved_profile != null:
+		sh.profile = saved_profile  # the career phases above lent the shell a profile
+		saved_profile = null
 	sh.mode = "normal"
 	sh._start_tutorial()
+
+
+## The menu with everything a career puts on it: a NEW badge on every cycler,
+## a WON badge on the loadout, a named difficulty, the footer, the legacy
+## daily notice. The profile is a stand-in (never saved: nothing here cycles
+## a row, which is the only path that writes it).
+var saved_profile = null
+
+
+func _career_profile():
+	var p = Profile.new()
+	p.runs = 12
+	p.wins = 2
+	p.best_floor = 7
+	p.unlocked_tier = 2
+	p.unlocked_packages = ["mycology", "aeolian"]
+	p.unlocked_mutators = ["brittle", "spinning_shrine"]
+	p.unlocked_loadouts = ["tidewarden", "skyrunner"]
+	p.unseen = ["tier:2", "aeolian", "spinning_shrine", "skyrunner"]
+	p.records["loadouts"]["tender"] = p._loadout_rec(7, 1200, 1, 10, 2)
+	return p
+
+
+func _menu_badges_setup() -> void:
+	if saved_profile == null:
+		saved_profile = sh.profile
+	sh.profile = _career_profile()
+	sh.screen = "menu"
+	sh.mode = "normal"
+	sh.sel_tier = 2
+	sh.sel_loadout = "tender"
+	sh._legacy_notice = true
+
+
+func _menu_badges_check() -> String:
+	var why := _menu_check()
+	if why != "":
+		return why
+	var badges := 0
+	for row in sh._menu_rows():
+		if String(row[3]) != "":
+			badges += 1
+	return "" if badges >= 4 else "the career menu drew only %d badges" % badges
+
+
+## The DAILY sheet, unplayed (arg false) and finished with a streak (true).
+func _daily_setup() -> void:
+	sh._legacy_notice = false
+	sh.screen = "menu"
+	sh._tap("daily")
+	if bool(phase_arg):
+		var today: int = sh._daily_seed()
+		sh.profile.note_daily_try(today)
+		sh.profile.record_daily({"won": true, "floor": 7, "turns": 140, "seed": today})
+		sh._refresh_daily_info()
+
+
+func _daily_check() -> String:
+	if sh.mode != "daily":
+		return "daily sheet not up (%s)" % sh.mode
+	for h in sh.hotspots:
+		if String(h["tag"]) == "daily_play":
+			return ""
+	return "the daily sheet laid out no PLAY button"
 
 
 func _tutorial_check() -> String:

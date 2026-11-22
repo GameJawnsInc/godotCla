@@ -430,6 +430,13 @@ func _init() -> void:
 		Content.RUN_SCORE_VERSION, ", ".join(score_parts), Content.RUN_SCORE_TIER_QUARTERS,
 		Content.RUN_STAT_KEYS.size()])
 
+	# 16) fun pass, career layer: PACKAGE_INFO (display names for the packages,
+	# read by meta/ and shell/ only) mirrors PACKAGES key for key
+	failures.append_array(_lint_package_info(Content.PACKAGE_INFO, Content.PACKAGES))
+	failures.append_array(_lint_package_info_selftest())
+	print("package info: %d rows (%s), keys equal PACKAGES" % [Content.PACKAGE_INFO.size(),
+		", ".join(Content.PACKAGE_INFO.keys().map(func(k): return String(Content.PACKAGE_INFO[k]["name"])))])
+
 	if failures.is_empty():
 		print("content: OK")
 		quit(0)
@@ -2000,4 +2007,63 @@ func _lint_run_score_selftest() -> Array:
 			bad_keys += 1
 	print("run-score lint self-test: %d bad tables -> %d rejected; %d bad stat-key lists -> %d rejected; good -> clean" % [
 		BAD_RUN_SCORES.size() + 4, rejected, 4, bad_keys])
+	return out
+
+
+## PACKAGE_INFO: exactly the PACKAGES keys, each row {name, desc} - two
+## non-empty Strings and nothing else - with distinct names.
+func _lint_package_info(info, packages: Dictionary) -> Array:
+	var out: Array = []
+	if not (info is Dictionary):
+		return ["PACKAGE_INFO: must be a Dictionary, got %s" % str(info)]
+	for pkg in packages:
+		if not info.has(pkg):
+			out.append("PACKAGE_INFO: package '%s' has no row" % pkg)
+	var names := {}
+	for pkg in info:
+		if not packages.has(pkg):
+			out.append("PACKAGE_INFO: '%s' is not a PACKAGES key" % str(pkg))
+		var row = info[pkg]
+		if not (row is Dictionary):
+			out.append("PACKAGE_INFO[%s]: not a Dictionary" % str(pkg))
+			continue
+		for k in row:
+			if not ["name", "desc"].has(k):
+				out.append("PACKAGE_INFO[%s]: unknown key '%s'" % [str(pkg), str(k)])
+		for k in ["name", "desc"]:
+			if not (row.get(k) is String) or String(row.get(k)) == "":
+				out.append("PACKAGE_INFO[%s]: %s must be a non-empty String" % [str(pkg), k])
+		var nm = row.get("name")
+		if nm is String and nm != "":
+			if names.has(nm):
+				out.append("PACKAGE_INFO[%s]: name '%s' is also %s's" % [str(pkg), nm, names[nm]])
+			names[nm] = pkg
+	return out
+
+
+## One bad PACKAGE_INFO shape each, against a two-package fixture table.
+const PKG_FIXTURE := {"alpha": ["a1"], "beta": ["b1"]}
+const BAD_PACKAGE_INFOS := {
+	"missing_row": {"alpha": {"name": "Alpha", "desc": "a"}},
+	"extra_row": {"alpha": {"name": "Alpha", "desc": "a"}, "beta": {"name": "Beta", "desc": "b"},
+		"gamma": {"name": "Gamma", "desc": "c"}},
+	"no_name": {"alpha": {"desc": "a"}, "beta": {"name": "Beta", "desc": "b"}},
+	"empty_desc": {"alpha": {"name": "Alpha", "desc": ""}, "beta": {"name": "Beta", "desc": "b"}},
+	"unknown_key": {"alpha": {"name": "Alpha", "desc": "a", "icon": "x"}, "beta": {"name": "Beta", "desc": "b"}},
+	"not_a_row": {"alpha": "Alpha", "beta": {"name": "Beta", "desc": "b"}},
+	"duplicate_name": {"alpha": {"name": "Same", "desc": "a"}, "beta": {"name": "Same", "desc": "b"}},
+}
+
+
+func _lint_package_info_selftest() -> Array:
+	var out: Array = []
+	var rejected := 0
+	for k in BAD_PACKAGE_INFOS:
+		if _lint_package_info(BAD_PACKAGE_INFOS[k], PKG_FIXTURE).is_empty():
+			out.append("package-info lint self-test: bad fixture '%s' was accepted" % k)
+		else:
+			rejected += 1
+	for f in _lint_package_info({"alpha": {"name": "Alpha", "desc": "a"}, "beta": {"name": "Beta", "desc": "b"}}, PKG_FIXTURE):
+		out.append("package-info lint self-test: a good table was rejected: %s" % f)
+	print("package-info lint self-test: %d bad tables -> %d rejected; good -> clean" % [BAD_PACKAGE_INFOS.size(), rejected])
 	return out

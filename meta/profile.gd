@@ -11,7 +11,8 @@ extends RefCounted
 ## casts summed across every recorded run. Milestone predicates read those.
 ##
 ## Daily-challenge runs never touch the career: `record_daily` files the best
-## result per daily seed in `daily_best` and records nothing else, and
+## result per daily seed in `daily_best` (plus the ranked first finish in
+## `daily_first` and the attempts in `daily_tries`) and records nothing else, and
 ## `daily_config` derives a daily's whole run config from its seed alone -
 ## no career state, no live content tables (see DAILY_* below).
 
@@ -53,6 +54,24 @@ var daily_best: Dictionary = {}
 ## Test seam only: when non-empty, these rows stand in for Content.MILESTONES.
 var milestone_rows: Array = []
 
+## Career layer (fun pass, cosmetic): what the menu badges NEW and what the
+## daily keeps beside its best.
+## Days daily_streak scans back for the longest streak.
+const DAILY_LOOKBACK := 400
+## The goal ladder's predicate order: progress() lists a row's parts in it and
+## next_goals() breaks frac ties with it (a floor to reach before a win).
+const GOAL_KEY_ORDER := ["best_floor", "wins", "tier_wins", "casts", "won_with",
+	"wins_without", "grafts_owned_at_win"]
+## Ids announced but not yet looked at - milestone ids and "tier:N" ("feat:x"
+## arrives with the feats) - newest last, no duplicates. Drives the menu's NEW
+## badges; cycling onto the thing (mark_seen) clears it.
+var unseen: Array = []
+## str(daily seed) -> STARTED attempts (note_daily_try, at PLAY).
+var daily_tries: Dictionary = {}
+## str(daily seed) -> the FIRST finished result, the ranked one (same shape as
+## daily_best, which keeps improving).
+var daily_first: Dictionary = {}
+
 ## Category records (fun pass, cosmetic: a record buys nothing). RECORD_SHOW is
 ## the curated subset a player is told about - the only keys whose beating
 ## lands in last_report.records - as [key, label] in display order.
@@ -85,6 +104,7 @@ var last_report: Dictionary = {}
 func record_run(summary: Dictionary) -> Array:
 	var entry := _compact(summary)
 	var prev_tier := unlocked_tier
+	var goals_before := next_goals(1 << 20)
 	runs += 1
 	best_floor = maxi(best_floor, int(entry["floor"]))
 	if entry["won"]:
@@ -108,8 +128,28 @@ func record_run(summary: Dictionary) -> Array:
 	if unlocked_tier > prev_tier:
 		unlocks.append("tier:%d" % unlocked_tier)
 	unlocks.append_array(news)
-	last_report = {"run": runs, "unlocks": unlocks, "feats": [], "records": beaten, "next": []}
+	for id in unlocks:
+		if not unseen.has(id):
+			unseen.append(id)
+	last_report = {"run": runs, "unlocks": unlocks, "feats": [], "records": beaten,
+		"next": _with_delta(next_goals(1), goals_before)}
 	return news
+
+
+## `after` (next_goals rows) each with "delta": the have this run gained on
+## the same goal in `before` (matched by its first id; 0 for a goal that is
+## new). "Land 30 Grow Spikes 17/30 (+9 this run)" reads the 9 from here.
+static func _with_delta(after: Array, before: Array) -> Array:
+	var was := {}
+	for g in before:
+		was[String(g["ids"][0])] = int(g["have"])
+	var out: Array = []
+	for g in after:
+		var row: Dictionary = g.duplicate(true)
+		var k := String(row["ids"][0])
+		row["delta"] = maxi(0, int(row["have"]) - int(was[k])) if was.has(k) else 0
+		out.append(row)
+	return out
 
 
 ## The record keys: every flat run stat but closest_hp (a max), plus "score"
@@ -205,16 +245,82 @@ func bests_snapshot(loadout: String) -> Dictionary:
 	}
 
 
-## Daily challenge result: best-per-seed only, never career progress.
-func record_daily(summary: Dictionary) -> void:
+## Daily challenge result: best-per-seed only, never career progress (no
+## run, no record, no unlock, no NEW badge). The first finish on a seed is
+## also kept in daily_first - the RANKED result, the one a shared daily is
+## compared on - while daily_best keeps improving. Returns what the game-over
+## sheet says about it: {ranked (this was the first finish), new_best (an
+## earlier best was beaten), tries (attempts started on this seed)}.
+func record_daily(summary: Dictionary) -> Dictionary:
 	var key := daily_key(summary.get("seed"))
-	var rec := {
-		"won": _as_bool(summary.get("won"), false),
-		"floor": _as_int(summary.get("floor"), 0),
-		"turns": _as_int(summary.get("turns"), 0),
-	}
-	if not daily_best.has(key) or _daily_better(rec, daily_best[key]):
+	# the score rides along only when the summary has one, so a legacy
+	# {won, floor, turns} result keeps exactly its old stored shape
+	var rec := _daily_rec(summary.get("won"), summary.get("floor"), summary.get("turns"),
+		summary.get("score") if summary.has("score") else null)
+	# a profile from before daily_first existed holds a best and no ranked
+	# finish: that best stands in as the ranked one (the earliest result on
+	# file), so a worse retry today is never filed as the first finish
+	if daily_best.has(key) and not daily_first.has(key):
+		daily_first[key] = daily_best[key].duplicate()
+	var ranked := not daily_first.has(key)
+	if ranked:
+		daily_first[key] = rec.duplicate()
+	var new_best := false
+	if not daily_best.has(key):
 		daily_best[key] = rec
+	elif _daily_better(rec, daily_best[key]):
+		daily_best[key] = rec
+		new_best = true
+	return {"ranked": ranked, "new_best": new_best, "tries": int(daily_tries.get(key, 0))}
+
+
+## One stored daily result, in the ONE key order the record path and load_from
+## share. `score` is kept only when it is a number.
+static func _daily_rec(won, floor_v, turns, score = null) -> Dictionary:
+	var out := {"won": _as_bool(won, false), "floor": _as_int(floor_v, 0), "turns": _as_int(turns, 0)}
+	if score is int or score is float:
+		out["score"] = int(score)
+	return out
+
+
+## A daily attempt was started on `seed_v` (the shell calls it at PLAY, so a
+## retry counts as a try whether or not it ends).
+func note_daily_try(seed_v: int) -> void:
+	var key := daily_key(seed_v)
+	daily_tries[key] = int(daily_tries.get(key, 0)) + 1
+
+
+## The daily seed for a UTC date string ("2026-11-22"): the ONE formula - the
+## shell's _daily_seed, tests/daily_run.gd and daily_streak all call it.
+static func daily_seed_for(date: String) -> int:
+	return hash(date) & 0x7FFFFFFF
+
+
+## The daily streak as of `today_unix` (passed in: this touches no clock and
+## stores nothing - a streak is re-derived by re-hashing each date):
+## {current, longest, played_today, days}. A day counts when daily_best holds
+## a finish for that date's seed. `current` counts back from today when today
+## is played, else from yesterday, so a streak stays alive until a whole day
+## is missed; `longest` is the longest run inside DAILY_LOOKBACK days; `days`
+## is how many dailies were ever finished.
+func daily_streak(today_unix: int) -> Dictionary:
+	var hits: Array = []
+	for k in DAILY_LOOKBACK:
+		var date := Time.get_date_string_from_unix_time(today_unix - 86400 * k)
+		hits.append(daily_best.has(daily_key(daily_seed_for(date))))
+	var played_today: bool = hits[0]
+	var current := 0
+	var i := 0 if played_today else 1
+	while i < hits.size() and hits[i]:
+		current += 1
+		i += 1
+	var longest := 0
+	var run := 0
+	for h in hits:
+		run = run + 1 if h else 0
+		longest = maxi(longest, run)
+	return {"current": current, "longest": longest, "played_today": played_today,
+		"days": daily_best.size()}
 
 
 ## A win beats a loss, then a deeper floor, then fewer turns.
@@ -229,17 +335,24 @@ static func _daily_better(a: Dictionary, b: Dictionary) -> bool:
 ## The stored shape of one run: the scalars the ladder needs plus the two
 ## lists the history predicates read. Unknown ids are dropped on the way in.
 func _compact(summary: Dictionary) -> Dictionary:
+	var kit := _known_ability_ids(summary.get("kit", []))
 	return {
 		"won": _as_bool(summary.get("won"), false),
 		"floor": _as_int(summary.get("floor"), 0),
 		"tier": _as_int(summary.get("tier"), 0),
 		"turns": _as_int(summary.get("turns"), 0),
 		"seed": _as_int(summary.get("seed"), 0),
-		"kit": _known_ability_ids(summary.get("kit", [])),
+		"kit": kit,
 		"grafts": _known_ids(summary.get("grafts", []), Content.GRAFTS),
 		# a legacy {won, floor, tier} record carries no kit: it must never
-		# satisfy a wins_without predicate by looking like an empty kit
-		"has_kit": summary.has("kit"),
+		# satisfy a wins_without predicate by looking like an empty kit. A
+		# stored entry keeps its own flag (load_from runs every entry back
+		# through here, and the reloaded `kit: []` key must not flip it), and
+		# a kit that is not a real array, or holds no known id (a corrupt file,
+		# renamed content - a real run never ends with an empty kit), counts
+		# as no kit
+		"has_kit": _as_bool(summary.get("has_kit"), true) and summary.get("kit") is Array \
+			and not kit.is_empty(),
 		# fun pass (appended so the record path and load_from keep one key
 		# order): what the run was and what it scored
 		"loadout": _known_loadout(summary.get("loadout", "")),
@@ -373,6 +486,267 @@ static func _holds(kit: Array, want: String) -> bool:
 	return false
 
 
+# --- the goal ladder (fun pass) -----------------------------------------------
+
+## How far the career is along one milestone row:
+## {have, need, done, frac, key, text, hint, parts: [{key, have, need, text}]}.
+## `have` is capped at `need`. `parts` holds one entry per requires key in
+## GOAL_KEY_ORDER; the headline (have, need, key, text) is the part with the
+## SMALLEST have/need fraction, so a two-key row shows its harder half. A
+## binary key (won_with / wins_without) is 0/1 and its text is the hint read
+## off the history ("held it in 3 runs (best floor 5)") or "not yet". An owned
+## row reads done, have == need, text "done".
+func progress(row: Dictionary) -> Dictionary:
+	var req: Dictionary = row.get("requires", {})
+	var parts: Array = []
+	var hint := ""
+	for k in GOAL_KEY_ORDER:
+		if not req.has(k):
+			continue
+		var v = req[k]
+		var have := 0
+		var need := 1
+		var text := ""
+		match k:
+			"best_floor":
+				need = maxi(1, int(v))
+				have = mini(best_floor, need)
+				text = "best floor %d/%d" % [have, need]
+			"wins":
+				need = maxi(1, int(v))
+				have = mini(wins, need)
+				text = "wins %d/%d" % [have, need]
+			"tier_wins":
+				need = maxi(1, int(v))
+				have = mini(tier_wins, need)
+				text = "wins at difficulty 1+ %d/%d" % [have, need]
+			"casts":
+				need = 0
+				var bits: Array = []
+				for aid in v:
+					var n := int(v[aid])
+					var h := mini(int(casts_by_base.get(Content.base_id(String(aid)), 0)), n)
+					need += n
+					have += h
+					bits.append("%s %d/%d" % [_ability_name(String(aid)), h, n])
+				need = maxi(1, need)
+				text = "  ·  ".join(bits)
+			"won_with", "wins_without":
+				var all_of: bool = k == "won_with"
+				have = 1 if _win_holding(v, all_of) != null else 0
+				hint = _binary_hint(v, all_of)
+				text = hint if hint != "" else "not yet"
+			"grafts_owned_at_win":
+				need = maxi(1, int(v))
+				for e in history:
+					if bool(e["won"]):
+						have = maxi(have, mini(e["grafts"].size(), need))
+				text = "most grafts at a win %d/%d" % [have, need]
+		parts.append({"key": k, "have": have, "need": need, "text": text})
+	var head := {"key": "", "have": 0, "need": 1, "text": "not yet"}
+	var best_f := 2.0
+	for p in parts:
+		var f := float(p["have"]) / float(p["need"])
+		if f < best_f:
+			best_f = f
+			head = p
+	var need_h := int(head["need"])
+	if _owned(String(row.get("id", ""))):
+		return {"have": need_h, "need": need_h, "done": true, "frac": 1.0, "key": String(head["key"]),
+			"text": "done", "hint": hint, "parts": parts}
+	var have_h := int(head["have"])
+	return {"have": have_h, "need": need_h, "done": false, "frac": float(have_h) / float(need_h),
+		"key": String(head["key"]), "text": String(head["text"]), "hint": hint, "parts": parts}
+
+
+## What the history says about a binary goal: how close the runs that HELD
+## the cards (won_with) or went WITHOUT them (wins_without) got. "" when no
+## recorded run qualifies (legacy kit-less records never do).
+func _binary_hint(ids: Array, all_of: bool) -> String:
+	var n := 0
+	var deepest := 0
+	for e in history:
+		if not bool(e.get("has_kit", true)):
+			continue
+		var hits := 0
+		for id in ids:
+			if _holds(e["kit"], String(id)):
+				hits += 1
+		if (all_of and hits == ids.size()) or (not all_of and hits == 0):
+			n += 1
+			deepest = maxi(deepest, int(e["floor"]))
+	if n == 0:
+		return ""
+	if all_of:
+		return "held it in %d run%s (best floor %d)" % [n, "" if n == 1 else "s", deepest]
+	var names: Array = []
+	for id in ids:
+		names.append(_ability_name(String(id)))
+	return "without %s: best floor %d in %d run%s" % [join_names(names), deepest, n, "" if n == 1 else "s"]
+
+
+static func _ability_name(aid: String) -> String:
+	if Content.ABILITIES.has(aid):
+		return String(Content.ABILITIES[aid]["name"])
+	return aid.replace("_", " ").capitalize()
+
+
+## The next `n` goals, best first: [{desc, ids, names, have, need, frac, key,
+## text, hint}]. Unowned milestones are grouped by their requires (in table
+## order; the desc is the group's first row's), so the six rows behind "Shut
+## down the Furnace" are ONE goal naming six unlocks. The next difficulty
+## folds in where the predicate is the same: at tier 0 "tier:1" joins the
+## one-win group, at tier 1 "tier:2" joins the one-tier-win group, and past
+## that it is its own "Win at difficulty N" goal - so the ladder never lists
+## a goal twice. Ranked by fraction done (descending), then GOAL_KEY_ORDER,
+## then need, then table order. Pure: the same profile gives the same list.
+func next_goals(n: int) -> Array:
+	var groups := {}
+	var order: Array = []
+	for m in _milestones():
+		var id := String(m["id"])
+		if _owned(id):
+			continue
+		var gk := str(m.get("requires", {}))
+		if not groups.has(gk):
+			groups[gk] = {"desc": String(m.get("desc", "")), "ids": [], "row": m}
+			order.append(gk)
+		groups[gk]["ids"].append(id)
+	var cands: Array = []
+	var u := unlocked_tier
+	var tier_id := "tier:%d" % (u + 1) if u < Content.TIERS.size() else ""
+	for idx in order.size():
+		var g: Dictionary = groups[order[idx]]
+		var p := progress(g["row"])
+		var ids: Array = g["ids"].duplicate()
+		var gkey := String(p["key"])
+		if tier_id != "" and int(p["need"]) - int(p["have"]) == 1 \
+				and g["row"].get("requires", {}).size() == 1 \
+				and ((u == 0 and gkey == "wins") or (u == 1 and gkey == "tier_wins")):
+			ids.append(tier_id)
+			tier_id = ""
+		cands.append(_goal(String(g["desc"]), ids, p, idx))
+	if tier_id != "" and u >= 1:
+		cands.append(_goal("Win at difficulty %d" % u, [tier_id],
+			{"have": 0, "need": 1, "frac": 0.0, "key": "tier_wins", "text": "not yet", "hint": ""}, 999))
+	cands.sort_custom(func(a, b):
+		for i in 4:
+			if a["rank"][i] != b["rank"][i]:
+				return a["rank"][i] < b["rank"][i]
+		return false)
+	var out: Array = []
+	for c in cands.slice(0, n):
+		c.erase("rank")
+		out.append(c)
+	return out
+
+
+static func _goal(desc: String, ids: Array, p: Dictionary, idx: int) -> Dictionary:
+	var names: Array = []
+	for id in ids:
+		names.append(unlock_name(String(id)))
+	var frac := float(p["frac"])
+	return {"desc": desc, "ids": ids, "names": names, "have": int(p["have"]), "need": int(p["need"]),
+		"frac": frac, "key": String(p["key"]), "text": String(p["text"]), "hint": String(p["hint"]),
+		"rank": [-frac, GOAL_KEY_ORDER.find(String(p["key"])), int(p["need"]), idx]}
+
+
+# --- display helpers (static, pure) ---------------------------------------------
+
+## What an unlock id is: "tier" / "feat" by prefix, else the MILESTONES row's
+## kind, else by table membership; "" when it is nothing at all.
+static func unlock_kind(id: String) -> String:
+	if id.begins_with("tier:"):
+		return "tier"
+	if id.begins_with("feat:"):
+		return "feat"
+	for m in Content.MILESTONES:
+		if String(m["id"]) == id:
+			return String(m.get("kind", ""))
+	if Content.PACKAGES.has(id):
+		return "package"
+	if Content.MUTATORS.has(id):
+		return "mutator"
+	if Content.LOADOUTS.has(id):
+		return "loadout"
+	if Content.GRAFTS.has(id):
+		return "graft"
+	return ""
+
+
+## The player-facing name of an unlock id - never the raw id: "tier:2" ->
+## "difficulty 2", a package -> its Content.PACKAGE_INFO name, a loadout,
+## mutator or graft -> its table's name ("double_oil" -> "Slick Combine").
+## ("feat:x" reads x until the feats table lands.)
+static func unlock_name(id: String) -> String:
+	if id.begins_with("tier:"):
+		return "difficulty %s" % id.substr(5)
+	if id.begins_with("feat:"):
+		return id.substr(5).replace("_", " ").capitalize()
+	if Content.PACKAGE_INFO.has(id):
+		return String(Content.PACKAGE_INFO[id]["name"])
+	for table in [Content.LOADOUTS, Content.MUTATORS, Content.GRAFTS]:
+		if table.has(id):
+			return String(table[id]["name"])
+	return id.replace("_", " ").capitalize()
+
+
+## "A", "A and B", or "A, B and 3 more" (at most `max_names` named).
+static func join_names(names: Array, max_names := 2) -> String:
+	if names.is_empty():
+		return ""
+	if names.size() == 1:
+		return String(names[0])
+	if names.size() == 2 and max_names >= 2:
+		return "%s and %s" % [names[0], names[1]]
+	var shown: Array = []
+	for i in mini(maxi(1, max_names), names.size()):
+		shown.append(String(names[i]))
+	var rest := names.size() - shown.size()
+	if rest == 0:
+		var last := String(shown.pop_back())
+		return "%s and %s" % [", ".join(shown), last]
+	return "%s and %d more" % [", ".join(shown), rest]
+
+
+## "" when loadout `lid` can be played with `unlocked_packages`, else the name
+## of the first package it still needs ("Skyrunner (needs Aeolian)").
+static func gate_of(lid: String, unlocked_packages: Array) -> String:
+	if not Content.LOADOUTS.has(lid):
+		return ""
+	for pkg in Content.LOADOUTS[lid]["requires"].get("packages", []):
+		if not unlocked_packages.has(pkg):
+			return unlock_name(String(pkg))
+	return ""
+
+
+# --- NEW badges -------------------------------------------------------------------
+
+## The player looked at `id` (cycled onto it in the menu): drop it from
+## `unseen`. True when it was there, so the caller saves only on a change.
+func mark_seen(id: String) -> bool:
+	if not unseen.has(id):
+		return false
+	unseen.erase(id)
+	return true
+
+
+## The unseen ids of one kind ("tier", "package", "mutator", "loadout",
+## "feat"), oldest first. A loadout counts only once it is PLAYABLE
+## (available_loadouts), so a Skyrunner still waiting on Aeolian earns no
+## badge until the package opens it.
+func unseen_of(kind: String) -> Array:
+	var out: Array = []
+	var avail: Array = available_loadouts() if kind == "loadout" else []
+	for id in unseen:
+		if unlock_kind(String(id)) != kind:
+			continue
+		if kind == "loadout" and not avail.has(id):
+			continue
+		out.append(id)
+	return out
+
+
 ## Config for the next run: the tier, mutators, loadout and single package the
 ## menu asked for, each clamped to what the career has actually unlocked. The
 ## sim gets no "kit" key - the loadout carries the starting kit.
@@ -470,6 +844,9 @@ func to_dict() -> Dictionary:
 		# back from it would differ only in key order.
 		"casts_by_base": _sorted(casts_by_base),
 		"daily_best": _sorted(daily_best.duplicate(true)),
+		"daily_first": _sorted(daily_first.duplicate(true)),
+		"daily_tries": _sorted(daily_tries),
+		"unseen": unseen.duplicate(),
 		"records": {
 			"best": _sorted(records["best"].duplicate(true)),
 			"loadouts": _sorted(records["loadouts"].duplicate(true)),
@@ -570,17 +947,52 @@ static func load_from(path: String):  # -> Profile (or fresh if missing)
 	if hist.size() > HISTORY_MAX:
 		hist = hist.slice(hist.size() - HISTORY_MAX)
 	profile.history = hist
-	var daily: Dictionary = {}
-	var stored_daily = data.get("daily_best", {})
-	if stored_daily is Dictionary:
-		for k in stored_daily:
-			var v = stored_daily[k]
-			if v is Dictionary:
-				daily[str(k)] = {"won": _as_bool(v.get("won"), false),
-					"floor": _as_int(v.get("floor"), 0), "turns": _as_int(v.get("turns"), 0)}
-	profile.daily_best = daily
+	profile.daily_best = _load_daily(data.get("daily_best", {}))
+	profile.daily_first = _load_daily(data.get("daily_first", {}))
+	for k in profile.daily_best:  # pre-daily_first: the best stands in as ranked
+		if not profile.daily_first.has(k):
+			profile.daily_first[k] = profile.daily_best[k].duplicate()
+	var tries: Dictionary = {}
+	var stored_tries = data.get("daily_tries", {})
+	if stored_tries is Dictionary:
+		for k in stored_tries:
+			var n := _as_int(stored_tries[k], -1)
+			if _as_str(k).is_valid_int() and n > 0:
+				tries[_as_str(k)] = n
+	profile.daily_tries = tries
 	profile.records = _load_records(data.get("records", {}))
+	# after the unlocks are filtered: an unseen id must name something this
+	# career owns NOW (a renamed milestone, or a tier past unlocked_tier, would
+	# badge a row with nothing new on it). Feats are not in the tables yet, so
+	# a "feat:" entry has nothing to name and is dropped.
+	var seen_ok: Array = []
+	var stored_unseen = data.get("unseen", [])
+	if stored_unseen is Array:
+		for e in stored_unseen:
+			var id := _as_str(e)
+			if id == "" or seen_ok.has(id):
+				continue
+			if id.begins_with("tier:"):
+				var t := id.substr(5)
+				if t.is_valid_int() and int(t) >= 1 and int(t) <= profile.unlocked_tier:
+					seen_ok.append(id)
+			elif not id.begins_with("feat:") and profile._owned(id):
+				seen_ok.append(id)
+	profile.unseen = seen_ok
 	return profile
+
+
+## A saved daily_best / daily_first: keys are seeds (str of an int), each
+## entry rebuilt through _daily_rec so a reload str()s like the original.
+static func _load_daily(stored) -> Dictionary:
+	var out: Dictionary = {}
+	if not (stored is Dictionary):
+		return out
+	for k in stored:
+		var v = stored[k]
+		if v is Dictionary and _as_str(k).is_valid_int():
+			out[_as_str(k)] = _daily_rec(v.get("won"), v.get("floor"), v.get("turns"), v.get("score"))
+	return out
 
 
 ## `records` from a saved profile: every key, loadout and number checked

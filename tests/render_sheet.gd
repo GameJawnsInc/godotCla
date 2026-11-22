@@ -95,6 +95,11 @@ func _init() -> void:
 	if out == "":
 		out = "/tmp/sheet_%s.svg" % which
 	var sh = Shell.new()
+	# scratch paths before _ready: it reads the profile and settings, and
+	# restores (or deletes) a run save it finds - never the player's own
+	sh.profile_path = "user://render_sheet_profile.json"
+	sh.run_save_path = "user://render_sheet_run.save"
+	sh.cfg_path = "user://render_sheet_settings.cfg"
 	sh._ready()
 	var g = Game.new(_env("SHEET_SEED", 7), {"bloom": _env("SHEET_BLOOM", 9)})
 	sh.game = g

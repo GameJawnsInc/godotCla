@@ -25,6 +25,9 @@ extends SceneTree
 ##    score bests in meta/profile.gd. The career loop in 1) is also the
 ##    interface pin: every summary it records is the shell's exact merge, and
 ##    each must carry every Content.RUN_STAT_KEYS key as an int.
+## 9) the career layer: progress() per predicate, next_goals() (grouping, the
+##    tier fold, ranking, the report's delta), the unseen NEW-badge store and
+##    its display helpers, and the daily streak / tries / ranked first finish.
 ## Run: godot --headless --path . --script tests/test_meta.gd
 
 const Content := preload("res://sim/content.gd")
@@ -131,7 +134,15 @@ func _init() -> void:
 	print("career record: history %d, casts over %d bases, grow_spike %d" % [
 		profile.history.size(), profile.casts_by_base.size(), int(profile.casts_by_base.get("grow_spike", 0))])
 
-	# 2) save/load roundtrip
+	# 2) save/load roundtrip (the career layer's stores included: the NEW
+	# badges the career loop left in `unseen`, plus a daily's tries, first and
+	# best results, one of them carrying a score)
+	if profile.unseen.is_empty():
+		_fail("a 40-run career left nothing unseen (record_run is not filing unlocks)")
+	profile.note_daily_try(777)
+	profile.note_daily_try(777)
+	profile.record_daily({"won": false, "floor": 3, "turns": 60, "seed": 777, "score": 410})
+	profile.record_daily({"won": true, "floor": 7, "turns": 140, "seed": 777, "score": 1900})
 	var path := "user://test_profile.json"
 	profile.save(path)
 	var loaded = Profile.load_from(path)
@@ -244,6 +255,12 @@ func _init() -> void:
 	_check_score_bests()
 	_check_records()
 
+	# 9) fun pass, career layer: the goal ladder, NEW badges, the daily streak
+	_check_progress()
+	_check_next_goals()
+	_check_unseen()
+	_check_daily_streak()
+
 	if failures == 0:
 		print("meta: OK")
 	quit(1 if failures > 0 else 0)
@@ -335,6 +352,12 @@ func _check_load_filters() -> void:
 			"kit": ["solar_lance", "ghost_ability", "seed_bomb+"],
 			"grafts": ["deep_cells", "ghost_graft"],
 		}],
+		# career layer: junk in every new store
+		"unseen": ["mycology", "hydraulics", "ghost_package", "tier:1", "tier:5", "tier:x",
+			"feat:ghost_feat", 7, "mycology"],
+		"daily_tries": {"42": 3.0, "43": "lots", "not_a_seed": 2, "44": -1},
+		"daily_first": {"42": {"won": false, "floor": 4, "turns": 50, "score": "high"},
+			"x": {"won": true, "floor": 9, "turns": 1}, "45": "junk"},
 	}
 	var path := "user://test_profile_dirty.json"
 	var f := FileAccess.open(path, FileAccess.WRITE)
@@ -358,6 +381,14 @@ func _check_load_filters() -> void:
 	_expect(str(p.daily_best), str({"42": {"won": true, "floor": 9, "turns": 100}}), "load_from carries daily_best")
 	# the filtered profile still evaluates predicates over what survived
 	_expect(p._meets({"won_with": ["seed_bomb+tangle"]}), true, "migrated history still satisfies won_with")
+	# the career layer's stores: an unseen id must name something owned now
+	# (hydraulics is not unlocked, tier 5 is past unlocked_tier, feats are not
+	# in the tables yet), each once; tries are positive ints keyed by a seed;
+	# a daily result is rebuilt, its non-number score dropped
+	_expect(p.unseen, ["mycology", "tier:1"], "load_from filters unseen to what the career owns")
+	_expect(str(p.daily_tries), str({"42": 3}), "load_from keeps only int tries keyed by a seed")
+	_expect(str(p.daily_first), str({"42": {"won": false, "floor": 4, "turns": 50}}),
+		"load_from rebuilds daily_first and drops a non-number score")
 	print("load_from filters unknown ids: OK")
 
 
@@ -420,6 +451,17 @@ func _check_predicates() -> void:
 	_expect(bool(l.history[0].get("has_kit", true)), false, "legacy record is marked as carrying no kit")
 	_expect(l._meets({"wins_without": ["solar_lance"]}), false, "legacy record never satisfies wins_without (no kit known)")
 	_expect(l.unlocked_mutators.has("no_lance"), false, "legacy win does not unlock no_lance")
+	# ...and stays kit-less across a save and a reload: load_from runs the
+	# stored entry back through _compact, where the reloaded `kit: []` key
+	# used to flip has_kit to true and let the next claim grant no_lance
+	var legacy_path := "user://test_profile_legacy_kit.json"
+	l.save(legacy_path)
+	var lb = Profile.load_from(legacy_path)
+	DirAccess.remove_absolute(legacy_path)
+	_expect(bool(lb.history[0].get("has_kit", true)), false, "legacy record keeps has_kit false across save + reload")
+	_expect(lb._meets({"wins_without": ["solar_lance"]}), false, "reloaded legacy record never satisfies wins_without")
+	lb.record_run({"won": false, "floor": 2, "tier": 0})
+	_expect(lb.unlocked_mutators.has("no_lance"), false, "reloaded legacy win does not unlock no_lance on the next claim")
 	_expect(str(l.casts_by_base), str({}), "legacy record stores no casts")
 	# the three new milestone rows read exactly these predicates
 	var seen := {}
@@ -887,6 +929,9 @@ func _check_wrong_type_profile() -> void:
 			"casts_by_base": {"grow_spike": bad, "seed_bomb": 3},
 			"history": [entry, bad, {"kit": [bad, "solar_lance"], "won": true, "floor": 7}],
 			"daily_best": {"42": {"won": bad, "floor": bad, "turns": bad}, "43": bad},
+			"daily_first": {"42": {"won": bad, "floor": bad, "turns": bad, "score": bad}, "43": bad},
+			"daily_tries": {"42": bad, "44": 2},
+			"unseen": [bad, "mycology"],
 			"records": {
 				"best": {"kills": rec_e, "score": {"v": 300, "run": bad, "loadout": bad, "tier": bad}, "bloom_earned": bad},
 				"loadouts": {"tender": {"best_floor": bad, "best_score": bad, "best_tier_won": bad,
@@ -915,13 +960,20 @@ func _check_wrong_type_profile() -> void:
 		_expect(p.history[0]["death_cause"] is String and p.history[0]["floor"] is int, true,
 			"%s: the entry's strings and numbers have their types" % label)
 		_expect(p.daily_best.keys(), ["42", "43"] if is_d else ["42"], "%s: a dictionary daily loads, a bad one is dropped" % label)
+		_expect(p.daily_first.keys(), ["42", "43"] if is_d else ["42"], "%s: daily_first loads the same way" % label)
+		_expect(p.daily_first["42"].has("score"), false, "%s: a bad daily score is dropped" % label)
+		_expect(str(p.daily_tries), str({"44": 2}), "%s: a bad try count is dropped" % label)
+		_expect(p.unseen, ["mycology"], "%s: unseen keeps its good, owned id" % label)
 		_expect(p.records["best"].keys(), [],
 			"%s: a record without a real value is dropped, and a bad score_v drops the score" % label)
 		_expect(p.records["loadouts"].keys(), ["spiker", "tender"] if is_d else ["tender"], "%s: a dictionary loadout record loads" % label)
 		_expect(int(p.records["loadouts"]["tender"]["best_tier_won"]), -1,
 			"%s: a loadout record's numbers read their defaults" % label)
 		_expect(p.available_loadouts().has("tender"), true, "%s: the menu still fills" % label)
+		_expect(bool(p.history[0]["has_kit"]), false, "%s: a garbage kit is no kit (never an empty one)" % label)
+		var muts_before: Array = p.unlocked_mutators.duplicate()
 		p.record_run({"won": false, "floor": 2, "tier": 0, "turns": 30, "seed": 5})
+		_expect(p.unlocked_mutators, muts_before, "%s: the garbage entries unlock no mutator" % label)
 		p.save(path)
 		var back = Profile.load_from(path)
 		_expect(back != null and back.runs == p.runs and back.history.size() == p.history.size(), true,
@@ -1525,3 +1577,201 @@ func _check_records() -> void:
 	_expect(int(vp.records["loadouts"]["spiker"]["best_floor"]), 4, "load_from: ...but not the loadout's floor")
 	DirAccess.remove_absolute(oldp)
 	print("records: report rule, fastest win, loadout rows, score version, unlock order, load filters: OK")
+
+
+# --- 9) fun pass, career layer ------------------------------------------------
+
+## progress(row): one fixture per predicate key, the owned case, and a
+## two-key row whose headline is its harder half.
+func _check_progress() -> void:
+	var p = Profile.new()
+	p.best_floor = 2
+	var pr: Dictionary = p.progress({"id": "x", "requires": {"best_floor": 5}})
+	_expect([pr["have"], pr["need"], pr["text"], pr["done"]], [2, 5, "best floor 2/5", false], "progress: best_floor")
+	_expect(pr["frac"], 0.4, "progress: frac")
+	p.wins = 3
+	_expect(p.progress({"id": "x", "requires": {"wins": 2}})["have"], 2, "progress: have is capped at need")
+	p.tier_wins = 1
+	_expect(p.progress({"id": "x", "requires": {"tier_wins": 2}})["text"], "wins at difficulty 1+ 1/2", "progress: tier_wins")
+	p.casts_by_base = {"grow_spike": 12, "vine_whip": 40}
+	var pc: Dictionary = p.progress({"id": "x", "requires": {"casts": {"grow_spike": 30, "vine_whip": 10}}})
+	_expect([pc["have"], pc["need"]], [22, 40], "progress: a multi-ability casts row sums the capped parts")
+	_expect(pc["text"], "Grow Spike 12/30  ·  Vine Whip 10/10", "progress: casts names each ability")
+	# won_with: 0 until a win holds the id; the hint counts the runs that held it
+	var pw: Dictionary = p.progress({"id": "x", "requires": {"won_with": ["vine_whip"]}})
+	_expect([pw["have"], pw["need"], pw["text"], pw["hint"]], [0, 1, "not yet", ""], "progress: won_with with no history")
+	p.record_run({"won": false, "floor": 4, "tier": 0, "kit": ["vine_whip", "seed_bomb"], "grafts": []})
+	pw = p.progress({"id": "x", "requires": {"won_with": ["vine_whip"]}})
+	_expect([pw["have"], pw["hint"]], [0, "held it in 1 run (best floor 4)"], "progress: won_with hint off a loss")
+	p.record_run({"won": true, "floor": 7, "tier": 0, "kit": ["vine_whip+lash", "seed_bomb"], "grafts": ["deep_cells"]})
+	pw = p.progress({"id": "x", "requires": {"won_with": ["vine_whip"]}})
+	_expect([pw["have"], pw["hint"]], [1, "held it in 2 runs (best floor 7)"], "progress: won_with after a win holding a variant")
+	var pn: Dictionary = p.progress({"id": "x", "requires": {"wins_without": ["solar_lance"]}})
+	_expect([pn["have"], pn["text"]], [1, "without Solar Lance: best floor 7 in 2 runs"], "progress: wins_without")
+	var pg: Dictionary = p.progress({"id": "x", "requires": {"grafts_owned_at_win": 2}})
+	_expect([pg["have"], pg["need"], pg["text"]], [1, 2, "most grafts at a win 1/2"], "progress: grafts_owned_at_win (no shipped row)")
+	# the headline of a two-key row is its smallest fraction, parts in key order
+	var p2: Dictionary = p.progress({"id": "x", "requires": {"casts": {"grow_spike": 30}, "best_floor": 8}})
+	_expect([p2["key"], p2["have"], p2["need"]], ["casts", 12, 30], "progress: a two-key row heads with its harder half")
+	_expect([p2["parts"][0]["key"], p2["parts"][1]["key"]], ["best_floor", "casts"], "progress: parts in GOAL_KEY_ORDER")
+	# an owned row reads done
+	p.unlocked_loadouts = ["tidewarden"]
+	var po: Dictionary = p.progress({"id": "tidewarden", "requires": {"best_floor": 30}})
+	_expect([po["done"], po["have"] == po["need"], po["text"]], [true, true, "done"], "progress: an owned row is done")
+	print("goal progress: every predicate, the owned case and the two-key headline: OK")
+
+
+func _check_next_goals() -> void:
+	var fresh = Profile.new()
+	var g0: Array = fresh.next_goals(1)
+	_expect(g0[0]["ids"], ["tidewarden"], "next_goals: a fresh career's first goal is the floor-3 row")
+	_expect([g0[0]["desc"], g0[0]["names"]], ["Reach the Refinery Gate", ["Tidewarden"]], "next_goals: desc and names")
+	_expect(str(fresh.next_goals(3)), str(fresh.next_goals(3)), "next_goals: pure (same profile, same list)")
+	# after a floor-5 legacy run the floor rows are owned: the one-win wall leads
+	var p = Profile.new()
+	p.record_run({"won": false, "floor": 5, "tier": 0})
+	var g1: Dictionary = p.next_goals(1)[0]
+	_expect(g1["desc"], "Shut down the Furnace", "next_goals: after floor 5 the first win leads")
+	for id in ["hydraulics", "kit_of_3", "double_oil", "open_pool", "spinning_shrine", "skyrunner", "tier:1"]:
+		if not g1["ids"].has(id):
+			_fail("next_goals: the one-win goal is missing %s (%s)" % [id, str(g1["ids"])])
+	_expect(g1["ids"].size(), 7, "next_goals: six milestones and difficulty 1 in ONE goal")
+	_expect(g1["names"].has("Slick Combine") and g1["names"].has("difficulty 1"), true,
+		"next_goals: names come from Content (double_oil reads Slick Combine)")
+	for n in g1["names"]:
+		if String(n).contains("_"):
+			_fail("next_goals: a raw id leaked into a name: %s" % n)
+	# tier 1: difficulty 2 rides the one-tier-win group, never on its own too
+	var t1 = Profile.new()
+	t1.unlocked_tier = 1
+	t1.wins = 1
+	t1._claim()
+	var groups: Array = t1.next_goals(99)
+	var carriers := 0
+	for g in groups:
+		if g["ids"].has("tier:2"):
+			carriers += 1
+			_expect(g["key"], "tier_wins", "next_goals: tier 2 rides the tier_wins group")
+			_expect(g["ids"].size() > 1, true, "next_goals: ...not a standalone duplicate")
+	_expect(carriers, 1, "next_goals: difficulty 2 appears exactly once")
+	# past tier 1 it is its own goal
+	var t3 = Profile.new()
+	t3.unlocked_tier = 3
+	t3.wins = 3
+	t3.tier_wins = 2
+	t3._claim()
+	var standalone := false
+	for g in t3.next_goals(99):
+		if g["ids"] == ["tier:4"]:
+			standalone = g["desc"] == "Win at difficulty 3"
+	_expect(standalone, true, "next_goals: past tier 1 the next difficulty is its own goal")
+	# everything owned at the top tier: nothing left
+	var maxed = Profile.new()
+	maxed.unlocked_tier = Content.TIERS.size()
+	for m in Content.MILESTONES:
+		maxed._bucket(String(m["kind"])).append(String(m["id"]))
+	_expect(maxed.next_goals(3), [], "next_goals: a maxed career has none")
+	# the report's delta: what this run gained on the goal it shows next
+	var dp = Profile.new()
+	dp.best_floor = 5
+	dp.unlocked_loadouts = ["tidewarden", "flarekeeper"]
+	dp.unlocked_packages = ["mycology"]
+	dp.casts_by_base = {"grow_spike": 8}
+	dp.record_run({"won": false, "floor": 4, "tier": 0, "kit": ["grow_spike", "seed_bomb"], "grafts": [],
+		"effective_uses_by_base": {"grow_spike": 9}})
+	var nx: Dictionary = dp.last_report["next"][0]
+	_expect([nx["ids"], nx["have"], nx["need"], nx["delta"]], [["spiker"], 17, 30, 9],
+		"last_report.next[0]: Land 30 Grow Spikes 17/30 with +9 this run")
+	print("next goals: fresh, the one-win group + tier fold, tier 1 / tier 3, maxed, purity, delta: OK")
+
+
+func _check_unseen() -> void:
+	var p = Profile.new()
+	p.record_run({"won": true, "floor": 7, "tier": 0, "kit": ["seed_bomb", "vine_whip"], "grafts": []})
+	for id in ["tier:1", "hydraulics", "kit_of_3", "skyrunner", "lasher"]:
+		if not p.unseen.has(id):
+			_fail("unseen: a first win should leave %s unseen (%s)" % [id, str(p.unseen)])
+	_expect(p.unseen[0], "tier:1", "unseen: the tier comes first, as in last_report.unlocks")
+	var before: int = p.unseen.size()
+	p.record_run({"won": false, "floor": 2, "tier": 0})
+	_expect(p.unseen.size(), before, "unseen: a run that opens nothing adds nothing")
+	_expect(p.mark_seen("kit_of_3"), true, "mark_seen: true when it was unseen")
+	_expect(p.mark_seen("kit_of_3"), false, "mark_seen: false the second time")
+	_expect(p.unseen_of("tier"), ["tier:1"], "unseen_of: tier")
+	_expect(p.unseen_of("package"), ["mycology", "hydraulics"], "unseen_of: package (floor 7 and the win)")
+	# a gated loadout earns no badge until its package opens it
+	_expect(p.unseen_of("loadout").has("skyrunner"), false, "unseen_of: a Skyrunner waiting on Aeolian is hidden")
+	_expect(p.unseen_of("loadout").has("lasher"), true, "unseen_of: a playable loadout shows")
+	p.unlocked_packages.append("aeolian")
+	_expect(p.unseen_of("loadout").has("skyrunner"), true, "unseen_of: ...until Aeolian is unlocked")
+	# dailies never badge anything
+	var u0: Array = p.unseen.duplicate()
+	p.record_daily({"won": true, "floor": 7, "turns": 99, "seed": 5})
+	_expect(p.unseen, u0, "record_daily adds nothing to unseen")
+	# the codec keeps it (filtered against what is owned)
+	var path := "user://test_profile_unseen.json"
+	p.save(path)
+	var back = Profile.load_from(path)
+	_expect(back.unseen, p.unseen, "unseen round-trips")
+	DirAccess.remove_absolute(path)
+	# display helpers
+	_expect([Profile.unlock_kind("tier:3"), Profile.unlock_kind("feat:x"), Profile.unlock_kind("double_oil"),
+		Profile.unlock_kind("aeolian"), Profile.unlock_kind("skyrunner"), Profile.unlock_kind("deep_cells"),
+		Profile.unlock_kind("ghost")], ["tier", "feat", "mutator", "package", "loadout", "graft", ""], "unlock_kind")
+	_expect([Profile.unlock_name("tier:3"), Profile.unlock_name("double_oil"), Profile.unlock_name("aeolian"),
+		Profile.unlock_name("skyrunner")], ["difficulty 3", "Slick Combine", "Aeolian", "Skyrunner"], "unlock_name")
+	_expect([Profile.join_names(["A"]), Profile.join_names(["A", "B"]), Profile.join_names(["A", "B", "C", "D", "E"])],
+		["A", "A and B", "A, B and 3 more"], "join_names")
+	_expect([Profile.gate_of("skyrunner", []), Profile.gate_of("skyrunner", ["aeolian"]), Profile.gate_of("tender", [])],
+		["Aeolian", "", ""], "gate_of")
+	print("unseen: record, mark_seen, unseen_of (gated loadout), daily isolation, codec, helpers: OK")
+
+
+func _check_daily_streak() -> void:
+	var today := 1795000000  # a fixed instant: the streak reads no clock
+	var p = Profile.new()
+	for k in [0, 1, 2, 4]:
+		var sd := Profile.daily_seed_for(Time.get_date_string_from_unix_time(today - 86400 * k))
+		p.record_daily({"won": false, "floor": 3, "turns": 50, "seed": sd})
+	var st: Dictionary = p.daily_streak(today)
+	_expect([st["current"], st["longest"], st["played_today"], st["days"]], [3, 3, true, 4],
+		"daily_streak: today and the two days before")
+	_expect(p.daily_streak(today + 86400)["current"], 3, "daily_streak: alive until a whole day is missed")
+	_expect(p.daily_streak(today + 86400)["played_today"], false, "daily_streak: ...but today is not played")
+	_expect(p.daily_streak(today + 2 * 86400)["current"], 0, "daily_streak: a missed day breaks it")
+	_expect(p.daily_streak(today + 2 * 86400)["longest"], 3, "daily_streak: the longest stays")
+	_expect(Profile.daily_seed_for("2026-11-22"), hash("2026-11-22") & 0x7FFFFFFF, "daily_seed_for is the old formula")
+	# tries, the ranked first finish, and the report record_daily returns
+	var d = Profile.new()
+	d.note_daily_try(9)
+	var r1: Dictionary = d.record_daily({"won": false, "floor": 3, "turns": 50, "seed": 9})
+	_expect(str(r1), str({"ranked": true, "new_best": false, "tries": 1}), "record_daily: the first finish is ranked")
+	d.note_daily_try(9)
+	var r2: Dictionary = d.record_daily({"won": false, "floor": 5, "turns": 70, "seed": 9})
+	_expect(str(r2), str({"ranked": false, "new_best": true, "tries": 2}), "record_daily: a better finish is a new best")
+	var r3: Dictionary = d.record_daily({"won": false, "floor": 2, "turns": 70, "seed": 9})
+	_expect(str(r3), str({"ranked": false, "new_best": false, "tries": 2}), "record_daily: a worse finish is neither")
+	_expect(str(d.daily_first["9"]), str({"won": false, "floor": 3, "turns": 50}), "daily_first keeps the first finish")
+	_expect(int(d.daily_best["9"]["floor"]), 5, "daily_best keeps improving")
+	_expect([d.runs, d.history, d.unseen], [0, [], []], "the daily leaves the career alone")
+	# a profile from before daily_first: its best stands in as the ranked
+	# finish, so a worse retry is neither ranked nor filed as the first
+	var lg = Profile.new()
+	lg.daily_best = {"9": {"won": true, "floor": 7, "turns": 80}}
+	var rl: Dictionary = lg.record_daily({"won": false, "floor": 2, "turns": 30, "seed": 9})
+	_expect(bool(rl["ranked"]), false, "record_daily: a legacy best is the ranked result, not the next finish")
+	_expect(str(lg.daily_first["9"]), str({"won": true, "floor": 7, "turns": 80}),
+		"record_daily: daily_first takes the legacy best")
+	var lpath := "user://test_profile_legacy_daily.json"
+	var lf := FileAccess.open(lpath, FileAccess.WRITE)
+	lf.store_string(JSON.stringify({"daily_best": {"5": {"won": false, "floor": 4, "turns": 60}}}))
+	lf.close()
+	var lp = Profile.load_from(lpath)
+	_expect(str(lp.daily_first), str({"5": {"won": false, "floor": 4, "turns": 60}}),
+		"load_from backfills daily_first from a legacy daily_best")
+	DirAccess.remove_absolute(lpath)
+	var ds = Profile.new()
+	ds.record_daily({"won": true, "floor": 7, "turns": 90, "seed": 3, "score": 1500})
+	_expect(str(ds.daily_best["3"]), str({"won": true, "floor": 7, "turns": 90, "score": 1500}),
+		"record_daily stores a score only when the summary has one")
+	print("daily streak: current / longest / missed day, tries, ranked first, new best, score: OK")

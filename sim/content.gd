@@ -1065,11 +1065,11 @@ const PACKAGES := {
 const MILESTONES := [
 	{"id": "mycology", "kind": "package", "requires": {"best_floor": 5}, "desc": "Reach the Pipeworks"},
 	{"id": "hydraulics", "kind": "package", "requires": {"wins": 1}, "desc": "Shut down the Furnace"},
-	{"id": "aeolian", "kind": "package", "requires": {"tier_wins": 1}, "desc": "Win at tier 1 or higher"},
+	{"id": "aeolian", "kind": "package", "requires": {"tier_wins": 1}, "desc": "Win at difficulty 1 or higher"},
 	{"id": "kit_of_3", "kind": "mutator", "requires": {"wins": 1}, "desc": "Shut down the Furnace"},
 	{"id": "double_oil", "kind": "mutator", "requires": {"wins": 1}, "desc": "Shut down the Furnace"},
-	{"id": "brittle", "kind": "mutator", "requires": {"tier_wins": 1}, "desc": "Win at tier 1 or higher"},
-	{"id": "parched", "kind": "mutator", "requires": {"tier_wins": 1}, "desc": "Win at tier 1 or higher"},
+	{"id": "brittle", "kind": "mutator", "requires": {"tier_wins": 1}, "desc": "Win at difficulty 1 or higher"},
+	{"id": "parched", "kind": "mutator", "requires": {"tier_wins": 1}, "desc": "Win at difficulty 1 or higher"},
 	{"id": "overtime", "kind": "mutator", "requires": {"wins": 2}, "desc": "Shut down the Furnace twice"},
 	{"id": "boarded", "kind": "mutator", "requires": {"wins": 2}, "desc": "Shut down the Furnace twice"},
 	{"id": "no_lance", "kind": "mutator", "requires": {"wins_without": ["solar_lance"]}, "desc": "Win without Solar Lance"},
@@ -1094,6 +1094,16 @@ const MILESTONES := [
 	{"id": "lasher", "kind": "loadout", "requires": {"won_with": ["vine_whip"]}, "desc": "Win holding Vine Whip"},
 	{"id": "skyrunner", "kind": "loadout", "requires": {"wins": 1}, "desc": "Shut down the Furnace"},
 ]
+
+## Display data for the tech packages (fun pass). PACKAGES is id -> [ability
+## ids] and is read by the sim; this sibling is read ONLY by meta/ and shell/
+## (unlock names, the DAILY sheet, the menu's PACKAGE row) - the sim never
+## reads it. Keys must equal PACKAGES keys (tests/test_content.gd).
+const PACKAGE_INFO := {
+	"mycology": {"name": "Mycology", "desc": "spores, tunnels and growth-network tricks"},
+	"hydraulics": {"name": "Hydraulics", "desc": "water, steam, washing and shoving"},
+	"aeolian": {"name": "Aeolian", "desc": "wind, repositioning and clearing smoke"},
+}
 
 ## Cosmetic run score (fun pass). The SIM NEVER READS THIS - meta/run_stats.gd
 ## RunStats.score() scores a finished run's merged summary (Game.run_summary()

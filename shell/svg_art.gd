@@ -87,6 +87,10 @@ static var ART := {
 	"ic_camera": _svg('<rect x="3" y="10" width="26" height="17" rx="3" fill="#cfe3c4"/><rect x="11" y="5" width="10" height="7" rx="2" fill="#cfe3c4"/><circle cx="16" cy="18" r="6.5" fill="#2e4632"/><circle cx="16" cy="18" r="3.5" fill="#79a865"/><circle cx="25" cy="14" r="1.5" fill="#2e4632"/>'),
 	"ic_lens": _svg('<circle cx="13" cy="13" r="8" fill="none" stroke="#cfe3c4" stroke-width="3"/><path d="M19.5 19.5L28 28" stroke="#cfe3c4" stroke-width="3.5"/><circle cx="13" cy="13" r="4" fill="#79a865" opacity="0.5"/>'),
 	"ic_shield": _svg('<path d="M16 3l10 4v9q0 8-10 13Q6 24 6 16V7z" fill="#7ec8e0"/>'),
+	# career layer (fun pass): the unlock and DAILY cards' kinds
+	"ic_tier": _svg('<path d="M4 27h24v-4H4zM8 21h16v-4H8zM12 15h8v-4h-8z" fill="#e8c840"/><path d="M16 3l3 5h-6z" fill="#e04b3a"/>'),
+	"ic_mutator": _svg('<circle cx="16" cy="16" r="11" fill="none" stroke="#d878b8" stroke-width="3"/><path d="M16 5v7M16 20v7M5 16h7M20 16h7" stroke="#d878b8" stroke-width="2.4"/><circle cx="16" cy="16" r="3.5" fill="#e8c840"/>'),
+	"ic_feat": _svg('<path d="M16 3l3.6 7.6 8.2 1-6 5.7 1.6 8.2L16 21.5 8.6 25.5l1.6-8.2-6-5.7 8.2-1z" fill="#e8c840"/><circle cx="16" cy="15" r="3" fill="#79a865"/>'),
 
 	# --- intent badges (shell/danger.gd BADGE / BLOCK_ICON): a glyph per enemy
 	# intent, drawn on a dark disc at the enemy's corner, plus the four "this

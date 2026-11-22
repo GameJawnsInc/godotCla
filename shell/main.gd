@@ -176,7 +176,25 @@ var run_save_path := RUN_SAVE_PATH
 
 # settings (persisted to user://tender.cfg)
 var hold_ms := 420
-var seed_mode := "random"  # random | daily
+## What the live run is: "career" (PLAY - recorded to the profile) or "daily"
+## (the DAILY sheet's PLAY - filed to the daily board only). It replaced the
+## old global seed-mode setting: a run carries its own kind, in its run-save
+## header too, so a resumed or retried run is filed where it started.
+var run_kind := "career"
+## The old cfg "seed_mode" key. Its only use is routing a run save from before
+## the daily got its own button (a header with no "kind"), and the one-time
+## menu notice below. `_save_settings` carries it forward while it is "daily"
+## (a settings change must not re-file a header-less daily to the career) and
+## `_start_run` drops it for good: the run save it writes names its own kind.
+var _legacy_seed_mode := "random"
+## "the daily now has its own button": shown on the menu until the player
+## starts a run or opens the DAILY sheet, then never again - the dismissal is
+## persisted (cfg "legacy_notice_seen", or the seed_mode key gone).
+var _legacy_notice := false
+## Where the settings are read and saved. Tests point it at a scratch file
+## before `_ready`, as they do `profile_path`, so a test never rewrites the
+## player's own settings.
+var cfg_path := CFG_PATH
 var intro_mode := "once"   # once | always | never
 var sfx_on := true
 var music_on := true
@@ -213,8 +231,8 @@ var _floor_fade_ms := -99999  # descend wipe: new floor fades in from dark
 var profile  # meta career: unlocks tiers/packages across runs (meta/profile.gd)
 ## The four run choices the title screen makes, all persisted in tender.cfg
 ## and all clamped to what the career unlocked (_clamp_selection). PLAY turns
-## them into a run config through profile.game_config; in daily seed mode the
-## seed's own Profile.daily_config replaces them for that run.
+## them into a run config through profile.game_config; for a daily run
+## (run_kind == "daily") the seed's own Profile.daily_config replaces them.
 var sel_tier := 0        # difficulty, clamped to profile.unlocked_tier
 var sel_loadout := "tender"  # Content.LOADOUTS id: the starting kit
 var sel_package := ""    # the one package committed to the run ("" = none)
@@ -274,6 +292,25 @@ var _over_prev: Dictionary = {}
 ## The finished run's merged summary and the profile's last_report for it.
 var _run_summary: Dictionary = {}
 var _run_report: Dictionary = {}
+## What profile.record_daily said about the finished daily ({ranked, new_best,
+## tries}); {} after a career run.
+var _daily_report: Dictionary = {}
+## The DAILY entry's cached facts ({date, seed, streak}), recomputed by
+## _refresh_daily_info when the UTC date moves or a daily is tried or filed -
+## never per frame (the menu redraws every frame for its vista).
+var _daily_info: Dictionary = {}
+## The run save's header ({} when there is no save of this version), cached for
+## the path in _save_head_path and dropped by _save_head_dirty at every site
+## that writes or removes the save: the DAILY sheet asks on every frame, and a
+## file open per frame is not free on a phone.
+var _save_head_cache: Dictionary = {}
+var _save_head_path := ""
+## The DAILY sheet's PLAY was tapped once while another run is resumable: the
+## next tap starts the daily and abandons that run. Cleared when the sheet opens.
+var _daily_armed := false
+## The menu's PLAY was tapped once while a daily try is resumable (its try is
+## already counted): the next tap abandons it. Any other tap disarms it.
+var _play_armed := false
 
 
 func _ready() -> void:
@@ -284,30 +321,71 @@ func _ready() -> void:
 	add_child(audio)
 	_load_settings()
 	_clamp_selection()
+	_refresh_daily_info()
 	audio.sfx_on = sfx_on
 	audio.music_on = music_on
 	set_process(true)
 	var env := OS.get_environment("SHELL_SEED")
 	if env != "":
-		seed_v = int(env)
-		screen = "game"
-		_new_game()
+		# through _start_run like every run start, so the legacy seed_mode key
+		# is dropped here too (the save it writes names its kind)
+		_start_run("career", maxi(0, int(env)))
 	elif FileAccess.file_exists(run_save_path):
 		_load_run()  # Android reclaimed the app mid-run: replay it back
 	queue_redraw()
 
 
-## Today's daily seed (UTC date): the same number for everyone, so the menu
-## can show today's config before PLAY rolls the seed.
+## Today's daily seed (UTC date): the same number for everyone, so the DAILY
+## sheet can show today's config before PLAY. Profile.daily_seed_for is the
+## one formula (tests/daily_run.gd calls it too).
 func _daily_seed() -> int:
-	return hash(Time.get_date_string_from_system(true)) & 0x7FFFFFFF
+	return Profile.daily_seed_for(Time.get_date_string_from_system(true))
 
 
 func _roll_seed() -> void:
-	if seed_mode == "daily":
+	if run_kind == "daily":
 		seed_v = _daily_seed()
 	else:
 		seed_v = (int(Time.get_unix_time_from_system()) * 1103515245 + Time.get_ticks_msec()) % 1000000
+
+
+## Start a run of `kind` ("career" or "daily") - the ONE way PLAY, the DAILY
+## sheet, R and N start a run. `keep_seed` replays that seed (R: retry), else
+## the seed is rolled (today's date for a daily). Every daily start counts as a
+## try - a retry included - and is saved at once, because the try count is
+## part of what the DAILY sheet reports.
+func _start_run(kind: String, keep_seed: int = -1) -> void:
+	run_kind = "daily" if kind == "daily" else "career"
+	if keep_seed >= 0:
+		seed_v = keep_seed
+	else:
+		_roll_seed()
+	if run_kind == "daily":
+		profile.note_daily_try(seed_v)
+		profile.save(profile_path)
+		_refresh_daily_info()
+	_legacy_notice = false
+	screen = "game"
+	_new_game()
+	if _legacy_seed_mode == "daily":
+		# the save just written carries "kind": no header-less save is left
+		# for the old key to route, so drop it (and the notice) for good
+		_legacy_seed_mode = "random"
+		_save_settings()
+
+
+## Recompute the DAILY entry's facts: today's date and seed, and the streak.
+func _refresh_daily_info() -> void:
+	var date := Time.get_date_string_from_system(true)
+	_daily_info = {"date": date, "seed": Profile.daily_seed_for(date),
+		"streak": profile.daily_streak(int(Time.get_unix_time_from_system()))}
+
+
+## The cached DAILY facts, refreshed when the UTC date has moved since.
+func _daily_now() -> Dictionary:
+	if _daily_info.is_empty() or String(_daily_info.get("date", "")) != Time.get_date_string_from_system(true):
+		_refresh_daily_info()
+	return _daily_info
 
 
 ## Keep the menu's run choices inside what the career actually unlocked: the
@@ -336,11 +414,11 @@ func _max_tier() -> int:
 	return mini(int(profile.unlocked_tier), Content.TIERS.size())
 
 
-## The config PLAY starts a run with: the menu's own choices through the
-## career gate, or - in daily seed mode - the seed's own frozen daily config,
-## which no career unlock touches (a daily needs nothing unlocked).
+## The config a run starts with: the menu's own choices through the career
+## gate, or - for a daily - the seed's own frozen daily config, which no
+## career unlock touches (a daily needs nothing unlocked).
 func _run_config() -> Dictionary:
-	if seed_mode == "daily":
+	if run_kind == "daily":
 		return Profile.daily_game_config(seed_v)
 	var muts: Array = [] if sel_mutator == "" else [sel_mutator]
 	return profile.game_config(sel_tier, muts, sel_loadout, sel_package)
@@ -360,8 +438,12 @@ func _new_game() -> void:
 	if _run_save != null:
 		_run_save.close()
 	_run_save = FileAccess.open(run_save_path, FileAccess.WRITE)
+	_save_head_dirty()
 	if _run_save != null:
-		_run_save.store_line(var_to_str({"v": RUN_SAVE_VERSION, "seed": seed_v, "tier": run_tier, "config": cfg}).replace("\n", " "))
+		# "kind" is shell state, not sim state: tests/import_run.gd reads only
+		# v / seed / tier / config, so RUN_SAVE_VERSION does not move for it
+		_run_save.store_line(var_to_str({"v": RUN_SAVE_VERSION, "seed": seed_v, "tier": run_tier,
+			"config": cfg, "kind": run_kind}).replace("\n", " "))
 		_run_save.flush()
 	mode = "normal"
 	if intro_mode == "always" or (intro_mode == "once" and not seen_intro):
@@ -463,6 +545,7 @@ func _load_run() -> void:
 		# the save goes - but the player is told why their run vanished
 		f.close()
 		DirAccess.remove_absolute(run_save_path)
+		_save_head_dirty()
 		save_lost = true
 		return
 	var g = Game.new(int(head["seed"]), Dictionary(head["config"]))
@@ -480,11 +563,16 @@ func _load_run() -> void:
 	f.close()
 	if g.over:
 		DirAccess.remove_absolute(run_save_path)
+		_save_head_dirty()
 		return
 	game = g
 	stats = st
 	_stats_for = g
 	seed_v = int(head["seed"])
+	# where the run is filed when it ends: its own header, or - for a save
+	# written before the daily had its own button - the old global toggle
+	var kind = head.get("kind", "daily" if _legacy_seed_mode == "daily" else "career")
+	run_kind = "daily" if str(kind) == "daily" else "career"
 	run_tier = int(head.get("tier", 0))
 	sel_tier = run_tier
 	_game_is_run = true
@@ -520,14 +608,13 @@ func _ensure_stats() -> void:
 		_new_stats()
 
 
-## Is the live run the daily challenge? (The one place that asks, so the run's
-## kind can move off the global seed mode without touching the callers.)
+## Is the live run the daily challenge? (The one place that asks.)
 func _run_is_daily() -> bool:
-	return seed_mode == "daily"
+	return run_kind == "daily"
 
 
 ## Game-over site: the run's own record (Game.run_summary() merged with the
-## stats fold, stamped with the tier and seed mode the shell chose and the
+## stats fold, stamped with the tier and run kind the shell chose and the
 ## cosmetic score) goes to the career profile - or to the daily board when the
 ## seed came from the daily challenge, since a daily scores its seed and
 ## unlocks nothing. The bests the sheet compares against are snapshotted
@@ -539,22 +626,25 @@ func _record_finished_run() -> void:
 	var summary: Dictionary = game.run_summary()
 	summary.merge(stats.summary())  # the two key sets are disjoint (tests/test_meta.gd)
 	summary["tier"] = run_tier
-	summary["seed_mode"] = seed_mode
+	summary["run_kind"] = run_kind
+	summary["date"] = Time.get_date_string_from_system(true)
 	summary["score"] = int(RunStats.score(summary)["total"])
 	summary["score_v"] = Content.RUN_SCORE_VERSION
 	_run_summary = summary
 	_run_unlocks = []
 	_run_report = {}
+	_daily_report = {}
 	if _run_is_daily():
 		# the key record_daily writes (the game's own seed), never seed_v
 		_over_prev = {"daily": profile.daily_best.get(Profile.daily_key(summary.get("seed")), {}).duplicate()}
-		profile.record_daily(summary)
+		_daily_report = profile.record_daily(summary)
 	else:
 		_over_prev = profile.bests_snapshot(String(summary.get("loadout", "tender")))
 		profile.record_run(summary)
 		_run_report = profile.last_report
 		_run_unlocks = _run_report["unlocks"]  # "tier:N" first, then milestone ids
 	profile.save(profile_path)
+	_refresh_daily_info()  # a finished daily moves the streak
 	if _run_save != null:
 		_run_save.close()
 		_run_save = null
@@ -577,6 +667,7 @@ func _archive_run() -> void:
 	if DirAccess.rename_absolute(run_save_path, dest) != OK:
 		DirAccess.copy_absolute(run_save_path, dest)
 	DirAccess.remove_absolute(run_save_path)  # no-op after a successful rename
+	_save_head_dirty()
 	_prune_runs()
 
 
@@ -602,9 +693,12 @@ func _prune_runs() -> void:
 
 func _load_settings() -> void:
 	var cf := ConfigFile.new()
-	if cf.load(CFG_PATH) == OK:
+	if cf.load(cfg_path) == OK:
 		hold_ms = int(cf.get_value("ui", "hold_ms", 420))
-		seed_mode = String(cf.get_value("ui", "seed_mode", "random"))
+		# carried forward only while it still routes something (see _legacy_seed_mode)
+		_legacy_seed_mode = str(cf.get_value("ui", "seed_mode", "random"))
+		_legacy_notice = _legacy_seed_mode == "daily" \
+			and not bool(cf.get_value("ui", "legacy_notice_seen", false))
 		intro_mode = String(cf.get_value("ui", "intro_mode", "once"))
 		sfx_on = bool(cf.get_value("ui", "sfx_on", true))
 		music_on = bool(cf.get_value("ui", "music_on", true))
@@ -617,7 +711,6 @@ func _load_settings() -> void:
 func _save_settings() -> void:
 	var cf := ConfigFile.new()
 	cf.set_value("ui", "hold_ms", hold_ms)
-	cf.set_value("ui", "seed_mode", seed_mode)
 	cf.set_value("ui", "intro_mode", intro_mode)
 	cf.set_value("ui", "sfx_on", sfx_on)
 	cf.set_value("ui", "music_on", music_on)
@@ -625,7 +718,11 @@ func _save_settings() -> void:
 	cf.set_value("ui", "loadout", sel_loadout)
 	cf.set_value("ui", "package", sel_package)
 	cf.set_value("ui", "mutator", sel_mutator)
-	cf.save(CFG_PATH)
+	if _legacy_seed_mode == "daily":
+		cf.set_value("ui", "seed_mode", "daily")
+		if not _legacy_notice:
+			cf.set_value("ui", "legacy_notice_seen", true)
+	cf.save(cfg_path)
 
 
 func _act(a: Dictionary) -> void:
@@ -952,10 +1049,11 @@ func _back(quit_at_root: bool = false) -> String:
 		queue_redraw()
 		return "tooltip"
 	if screen == "menu":
-		if mode == "settings":
+		if mode == "settings" or mode == "daily":
+			var closed := mode
 			mode = "normal"
 			queue_redraw()
-			return "settings"
+			return closed
 		if quit_at_root:
 			_tap("quit")  # is_inside_tree-guarded, so a test can call it
 			return "quit"
@@ -1243,6 +1341,11 @@ func _key(k: int) -> void:
 		if mode == "settings":
 			mode = "normal"
 			queue_redraw()
+		elif mode == "daily":
+			# the DAILY sheet takes ENTER as its own PLAY; ESC (above) closes it
+			# and every other key is ignored
+			if k == KEY_ENTER or k == KEY_SPACE:
+				_tap(String(_daily_sheet(int(_daily_now()["seed"]))["play_tag"]))
 		elif k == KEY_ENTER or k == KEY_SPACE:
 			_tap("play")
 		return
@@ -1276,11 +1379,15 @@ func _key(k: int) -> void:
 		queue_redraw()
 		return
 	if game.over:
+		if screen == "tutorial":
+			# a tutorial death retries the tutorial; there is no "next seed"
+			if k == KEY_R:
+				_tap("tutorial")
+			return
 		if k == KEY_R:
-			_new_game()
+			_start_run(run_kind, seed_v)  # retry: a daily retry is another try
 		elif k == KEY_N:
-			seed_v += 1
-			_new_game()
+			_start_run("career", seed_v + 1)
 		return
 	if k == KEY_L:
 		mode = "help"
@@ -1310,10 +1417,14 @@ func _key(k: int) -> void:
 		KEY_I:
 			_tap("inspect")
 		KEY_R:
-			_new_game()
+			if screen == "tutorial":
+				_tap("tutorial")  # mid-tutorial R restarts it, as a tutorial death's R does
+				return
+			_start_run(run_kind, seed_v)
 		KEY_N:
-			seed_v += 1
-			_new_game()
+			if screen == "tutorial":
+				return  # no "next seed" in the tutorial: N must not leave it for a run
+			_start_run("career", seed_v + 1)
 
 
 func _dir_input(d: Vector2i) -> void:
@@ -1567,6 +1678,8 @@ func _click(pos: Vector2) -> void:
 			if hsp["rect"].has_point(pos):
 				_tap(hsp["tag"])
 				return
+		# a sheet over the menu (settings, daily) closes on an off-button tap
+		# for settings; the DAILY sheet takes only its own buttons
 		if mode == "settings":
 			mode = "normal"
 			queue_redraw()
@@ -1597,8 +1710,7 @@ func _click(pos: Vector2) -> void:
 		if screen == "tutorial":
 			_tap("menu")
 		else:
-			_roll_seed()
-			_new_game()
+			_start_run("career")  # NEW RUN is a career run (C25), never another daily try
 		return
 	if game.phase == "draft":
 		return
@@ -1625,6 +1737,8 @@ func _click(pos: Vector2) -> void:
 func _tap(tag: String) -> void:
 	if audio != null:
 		audio.play("tap")
+	var play_armed := _play_armed
+	_play_armed = false
 	if tag.begins_with("ability:"):
 		_ability_press(int(tag.get_slice(":", 1)))
 	elif tag.begins_with("item:"):
@@ -1720,9 +1834,29 @@ func _tap(tag: String) -> void:
 		mode = "normal"
 		queue_redraw()
 	elif tag == "play":
-		_roll_seed()
-		screen = "game"
-		_new_game()
+		if not play_armed and String(_resumable_run().get("kind", "")) == "daily":
+			_play_armed = true  # a daily try in progress: PLAY asks for a second tap
+			queue_redraw()
+		else:
+			_start_run("career")
+	elif tag == "daily":
+		if _legacy_notice:
+			_legacy_notice = false
+			_save_settings()  # the notice is said once, not once per boot
+		_refresh_daily_info()
+		_daily_armed = false
+		mode = "daily"
+		queue_redraw()
+	elif tag == "daily_play":
+		if not _daily_armed and _daily_play_abandons(int(_daily_now()["seed"])):
+			_daily_armed = true  # the sheet now asks for a second tap
+			queue_redraw()
+		else:
+			_daily_armed = false
+			_start_run("daily")
+	elif tag == "daily_resume":
+		mode = "normal"  # the sheet closes behind the resumed try
+		_tap("resume")
 	elif tag == "resume":
 		if (game == null or not _game_is_run or game.over) and FileAccess.file_exists(run_save_path):
 			_load_run()  # the live run was displaced (e.g. by the tutorial)
@@ -1738,6 +1872,7 @@ func _tap(tag: String) -> void:
 		screen = "menu"
 		mode = "normal"
 		tooltip = []
+		_daily_now()
 		queue_redraw()
 	elif tag == "quit":
 		if is_inside_tree():
@@ -1752,20 +1887,29 @@ func _tap(tag: String) -> void:
 				audio.set_music(music_on)
 			"tier":
 				sel_tier = (sel_tier + 1) % (_max_tier() + 1)
+				_seen("tier:%d" % sel_tier)
 			"loadout":
 				sel_loadout = String(_cycle(profile.available_loadouts(), sel_loadout))
+				_seen(sel_loadout)
 			"package":
 				sel_package = String(_cycle(_with_none(profile.unlocked_packages), sel_package))
+				_seen(sel_package)
 			"mutator":
 				sel_mutator = String(_cycle(_with_none(profile.unlocked_mutators), sel_mutator))
+				_seen(sel_mutator)
 			"hold":
 				hold_ms = {300: 420, 420: 650, 650: 300}.get(hold_ms, 420)
-			"seed":
-				seed_mode = "daily" if seed_mode == "random" else "random"
 			"intro":
 				intro_mode = {"once": "always", "always": "never", "never": "once"}.get(intro_mode, "once")
 		_save_settings()
 		queue_redraw()
+
+
+## The player cycled onto `id`: its NEW badge goes, and the profile is saved
+## only when that changed something.
+func _seen(id: String) -> void:
+	if id != "" and profile.mark_seen(id):
+		profile.save(profile_path)
 
 
 ## The entry after `cur` in `opts`, wrapping round; the first entry when `cur`
@@ -1784,35 +1928,95 @@ static func _with_none(ids: Array) -> Array:
 	return out
 
 
-## The title screen's row stack as data: [label, tap tag, highlighted]. A row
-## with an empty tag is a line of text, not a button (the daily config line).
-## Built here so a headless test can read exactly what the menu offers.
+## The title screen's rows as data: [label, tap tag, highlighted, badge,
+## group]. Rows that share a non-empty group share one line (DAILY sits alone
+## until the CAREER sheet joins it; TUTORIAL / SETTINGS / QUIT share the
+## last). `badge` is drawn small and gold at the row's right edge: NEW while
+## the career has something on that row the player has not cycled onto yet,
+## and on the LOADOUT row a WON / WON D<n> for the selected loadout. Built
+## here so a headless test reads exactly what the menu offers.
 func _menu_rows() -> Array:
 	var rows: Array = []
 	var has_resume: bool = (game != null and not game.over and _game_is_run) \
 		or FileAccess.file_exists(run_save_path)
 	if has_resume:
-		rows.append(["RESUME RUN", "resume", true])
-	rows.append(["PLAY", "play", true])
+		rows.append(["RESUME RUN", "resume", true, "", ""])
+	rows.append(["TAP AGAIN TO ABANDON" if _play_armed else "PLAY", "play", true, "", ""])
+	var di := _daily_now()
+	rows.append(["DAILY", "daily", not bool(di["streak"]["played_today"]), "", "a"])
 	if int(profile.unlocked_tier) > 0:
 		var tn := "base run" if sel_tier == 0 else String(Content.TIERS[sel_tier - 1]["name"])
-		rows.append(["DIFFICULTY %d: %s" % [sel_tier, tn], "set:tier", false])
-	if seed_mode == "daily":
-		# a daily's loadout, package and mutator come from the seed, not from
-		# the menu: one line saying what today hands everyone
-		var d: Dictionary = Profile.daily_config(_daily_seed())
-		rows.append(["TODAY: %s · %s · %s" % [
-			Names.choice_name("loadout", String(d["loadout"])),
-			Names.choice_name("package", String(d["package"])),
-			Names.choice_name("mutator", String(d["mutator"]))], "", false])
-	else:
-		rows.append(["LOADOUT: %s" % Names.choice_name("loadout", sel_loadout), "set:loadout", false])
-		rows.append(["PACKAGE: %s" % Names.choice_name("package", sel_package), "set:package", false])
-		rows.append(["MUTATOR: %s" % Names.choice_name("mutator", sel_mutator), "set:mutator", false])
-	rows.append(["TUTORIAL", "tutorial", false])
-	rows.append(["SETTINGS", "settings", false])
-	rows.append(["QUIT", "quit", false])
+		rows.append(["DIFFICULTY %d: %s" % [sel_tier, tn], "set:tier", false,
+			_new_badge("tier"), ""])
+	var lbadge := _new_badge("loadout")
+	if lbadge == "":
+		var won_tier := int(profile.records["loadouts"].get(sel_loadout, {}).get("best_tier_won", -1))
+		if won_tier >= 1:
+			lbadge = "WON D%d" % won_tier
+		elif won_tier == 0:
+			lbadge = "WON"
+	rows.append(["LOADOUT: %s" % Names.choice_name("loadout", sel_loadout), "set:loadout", false, lbadge, ""])
+	rows.append(["PACKAGE: %s" % _package_name(sel_package), "set:package", false, _new_badge("package"), ""])
+	rows.append(["MUTATOR: %s" % Names.choice_name("mutator", sel_mutator), "set:mutator", false,
+		_new_badge("mutator"), ""])
+	rows.append(["TUTORIAL", "tutorial", false, "", "b"])
+	rows.append(["SETTINGS", "settings", false, "", "b"])
+	rows.append(["QUIT", "quit", false, "", "b"])
 	return rows
+
+
+func _new_badge(kind: String) -> String:
+	return "NEW" if not profile.unseen_of(kind).is_empty() else ""
+
+
+## A package's display name: Profile.unlock_name, the one source the unlock
+## text and the DAILY sheet share ("none" for no package).
+static func _package_name(id: String) -> String:
+	return "none" if id == "" else Profile.unlock_name(id)
+
+
+## Where every menu row lands, as data (_draw_menu draws this and nothing
+## else, and tests/test_shell.gd holds every label to a readable size at every
+## phone shape): [{rect, label, tag, gold, badge, size, badge_size}]. The
+## block is 0.80vw wide - at the old 0.62vw a long DIFFICULTY name with a
+## badge shrank to ~1.06% of the screen height - the rows fill the space
+## between the title art and the footer, and a grouped line splits its width.
+func _menu_layout(vw: float, vh: float) -> Array:
+	var rows: Array = _menu_rows()
+	var lines: Array = []
+	for row in rows:
+		var grp := String(row[4])
+		if grp != "" and not lines.is_empty() and String(lines[-1][0][4]) == grp:
+			lines[-1].append(row)
+		else:
+			lines.append([row])
+	var top := vh * 0.46
+	var bottom := vh * 0.935
+	var gap := vh * 0.016
+	var n := lines.size()
+	var bh := minf(vh * 0.072, (bottom - top - gap * (n - 1)) / n)
+	var bw := vw * 0.80
+	var bx := (vw - bw) / 2.0
+	var cgap := vw * 0.02
+	var y := top + (bottom - top - (bh * n + gap * (n - 1))) / 2.0
+	# the badge is the only word that names an unlock here: held to the card floor
+	var bsz := maxi(int(bh * 0.24), ceili(vh * 0.0115))
+	var out: Array = []
+	for line in lines:
+		var k: int = line.size()
+		var cw := (bw - cgap * (k - 1)) / k
+		for i in k:
+			var row: Array = line[i]
+			var r := Rect2(bx + i * (cw + cgap), y, cw, bh)
+			var badge := String(row[3])
+			var badge_w := 0.0
+			if badge != "":
+				badge_w = font.get_string_size(badge, HORIZONTAL_ALIGNMENT_LEFT, -1, bsz).x + bh * 0.2
+			out.append({"rect": r, "label": String(row[0]), "tag": String(row[1]), "gold": bool(row[2]),
+				"badge": badge, "size": _fit_size(String(row[0]), int(bh * 0.38), cw * 0.92 - badge_w),
+				"badge_size": bsz, "badge_w": badge_w})
+		y += bh + gap
+	return out
 
 
 func _draft_key(k: int) -> void:
@@ -2095,6 +2299,8 @@ func _draw() -> void:
 		_draw_menu(vw, vh)
 		if mode == "settings":
 			_draw_settings(vw, vh)
+		elif mode == "daily":
+			_draw_daily(vw, vh)
 		return
 	var snap: Dictionary = game.snapshot()
 
@@ -2182,28 +2388,42 @@ func _draw_menu(vw: float, vh: float) -> void:
 		# review §6.0: a version bump used to eat the run without a word
 		_txt_c_fit(vw / 2.0, vh * 0.228, "your saved run was lost to an update",
 			COL_GOLD, int(vh * 0.019), vw * 0.9)
+	elif _legacy_notice:
+		# the old settings toggle is gone; say once where the daily went
+		_txt_c_fit(vw / 2.0, vh * 0.228, "the daily now has its own button",
+			COL_GOLD, int(vh * 0.019), vw * 0.9)
 
-	var bw := vw * 0.62
-	var bx := (vw - bw) / 2.0
-	# build the row list first, then size the stack to the space above the footer
+	# the rows are data first (_menu_layout), sized to the space above the footer
 	_clamp_selection()
-	var rows: Array = _menu_rows()
-	var top := vh * 0.46
-	var bottom := vh * 0.935
-	var gap := vh * 0.016
-	var bh := minf(vh * 0.072, (bottom - top - gap * (rows.size() - 1)) / rows.size())
-	var y := top + (bottom - top - (bh * rows.size() + gap * (rows.size() - 1))) / 2.0
-	for row in rows:
-		if String(row[1]) == "":
-			_txt_c_fit(vw / 2.0, y + bh * 0.66, String(row[0]), COL_CREAM, int(bh * 0.30), bw)
-		else:
-			_button(Rect2(bx, y, bw, bh), String(row[0]), String(row[1]), int(bh * 0.38),
-				COL_GOLD if bool(row[2]) else COL_DIM_TEXT)
-		y += bh + gap
-	var career := "%s seed" % seed_mode
+	for m in _menu_layout(vw, vh):
+		var r: Rect2 = m["rect"]
+		_box(r, _sb_gold if bool(m["gold"]) else _sb)
+		var fs2 := int(m["size"])
+		var bw_: float = float(m["badge_w"])
+		_txt_c((r.position.x + r.end.x - bw_) / 2.0, r.get_center().y + fs2 * 0.35,
+			String(m["label"]), COL_TEXT, fs2)
+		if String(m["badge"]) != "":
+			var bsz := int(m["badge_size"])
+			var tw := font.get_string_size(String(m["badge"]), HORIZONTAL_ALIGNMENT_LEFT, -1, bsz).x
+			_txt(Vector2(r.end.x - tw - r.size.y * 0.12, r.get_center().y + bsz * 0.35),
+				String(m["badge"]), COL_GOLD, bsz)
+		_hot(r, String(m["tag"]))
 	if int(profile.runs) > 0:
-		career += "  ·  runs %d · wins %d · best %d" % [profile.runs, profile.wins, profile.best_floor]
-	_txt_c_fit(vw / 2.0, vh * 0.972, career, COL_DIM_TEXT, int(vh * 0.016), vw * 0.92)
+		_txt_c_fit(vw / 2.0, vh * 0.972, "runs %d  ·  wins %d  ·  best floor %d" % [
+			profile.runs, profile.wins, profile.best_floor], COL_DIM_TEXT, int(vh * 0.016), vw * 0.92)
+
+
+## The settings sheet's toggles as data: [label, tap tag]. (The old "Run
+## seed" toggle is gone - PLAY is always a career run and the daily is the
+## menu's DAILY entry.)
+func _settings_rows() -> Array:
+	var names := {300: "short", 420: "normal", 650: "long"}
+	return [
+		["Hold delay:  %s" % names.get(hold_ms, "normal"), "set:hold"],
+		["Intro tips:  %s" % intro_mode, "set:intro"],
+		["Sound effects:  %s" % ("on" if sfx_on else "off"), "set:sfx"],
+		["Music:  %s" % ("on" if music_on else "off"), "set:music"],
+	]
 
 
 func _draw_settings(vw: float, vh: float) -> void:
@@ -2211,17 +2431,10 @@ func _draw_settings(vw: float, vh: float) -> void:
 	var y := _sheet(vw, vh, "SETTINGS")
 	var bw := vw * 0.88
 	var bh := vh * 0.08
-	var names := {300: "short", 420: "normal", 650: "long"}
-	_button(Rect2(vw * 0.06, y, bw, bh), "Hold delay:  %s" % names.get(hold_ms, "normal"), "set:hold", int(bh * 0.3))
-	y += bh + vh * 0.025
-	_button(Rect2(vw * 0.06, y, bw, bh), "Run seed:  %s" % ("random every run" if seed_mode == "random" else "daily (same for all)"), "set:seed", int(bh * 0.28))
-	y += bh + vh * 0.025
-	_button(Rect2(vw * 0.06, y, bw, bh), "Intro tips:  %s" % intro_mode, "set:intro", int(bh * 0.3))
-	y += bh + vh * 0.025
-	_button(Rect2(vw * 0.06, y, bw, bh), "Sound effects:  %s" % ("on" if sfx_on else "off"), "set:sfx", int(bh * 0.3))
-	y += bh + vh * 0.025
-	_button(Rect2(vw * 0.06, y, bw, bh), "Music:  %s" % ("on" if music_on else "off"), "set:music", int(bh * 0.3))
-	y += bh + vh * 0.03
+	for row in _settings_rows():
+		_button(Rect2(vw * 0.06, y, bw, bh), String(row[0]), String(row[1]), int(bh * 0.3))
+		y += bh + vh * 0.025
+	y += vh * 0.005
 	# the globalized path is absolute, so the whole line used to shrink to the
 	# 9px _fit_size floor whatever the label said - the tail is the useful half
 	var rp := ProjectSettings.globalize_path(runs_dir)
@@ -2232,6 +2445,182 @@ func _draw_settings(vw: float, vh: float) -> void:
 		COL_DIM_TEXT, int(vh * 0.018), bw)
 	y += vh * 0.05
 	_button(Rect2(vw * 0.06, y, bw, bh), "BACK", "close", int(bh * 0.34))
+
+
+## The DAILY sheet as data, for `seed_v` (today's daily seed in the app; any
+## seed in the tests): {head, cards: [[icon, name, desc, tag, badge]], result,
+## streak, note, play, play_tag} - play_tag "daily_resume" (label RESUME
+## TODAY'S TRY) while a try on that seed is still resumable, else
+## "daily_play". The cards are the day's loadout, package and mutator,
+## straight off Profile.daily_config (the frozen lists, so an old date never
+## changes); the lines are what the profile filed for that seed - the first
+## finish is the RANKED one and every later finish only improves the best.
+func _daily_sheet(seed_v: int) -> Dictionary:
+	var d: Dictionary = Profile.daily_config(seed_v)
+	var di := _daily_now()
+	var when := String(di["date"]) if int(di["seed"]) == seed_v else "seed %d" % seed_v
+	var cards: Array = []
+	var lid := String(d["loadout"])
+	var ldef: Dictionary = Content.LOADOUTS[lid]
+	cards.append([_ability_icon(String(ldef["kit"][0])), String(ldef["name"]), String(ldef["desc"]), "", "LOADOUT"])
+	var pkg := String(d["package"])
+	if pkg != "":
+		var anames: Array = []
+		for aid in Content.PACKAGES[pkg]:
+			anames.append(Names.aname(aid))
+		cards.append([_ability_icon(String(Content.PACKAGES[pkg][0])), _package_name(pkg),
+			"%s  ·  %s" % [Content.PACKAGE_INFO[pkg]["desc"], ", ".join(anames)], "", "PACKAGE"])
+	var mut := String(d["mutator"])
+	if mut != "":
+		cards.append(["ic_mutator", String(Content.MUTATORS[mut]["name"]),
+			String(Content.MUTATORS[mut]["desc"]), "", "MUTATOR"])
+	var key := Profile.daily_key(seed_v)
+	var tries := int(profile.daily_tries.get(key, 0))
+	var best: Dictionary = profile.daily_best.get(key, {})
+	var first: Dictionary = profile.daily_first.get(key, best)
+	var result := ""
+	if best.is_empty():
+		if tries == 0:
+			result = "No finish yet  ·  your first finish is your ranked result"
+		else:
+			result = "%d %s, no finish yet" % [tries, "try" if tries == 1 else "tries"]
+	else:
+		result = "ranked: %s  ·  best: %s  ·  %d %s" % [_daily_result_text(first), _daily_result_text(best),
+			maxi(tries, 1), "try" if maxi(tries, 1) == 1 else "tries"]
+	var resume := _daily_try_live(seed_v)
+	# a fresh start overwrites the one run save: another resumable run (a
+	# career run, or an older daily) is lost unrecorded, so the sheet says so
+	# and PLAY takes a second tap
+	var abandons := not resume and _daily_play_abandons(seed_v)
+	var play := "RESUME TODAY'S TRY" if resume else ("PLAY TODAY'S RUN" if best.is_empty() else "PLAY AGAIN  ·  unranked")
+	if abandons and _daily_armed:
+		play = "TAP AGAIN TO ABANDON"
+	var st: Dictionary = di["streak"]
+	var streak := "finish today's run to start a streak"
+	if int(st["current"]) >= 1:
+		streak = "streak %d day%s  ·  longest %d" % [int(st["current"]), "" if int(st["current"]) == 1 else "s",
+			int(st["longest"])]
+	elif int(st["longest"]) >= 1:
+		streak = "streak broken  ·  longest %d" % int(st["longest"])
+	return {
+		"head": "%s  ·  the same run for everyone" % when,
+		"cards": cards, "result": result, "streak": streak,
+		"note": "starting this abandons your unfinished run" if abandons else "dailies never count toward your career",
+		"note_warn": abandons,
+		# a try still in progress is resumed, never thrown away by a fresh start
+		"play": play,
+		"play_tag": "daily_resume" if resume else "daily_play",
+		"finished": not best.is_empty(), "streak_on": int(st["current"]) >= 1,
+	}
+
+
+## True while a daily try on `seed` is still resumable: the live run, or - when
+## the live game is not a run (the tutorial displaced it) - the run save's own
+## header. The DAILY sheet then offers RESUME instead of a fresh start, which
+## would overwrite the save and count a second try.
+func _daily_try_live(seed: int) -> bool:
+	var r := _resumable_run()
+	return String(r.get("kind", "")) == "daily" and int(r.get("seed", -1)) == seed
+
+
+## True when starting `seed`'s daily would throw away another resumable run
+## (a career run, or a daily on another seed) - the start overwrites the save.
+func _daily_play_abandons(seed: int) -> bool:
+	return not _resumable_run().is_empty() and not _daily_try_live(seed)
+
+
+## The run a RESUME would bring back, as {kind, seed}, or {} when there is
+## none: the live run, or - when the live game is not a run (the tutorial
+## displaced it) - the run save's cached header.
+func _resumable_run() -> Dictionary:
+	if game != null and _game_is_run and not game.over:
+		return {"kind": run_kind, "seed": seed_v}
+	var head := _save_head()
+	if head.is_empty():
+		return {}
+	var kind = head.get("kind", "daily" if _legacy_seed_mode == "daily" else "career")
+	return {"kind": str(kind), "seed": int(head.get("seed", -1))}
+
+
+## The run save's header, read once per write (see _save_head_cache).
+func _save_head() -> Dictionary:
+	if _save_head_path == run_save_path:
+		return _save_head_cache
+	_save_head_path = run_save_path
+	_save_head_cache = {}
+	if FileAccess.file_exists(run_save_path):
+		var f := FileAccess.open(run_save_path, FileAccess.READ)
+		if f != null:
+			var head = str_to_var(f.get_line())
+			f.close()
+			if head is Dictionary and int(head.get("v", -1)) == RUN_SAVE_VERSION:
+				_save_head_cache = head
+	return _save_head_cache
+
+
+## The run save was written or removed: the next _save_head reads it afresh.
+func _save_head_dirty() -> void:
+	_save_head_path = ""
+
+
+static func _daily_result_text(r: Dictionary) -> String:
+	if bool(r.get("won", false)):
+		return "won in %d turns" % int(r.get("turns", 0))
+	return "floor %d" % int(r.get("floor", 0))
+
+
+## Where the DAILY sheet's pieces land, as data (_draw_daily draws it;
+## tests/test_shell.gd checks every size and the button row at every phone
+## shape): {lines: [{text, x, y, size, col}], cards: [{rect, row}],
+## buttons: [{rect, label, tag, size, gold}]}. The button row goes through
+## _sheet_button_y like every sheet's trailing row.
+func _daily_layout(vw: float, vh: float, info: Dictionary) -> Dictionary:
+	var y := vh * 0.16
+	var w := vw * 0.88
+	var lines: Array = []
+	var spec := [
+		[String(info["head"]), 0.022, COL_CREAM, 0.03],
+		[String(info["result"]), 0.021, COL_GOLD if bool(info["finished"]) else COL_TEXT, 0.038],
+		[String(info["streak"]), 0.021, COL_GOLD if bool(info["streak_on"]) else COL_TEXT, 0.036],
+		[String(info["note"]), 0.018, COL_RED if bool(info.get("note_warn", false)) else COL_DIM_TEXT, 0.034],
+	]
+	for sp in spec:
+		y += vh * float(sp[3])
+		lines.append({"text": sp[0], "x": vw / 2.0, "y": y,
+			"size": _fit_size(String(sp[0]), int(vh * float(sp[1])), w), "col": sp[2]})
+	y += vh * 0.03
+	var ch := vh * 0.105
+	var cards: Array = []
+	for c in info["cards"]:
+		cards.append({"rect": Rect2(vw * 0.05, y, vw * 0.9, ch), "row": c})
+		y += ch + vh * 0.015
+	y += vh * 0.01
+	var bh := vh * 0.065
+	var by := _sheet_button_y(y, bh, vh)
+	var buttons: Array = []
+	for b in [[Rect2(vw * 0.06, by, vw * 0.30, bh), "BACK", "close", false],
+			[Rect2(vw * 0.40, by, vw * 0.54, bh), String(info["play"]), String(info.get("play_tag", "daily_play")), true]]:
+		var br: Rect2 = b[0]
+		buttons.append({"rect": br, "label": b[1], "tag": b[2], "gold": b[3],
+			"size": _fit_size(String(b[1]), int(bh * 0.34), br.size.x * 0.92)})
+	return {"lines": lines, "cards": cards, "buttons": buttons}
+
+
+func _draw_daily(vw: float, vh: float) -> void:
+	hotspots.clear()
+	_sheet(vw, vh, "DAILY CHALLENGE")
+	var L := _daily_layout(vw, vh, _daily_sheet(int(_daily_now()["seed"])))
+	for ln in L["lines"]:
+		_txt_c(float(ln["x"]), float(ln["y"]), String(ln["text"]), ln["col"], int(ln["size"]))
+	for c in L["cards"]:
+		var row: Array = c["row"]
+		_card(c["rect"], String(row[0]), String(row[1]), String(row[2]), String(row[3]), vh, String(row[4]))
+	for b in L["buttons"]:
+		var br: Rect2 = b["rect"]
+		_box(br, _sb_gold if bool(b["gold"]) else _sb)
+		var fs := int(b["size"])
+		_txt_c(br.get_center().x, br.get_center().y + fs * 0.35, String(b["label"]), COL_TEXT, fs)
+		_hot(br, String(b["tag"]))
 
 
 func _draw_tut_banner(vw: float, vh: float) -> void:
@@ -2389,7 +2778,7 @@ func _ability_tags(aid: String) -> Array:
 func _config_line(snap: Dictionary) -> String:
 	var parts: Array = [Names.choice_name("loadout", String(snap.get("loadout", "tender")))]
 	for pkg in snap.get("packages", []):
-		parts.append(Names.choice_name("package", String(pkg)))
+		parts.append(_package_name(String(pkg)))
 	for m in snap.get("mutators", []):
 		parts.append(Names.choice_name("mutator", String(m)))
 	return " · ".join(parts)
@@ -3748,7 +4137,7 @@ func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 			var tn2 := String(Content.TIERS[int(us.substr(5)) - 1]["name"])
 			label = "NEW DIFFICULTY UNLOCKED: %s" % tn2.to_upper()
 		else:
-			label = "UNLOCKED: %s" % us.replace("_", " ").to_upper()
+			label = "UNLOCKED: %s" % Profile.unlock_name(us).to_upper()
 		_txt_c_fit(vw / 2.0, oy, label, COL_GOLD, int(vh * 0.021), vw * 0.92)
 		oy += vh * 0.032
 	oy = maxf(oy + vh * 0.03, vh * 0.64)

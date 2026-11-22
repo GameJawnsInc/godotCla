@@ -16,7 +16,7 @@ const Profile := preload("res://meta/profile.gd")
 
 func _init() -> void:
 	var date := Time.get_date_string_from_system(true)
-	var seed_v: int = hash(date) & 0x7FFFFFFF
+	var seed_v: int = Profile.daily_seed_for(date)  # the one formula (the shell uses it too)
 	# career-agnostic: the daily needs nothing unlocked and unlocks nothing
 	var daily: Dictionary = Profile.daily_config(seed_v)
 	var config: Dictionary = Profile.daily_game_config(seed_v)

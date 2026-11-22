@@ -105,7 +105,8 @@ architecture below is designed to bend rather than block.
     table AND alone, so no fixture's own rule can be shadowed by the
     one-row-per-tag rule, and the planned rider rows), and the fun-pass
     `RUN_SCORE` / `RUN_SCORE_TIER_QUARTERS` / `RUN_SCORE_VERSION` /
-    `RUN_STAT_KEYS` shapes with a bad-table self-test
+    `RUN_STAT_KEYS` shapes with a bad-table self-test, and `Content.PACKAGE_INFO`
+    (keys equal `PACKAGES`, `{name, desc}` rows) with its own bad-table self-test
   - `godot --headless --path . --script tests/test_grammar.gd` — effect grammar
     behaviour: rider evaluation, returned outcomes, the data tables driven
     through `Game._apply_effect` on hand-built states, the D4 draft slots
@@ -149,7 +150,11 @@ architecture below is designed to bend rather than block.
     filters), `_check_wrong_type_profile` (null / array / string / dict /
     bool in every numeric, bool and string slot of a stored profile: it loads,
     saves, reloads and records); its career loop is the shell's exact merge
-    and pins every `Content.RUN_STAT_KEYS` key as an int in every summary
+    and pins every `Content.RUN_STAT_KEYS` key as an int in every summary;
+    then the career layer: `progress` per predicate, `next_goals` (grouping,
+    the tier fold, ranking, the report's `delta`), the `unseen` store and its
+    helpers, the daily streak / tries / ranked first finish, and the new stores
+    through the load filters and the wrong-type fixture
   - `godot --headless --path . --script tests/test_shell.gd` — shell smoke test
     (the shell reads the sim, so a sim change can break it), plus the two
     player-facing gates: `_check_card_text` holds every shipped description
@@ -176,13 +181,19 @@ architecture below is designed to bend rather than block.
     the guard through the real input paths; `_check_intent_badges` the badge
     tables against `tests/test_content.gd` `INTENT_TYPES`, `Art.ART`, the
     LEGEND and `Content.STATUSES`, then badges, tile numbers, tethers, vent
-    marks, gum slots and the stoker tooltip line on live states
+    marks, gum slots and the stoker tooltip line on live states;
+    `_check_new_badges` / `_check_menu_layout` / `_check_daily_layout` the
+    career menu (NEW / WON badges, every label >= 1.5% vh) and the DAILY sheet
+    (lines, cards and its button row at every viewport), and
+    `_check_card_text` holds the DAILY cards' names and descriptions to
+    `CARD_MIN_VH` at the 0.105vh geometry
   - `godot --headless --path . --script tests/test_draw.gd` — the draw smoke
     test, and the ONLY test that runs the shell's `_draw` code: it hosts
     `shell/main.gd` in a `SubViewport` (`UPDATE_ALWAYS`) at the four named
     shapes 1080x2400 / 720x1600 / 1440x3200 / 1920x1080 plus every
     `CARD_VIEWPORTS` shape, and drives real frames through the menu and
-    settings, tutorial steps, an optimizer game through `_act` (300 actions on
+    settings, the career menu (every badge, the legacy notice) and the DAILY
+    sheet unplayed and finished, tutorial steps, an optimizer game through `_act` (300 actions on
     the first shape, 90 on the rest) with tooltips raised on every enemy, vent
     and the tender (each tip raised before the next action and required to
     name the enemy or the tender it was aimed at), a lethal state (vignette, outline, guard flash, escape
@@ -1114,6 +1125,83 @@ architecture below is designed to bend rather than block.
   `DAILY_PACKAGES` / `DAILY_MUTATORS` lists (frozen so a growing content table
   never moves an earlier date), and `daily_game_config(seed)` spells the same
   choice as a `Game.new` config.
+- Career layer (fun pass, part 1 of 3: goals, NEW badges, the daily entry).
+  Everything here is cosmetic - no permanent power - and the sim never reads
+  any of it. `Content.PACKAGE_INFO` (`{name, desc}` per `PACKAGES` key, linted
+  equal) is the packages' display table, read only by meta/ and shell/.
+  `meta/profile.gd`: `progress(row)` -> `{have, need, done, frac, key, text,
+  hint, parts}` per `GOAL_KEY_ORDER`, headline = the part with the smallest
+  fraction, binary keys (`won_with` / `wins_without`) 0/1 with a history hint;
+  `next_goals(n)` groups unowned milestones by `str(requires)` (the six "Shut
+  down the Furnace" rows are ONE goal), folds the next difficulty in (tier 0:
+  `tier:1` joins the one-win group; tier 1: `tier:2` the one-tier-win group;
+  past that a standalone "Win at difficulty N") and ranks by `[-frac,
+  GOAL_KEY_ORDER, need, table index]`; `record_run` sets `last_report.next =
+  next_goals(1)` with `delta` (have gained this run, matched on the goal's
+  first id). Static display helpers: `unlock_kind`, `unlock_name` (never a raw
+  id: `double_oil` -> "Slick Combine", `tier:2` -> "difficulty 2"),
+  `join_names`, `gate_of(lid, unlocked_packages)`. NEW badges: `unseen` (ids
+  in `last_report.unlocks` order, no duplicates; `record_daily` never adds),
+  `mark_seen(id) -> bool`, `unseen_of(kind)` (a loadout only once PLAYABLE, so
+  a gated Skyrunner badges nothing); the menu's cyclers call
+  `main._seen(id)`, which saves only on a change; `load_from` keeps an unseen
+  id only while the career owns it (`tier:N` only up to `unlocked_tier`;
+  `feat:` entries wait for the feats table). The menu (`_menu_rows` ->
+  `[label, tag, gold, badge, group]`, drawn from `_menu_layout(vw, vh)` at
+  0.80vw; `tests/test_shell.gd` `_check_menu_layout` holds every label >= 1.5%
+  vh at every `CARD_VIEWPORTS` shape) puts NEW on the DIFFICULTY / LOADOUT /
+  PACKAGE / MUTATOR rows and WON / WON D<n> on the selected loadout, shares
+  one line between TUTORIAL / SETTINGS / QUIT, and its footer is `runs ·
+  wins · best floor`. The daily is its own entry: `run_kind` ("career" |
+  "daily") replaced the global seed mode, every run starts through
+  `main._start_run(kind, keep_seed := -1)` (PLAY career, the DAILY sheet's
+  PLAY daily, R = same kind and seed, N = career on seed + 1; in the
+  tutorial, dead or not, R restarts the tutorial and N does nothing), the
+  run-save header carries `"kind"` (shell state: `RUN_SAVE_VERSION` and
+  `tests/import_run.gd` are unaffected) and a header without one is routed by
+  `_legacy_seed_mode`, the old cfg key: `_save_settings` carries it forward
+  while it is "daily" and `_start_run` drops it for good, since the save it
+  writes names its kind (the settings toggle and `set:seed` are gone). That
+  carry-forward, and the second cfg key `legacy_notice_seen`, are a recorded
+  DEVIATION from the brief's C26 ("`_save_settings` stops writing the key"):
+  dropping it on a settings change would re-file a resumed header-less daily
+  to the career. It is safe only while EVERY run start goes through
+  `_start_run` (the `SHELL_SEED` boot does too; `_load_run` keeps the key on
+  purpose, it is what routes that save) - a new start path (the over sheet's
+  buttons) must route there as well. The
+  menu says "the daily now has its own button" ONCE: opening DAILY persists
+  the dismissal (`legacy_notice_seen`) and starting a run drops the key.
+  While a daily try on the sheet's seed is still resumable (the live run, or
+  the run save's header when the tutorial displaced it: `_daily_try_live`),
+  the DAILY sheet's PLAY reads RESUME TODAY'S TRY and taps `daily_resume`
+  instead of overwriting the save and counting a second try; a tap on a
+  finished run's over sheet is NEW RUN, a career run (C25), never a daily try.
+  Settings load and save through `main.cfg_path` (default `CFG_PATH`), which
+  every shell `tests/test_shell.gd` builds (`_bare_shell`, `_iso_shell`),
+  `tests/test_draw.gd`'s shell and `tests/render_sheet.gd`'s point at a
+  scratch file, as they do the
+  profile and the run save; `tests/test_shell.gd` ends by checking the
+  player's real cfg, profile and run save are byte-identical. `Profile.
+  daily_seed_for(date)` is the one seed formula (`_daily_seed`,
+  `tests/daily_run.gd`, the streak). `note_daily_try(seed)` counts STARTED
+  attempts in `daily_tries` (at `_start_run`, saved at once; a retry is a
+  try), `record_daily` returns `{ranked, new_best, tries}`, keeps the first
+  finish in `daily_first` (the ranked result) and stores `score` only when the
+  summary has one, and `daily_streak(today_unix)` -> `{current, longest,
+  played_today, days}` re-derives the streak by re-hashing dates (no clock, no
+  storage). The DAILY sheet is `_daily_sheet(seed)` (data) laid out by
+  `_daily_layout` with its BACK / PLAY row through `_sheet_button_y`; Back and
+  ESC close it, every other key but ENTER is ignored. `_daily_info` caches
+  date, seed and streak, refreshed on boot, when the DAILY sheet opens, after
+  a try or a finished run, and recomputed by `_daily_now` when the UTC date
+  moves - never per frame; the run save's header is cached the same way
+  (`_save_head`, dropped by `_save_head_dirty` wherever the save is written
+  or removed). A fresh daily start overwrites the one run save, so while
+  another run is resumable (a career run, or an older daily) the sheet's note
+  turns red ("starting this abandons your unfinished run") and PLAY takes a
+  second tap (`_daily_armed`, cleared when the sheet opens). A profile from
+  before `daily_first` has its `daily_best` stand in as the ranked finish
+  (backfilled in `load_from` and in `record_daily`).
 - Balance targets and the measurement discipline live in `docs/BALANCE.md`;
   `tests/daily_run.gd` generates the date-seeded daily challenge through
   `Profile.daily_config`.
