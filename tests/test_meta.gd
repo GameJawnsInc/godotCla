@@ -234,6 +234,7 @@ func _init() -> void:
 	# 7) profile io that has to survive a phone: a file that is not a profile,
 	# a tier from a build with more tiers, and a save that is interrupted
 	_check_bad_profile_files()
+	_check_wrong_type_profile()
 	_check_tier_clamp()
 	_check_atomic_save()
 
@@ -863,6 +864,72 @@ func _check_bad_profile_files() -> void:
 	print("load_from survives a file that is not a profile: OK")
 
 
+## A profile that IS a Dictionary but whose values have the wrong JSON type -
+## a hand edit, a different build, a corrupt sync. `int(null)`, `int([1])`,
+## `bool(null)` and `String(null)` are runtime errors, and a runtime error
+## inside load_from returns null out of it; every numeric, bool and string
+## slot (the career scalars, history entries, casts, daily_best, records) is
+## therefore read through a type guard. For each bad value every slot carries
+## it, and the career that comes back must load, save, reload and record.
+func _check_wrong_type_profile() -> void:
+	var path := "user://test_profile_types.json"
+	var n := 0
+	for bad in [null, [1, 2], "x", {"a": 1}, true]:
+		var entry := {}
+		for k in ["won", "floor", "tier", "turns", "seed", "kit", "grafts", "loadout",
+				"death_cause", "bloom", "mutators", "packages", "score"]:
+			entry[k] = bad
+		var rec_e := {"v": bad, "run": bad, "loadout": bad, "tier": bad}
+		var data := {
+			"runs": bad, "wins": bad, "tier_wins": bad, "best_floor": bad, "unlocked_tier": bad,
+			"unlocked_packages": [bad, "mycology"], "unlocked_mutators": bad,
+			"unlocked_grafts": [bad], "unlocked_loadouts": [bad, "tidewarden"],
+			"casts_by_base": {"grow_spike": bad, "seed_bomb": 3},
+			"history": [entry, bad, {"kit": [bad, "solar_lance"], "won": true, "floor": 7}],
+			"daily_best": {"42": {"won": bad, "floor": bad, "turns": bad}, "43": bad},
+			"records": {
+				"best": {"kills": rec_e, "score": {"v": 300, "run": bad, "loadout": bad, "tier": bad}, "bloom_earned": bad},
+				"loadouts": {"tender": {"best_floor": bad, "best_score": bad, "best_tier_won": bad,
+					"runs": bad, "wins": bad}, "spiker": bad},
+				"score_v": bad,
+			},
+		}
+		var f := FileAccess.open(path, FileAccess.WRITE)
+		f.store_string(JSON.stringify(data))
+		f.close()
+		var p = Profile.load_from(path)
+		var label := "load_from with every slot = %s" % JSON.stringify(bad)
+		if p == null:
+			_fail("%s returned null - the shell cannot boot on that" % label)
+			continue
+		n += 1
+		_expect([p.runs, p.wins, p.tier_wins, p.best_floor, p.unlocked_tier], [0, 0, 0, 0, 0],
+			"%s: the scalars read their default" % label)
+		_expect(p.unlocked_packages, ["mycology"], "%s: the package list keeps its good id" % label)
+		_expect(p.unlocked_loadouts, ["tidewarden"], "%s: the loadout list keeps its good id" % label)
+		_expect(int(p.casts_by_base.get("seed_bomb", -1)), 3, "%s: a good cast count survives" % label)
+		var is_d: bool = bad is Dictionary  # a dict-shaped "bad" value is a (garbage) entry: it loads
+		_expect(p.history.size(), 3 if is_d else 2, "%s: dictionary history entries load, the bad one is dropped" % label)
+		_expect(p.history[0]["kit"], [], "%s: a bad kit loads as an empty one" % label)
+		_expect(p.history[-1]["kit"], ["solar_lance"], "%s: a kit keeps its good id" % label)
+		_expect(p.history[0]["death_cause"] is String and p.history[0]["floor"] is int, true,
+			"%s: the entry's strings and numbers have their types" % label)
+		_expect(p.daily_best.keys(), ["42", "43"] if is_d else ["42"], "%s: a dictionary daily loads, a bad one is dropped" % label)
+		_expect(p.records["best"].keys(), [],
+			"%s: a record without a real value is dropped, and a bad score_v drops the score" % label)
+		_expect(p.records["loadouts"].keys(), ["spiker", "tender"] if is_d else ["tender"], "%s: a dictionary loadout record loads" % label)
+		_expect(int(p.records["loadouts"]["tender"]["best_tier_won"]), -1,
+			"%s: a loadout record's numbers read their defaults" % label)
+		_expect(p.available_loadouts().has("tender"), true, "%s: the menu still fills" % label)
+		p.record_run({"won": false, "floor": 2, "tier": 0, "turns": 30, "seed": 5})
+		p.save(path)
+		var back = Profile.load_from(path)
+		_expect(back != null and back.runs == p.runs and back.history.size() == p.history.size(), true,
+			"%s: the career saves and reloads after a run" % label)
+	DirAccess.remove_absolute(path)
+	print("load_from survives wrong-typed values in every slot (%d / 5 shapes): OK" % n)
+
+
 ## unlocked_tier is an INDEX into Content.TIERS, and the one unlock load_from
 ## has no table to filter against. A profile written by a build with more
 ## tiers (or kept while TIERS shrank) used to come back verbatim; the shell
@@ -1158,6 +1225,39 @@ func _check_room_clear_units() -> void:
 	g.enemies.erase(victim)
 	c = st.feed(g, [{"t": "death", "who": victim["kind"], "id": victim["id"]}])
 	_expect(bool(c["room_cleared"]), false, "unit room clear: a kill elsewhere does not clear the tender's room")
+	# room R comes from the tender's PRE-step tile first, then the post-step
+	# tile: a corridor tile outside every room (grown by 1, as the fold grows it)
+	var corridor := Vector2i(-20, -20)
+	for y in range(g.map["h"]):
+		for x in range(g.map["w"]):
+			var t := Vector2i(x, y)
+			var in_room := false
+			for r in rooms:
+				if Rect2i(r).grow(1).has_point(t):
+					in_room = true
+					break
+			if not in_room:
+				corridor = t
+				break
+		if corridor != Vector2i(-20, -20):
+			break
+	# (a) the tender walks OUT into the corridor on the killing step
+	victim["pos"] = inside
+	g.enemies.append(victim)
+	g.player["pos"] = r0.get_center()
+	st.feed(g, [])
+	g.enemies.erase(victim)
+	g.player["pos"] = corridor
+	c = st.feed(g, [{"t": "death", "who": victim["kind"], "id": victim["id"]}])
+	_expect(bool(c["room_cleared"]), true, "unit room clear: the tender leaves the room on the killing step (pre-step tile)")
+	# (b) the tender steps IN from the corridor on the killing step
+	g.enemies.append(victim)
+	g.player["pos"] = corridor
+	st.feed(g, [])
+	g.enemies.erase(victim)
+	g.player["pos"] = r0.get_center()
+	c = st.feed(g, [{"t": "death", "who": victim["kind"], "id": victim["id"]}])
+	_expect(bool(c["room_cleared"]), true, "unit room clear: the tender enters the room on the killing step (post-step fallback)")
 
 
 func _check_score_formula() -> void:

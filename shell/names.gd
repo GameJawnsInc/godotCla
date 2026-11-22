@@ -44,6 +44,15 @@ static func boss_name(kind) -> String:
 	return n if n.begins_with("The ") else "The " + n
 
 
+## An enemy at the start of a sentence: "Drill Bot", but a boss reads
+## "The Furnace Core" (boss_name).
+static func subj(kind) -> String:
+	var k := String(kind) if kind != null else ""
+	if Content.ENEMIES.get(k, {}).get("traits", []).has("boss"):
+		return boss_name(k)
+	return ename(k)
+
+
 ## "a Drill Bot" / "an Oil Sludge"; a boss is "the Overseer" (there is only
 ## one); "" is "a machine"; an unknown kind is its id spaced out.
 static func a_name(kind) -> String:
@@ -113,3 +122,36 @@ static func src_long(src) -> String:
 			return head.replace("_", " ")
 		return "%s %s" % [src_name(by), head.replace("_", " ")]
 	return src_name(s)
+
+
+## A consumable item's display name, else its id spaced out.
+static func item_name(id) -> String:
+	var s := String(id) if id != null else ""
+	return String(Content.ITEMS.get(s, {}).get("name", s.replace("_", " ")))
+
+
+## A shrine purchase in words ("bloom_surge" -> "Bloom Surge", "heal" -> "a heal").
+static func shop_name(item: String, id: String) -> String:
+	match item:
+		"heal":
+			return "a heal"
+		"graft":
+			return String(Content.GRAFTS.get(id, {}).get("name", id.replace("_", " ")))
+		"ability":
+			return aname(id)
+		"item":
+			return item_name(id)
+	return id.replace("_", " ") if id != "" else item
+
+
+## Display name for a run choice: loadouts and mutators carry one in Content,
+## a package is just its id capitalized, and "" is the opted-out row.
+static func choice_name(kind: String, id: String) -> String:
+	if id == "":
+		return "none"
+	match kind:
+		"loadout":
+			return String(Content.LOADOUTS[id]["name"]) if Content.LOADOUTS.has(id) else id
+		"mutator":
+			return String(Content.MUTATORS[id]["name"]) if Content.MUTATORS.has(id) else id
+	return id.capitalize()

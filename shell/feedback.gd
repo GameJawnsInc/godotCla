@@ -68,15 +68,19 @@ const STATUS_WORDS := {  # status -> [callout, verb, past, colour]
 	"spore": ["SPORED", "spores", "spored", Color("c9a0dc")],
 }
 const HOOK_LANDING_OPS := ["damage_at", "status_at", "terrain_at"]
-## mirrors sim/game.gd _damage_enemy + _compute_boss_intent: change both together
+## mirrors sim/game.gd _damage_enemy + _compute_boss_intent: change both together.
+## [banner title, banner line]; the log composes boss_line(): "<Boss> - <line>",
+## which tests/test_shell.gd holds to LOG_LINE_MAX for every row.
 const BOSS_PHASE_LINES := {
-	"furnace_core": {2: ["THE FURNACE STOKES", "a coal golem joins · it now ignites all oil"],
-		3: ["THE CORE CLOGS ITS VENTS", "goo shields it: cleanse or grow beside it"]},
+	"furnace_core": {2: ["THE FURNACE STOKES", "a coal golem joins · now ignites all oil"],
+		3: ["THE CORE CLOGS ITS VENTS", "goo shield: cleanse or grow beside it"]},
 	"overseer": {2: ["THE OVERSEER QUICKENS", "advances 3 · quakes all around it up close"],
-		3: ["THE OVERSEER CLOGS ITS VENTS", "goo shields it: cleanse or grow beside it"]},
+		3: ["THE OVERSEER CLOGS ITS VENTS", "goo shield: cleanse or grow beside it"]},
 	"the_dredge": {2: ["THE DREDGE HUNGERS", "drags you twice · dredges growth within 3"],
-		3: ["THE DREDGE CLOGS ITS VENTS", "goo shields it: cleanse or grow beside it"]},
+		3: ["THE DREDGE CLOGS ITS VENTS", "goo shield: cleanse or grow beside it"]},
 }
+## the longest line the log may hold (tests/test_shell.gd 20 pins it)
+const LOG_LINE_MAX := 60
 const SOUND_OF := {   # event type -> sound id ("damage"/"move" only when who == "player")
 	"player_death": "death", "boss_phase": "boss", "damage": "hurt", "death": "kill",
 	"strike": "hit", "ability": "cast", "cleanse": "sparkle", "heal": "heal",
@@ -157,13 +161,6 @@ static func ev_pos(ev: Dictionary, pre: Dictionary, game) -> Vector2:
 
 static func _ppos(game) -> Vector2:
 	return Vector2(game.player["pos"])
-
-
-## A sentence-starting enemy name: "Drill Bot", but "The Furnace Core".
-static func _subj(kind: String) -> String:
-	if Content.ENEMIES.get(kind, {}).get("traits", []).has("boss"):
-		return Names.boss_name(kind)
-	return Names.ename(kind)
 
 
 static func _is_boss(kind: String) -> bool:
@@ -308,10 +305,26 @@ static func _then_claimed(evs: Array, i: int, cl: Dictionary) -> Array:
 	if not (cl.get(i) is int):
 		return out
 	var k := i - 1
-	while k >= 0 and String(cl.get(k, "")) == "then" and String(evs[k].get("t", "")) == "status":
+	# a claim value is "hook"/"then" for a status and an INT for a hook or a
+	# then-rider index, so test the type before comparing (String(int) throws)
+	while k >= 0 and cl.get(k) is String and cl[k] == "then" and String(evs[k].get("t", "")) == "status":
 		out.push_front(k)
 		k -= 1
 	return out
+
+
+## The boss phase log line: "The Furnace Core - a coal golem joins · ...".
+static func boss_line(kind: String, phase: int) -> String:
+	var pl: Array = BOSS_PHASE_LINES.get(kind, {}).get(phase, [])
+	return "%s - %s" % [Names.boss_name(kind), String(pl[1])] if pl.size() > 1 else "BOSS PHASE %d" % phase
+
+
+## The kind a `death` event in this step names for enemy `id`, else "".
+static func _death_kind(evs: Array, id) -> String:
+	for ev in evs:
+		if String(ev.get("t", "")) == "death" and _same(ev.get("id"), id):
+			return String(ev.get("who", ""))
+	return ""
 
 
 static func _next_damage(evs: Array, i: int, aid: String) -> int:
@@ -632,24 +645,6 @@ static func banners(evs: Array, _pre: Dictionary, game, ctx: Dictionary) -> Arra
 
 # --- the log ------------------------------------------------------------------
 
-## Purchase ids in words ("bloom_surge" -> "Bloom Surge").
-static func shop_name(item: String, id: String) -> String:
-	match item:
-		"heal":
-			return "a heal"
-		"graft":
-			return String(Content.GRAFTS.get(id, {}).get("name", id.replace("_", " ")))
-		"ability":
-			return Names.aname(id)
-		"item":
-			return String(Content.ITEMS.get(id, {}).get("name", id.replace("_", " ")))
-	return id.replace("_", " ") if id != "" else item
-
-
-static func _item_name(id: String) -> String:
-	return String(Content.ITEMS.get(id, {}).get("name", id.replace("_", " ")))
-
-
 ## One event's line and category, ignoring claims and aggregation (those are
 ## log_entries' job). "" = no line.
 static func _line(ev: Dictionary, pre: Dictionary, game, ctx: Dictionary, evs: Array, i: int) -> Array:
@@ -661,13 +656,13 @@ static func _line(ev: Dictionary, pre: Dictionary, game, ctx: Dictionary, evs: A
 			var src := String(ev.get("src", ""))
 			if String(ev.get("who", "")) == "player":
 				return ["You take %d dmg (%s)" % [int(ev.get("amt", 0)), Names.src_name(src if src != "" else "?")], "hurt"]
-			s = "%s takes %d" % [_subj(String(ev.get("who", ""))), int(ev.get("amt", 0))]
+			s = "%s takes %d" % [Names.subj(String(ev.get("who", ""))), int(ev.get("amt", 0))]
 			if src.begins_with("collision:"):
 				return [s + " (collision)", "combo"]
 			if src != "" and src != "strike":
 				s += " (%s)" % Names.src_name(src)
 		"death":
-			s = "%s destroyed" % _subj(String(ev.get("who", "")))
+			s = "%s destroyed" % Names.subj(String(ev.get("who", "")))
 		"player_death":
 			return ["You die (%s)" % Names.src_name(String(ev.get("cause", "?"))), "hurt"]
 		"heal":
@@ -684,11 +679,11 @@ static func _line(ev: Dictionary, pre: Dictionary, game, ctx: Dictionary, evs: A
 		"room_bloom":
 			s = "Room BLOOMS - +%d bloom and a supply pod" % int(ev.get("bonus", 2))
 		"item_pickup":
-			s = "Picked up %s" % _item_name(String(ev.get("id", "")))
+			s = "Picked up %s" % Names.item_name(String(ev.get("id", "")))
 		"item_use":
 			var irow: Dictionary = Content.ITEMS.get(String(ev.get("id", "")), {})
-			s = "%s used - %s" % [_item_name(String(ev.get("id", ""))), String(irow.get("desc", ""))] if irow.has("desc") \
-				else "%s used" % _item_name(String(ev.get("id", "")))
+			s = "%s used - %s" % [Names.item_name(String(ev.get("id", ""))), String(irow.get("desc", ""))] if irow.has("desc") \
+				else "%s used" % Names.item_name(String(ev.get("id", "")))
 		"satchel_full":
 			s = "Satchel full (2 slots)"
 		"stairs_dormant":
@@ -704,7 +699,7 @@ static func _line(ev: Dictionary, pre: Dictionary, game, ctx: Dictionary, evs: A
 		"assimilate":
 			s = "The machines WELD into a hulk"
 		"upcycle":
-			s = "Upcycled: %s" % _item_name(String(ev.get("id", "")))
+			s = "Upcycled: %s" % Names.item_name(String(ev.get("id", "")))
 		"upcycle_ability":
 			s = "Forged %s" % Names.aname(ev.get("id", ""))
 		"upcycle_scrap":
@@ -717,11 +712,11 @@ static func _line(ev: Dictionary, pre: Dictionary, game, ctx: Dictionary, evs: A
 			return ["Tar gums up %s" % Names.aname(ev.get("id", "")), "hurt"]
 		"screened":
 			var it := String(ev.get("intent", ""))
-			s = "%s's %s is lost in the smoke" % [_subj(kind_of(ev.get("id"), pre, game)), String(SCREEN_WORDS.get(it, it))]
+			s = "%s's %s is lost in the smoke" % [Names.subj(kind_of(ev.get("id"), pre, game)), String(SCREEN_WORDS.get(it, it))]
 		"drain":
-			return ["%s drains %d banked charge" % [_subj(kind_of(ev.get("id"), pre, game)), int(ev.get("amt", 0))], "hurt"]
+			return ["%s drains %d banked charge" % [Names.subj(kind_of(ev.get("id"), pre, game)), int(ev.get("amt", 0))], "hurt"]
 		"drag":
-			return ["%s drags you" % _subj(kind_of(ev.get("id"), pre, game)), "hurt"]
+			return ["%s drags you" % Names.subj(kind_of(ev.get("id"), pre, game)), "hurt"]
 		"stoke":
 			s = "Smokestack thickens the smog"
 		"boss_phase":
@@ -731,21 +726,23 @@ static func _line(ev: Dictionary, pre: Dictionary, game, ctx: Dictionary, evs: A
 				if _is_boss(String(e["kind"])):
 					bk = String(e["kind"])
 					break
-			var pl: Array = BOSS_PHASE_LINES.get(bk, {}).get(ph, [])
-			s = "%s: %s" % [Names.boss_name(bk), String(pl[1])] if pl.size() > 1 else "BOSS PHASE %d" % ph
+			s = boss_line(bk, ph)
 			cat = "boss"
 		"vents_clogged":
 			s = "The boss clogs the vents with goo"
 		"core_shielded":
-			return ["%s is shielded: cleanse or grow beside it" % _subj(kind_of(ev.get("id"), pre, game)), "boss"]
+			return ["%s is shielded: cleanse or grow beside it" % Names.subj(kind_of(ev.get("id"), pre, game)), "boss"]
 		"dredge":
 			s = "The Dredge eats %d growth and heals" % int(ev.get("tiles", 0))
 		"summon":
-			s = "%s summons %s" % [_subj(kind_of(ev.get("id"), pre, game)), Names.a_name(kind_of(ev.get("child"), pre, game))]
+			var ck := kind_of(ev.get("child"), pre, game)
+			if ck == "":
+				ck = _death_kind(evs, ev.get("child"))  # spawned and destroyed this step
+			s = "%s summons %s" % [Names.subj(kind_of(ev.get("id"), pre, game)), Names.a_name(ck)]
 		"split":
-			s = "%s splits" % _subj(kind_of(ev.get("id"), pre, game))
+			s = "%s splits" % Names.subj(kind_of(ev.get("id"), pre, game))
 		"ooze":
-			s = "%s oozes oil" % _subj(kind_of(ev.get("id"), pre, game))
+			s = "%s oozes oil" % Names.subj(kind_of(ev.get("id"), pre, game))
 		"ignite_all":
 			s = "ALL OIL IGNITES"
 		"flood":
@@ -753,9 +750,9 @@ static func _line(ev: Dictionary, pre: Dictionary, game, ctx: Dictionary, evs: A
 		"smoke_burst":
 			s = "The golem bursts into smoke"
 		"buy":
-			var what := shop_name(String(ev.get("item", "")), String(ev.get("id", "")))
+			var what := Names.shop_name(String(ev.get("item", "")), String(ev.get("id", "")))
 			if String(ev.get("discarded", "")) != "":
-				s = "Bought %s (discarded %s)" % [what, shop_name("graft", String(ev["discarded"]))]
+				s = "Bought %s (discarded %s)" % [what, Names.shop_name("graft", String(ev["discarded"]))]
 			else:
 				s = "Bought %s" % what
 		"reroll":
@@ -777,18 +774,18 @@ static func _line(ev: Dictionary, pre: Dictionary, game, ctx: Dictionary, evs: A
 		"undim":
 			s = "Air clears - regen recovers"
 		"immune":
-			s = "%s shrugs it off" % _subj(kind_of(ev.get("id"), pre, game))
+			s = "%s shrugs it off" % Names.subj(kind_of(ev.get("id"), pre, game))
 		"stunned":
-			s = "%s is stunned" % _subj(kind_of(ev.get("id"), pre, game))
+			s = "%s is stunned" % Names.subj(kind_of(ev.get("id"), pre, game))
 		"staggered":
-			s = "%s staggers - wind-up lost" % _subj(kind_of(ev.get("id"), pre, game))
+			s = "%s staggers - wind-up lost" % Names.subj(kind_of(ev.get("id"), pre, game))
 		"rooted":
-			s = "%s is rooted in place" % _subj(kind_of(ev.get("id"), pre, game))
+			s = "%s is rooted in place" % Names.subj(kind_of(ev.get("id"), pre, game))
 		"resisted":
 			var stn := String(ev.get("status", "root"))
-			s = "%s shakes off the %s (cooldown)" % [_subj(kind_of(ev.get("id"), pre, game)), String(Names.SRC_WORDS.get(stn, stn))]
+			s = "%s shakes off the %s (cooldown)" % [Names.subj(kind_of(ev.get("id"), pre, game)), String(Names.SRC_WORDS.get(stn, stn))]
 		"status":
-			var nm := _subj(kind_of(ev.get("id"), pre, game))
+			var nm := Names.subj(kind_of(ev.get("id"), pre, game))
 			var st := String(ev.get("status", ""))
 			var turns := int(ev.get("turns", 0))
 			if st == "spore":

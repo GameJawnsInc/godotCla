@@ -126,16 +126,21 @@ static func sky_chips(sky: Dictionary) -> Array:
 	return out
 
 
-## A damage source in words - the SHORT form the log prints, so the INCOMING
-## line and the log can never name one source two ways (shell/names.gd).
-static func src_name(src: String) -> String:
-	return Names.src_name(src)
+## Does this floor have stairs, and are they awake? A real stairs tile (the
+## boss arena's is (-1, -1)) and the quota met - green_need can be reclamped
+## to 0 on an ordinary floor, where the stairs ARE awake, so the quota alone
+## cannot tell the boss floor apart.
+static func stairs_awake(snap: Dictionary) -> bool:
+	var st = snap.get("map", {}).get("stairs", Vector2i(-1, -1))
+	if not (st is Vector2i) or st == Vector2i(-1, -1):
+		return false
+	return int(snap.get("greened", 0)) >= int(snap.get("green_need", 0))
 
 
 ## The danger-owned context line, or {} when danger has nothing to say:
 ## {text, col, pulse}. Priority inside: incoming damage, then the choke
-## countdown, then the vents.
-static func context_line(d: Dictionary, greened: int, green_need: int) -> Dictionary:
+## countdown, then the vents. `awake` is stairs_awake(snap).
+static func context_line(d: Dictionary, awake: bool) -> Dictionary:
 	if not bool(d.get("ok", false)):
 		return {}
 	var fc: Dictionary = d["fc"]
@@ -149,8 +154,8 @@ static func context_line(d: Dictionary, greened: int, green_need: int) -> Dictio
 	var sky: Dictionary = d["sky"]
 	var c := int(sky.get("choke_in", -1))
 	if not bool(sky.get("choking", false)) and c >= 1 and c <= SKY_AMBER:
-		# the boss floor has no stairs (green_need 0): never offer a descent there
-		var how := "descend to escape it" if green_need > 0 and greened >= green_need else "cleansing thins it"
+		# the boss floor has no stairs: stairs_awake says so, never green_need
+		var how := "descend to escape it" if awake else "cleansing thins it"
 		if c == 1:
 			return {"text": "Smog chokes NEXT TURN - %s" % how, "col": COL_RED, "pulse": true}
 		return {"text": "Smog chokes in %d - %s" % [c, how], "col": COL_AMBER, "pulse": false}
@@ -170,7 +175,7 @@ static func _src_suffix(fc: Dictionary) -> String:
 		return String(a) < String(b))
 	var names: Array = []
 	for i in mini(2, keys.size()):
-		names.append(src_name(String(keys[i])))
+		names.append(Names.src_name(String(keys[i])))  # the log's SHORT form
 	var s := "  ·  " + ", ".join(names)
 	if keys.size() > 2:
 		s += " +%d" % (keys.size() - 2)
@@ -179,6 +184,10 @@ static func _src_suffix(fc: Dictionary) -> String:
 
 ## One legal action, then the end turn, survives - by kind, for the guard's
 ## words and the satchel pulse. Only called when the forecast is lethal.
+## `strike` is a deliberate addition to the spec's {move, item, descend}
+## shape. An action that WINS the run (c.over and c.won: a strike or an item
+## that kills the boss) is an escape of its kind - the best one there is; an
+## action that ends the run any other way is not.
 static func escapes(game) -> Dictionary:
 	var out := {"move": false, "strike": false, "item": [], "descend": false}
 	for a in game.legal_actions():
@@ -187,13 +196,13 @@ static func escapes(game) -> Dictionary:
 			continue
 		var c = game.clone()
 		c.step(a)
-		if c.over:
+		if c.over and not c.won:
 			continue
-		if c.phase != "play":
+		if not c.over and c.phase != "play":
 			if t == "descend":
 				out["descend"] = true
 			continue
-		if bool(c.end_turn_forecast()["dies"]):
+		if not c.over and bool(c.end_turn_forecast()["dies"]):
 			continue
 		if t == "use_item":
 			out["item"].append(int(a["slot"]))
@@ -326,25 +335,42 @@ static func gum_slots(snap: Dictionary, tele: Dictionary) -> Array:
 	return out
 
 
+## "No choke countdown announced yet on this floor" for cues' `announced`.
+const NO_CUE := 99
+
+
 ## Danger transitions worth a sound or a banner, from the state before a
-## step to the state after it: {sounds: [ids], banner: [line, line] or []}.
-static func cues(prev: Dictionary, cur: Dictionary) -> Dictionary:
-	var out := {"sounds": [], "banner": []}
+## step to the state after it: {sounds: [ids], banner: [line, line] or [],
+## announced: int}. The choke cues have HYSTERESIS: `announced` is the lowest
+## choke countdown already announced on this floor (NO_CUE = none; the shell
+## keeps it and resets it on a new game, the tutorial and a run load, and a
+## floor change resets it here), and the window tick (entering 1..SKY_AMBER)
+## and the banner (reaching 1) fire only when a NEW minimum is reached - so a
+## cleanse that pushes the choke back and the end turn that brings it down
+## again do not replay the same warning turn after turn. A countdown already
+## standing before the step counts as announced (a resumed run, a reset).
+static func cues(prev: Dictionary, cur: Dictionary, announced: int = NO_CUE) -> Dictionary:
+	var out := {"sounds": [], "banner": [], "announced": announced}
 	if not bool(cur.get("ok", false)):
 		return out
 	var same_floor: bool = bool(prev.get("ok", false)) and int(prev.get("floor", -1)) == int(cur.get("floor", -2))
 	var p: Dictionary = prev if same_floor else {}
+	var ann := announced if same_floor else NO_CUE
 	if bool(cur.get("lethal", false)) and not bool(p.get("lethal", false)):
 		out["sounds"].append("warn")
 	var cs: Dictionary = cur.get("sky", {})
 	var ps: Dictionary = p.get("sky", {})
 	var c_now := -1 if bool(cs.get("choking", false)) else int(cs.get("choke_in", -1))
 	var c_prev := -1 if bool(ps.get("choking", false)) else int(ps.get("choke_in", -1))
-	if c_now == 1 and c_prev != 1:
-		out["banner"] = ["THE SMOG THICKENS", "it chokes from next turn"]
-		if not out["sounds"].has("warn"):
+	if c_prev >= 1 and c_prev <= SKY_AMBER:
+		ann = mini(ann, c_prev)
+	if c_now >= 1 and c_now <= SKY_AMBER and c_now < ann:
+		if c_now == 1:
+			out["banner"] = ["THE SMOG THICKENS", "it chokes from next turn"]
+			if not out["sounds"].has("warn"):
+				out["sounds"].append("warn")
+		elif ann > SKY_AMBER and not out["sounds"].has("warn"):
 			out["sounds"].append("warn")
-	elif c_now >= 1 and c_now <= SKY_AMBER and not (c_prev >= 1 and c_prev <= SKY_AMBER):
-		if not out["sounds"].has("warn"):
-			out["sounds"].append("warn")
+		ann = c_now
+	out["announced"] = ann
 	return out

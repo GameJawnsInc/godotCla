@@ -146,15 +146,19 @@ architecture below is designed to bend rather than block.
     room clear, floors unhurt), the score, `near_miss` per rule, `highlights`
     order, career records and score bests (report rule, fastest win, loadout
     rows, the `score_v` reset, `bests_snapshot` before the record, load
-    filters); its career loop is the shell's exact merge and pins every
-    `Content.RUN_STAT_KEYS` key as an int in every summary
+    filters), `_check_wrong_type_profile` (null / array / string / dict /
+    bool in every numeric, bool and string slot of a stored profile: it loads,
+    saves, reloads and records); its career loop is the shell's exact merge
+    and pins every `Content.RUN_STAT_KEYS` key as an int in every summary
   - `godot --headless --path . --script tests/test_shell.gd` — shell smoke test
     (the shell reads the sim, so a sim change can break it), plus the two
     player-facing gates: `_check_card_text` holds every shipped description
     to a readable size on the tightest shrine card, and `_check_cleanse_hint`
     holds CLEANSE's refusal to the truth; `_check_resume_stats` holds a
     resumed run's stats fold equal to an uninterrupted one, and every
-    `_bare_shell` keeps its career in a scratch `profile_path`;
+    `_bare_shell` keeps its career in a scratch `profile_path` and its run
+    save in a scratch `run_save_path` (the shell's `_ready` restores, and may
+    delete, a save it finds there);
     `_check_names` holds the one names module (short and long source names,
     articles, the floor title card) and `_check_feedback` the feedback layer:
     callouts, the cleanse gain, kill weight, the boss shield, log names / xN,
@@ -163,16 +167,34 @@ architecture below is designed to bend rather than block.
     `_check_danger_readouts` the danger layer's verdicts and words (the HP
     rule table, the SKIES chips and bar alert, every context line and guard
     flash, the cues) plus its two gates - the FIT gate (the worst INCOMING line,
-    built from the two longest `Content.ENEMIES` names, and the four guard
-    flashes draw at >= `CARD_MIN_VH` in the context line's box at every
-    `CARD_VIEWPORTS` shape) and the LAYOUT gate (`_sky_row_layout` with chips
+    built from the two longest `Content.ENEMIES` names, the five guard
+    flashes and the NEXT TURN choke line draw at >= `CARD_MIN_VH` in the
+    context line's box at every `CARD_VIEWPORTS` shape) and the LAYOUT gate (`_sky_row_layout` with chips
     60/12/9: numbers >= `CARD_MIN_VH`, chips end by 0.55vw, the config line
     keeps >= 0.2vw, icon tops clear the bar) - and the cue reaching the banner
     queue at danger priority with boss > warn > hurt; `_check_lethal_guard`
     the guard through the real input paths; `_check_intent_badges` the badge
     tables against `tests/test_content.gd` `INTENT_TYPES`, `Art.ART`, the
     LEGEND and `Content.STATUSES`, then badges, tile numbers, tethers, vent
-    marks and gum slots on live states
+    marks, gum slots and the stoker tooltip line on live states
+  - `godot --headless --path . --script tests/test_draw.gd` — the draw smoke
+    test, and the ONLY test that runs the shell's `_draw` code: it hosts
+    `shell/main.gd` in a `SubViewport` (`UPDATE_ALWAYS`) at the four named
+    shapes 1080x2400 / 720x1600 / 1440x3200 / 1920x1080 plus every
+    `CARD_VIEWPORTS` shape, and drives real frames through the menu and
+    settings, tutorial steps, an optimizer game through `_act` (300 actions on
+    the first shape, 90 on the rest) with tooltips raised on every enemy, vent
+    and the tender (each tip raised before the next action and required to
+    name the enemy or the tender it was aimed at), a lethal state (vignette, outline, guard flash, escape
+    glow), a danger board (tether, gum slot, SKIES chips, vent countdown), a
+    kill (ghost, streak flame), the boss floor (core shield ring up and down,
+    a phase banner), the shrine / forge / draft / drop sheets, the log, help
+    pages and intro, and both game-over screens, each phase asserting the
+    state its draw code needs. The gate is an `OS.add_logger` `Logger` that
+    counts every engine error, `push_error` and SCRIPT ERROR: any one exits 1.
+    It writes nothing real (scratch `profile_path`, `run_save_path` and
+    `runs_dir`, all set before `_ready`; `SHELL_SEED` cleared, run save
+    closed, `_game_is_run` false, audio muted)
 - Bots live in one registry, `bots/roster.gd` (`Roster.names()/make(name, seed)`);
   every runner resolves persona names through it, and an unknown name fails
   loudly. `deeproot_rollout` is deeproot with rollout drafting (a separate
@@ -1015,7 +1037,13 @@ architecture below is designed to bend rather than block.
   `record_run` into `_over_prev` and is the only source of any "was" value.
   History entries gained `loadout, death_cause, bloom, mutators, packages,
   score`, and `load_from` filters record keys and loadouts against Content and
-  `int()`s every number. The shell's `profile_path` (default `PROFILE_PATH`)
+  reads every number, bool and string through a type guard (`_as_int`,
+  `_as_bool`, `_as_str`: `int(null)`, `bool(null)` and `String(null)` are
+  runtime errors that would return null out of `load_from`), for the old
+  scalars as well as the fun-pass fields; `tests/test_meta.gd` feeds it a
+  profile with null / array / string / dict / bool in every slot. The daily
+  board's key is `Profile.daily_key(seed)`, the one spelling `record_daily`
+  writes and the game-over site reads (the game's own seed, never `seed_v`). The shell's `profile_path` (default `PROFILE_PATH`)
   is where the career is read and saved; tests set it before `_ready`. No
   visible UI reads any of this yet.
 - Run summary and effective casts (C4): `Game.effective_uses` (base id -> int)
@@ -1455,8 +1483,12 @@ architecture below is designed to bend rather than block.
   from `shell/names.gd`, the ONE names module (`ename`, `the_name` "the
   Overseer", `boss_name` "The Furnace Core", `a_name`, `aname`,
   `source_name`, `src_name` SHORT - cut at ":", so 8c's "(fire)" holds -
-  and `src_long` "Solar Lance fire" / "Water Jet slam"); no other file
-  defines a name or article helper. Callouts name every payoff over its tile
+  and `src_long` "Solar Lance fire" / "Water Jet slam", plus `subj` (a
+  sentence-start enemy: "Drill Bot" / "The Furnace Core"), `item_name`,
+  `shop_name` and the menu's `choice_name`); no other file defines a name or
+  article helper (main's old `_ename` / `_choice_name`, feedback's `_subj` /
+  `shop_name` / `_item_name` and danger's `src_name` delegate all moved here
+  or went). Callouts name every payoff over its tile
   (CINDER GRIP, GROWTH +1 dmg, BURNING +1 dmg, ROOTED!, SURGE +1 dmg,
   COLLISION, SHIELDED, BLOCKED n, IGNITE, TITHE -n, BOUNTY +4, DOUBLE KILL,
   ROOM CLEAR, STREAK n), deduped per text and tile, sorted by priority, every
@@ -1485,9 +1517,15 @@ architecture below is designed to bend rather than block.
   a death alone, then the combo chime climbing `CHIME_STEPS` per combo
   callout (delayed through `_sfx_q`); `shell/audio.gd` has 8 players, a
   deterministic per-id pitch `jitter` cycle and six new sounds appended AFTER
-  the old ones (only `_noise` draws its rng). The boss explains itself:
+  the old ones (the bank's `_noise` calls are `_rng`'s only consumer; the
+  music's noise bed draws from its own `_music_rng`, re-seeded per render,
+  so a sound appended to the bank never shifts it). The boss explains itself:
   `BOSS_PHASE_LINES` words each phase (it MIRRORS `_damage_enemy` and
-  `_compute_boss_intent`, whose comments say so - change both together), and
+  `_compute_boss_intent`, whose comments say so - change both together; the
+  log composes `Feedback.boss_line` "<Boss> - <line>", held to
+  `LOG_LINE_MAX` (60) for every row by a static check in `tests/test_shell.gd`),
+  a summon names a child destroyed in the same step from that step's own
+  `death` event, and
   the read-only `Game.core_shield_up(id)` draws a cyan ring on the map and
   SHIELDED on the boss bar before a hit is wasted. `_floor_card_lines(snap)`
   is the floor title card: the boss floor reads "defeat the Overseer", never
@@ -1503,9 +1541,19 @@ architecture below is designed to bend rather than block.
   `badges` (`BADGE` / `NO_BADGE` / `BLOCK_ICON`: every `INTENT_TYPES` entry
   has a decision, and a blocked intent wears its block glyph and paints no
   red tile), `tile_numbers`, `tethers`, `marks`, `vent_marks`, `gum_slots`,
-  the guard's words and `cues(prev, cur)` (a `warn` when lethal switches on or
-  the choke enters 1..5; at choke 1 the banner THE SMOG THICKENS, pushed at
-  `BANNER_PRIO.danger`, its tick passed to `_feedback` as an extra sound).
+  the guard's words and `cues(prev, cur, announced)` (a `warn` when lethal
+  switches on or the choke enters 1..5; at choke 1 the banner THE SMOG
+  THICKENS, pushed at `BANNER_PRIO.danger`, its tick passed to `_feedback` as
+  an extra sound). The choke cues have HYSTERESIS: the shell keeps
+  `_choke_cued`, the lowest countdown already announced on the floor
+  (`Danger.NO_CUE` = none; reset by `_reset_danger`, i.e. a new game, the
+  tutorial and a run load, and by `cues` itself on a floor change), and a cue
+  fires only on a NEW minimum - so a cleanse relief and the end turn that
+  brings the countdown back do not replay the banner or the tick. `escapes`
+  carries `strike` beside the spec's `{move, item, descend}` (a deliberate
+  addition, with its own guard flash) and counts a WINNING action (`c.over
+  and c.won`: the boss-killing strike, a winning item) as an escape of its
+  kind.
   The shell caches `compute` per state change (`_danger_state`, keyed on
   `_danger_rev` - bumped after every step and on every new or restored game -
   and the game instance), never per frame: the forecast steps a clone and the
@@ -1519,9 +1567,13 @@ architecture below is designed to bend rather than block.
   whose ONE priority chain is `_context_msg(snap)`: mode prompts, flash (red
   when `_flash_red`), `Danger.context_line` outside the tutorial ("! INCOMING
   3 - LETHAL  ·  Drill Bot, smog", the choke countdown, the vents), then the
-  floor hints. The choke countdown says "descend to escape it" only when the
-  floor HAS stairs that are awake (`green_need > 0`, so never on the boss
-  floor) and "cleansing thins it" otherwise. A drag's tether is grey and
+  floor hints. The choke countdown says "descend to escape it" only when
+  `Danger.stairs_awake(snap)` - a real stairs tile (the boss arena's is
+  (-1, -1)) and `greened >= green_need`, so a quota RECLAMPED to 0 on an
+  ordinary floor still offers the descent - and "cleansing thins it"
+  otherwise. A stoker's tooltip line keys on the row's `stokes` trait (an idle
+  turn keeps it) and, with more than one stoker alive, words the `sky` vs
+  `sky_calm` gap as shared ("stokers bring the choke N turns sooner"). A drag's tether is grey and
   RINGLESS when blocked (`tethers` nulls `land`, since the sim fills `path`
   before it applies the block). The lethal guard (`_guard_lets_end`) asks only before an
   IMPLICIT end turn - a D-pad press or cleanse tap that ran out of charge,

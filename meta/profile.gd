@@ -142,7 +142,7 @@ func _fold_records(summary: Dictionary, entry: Dictionary) -> Array:
 	# a summary without score_v (the legacy shapes) carries no score either,
 	# so it never moves the version: only a scored summary can reset bests
 	if summary.has("score_v"):
-		var sv := int(summary["score_v"])
+		var sv := _as_int(summary["score_v"], 0)
 		if sv != int(records["score_v"]):
 			_drop_score_bests()
 			records["score_v"] = sv
@@ -164,7 +164,7 @@ func _fold_records(summary: Dictionary, entry: Dictionary) -> Array:
 	var best: Dictionary = records["best"]
 	var beaten := {}
 	for key in _record_max_keys():
-		var v := int(summary.get(key, 0))
+		var v := _as_int(summary.get(key), 0)
 		if v <= 0:
 			continue
 		if best.has(key) and v <= int(best[key]["v"]):
@@ -207,11 +207,11 @@ func bests_snapshot(loadout: String) -> Dictionary:
 
 ## Daily challenge result: best-per-seed only, never career progress.
 func record_daily(summary: Dictionary) -> void:
-	var key := str(int(summary.get("seed", 0)))
+	var key := daily_key(summary.get("seed"))
 	var rec := {
-		"won": bool(summary.get("won", false)),
-		"floor": int(summary.get("floor", 0)),
-		"turns": int(summary.get("turns", 0)),
+		"won": _as_bool(summary.get("won"), false),
+		"floor": _as_int(summary.get("floor"), 0),
+		"turns": _as_int(summary.get("turns"), 0),
 	}
 	if not daily_best.has(key) or _daily_better(rec, daily_best[key]):
 		daily_best[key] = rec
@@ -230,11 +230,11 @@ static func _daily_better(a: Dictionary, b: Dictionary) -> bool:
 ## lists the history predicates read. Unknown ids are dropped on the way in.
 func _compact(summary: Dictionary) -> Dictionary:
 	return {
-		"won": bool(summary.get("won", false)),
-		"floor": int(summary.get("floor", 0)),
-		"tier": int(summary.get("tier", 0)),
-		"turns": int(summary.get("turns", 0)),
-		"seed": int(summary.get("seed", 0)),
+		"won": _as_bool(summary.get("won"), false),
+		"floor": _as_int(summary.get("floor"), 0),
+		"tier": _as_int(summary.get("tier"), 0),
+		"turns": _as_int(summary.get("turns"), 0),
+		"seed": _as_int(summary.get("seed"), 0),
 		"kit": _known_ability_ids(summary.get("kit", [])),
 		"grafts": _known_ids(summary.get("grafts", []), Content.GRAFTS),
 		# a legacy {won, floor, tier} record carries no kit: it must never
@@ -243,11 +243,11 @@ func _compact(summary: Dictionary) -> Dictionary:
 		# fun pass (appended so the record path and load_from keep one key
 		# order): what the run was and what it scored
 		"loadout": _known_loadout(summary.get("loadout", "")),
-		"death_cause": String(summary.get("death_cause", "")),
-		"bloom": int(summary.get("bloom", 0)),
+		"death_cause": _as_str(summary.get("death_cause")),
+		"bloom": _as_int(summary.get("bloom"), 0),
 		"mutators": _known_ids(summary.get("mutators", []), Content.MUTATORS),
 		"packages": _known_ids(summary.get("packages", []), Content.PACKAGES),
-		"score": int(summary.get("score", 0)),
+		"score": _as_int(summary.get("score"), 0),
 	}
 
 
@@ -539,14 +539,14 @@ static func load_from(path: String):  # -> Profile (or fresh if missing)
 	# profile, so the test is "is it a Dictionary", not "is it null".
 	if not (data is Dictionary):
 		return profile
-	profile.runs = int(data.get("runs", 0))
-	profile.wins = int(data.get("wins", 0))
-	profile.tier_wins = int(data.get("tier_wins", 0))
-	profile.best_floor = int(data.get("best_floor", 0))
+	profile.runs = _as_int(data.get("runs"), 0)
+	profile.wins = _as_int(data.get("wins"), 0)
+	profile.tier_wins = _as_int(data.get("tier_wins"), 0)
+	profile.best_floor = _as_int(data.get("best_floor"), 0)
 	# the one unlock with no Content table to filter against: it is an INDEX
 	# into Content.TIERS, so a profile written by a build with more tiers (or
 	# kept while TIERS shrank) would hand the menu a tier that cannot be named
-	profile.unlocked_tier = clampi(int(data.get("unlocked_tier", 0)), 0, Content.TIERS.size())
+	profile.unlocked_tier = clampi(_as_int(data.get("unlocked_tier"), 0), 0, Content.TIERS.size())
 	# renamed or removed content must never brick a saved career: every stored
 	# id is filtered against the tables that exist right now.
 	profile.unlocked_packages = _known_ids(data.get("unlocked_packages", []), Content.PACKAGES)
@@ -557,9 +557,9 @@ static func load_from(path: String):  # -> Profile (or fresh if missing)
 	var stored_casts = data.get("casts_by_base", {})
 	if stored_casts is Dictionary:
 		for aid in stored_casts:
-			var cid := _migrate_ability_id(String(aid))
+			var cid := _migrate_ability_id(_as_str(aid))
 			if cid != "":
-				casts[Content.base_id(cid)] = int(stored_casts[aid])
+				casts[Content.base_id(cid)] = _as_int(stored_casts[aid], 0)
 	profile.casts_by_base = casts
 	var hist: Array = []
 	var stored_hist = data.get("history", [])
@@ -576,8 +576,8 @@ static func load_from(path: String):  # -> Profile (or fresh if missing)
 		for k in stored_daily:
 			var v = stored_daily[k]
 			if v is Dictionary:
-				daily[str(k)] = {"won": bool(v.get("won", false)),
-					"floor": int(v.get("floor", 0)), "turns": int(v.get("turns", 0))}
+				daily[str(k)] = {"won": _as_bool(v.get("won"), false),
+					"floor": _as_int(v.get("floor"), 0), "turns": _as_int(v.get("turns"), 0)}
 	profile.daily_best = daily
 	profile.records = _load_records(data.get("records", {}))
 	return profile
@@ -599,18 +599,18 @@ static func _load_records(stored) -> Dictionary:
 	if sb is Dictionary:
 		for k in sb:
 			var e = sb[k]
-			if keep.has(String(k)) and e is Dictionary and int(e.get("v", 0)) > 0:
-				out["best"][String(k)] = _rec(int(e.get("v", 0)), int(e.get("run", 0)),
-					_known_loadout(e.get("loadout", "")), int(e.get("tier", 0)))
+			if keep.has(str(k)) and e is Dictionary and _as_int(e.get("v"), 0) > 0:
+				out["best"][str(k)] = _rec(_as_int(e.get("v"), 0), _as_int(e.get("run"), 0),
+					_known_loadout(e.get("loadout", "")), _as_int(e.get("tier"), 0))
 	var sl = stored.get("loadouts", {})
 	if sl is Dictionary:
 		for lid in sl:
 			var r = sl[lid]
-			if Content.LOADOUTS.has(String(lid)) and r is Dictionary:
-				out["loadouts"][String(lid)] = _loadout_rec(int(r.get("best_floor", 0)),
-					int(r.get("best_score", 0)), int(r.get("best_tier_won", -1)),
-					int(r.get("runs", 0)), int(r.get("wins", 0)))
-	out["score_v"] = int(stored.get("score_v", 0))
+			if Content.LOADOUTS.has(str(lid)) and r is Dictionary:
+				out["loadouts"][str(lid)] = _loadout_rec(_as_int(r.get("best_floor"), 0),
+					_as_int(r.get("best_score"), 0), _as_int(r.get("best_tier_won"), -1),
+					_as_int(r.get("runs"), 0), _as_int(r.get("wins"), 0))
+	out["score_v"] = _as_int(stored.get("score_v"), 0)
 	if int(out["score_v"]) != Content.RUN_SCORE_VERSION:
 		out["best"].erase("score")
 		for lid in out["loadouts"]:
@@ -634,7 +634,7 @@ static func _known_ability_ids(ids) -> Array:
 	if not (ids is Array):
 		return out
 	for id in ids:
-		var mid := _migrate_ability_id(String(id))
+		var mid := _migrate_ability_id(_as_str(id))
 		if mid != "":
 			out.append(mid)
 	return out
@@ -657,6 +657,40 @@ static func _known_ids(ids, known) -> Array:
 	if not (ids is Array):
 		return out
 	for id in ids:
-		if known.has(String(id)):
-			out.append(String(id))
+		var sid := _as_str(id)
+		if sid != "" and known.has(sid):
+			out.append(sid)
 	return out
+
+
+## Type-guarded reads for anything that came out of a JSON file or a summary
+## dict: `int(null)`, `int([1])`, `bool(null)` and `String(null)` are runtime
+## errors in GDScript, and a runtime error inside load_from returns null out of
+## it - the brick case load_from exists to prevent. Each returns the default
+## (or "") unless the value already has a usable type. JSON numbers are floats.
+static func _as_int(v, default: int) -> int:
+	if v is int or v is float:
+		return int(v)
+	return default
+
+
+static func _as_bool(v, default: bool) -> bool:
+	if v is bool:
+		return v
+	if v is int or v is float:
+		return v != 0
+	return default
+
+
+## "" for anything but a String or StringName (never str(null) == "<null>",
+## which an id filter would then try to match).
+static func _as_str(v) -> String:
+	if v is String or v is StringName:
+		return String(v)
+	return ""
+
+
+## The daily_best key for a seed: the ONE spelling record_daily writes and
+## every reader (the shell's game-over sheet) must look up.
+static func daily_key(seed_v) -> String:
+	return str(_as_int(seed_v, 0))

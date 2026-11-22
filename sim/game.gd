@@ -1107,6 +1107,7 @@ func _stagger(e: Dictionary) -> void:
 	_hook("staggered", {"enemy": e})
 
 
+# telegraph() mirrors these arms - change together (tests/test_grammar.gd fq pins it).
 func _execute_intent(e: Dictionary) -> void:
 	if int(e["status"].get("stagger_cd", 0)) > 0:
 		e["status"]["stagger_cd"] -= 1
@@ -1393,6 +1394,7 @@ func _terrain_react() -> void:
 				_hook(ev, {"tile": p, "by": String(pending[p]["by"])})
 
 
+# smog_forecast() mirrors this tick - change together (tests/test_grammar.gd fq pins it).
 func _tick_smog() -> void:
 	# smokestack stokes are extra FULL ticks, so dim/choke/spawn thresholds
 	# are crossed one value at a time and never skipped

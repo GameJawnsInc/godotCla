@@ -27,6 +27,8 @@ const TMP_SAVE := "user://test_import_run.save"
 ## Every _bare_shell reads and writes its career here, never the player's real
 ## profile (Shell.PROFILE_PATH); _init deletes it at the end.
 const TEST_PROFILE := "user://test_shell_profile.json"
+## every _bare_shell restores (and writes) its run save here, never the real one
+const TEST_RUN_SAVE := "user://test_shell_run.save"
 const TMP_JSON := "user://test_import_record.json"
 
 var fails := 0
@@ -70,6 +72,11 @@ func _init() -> void:
 		_check(ak._bank[id].data.size() > 100, "sfx %s has samples" % id)
 	var mus = ak.render_music_stream()
 	_check(mus != null and mus.data.size() > 100000, "music loop renders")
+	# the music's noise bed has its own seeded generator: a bank that drew (or
+	# did not draw) any number of sounds first leaves the music byte-identical
+	var ak_m = AudioKit.new()
+	_check(ak_m.render_music_stream().data == mus.data, "the music renders the same with or without the bank built first")
+	ak_m.free()
 	for sid in ["combo", "multikill", "card", "shielded", "whoomph", "arrive"]:
 		_check(ak._bank.has(sid), "the fun-pass sound %s is in the bank" % sid)
 	ak.free()
@@ -464,11 +471,11 @@ func _init() -> void:
 	arch.runs_dir = "user://test_runs"
 	arch.seed_v = 987654
 	arch.game = Game.new(1, {})
-	var lf := FileAccess.open("user://tender_run.save", FileAccess.WRITE)
+	var lf := FileAccess.open(arch.run_save_path, FileAccess.WRITE)  # the scratch live slot
 	lf.store_line("stand-in log")
 	lf.close()
 	arch._archive_run()
-	_check(not FileAccess.file_exists("user://tender_run.save"), "the finished log leaves the live slot")
+	_check(not FileAccess.file_exists(arch.run_save_path), "the finished log leaves the live slot")
 	var archived := ""
 	for n in _dir_files(arch.runs_dir):
 		if n.begins_with("run_987654_"):
@@ -528,9 +535,36 @@ func _init() -> void:
 	_check(rec._run_unlocks.is_empty(), "a daily unlocks nothing")
 	_check(rec._over_prev.has("daily") and rec._over_prev["daily"].is_empty(),
 		"a first daily finish compares against no earlier best (%s)" % str(rec._over_prev))
+	# a second daily on the same seed compares against the first result, read
+	# under the key record_daily writes (the game's seed) whatever seed_v says
+	var first_daily: Dictionary = rec.profile.daily_best["77"].duplicate()
+	rec.seed_v = 77
+	rec._run_recorded = false
+	rec.game = Game.new(77, {})
+	rec.game.over = true
+	rec._record_finished_run()
+	_check(rec._over_prev.get("daily", {}) == first_daily and not first_daily.is_empty(),
+		"a second daily on seed 77 compares against the first (%s vs %s)" % [str(rec._over_prev), str(first_daily)])
+	rec.seed_v = 78
+	rec._run_recorded = false
+	rec.game = Game.new(77, {})
+	rec.game.over = true
+	rec._record_finished_run()
+	_check(rec._over_prev.get("daily", {}) == first_daily,
+		"the daily best is looked up by the game's seed, not seed_v (%s)" % str(rec._over_prev))
 	rec.free()
 	var prof_after := FileAccess.get_file_as_string(prof_path) if FileAccess.file_exists(prof_path) else ""
-	_check(prof_after == prof_before, "the game-over test never writes the player's real profile")
+	var prof_safe := prof_after == prof_before
+	_check(prof_safe, "the game-over test never writes the player's real profile")
+	if not prof_safe:
+		# the routing regressed: put the player's career back before anything else
+		if prof_before == "":
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(prof_path))
+		else:
+			var pf := FileAccess.open(prof_path, FileAccess.WRITE)
+			if pf != null:
+				pf.store_string(prof_before)
+				pf.close()
 
 	# 11. the title screen's run-setup rows (Block A): three cyclers gated by
 	# the career, the config PLAY builds out of them, the status line that
@@ -619,7 +653,7 @@ func _init() -> void:
 			sh._run_save.close()
 			sh._run_save = null
 		sh.free()
-	DirAccess.remove_absolute("user://tender_run.save")
+	DirAccess.remove_absolute(TEST_RUN_SAVE)  # day._new_game wrote the scratch slot
 	if cfg_before == "":
 		DirAccess.remove_absolute(Shell.CFG_PATH)
 	else:
@@ -705,9 +739,12 @@ func _init() -> void:
 
 ## A shell with no live run attached: these tests drive `game` directly, so
 ## nothing may be appended to (or restored from) the on-disk run log.
-func _bare_shell():
+func _bare_shell(keep_save := false):
 	var sh = Shell.new()
 	sh.profile_path = TEST_PROFILE  # before _ready: it loads from here
+	sh.run_save_path = TEST_RUN_SAVE  # ...and restores (or deletes) a run save from here
+	if not keep_save:
+		DirAccess.remove_absolute(TEST_RUN_SAVE)  # an earlier shell's run is not restored here
 	sh._ready()
 	if sh._run_save != null:
 		sh._run_save.close()
@@ -1350,15 +1387,13 @@ func _check_resume_stats() -> void:
 			break  # a finished run is not resumed; keep the log one step short
 		acts.append(a)
 		st.feed(g, evs)
-	var save_path: String = Shell.RUN_SAVE_PATH
-	var had_save := FileAccess.file_exists(save_path)
-	var keep := FileAccess.get_file_as_string(save_path) if had_save else ""
+	var save_path: String = TEST_RUN_SAVE  # where _bare_shell restores from
 	var f := FileAccess.open(save_path, FileAccess.WRITE)
 	f.store_line(var_to_str({"v": Shell.RUN_SAVE_VERSION, "seed": seed_v, "tier": 0, "config": {}}).replace("\n", " "))
 	for a in acts:
 		f.store_line(var_to_str(a).replace("\n", " "))
 	f.close()
-	var sh = _bare_shell()
+	var sh = _bare_shell(true)
 	sh._load_run()
 	_check(sh.game != null and not sh.game.over and sh.game.total_turns == g.total_turns,
 		"the resumed run is the same game (%d actions)" % acts.size())
@@ -1373,10 +1408,6 @@ func _check_resume_stats() -> void:
 		sh._run_save = null
 	sh.free()
 	DirAccess.remove_absolute(save_path)
-	if had_save:
-		var rf := FileAccess.open(save_path, FileAccess.WRITE)
-		rf.store_string(keep)
-		rf.close()
 	print("resume stats: %d actions replayed, fold identical (kills %d, bloom earned %d)" % [
 		acts.size(), int(st.kills), int(st.bloom_earned)])
 
@@ -1717,6 +1748,13 @@ func _check_feedback() -> void:
 	var lines17: Array = Feedback.log_entries([{"t": "reinforcement", "tile": pp17 + Vector2i(30, 30)},
 		{"t": "reinforcement", "tile": pp17 + Vector2i(31, 30)}], pre17b, g17b, {}).map(func(l): return l["text"])
 	_check(lines17 == ["Vents release 2 Drill Bots"], "two of a kind fold into one line: %s" % str(lines17))
+	# a summoned child destroyed in the same step is named from its own death event
+	var eng: Dictionary = g17b._spawn("extractor_engine", pp17 + Vector2i(30, 31))
+	var pre17c: Dictionary = sh._pre_step()
+	var sum17: Array = Feedback.log_entries([{"t": "summon", "id": eng["id"], "child": 9999},
+		{"t": "death", "who": "sludgeling", "id": 9999}], pre17c, g17b, {}).map(func(l): return l["text"])
+	_check(sum17.size() >= 1 and String(sum17[0]) == "Extractor Engine summons a Sludgeling",
+		"a child spawned and killed in one step is still named: %s" % str(sum17))
 
 	# 18. repeats count up instead of vanishing
 	var ll: Array = []
@@ -1724,12 +1762,43 @@ func _check_feedback() -> void:
 	for s18 in ["A", "A", "A", "B", "B"]:
 		Feedback.log_push(ll, lc, s18, "info")
 	_check(ll == ["A x3", "B x2"] and lc.size() == ll.size(), "log_push counts repeats: %s / %s" % [str(ll), str(lc)])
+	# through the real path: two illegal steps, _act -> _feedback -> _log
 	var sh18 = _bare_shell()
 	sh18.game = Game.new(4242, {})
-	sh18._log("Can't do that")
-	sh18._log("Can't do that")
-	_check(sh18.log_lines == ["Can't do that x2"] and sh18.log_cats.size() == 1, "two identical lines merge: %s" % str(sh18.log_lines))
+	var n18: int = sh18.log_lines.size()
+	_check(not sh18.game.legal_actions().any(func(a): return String(a.get("type", "")) == "descend"),
+		"descend is illegal on a fresh floor (the probe the merge test spends)")
+	sh18._act({"type": "descend"})
+	sh18._act({"type": "descend"})
+	_check(sh18.log_lines.size() == n18 + 1 and String(sh18.log_lines.back()) == "Can't do that x2"
+		and sh18.log_cats.size() == sh18.log_lines.size(),
+		"two illegal actions through _act merge into one line: %s" % str(sh18.log_lines))
 	sh18.free()
+
+	# 18b. two then-riders in one step: a claim is "then" for a status and an
+	# INT for a rider index, and the walk back from the second rider meets the
+	# first rider's int claim (String(int) used to throw there)
+	var g18b = _fb_board()[0]
+	var e18b: Dictionary = g18b.enemies[0]
+	sh.game = g18b
+	var pre18b: Dictionary = sh._pre_step()
+	var two_then: Array = [
+		{"t": "status", "id": e18b["id"], "status": "root", "turns": 1},
+		{"t": "rider", "id": "seed_bomb+tangle", "kind": "then", "amt": 1},
+		{"t": "status", "id": e18b["id"], "status": "stun", "turns": 1},
+		{"t": "rider", "id": "vine_whip+lash", "kind": "then", "amt": 1},
+	]
+	var cl18b: Dictionary = Feedback.claims(two_then, g18b)
+	_check(cl18b.get(0) == "then" and cl18b.get(1) == 0 and cl18b.get(2) == "then" and cl18b.get(3) == 2,
+		"each then-rider claims its own status: %s" % str(cl18b))
+	_check(Feedback._then_claimed(two_then, 3, cl18b) == [2] and Feedback._then_claimed(two_then, 1, cl18b) == [0],
+		"the walk back stops at the earlier rider's int claim")
+	var r18b: Dictionary = Feedback.step(two_then, pre18b, g18b, {}, 1000)
+	var t18b: Array = _texts(r18b["callouts"])
+	var l18b: Array = _log_texts(r18b)
+	_check(t18b.has("ROOTED!") or t18b.any(func(t): return String(t).begins_with("ROOTED")),
+		"two then-riders in a step still float their statuses: %s" % str(t18b))
+	_check(l18b.size() == 2, "...and log one line each: %s" % str(l18b))
 
 	# 19. vocabulary tripwire: every word table covers the shipped content
 	for aid in Content.ABILITIES:
@@ -1758,6 +1827,18 @@ func _check_feedback() -> void:
 		if Content.ENEMIES[kind]["traits"].has("boss"):
 			_check(Feedback.BOSS_PHASE_LINES.has(kind) and Feedback.BOSS_PHASE_LINES[kind].has(2)
 				and Feedback.BOSS_PHASE_LINES[kind].has(3), "boss %s has phase 2 and 3 words" % kind)
+	# every boss phase log line, composed with its boss's own name, fits the
+	# log (test 20's bot runs never reach floor 7, so this is the boss floor's
+	# only length pin) and reads with one separator, never "X: y: z"
+	for bk in Feedback.BOSS_PHASE_LINES:
+		_check(Content.ENEMIES.has(bk), "BOSS_PHASE_LINES row %s names a real boss" % bk)
+		for ph in Feedback.BOSS_PHASE_LINES[bk]:
+			var bl: String = Feedback.boss_line(String(bk), int(ph))
+			_check(bl.length() <= Feedback.LOG_LINE_MAX and bl.begins_with(Names.boss_name(bk) + " - ")
+				and bl.count(":") <= 1,
+				"boss phase line fits %d chars with one separator: '%s' (%d)" % [Feedback.LOG_LINE_MAX, bl, bl.length()])
+			var shl: String = "%s is shielded: cleanse or grow beside it" % Names.subj(bk)
+			_check(shl.length() <= Feedback.LOG_LINE_MAX, "the core-shield line fits for %s: %s" % [bk, shl])
 
 	# 20. bot-driven: real games through _act
 	var any_callout := false
@@ -1782,7 +1863,7 @@ func _check_feedback() -> void:
 		for l in sh20.log_lines:
 			if String(l).contains("_") and raw == "":
 				raw = String(l)
-			if String(l).length() > 60 and long_line == "":
+			if String(l).length() > Feedback.LOG_LINE_MAX and long_line == "":
 				long_line = String(l)
 		cats_ok = cats_ok and sh20.log_lines.size() == sh20.log_cats.size()
 		sh20.free()
@@ -1859,27 +1940,25 @@ func _check_danger_readouts() -> void:
 	_check(chips[1]["col"] == Danger.COL_DIM, "every vent occupied: the vent chip greys")
 	# the context line, word for word
 	var d := {"ok": true, "fc": {"dmg": 3, "absorbed": 0, "by_src": {"drill_bot": 2, "smog": 1}, "dies": true}, "sky": {}}
-	var cl: Dictionary = Danger.context_line(d, 0, 2)
+	var cl: Dictionary = Danger.context_line(d, false)
 	_check(cl["text"] == "! INCOMING 3 - LETHAL  ·  Drill Bot, smog" and cl["col"] == Danger.COL_RED and cl["pulse"],
 		"lethal line names its sources, red and pulsing (%s)" % cl["text"])
 	d["fc"] = {"dmg": 2, "absorbed": 0, "by_src": {"drill_bot": 2}, "dies": false}
-	_check(Danger.context_line(d, 0, 2)["text"] == "! INCOMING 2  ·  Drill Bot", "incoming, not lethal")
+	_check(Danger.context_line(d, false)["text"] == "! INCOMING 2  ·  Drill Bot", "incoming, not lethal")
 	d["fc"] = {"dmg": 4, "absorbed": 0, "by_src": {"drill_bot": 1, "rust_hound": 1, "smog": 1, "fire:solar_lance": 1}, "dies": false}
-	_check(Danger.context_line(d, 0, 2)["text"] == "! INCOMING 4  ·  Drill Bot, fire +2",
-		"four sources: two named (ties by id, the short form), then +2 (%s)" % Danger.context_line(d, 0, 2)["text"])
+	_check(Danger.context_line(d, false)["text"] == "! INCOMING 4  ·  Drill Bot, fire +2",
+		"four sources: two named (ties by id, the short form), then +2 (%s)" % Danger.context_line(d, false)["text"])
 	d["fc"] = {"dmg": 2, "absorbed": 2, "by_src": {}, "dies": false}
-	_check(Danger.context_line(d, 0, 2)["text"] == "! INCOMING 2 - shield holds", "shield holds")
+	_check(Danger.context_line(d, false)["text"] == "! INCOMING 2 - shield holds", "shield holds")
 	d["fc"] = {"dmg": 0, "absorbed": 0, "by_src": {}, "dies": false}
 	d["sky"] = {"choke_in": 3, "choking": false, "spawn_in": 9, "spawn_open": 1}
-	_check(Danger.context_line(d, 1, 2)["text"] == "Smog chokes in 3 - cleansing thins it", "choke soon, stairs asleep")
-	_check(Danger.context_line(d, 2, 2)["text"] == "Smog chokes in 3 - descend to escape it", "choke soon, stairs awake")
+	_check(Danger.context_line(d, false)["text"] == "Smog chokes in 3 - cleansing thins it", "choke soon, stairs asleep")
+	_check(Danger.context_line(d, true)["text"] == "Smog chokes in 3 - descend to escape it", "choke soon, stairs awake")
 	d["sky"]["choke_in"] = 1
-	_check(Danger.context_line(d, 2, 2)["text"] == "Smog chokes NEXT TURN - descend to escape it"
-		and Danger.context_line(d, 1, 2)["text"] == "Smog chokes NEXT TURN - cleansing thins it", "choke next turn")
+	_check(Danger.context_line(d, true)["text"] == "Smog chokes NEXT TURN - descend to escape it"
+		and Danger.context_line(d, false)["text"] == "Smog chokes NEXT TURN - cleansing thins it", "choke next turn")
 	# the boss floor has no stairs (green 0/0): never "descend to escape it"
 	d["sky"]["choke_in"] = 3
-	_check(Danger.context_line(d, 0, 0)["text"] == "Smog chokes in 3 - cleansing thins it",
-		"boss floor: no descent offered (%s)" % Danger.context_line(d, 0, 0)["text"])
 	var g7 := Game.new(3)
 	g7._enter_floor(7)
 	var d7 := 0
@@ -1887,11 +1966,29 @@ func _check_danger_readouts() -> void:
 		if String(a.get("type", "")) == "descend":
 			d7 += 1
 	_check(int(g7.snapshot()["green_need"]) == 0 and d7 == 0, "fixture: floor 7 needs no green and has no descent")
+	_check(not Danger.stairs_awake(g7.snapshot()), "boss floor: green 0/0, but no stairs tile, so no stairs awake")
+	_check(Danger.context_line(d, Danger.stairs_awake(g7.snapshot()))["text"] == "Smog chokes in 3 - cleansing thins it",
+		"boss floor: no descent offered (%s)" % Danger.context_line(d, Danger.stairs_awake(g7.snapshot()))["text"])
+	# an ordinary floor whose quota was RECLAMPED to 0 (the corruption went
+	# without a cleanse): green_need 0, the stairs awake - the descent is offered
+	var gq := Game.new(3)
+	for t in gq.terrain.keys().duplicate():
+		if Content.is_corruption(String(gq.terrain[t]["kind"])):
+			gq.terrain.erase(t)
+	gq._reclamp_quota()
+	var sq: Dictionary = gq.snapshot()
+	_check(int(sq["floor"]) == 1 and int(sq["green_need"]) == 0 and int(sq["greened"]) == 0,
+		"fixture: floor 1 reclamped to green 0/0 (%d/%d)" % [int(sq["greened"]), int(sq["green_need"])])
+	gq.player["pos"] = gq.map["stairs"]
+	_check(gq.legal_actions().any(func(a): return String(a.get("type", "")) == "descend"),
+		"fixture: the reclamped floor's stairs really take a descent")
+	_check(Danger.stairs_awake(sq) and Danger.context_line(d, Danger.stairs_awake(sq))["text"] == "Smog chokes in 3 - descend to escape it",
+		"reclamped green 0/0 on an ordinary floor: descend to escape it")
 	d["sky"] = {"choke_in": 20, "choking": false, "spawn_in": 1, "spawn_open": 1}
-	_check(Danger.context_line(d, 2, 2)["text"] == "The vents release next turn", "vents next turn")
+	_check(Danger.context_line(d, true)["text"] == "The vents release next turn", "vents next turn")
 	d["sky"]["spawn_open"] = 0
-	_check(Danger.context_line(d, 2, 2).is_empty(), "every vent sealed or taken: nothing to say")
-	_check(Danger.context_line({"ok": false}, 0, 2).is_empty(), "over or drafting: nothing to say")
+	_check(Danger.context_line(d, true).is_empty(), "every vent sealed or taken: nothing to say")
+	_check(Danger.context_line({"ok": false}, false).is_empty(), "over or drafting: nothing to say")
 	# the guard's words, by escape
 	var gd := {"fc": {"dmg": 3}, "escapes": {"move": true, "item": [0], "descend": true}}
 	_check(Danger.guard_flash(gd) == "LETHAL (3) - step off, or tap again to end turn", "guard: step off first")
@@ -1919,6 +2016,55 @@ func _check_danger_readouts() -> void:
 	_check(Danger.cues({"ok": true, "floor": 1, "lethal": true, "sky": {"choke_in": 4}}, {"ok": true, "floor": 2, "lethal": true, "sky": {"choke_in": 4}})["sounds"] == ["warn"],
 		"a new floor forgets the old one: lethal and the window both count as entered, one tick")
 	_check(Danger.cues(p0, {"ok": false})["sounds"].is_empty(), "nothing cues once the game is over or drafting")
+	# hysteresis: a cue fires only on a NEW minimum of the choke countdown on
+	# this floor, so a cleanse relief and the end turn after it stay quiet
+	var sk := func(n): return {"ok": true, "floor": 1, "lethal": false, "sky": {"choke_in": n, "choking": false}}
+	var hc: Dictionary = Danger.cues(sk.call(2), sk.call(1), Danger.NO_CUE)
+	_check(hc["banner"] == ["THE SMOG THICKENS", "it chokes from next turn"] and int(hc["announced"]) == 1,
+		"hysteresis: reaching 1 banners and remembers 1")
+	var relief: Dictionary = Danger.cues(sk.call(1), sk.call(3), int(hc["announced"]))
+	_check(relief["sounds"].is_empty() and relief["banner"].is_empty() and int(relief["announced"]) == 1,
+		"hysteresis: the cleanse relief (1 -> 3) is silent")
+	var back: Dictionary = Danger.cues(sk.call(3), sk.call(1), int(relief["announced"]))
+	_check(back["sounds"].is_empty() and back["banner"].is_empty(),
+		"hysteresis: the end turn back to 1 does not banner or tick again (%s)" % str(back))
+	var w1: Dictionary = Danger.cues(sk.call(6), sk.call(5), Danger.NO_CUE)
+	var w2: Dictionary = Danger.cues(sk.call(5), sk.call(7), int(w1["announced"]))
+	var w3: Dictionary = Danger.cues(sk.call(7), sk.call(6), int(w2["announced"]))
+	var w4: Dictionary = Danger.cues(sk.call(6), sk.call(5), int(w3["announced"]))
+	_check(w1["sounds"] == ["warn"] and w2["sounds"].is_empty() and w3["sounds"].is_empty() and w4["sounds"].is_empty(),
+		"hysteresis: leaving the window on a relief and re-entering it does not tick twice")
+	var w5: Dictionary = Danger.cues(sk.call(2), sk.call(1), int(w4["announced"]))
+	_check(w5["banner"].size() == 2, "hysteresis: a NEW minimum (1) still banners")
+	var nf: Dictionary = Danger.cues(sk.call(2), {"ok": true, "floor": 2, "sky": {"choke_in": 1}}, 1)
+	_check(nf["banner"].size() == 2, "hysteresis: a new floor forgets what the last one announced")
+	var rs: Dictionary = Danger.cues(sk.call(3), sk.call(2), Danger.NO_CUE)
+	_check(rs["sounds"].is_empty() and int(rs["announced"]) == 2,
+		"hysteresis: a countdown already standing before the step (a reset, a resume) counts as announced")
+	# escapes: a WINNING action is an escape of its kind (the boss-killing strike)
+	var gw := Game.new(3)
+	gw._enter_floor(7)
+	gw.terrain.clear()
+	var boss_w: Dictionary = {}
+	for e in gw.enemies.duplicate():
+		if Content.ENEMIES[e["kind"]]["traits"].has("boss"):
+			boss_w = e
+		else:
+			gw.enemies.erase(e)
+	var wd: Array = _open_dirs(gw)
+	_check(not boss_w.is_empty() and wd.size() >= 2, "fixture: floor 7 has its boss and two open sides")
+	boss_w["pos"] = gw.player["pos"] + wd[0]
+	boss_w["hp"] = 1
+	boss_w["intent"] = {"type": "idle"}
+	var killer: Dictionary = gw._spawn("drill_bot", gw.player["pos"] + wd[1])
+	killer["intent"] = {"type": "attack", "tile": gw.player["pos"], "dmg": 99}
+	gw.smog = 0
+	var dzw: Dictionary = Danger.compute(gw)
+	var ew: Dictionary = Danger.escapes(gw)
+	var cw = gw.clone()
+	cw.step({"type": "strike", "dir": wd[0]})
+	_check(bool(dzw["lethal"]) and cw.over and cw.won, "fixture: lethal, and the strike on the 1-HP boss wins the run")
+	_check(bool(ew["strike"]), "a boss-killing strike counts as a strike escape (%s)" % str(ew))
 
 	var sh = _bare_shell()
 	# fit gate: the worst context line (the two longest enemy names, +9) and the
@@ -1977,6 +2123,41 @@ func _check_danger_readouts() -> void:
 		queued = queued or (qb["lines"] == ["THE SMOG THICKENS", "it chokes from next turn"]
 			and int(qb["prio"]) == int(Feedback.BANNER_PRIO["danger"]) and qb["col"] == Danger.COL_AMBER)
 	_check(queued, "choke 1: THE SMOG THICKENS waits in the banner queue at danger priority (%s)" % str(sh._banner_q))
+	_check(sh._choke_cued == 1, "the shell remembers the choke countdown it announced (%d)" % sh._choke_cued)
+	# a cleanse relief, then the end turns that bring it back to 1: no second
+	# banner and no second tick (Danger.cues' hysteresis, through _act)
+	var spy := SfxSpy.new()
+	var real_audio = sh.audio
+	sh.audio = spy
+	var ot := Vector2i.ZERO
+	for od in _open_dirs(g):
+		ot = g.player["pos"] + od
+		break
+	g.terrain[ot] = {"kind": "oil"}
+	# a second slick far off, so the cleanse does not restore the floor (which
+	# clears the skies outright and would test nothing)
+	var far_room: Rect2i = g.map["rooms"][g.map["rooms"].size() - 1]
+	g.terrain[far_room.get_center()] = {"kind": "oil"}
+	g.player["charge"] = 3
+	sh._banner_q = []
+	sh._act({"type": "cleanse", "target": ot})
+	var c_after := int(sh._danger_state()["sky"]["choke_in"])
+	_check(c_after > 1, "fixture: the cleanse pushed the choke back (%d)" % c_after)
+	var guard_n := 0
+	while int(sh._danger_state()["sky"]["choke_in"]) > 1 and guard_n < 6:
+		sh._act({"type": "end_turn"})
+		guard_n += 1
+	_check(int(sh._danger_state()["sky"]["choke_in"]) == 1, "fixture: the end turns bring the choke back to 1")
+	var refired := false
+	for qb in sh._banner_q:
+		refired = refired or qb["lines"] == ["THE SMOG THICKENS", "it chokes from next turn"]
+	refired = refired or sh._banner == ["THE SMOG THICKENS", "it chokes from next turn"]
+	_check(not refired and not spy.played.has("warn"),
+		"a cleanse relief and the end turn after it re-fire neither the banner nor the tick (%s / %s)" % [str(sh._banner_q), str(spy.played)])
+	sh.audio = real_audio
+	spy.free()
+	sh._reset_danger()
+	_check(sh._choke_cued == Danger.NO_CUE, "a new or restored game forgets the announced countdown")
 	var ids: Array = sh._play_events([{"t": "damage", "who": "player", "amt": 1, "src": "drill_bot"},
 		{"t": "boss_phase", "phase": 2}], ["warn"]).map(func(p): return String(p["id"]))
 	_check(ids == ["boss", "warn", "hurt"], "the warn tick ranks boss > warn > hurt: %s" % str(ids))
@@ -2127,6 +2308,40 @@ func _check_intent_badges() -> void:
 	var bs: Array = Danger.badges(g.snapshot(), g.telegraph())
 	_check(bs.size() == 2 and bs[0]["icon"] == "in_attack" and bs[0]["text"] == "2" and bs[0]["live"]
 		and bs[1]["icon"] == "in_stoke" and bs[1]["text"] == "2", "badges: strike 2 (live), stoke in 2 (%s)" % str(bs))
+	# the stoker tooltip line keys on the ROW's stokes trait, not the intent
+	# standing this turn, and with two stokers alive it words the total as shared
+	var tip_sh = _danger_shell(g)
+	var g_smog: int = g.smog
+	g.smog = int(g.floor_def(int(g.floor_num))["smog_choke"]) - 4
+	tip_sh._danger_rev += 1
+	var dzt: Dictionary = tip_sh._danger_state()
+	var cc := int(dzt["sky"]["choke_in"])
+	var calm := int(dzt["sky_calm"]["choke_in"])
+	_check(cc > 0 and calm > cc, "fixture: the smokestack pulls the choke in (%d vs calm %d)" % [cc, calm])
+	var want_tip := "brings the choke %d turns sooner" % (calm - cc)
+	_check(tip_sh._danger_tip(stack, dzt).has(want_tip), "a stoking smokestack's tooltip: %s" % str(tip_sh._danger_tip(stack, dzt)))
+	var idle_stack: Dictionary = stack.duplicate(true)
+	idle_stack["intent"] = {"type": "idle"}
+	_check(tip_sh._danger_tip(idle_stack, dzt).has(want_tip),
+		"...and on its idle turn it still names the pull (the row, not the intent)")
+	var st2 := Vector2i(-1, -1)
+	for dd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if g._open(st + dd) and st + dd != pp:
+			st2 = st + dd
+			break
+	var stack2: Dictionary = g._spawn("smokestack", st2)
+	stack2["intent"] = {"type": "stoke", "in": 2}
+	tip_sh._danger_rev += 1
+	var dz2: Dictionary = tip_sh._danger_state()
+	var c2 := int(dz2["sky"]["choke_in"])
+	var calm2 := int(dz2["sky_calm"]["choke_in"])
+	var tip2: Array = tip_sh._danger_tip(stack, dz2)
+	_check(calm2 > c2 and tip2.has("stokers bring the choke %d turns sooner" % (calm2 - c2))
+		and not tip2.any(func(l): return String(l).begins_with("brings")),
+		"two stokers: the total is worded as shared (%s)" % str(tip2))
+	g.enemies.erase(stack2)
+	g.smog = g_smog
+	tip_sh.free()
 	g.enemies[0]["status"] = {"stun": 1}
 	var tele: Dictionary = g.telegraph()
 	bs = Danger.badges(g.snapshot(), tele)
@@ -2210,3 +2425,11 @@ func _check_intent_badges() -> void:
 		"smoke beside you screens it: no outline, the smoke glyph")
 	print("intent badges: %d intents, %d badge rows, %d block glyphs" % [TestContent.INTENT_TYPES.size(),
 		Danger.BADGE.size(), Danger.BLOCK_ICON.size()])
+
+
+## A stand-in for the audio node: records every sound id the shell plays.
+class SfxSpy extends Node:
+	var played: Array = []
+
+	func play(id: String, _pitch := 1.0) -> void:
+		played.append(id)

@@ -4603,6 +4603,18 @@ func _check_fq_core_shield() -> void:
 	b2["hp"] = 6
 	g2.terrain[b2["pos"] + Vector2i(1, 0)] = {"kind": "goo"}
 	_ok(not g2.core_shield_up(int(b2["id"])), "fq core shield: above gate_hp it is down")
+	# the corruption conjunct: at or under gate_hp, nothing beside it at all
+	var g4 = _game()
+	var b4: Dictionary = g4._spawn("overseer", g4.player["pos"] + d)
+	b4["hp"] = 5
+	b4["intent"] = {"type": "idle"}
+	for dd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		g4.terrain.erase(b4["pos"] + dd)
+	_ok(not g4.core_shield_up(int(b4["id"])),
+		"fq core shield: at gate_hp with no growth and no corruption beside it: down")
+	var evs4: Array = g4.step({"type": "strike", "dir": d})
+	_ok(_evs(evs4, "core_shielded").is_empty() and int(b4["hp"]) < 5,
+		"fq core shield: a strike on the unshielded core lowers its hp %s" % str(evs4))
 	var g3 = _game()
 	var e3: Dictionary = g3._spawn("drill_bot", g3.player["pos"] + d)
 	e3["hp"] = 1
@@ -4621,9 +4633,13 @@ func _check_fq_aliases() -> void:
 		var g = _game_g(c[0], c[1])
 		_ok(g.resonances() == g._resonances() and g.tag_counts() == g._tag_counts(),
 			"fq aliases: %s + %s: %s / %s" % [str(c[0]), str(c[1]), str(g.resonances()), str(g.tag_counts())])
+		# _tag_counts() builds a fresh dict per call today, so this cannot fail
+		# yet: the copy in tag_counts() only guards a future cached
+		# _tag_counts(), and this check is the tripwire for that day.
 		var tc: Dictionary = g.tag_counts()
+		var want: int = int(tc.get("fire", 0))
 		tc["fire"] = 99
-		_ok(int(g._tag_counts().get("fire", 0)) != 99, "fq aliases: tag_counts() is a copy")
+		_ok(int(g.tag_counts().get("fire", 0)) == want, "fq aliases: tag_counts() is a copy")
 	var gf = _game_g(["solar_lance", "sun_flare+corona", "moss_filter", "seed_bomb"], ["oil_tithe"])
 	_ok(gf.resonances() == ["cinder_grip"] and int(gf.tag_counts().get("fire", 0)) == 3,
 		"fq aliases: the variant kit plus oil_tithe reads fire 3, cinder_grip lit")

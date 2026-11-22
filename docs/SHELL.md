@@ -120,10 +120,13 @@ screen says about what is about to hurt you. Nothing here changes a run.
   the coming end turn kills.
 - **Sounds and banners.** A double warning tick plays when the lethal
   forecast switches on and when the choke enters its last 5 turns; at 1 turn
-  the banner THE SMOG THICKENS / it chokes from next turn.
+  the banner THE SMOG THICKENS / it chokes from next turn. Each fires once per
+  new low on the floor: a cleanse that pushes the choke back, and the turns
+  that bring it down again, do not replay them.
 - **Tooltips.** Holding an enemy adds why its intent will not land (stunned,
   rooted, lost in the smoke, your anchor holds) and for a smokestack how many
-  turns sooner it brings the choke; holding yourself reads `ending here: 3
+  turns sooner it brings the choke (on its idle turns too; with two or more
+  alive, "stokers bring the choke N turns sooner", since that is their total); holding yourself reads `ending here: 3
   incoming - LETHAL`; holding a vent reads `releases in 4 turns` or `sealed -
   absorbs the next release`.
 
@@ -203,7 +206,8 @@ combo word, with an octave on a room clear. Repeated sounds vary slightly in
 pitch on a fixed cycle.
 
 `tests/render_frame.gd` draws no effects, so all of this is tested as data
-(`tests/test_shell.gd` `_check_feedback`).
+(`tests/test_shell.gd` `_check_feedback`), and drawn for real, frame by
+frame, by `tests/test_draw.gd`.
 
 ## Why CLEANSE refused
 
@@ -396,6 +400,12 @@ rasterization, input handlers driving the sim, the whole tutorial script,
 the shrine sheet's choice sinks, run restore, log retention and import),
 part of the suite. `SHELL_EXPORT_SAVE=<path>` also drops a real run log
 there, which is how you get a save to feed `tests/import_run.gd`.
+
+`tests/test_draw.gd` is the only test that runs `_draw`: it hosts the shell
+in a `SubViewport` at real phone and desktop sizes and renders frames of
+every screen (menu, tutorial, a bot game with tooltips, lethal, the boss
+floor, every sheet, help, game over), failing on any engine error, push_error
+or script error an `OS` logger sees.
 
 ## Art
 

@@ -169,6 +169,10 @@ var save_lost := false     # a saved run was discarded by a version bump (menu n
 ## Where finished run logs are archived. A var, not a const, so a test can
 ## point the archive at scratch space instead of the player's own runs.
 var runs_dir := "user://runs"
+## Where the live run's action log is written and restored from. RUN_SAVE_PATH
+## in the app; a headless test points it at scratch BEFORE _ready, which
+## restores (and may delete) whatever save it finds there.
+var run_save_path := RUN_SAVE_PATH
 
 # settings (persisted to user://tender.cfg)
 var hold_ms := 420
@@ -250,6 +254,9 @@ var _danger_at := -1
 var _danger_for = null
 ## The lethal guard's armed press: {sig: Danger.guard_sig, ms}. Empty = unarmed.
 var _guard := {}
+## The lowest choke countdown already announced on this floor (Danger.cues'
+## hysteresis; Danger.NO_CUE = none). Reset with the danger cache.
+var _choke_cued := Danger.NO_CUE
 var _flash_red := false  # the flash on screen is a guard refusal: draw it red
 ## Where the career profile is read and written. PROFILE_PATH in the app; the
 ## headless tests point it at a scratch file BEFORE _ready, so no test ever
@@ -285,7 +292,7 @@ func _ready() -> void:
 		seed_v = int(env)
 		screen = "game"
 		_new_game()
-	elif FileAccess.file_exists(RUN_SAVE_PATH):
+	elif FileAccess.file_exists(run_save_path):
 		_load_run()  # Android reclaimed the app mid-run: replay it back
 	queue_redraw()
 
@@ -352,7 +359,7 @@ func _new_game() -> void:
 	save_lost = false  # the notice stands until the player starts a fresh run
 	if _run_save != null:
 		_run_save.close()
-	_run_save = FileAccess.open(RUN_SAVE_PATH, FileAccess.WRITE)
+	_run_save = FileAccess.open(run_save_path, FileAccess.WRITE)
 	if _run_save != null:
 		_run_save.store_line(var_to_str({"v": RUN_SAVE_VERSION, "seed": seed_v, "tier": run_tier, "config": cfg}).replace("\n", " "))
 		_run_save.flush()
@@ -400,6 +407,7 @@ func _reset_danger() -> void:
 	_danger_rev += 1
 	_guard = {}
 	_flash_red = false
+	_choke_cued = Danger.NO_CUE
 
 
 ## The danger layer's view of the live game (Danger.compute), recomputed only
@@ -446,7 +454,7 @@ func _guard_lets_end() -> bool:
 ## replay the recorded actions. Determinism makes this byte-exact; a version
 ## mismatch or finished run just clears the save.
 func _load_run() -> void:
-	var f := FileAccess.open(RUN_SAVE_PATH, FileAccess.READ)
+	var f := FileAccess.open(run_save_path, FileAccess.READ)
 	if f == null:
 		return
 	var head = str_to_var(f.get_line())
@@ -454,7 +462,7 @@ func _load_run() -> void:
 		# the sim moved under the log: replaying it would diverge silently, so
 		# the save goes - but the player is told why their run vanished
 		f.close()
-		DirAccess.remove_absolute(RUN_SAVE_PATH)
+		DirAccess.remove_absolute(run_save_path)
 		save_lost = true
 		return
 	var g = Game.new(int(head["seed"]), Dictionary(head["config"]))
@@ -471,7 +479,7 @@ func _load_run() -> void:
 			st.feed(g, g.step(act))
 	f.close()
 	if g.over:
-		DirAccess.remove_absolute(RUN_SAVE_PATH)
+		DirAccess.remove_absolute(run_save_path)
 		return
 	game = g
 	stats = st
@@ -493,7 +501,7 @@ func _load_run() -> void:
 			_draft_focus_spent = bool(ev.get("focus", false))
 	for ln in Feedback.log_entries(tail, {}, game, {}):
 		_log(String(ln["text"]), String(ln["cat"]))
-	_run_save = FileAccess.open(RUN_SAVE_PATH, FileAccess.READ_WRITE)
+	_run_save = FileAccess.open(run_save_path, FileAccess.READ_WRITE)
 	if _run_save != null:
 		_run_save.seek_end()
 
@@ -538,7 +546,8 @@ func _record_finished_run() -> void:
 	_run_unlocks = []
 	_run_report = {}
 	if _run_is_daily():
-		_over_prev = {"daily": profile.daily_best.get(str(seed_v), {}).duplicate()}
+		# the key record_daily writes (the game's own seed), never seed_v
+		_over_prev = {"daily": profile.daily_best.get(Profile.daily_key(summary.get("seed")), {}).duplicate()}
 		profile.record_daily(summary)
 	else:
 		_over_prev = profile.bests_snapshot(String(summary.get("loadout", "tender")))
@@ -556,7 +565,7 @@ func _record_finished_run() -> void:
 ## runs_dir as run_<seed>_<yyyymmdd>_<won|died>.save and keep the newest
 ## RUNS_KEEP. tests/import_run.gd turns one into a regression pair.
 func _archive_run() -> void:
-	if not FileAccess.file_exists(RUN_SAVE_PATH):
+	if not FileAccess.file_exists(run_save_path):
 		return
 	var d := Time.get_date_dict_from_system()
 	var outcome := "won" if (game != null and game.won) else "died"
@@ -565,9 +574,9 @@ func _archive_run() -> void:
 	DirAccess.make_dir_recursive_absolute(runs_dir)
 	if FileAccess.file_exists(dest):
 		DirAccess.remove_absolute(dest)  # same seed, same day: the newer log wins
-	if DirAccess.rename_absolute(RUN_SAVE_PATH, dest) != OK:
-		DirAccess.copy_absolute(RUN_SAVE_PATH, dest)
-	DirAccess.remove_absolute(RUN_SAVE_PATH)  # no-op after a successful rename
+	if DirAccess.rename_absolute(run_save_path, dest) != OK:
+		DirAccess.copy_absolute(run_save_path, dest)
+	DirAccess.remove_absolute(run_save_path)  # no-op after a successful rename
 	_prune_runs()
 
 
@@ -670,7 +679,8 @@ func _act(a: Dictionary) -> void:
 	_danger_rev += 1
 	# danger transitions (lethal switching on, the choke window): a warn tick
 	# in the step's sound cap and, at choke 1, a banner (empty when over/draft)
-	var cue: Dictionary = Danger.cues(pre_d, _danger_state())
+	var cue: Dictionary = Danger.cues(pre_d, _danger_state(), _choke_cued)
+	_choke_cued = int(cue["announced"])
 	_arm_anim(pre["pos"], int(pre["floor"]))
 	for ev in evs:
 		if String(ev.get("t", "")) == "draft_offer":
@@ -1126,7 +1136,7 @@ func _show_tooltip(pos: Vector2) -> void:
 	for e in snap["enemies"]:
 		if e["pos"] == t:
 			var row := _legend_of(e["kind"])
-			lines.append("%s - hp %d%s" % [_ename(e["kind"]), e["hp"], "  ELITE" if e.get("elite", false) else ""])
+			lines.append("%s - hp %d%s" % [Names.ename(e["kind"]), e["hp"], "  ELITE" if e.get("elite", false) else ""])
 			lines.append(_intent_words(e))
 			lines.append_array(_danger_tip(e, dz))
 			if e["traits"].has("spiked") or e.get("elite", false):
@@ -1191,12 +1201,26 @@ func _danger_tip(e: Dictionary, dz: Dictionary) -> Array:
 			"anchor":
 				out.append("your anchor holds - the grapple fails")
 		break
-	if String(e["intent"].get("type", "")) == "stoke":
+	# keyed on the ROW (the `stokes` trait), not the current intent: a slow
+	# stoker on its idle turn still pulls the choke in. sky vs sky_calm removes
+	# EVERY stoker at once, so with more than one alive the total is shared.
+	if _is_stoker(String(e.get("kind", ""))):
 		var c := int(dz.get("sky", {}).get("choke_in", -1))
 		var calm := int(dz.get("sky_calm", {}).get("choke_in", -1))
 		if c > 0 and calm > c:
-			out.append("brings the choke %d turns sooner" % (calm - c))
+			var n_stokers := 0
+			for o in game.enemies:
+				if _is_stoker(String(o["kind"])):
+					n_stokers += 1
+			if n_stokers > 1:
+				out.append("stokers bring the choke %d turns sooner" % (calm - c))
+			else:
+				out.append("brings the choke %d turns sooner" % (calm - c))
 	return out
+
+
+func _is_stoker(kind: String) -> bool:
+	return Content.ENEMIES.get(kind, {}).get("traits", []).has("stokes")
 
 
 func _dir_from_key(k: int) -> Vector2i:
@@ -1700,7 +1724,7 @@ func _tap(tag: String) -> void:
 		screen = "game"
 		_new_game()
 	elif tag == "resume":
-		if (game == null or not _game_is_run or game.over) and FileAccess.file_exists(RUN_SAVE_PATH):
+		if (game == null or not _game_is_run or game.over) and FileAccess.file_exists(run_save_path):
 			_load_run()  # the live run was displaced (e.g. by the tutorial)
 		if game != null and not game.over and _game_is_run:
 			screen = "game"
@@ -1760,26 +1784,13 @@ static func _with_none(ids: Array) -> Array:
 	return out
 
 
-## Display name for a run choice: loadouts and mutators carry one in Content,
-## a package is just its id, and "" is the opted-out row.
-static func _choice_name(kind: String, id: String) -> String:
-	if id == "":
-		return "none"
-	match kind:
-		"loadout":
-			return String(Content.LOADOUTS[id]["name"]) if Content.LOADOUTS.has(id) else id
-		"mutator":
-			return String(Content.MUTATORS[id]["name"]) if Content.MUTATORS.has(id) else id
-	return id.capitalize()
-
-
 ## The title screen's row stack as data: [label, tap tag, highlighted]. A row
 ## with an empty tag is a line of text, not a button (the daily config line).
 ## Built here so a headless test can read exactly what the menu offers.
 func _menu_rows() -> Array:
 	var rows: Array = []
 	var has_resume: bool = (game != null and not game.over and _game_is_run) \
-		or FileAccess.file_exists(RUN_SAVE_PATH)
+		or FileAccess.file_exists(run_save_path)
 	if has_resume:
 		rows.append(["RESUME RUN", "resume", true])
 	rows.append(["PLAY", "play", true])
@@ -1791,13 +1802,13 @@ func _menu_rows() -> Array:
 		# the menu: one line saying what today hands everyone
 		var d: Dictionary = Profile.daily_config(_daily_seed())
 		rows.append(["TODAY: %s · %s · %s" % [
-			_choice_name("loadout", String(d["loadout"])),
-			_choice_name("package", String(d["package"])),
-			_choice_name("mutator", String(d["mutator"]))], "", false])
+			Names.choice_name("loadout", String(d["loadout"])),
+			Names.choice_name("package", String(d["package"])),
+			Names.choice_name("mutator", String(d["mutator"]))], "", false])
 	else:
-		rows.append(["LOADOUT: %s" % _choice_name("loadout", sel_loadout), "set:loadout", false])
-		rows.append(["PACKAGE: %s" % _choice_name("package", sel_package), "set:package", false])
-		rows.append(["MUTATOR: %s" % _choice_name("mutator", sel_mutator), "set:mutator", false])
+		rows.append(["LOADOUT: %s" % Names.choice_name("loadout", sel_loadout), "set:loadout", false])
+		rows.append(["PACKAGE: %s" % Names.choice_name("package", sel_package), "set:package", false])
+		rows.append(["MUTATOR: %s" % Names.choice_name("mutator", sel_mutator), "set:mutator", false])
 	rows.append(["TUTORIAL", "tutorial", false])
 	rows.append(["SETTINGS", "settings", false])
 	rows.append(["QUIT", "quit", false])
@@ -1845,19 +1856,6 @@ func _flash_danger(msg: String) -> void:
 
 
 # --- event log in words -------------------------------------------------------
-
-func _ename(kind: String) -> String:
-	return Content.ENEMIES[kind]["name"] if Content.ENEMIES.has(kind) else kind
-
-
-## The name of the enemy an event names by id (the screen event reports the
-## enemy, not its kind); "Something" if it has already left the board.
-func _ename_by_id(id) -> String:
-	for e in game.enemies:
-		if e["id"] == id:
-			return _ename(String(e["kind"]))
-	return "Something"
-
 
 ## One event in words, context-free (Feedback.ev_text: the log's templates).
 func _ev_text(ev: Dictionary) -> String:
@@ -2389,11 +2387,11 @@ func _ability_tags(aid: String) -> Array:
 ## being played, then the package and the mutator that shaped the run. Drawn
 ## under the skies bar so what a run is set to is never a mystery mid-floor.
 func _config_line(snap: Dictionary) -> String:
-	var parts: Array = [_choice_name("loadout", String(snap.get("loadout", "tender")))]
+	var parts: Array = [Names.choice_name("loadout", String(snap.get("loadout", "tender")))]
 	for pkg in snap.get("packages", []):
-		parts.append(_choice_name("package", String(pkg)))
+		parts.append(Names.choice_name("package", String(pkg)))
 	for m in snap.get("mutators", []):
-		parts.append(_choice_name("mutator", String(m)))
+		parts.append(Names.choice_name("mutator", String(m)))
 	return " · ".join(parts)
 
 
@@ -3190,8 +3188,7 @@ func _context_msg(snap: Dictionary) -> Dictionary:
 				return {"text": flash, "col": COL_RED if _flash_red else COL_GOLD, "pulse": false}
 			if screen == "tutorial":
 				return {"text": "", "col": col, "pulse": false}
-			var dl: Dictionary = Danger.context_line(_danger_state(),
-				int(snap["greened"]), int(snap["green_need"]))
+			var dl: Dictionary = Danger.context_line(_danger_state(), Danger.stairs_awake(snap))
 			if not dl.is_empty():
 				return dl
 			if snap["floor"] == 7:

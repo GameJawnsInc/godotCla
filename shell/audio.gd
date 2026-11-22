@@ -14,7 +14,8 @@ var _pi := 0
 var _music_player: AudioStreamPlayer
 var _bank := {}
 var _music_thread: Thread
-var _rng := RandomNumberGenerator.new()
+var _rng := RandomNumberGenerator.new()      # the sound bank's noise draws
+var _music_rng := RandomNumberGenerator.new()  # the music's noise bed, its own stream
 
 ## A repeated sound varies a little: each id walks this pitch cycle, one entry
 ## per time it actually plays (deterministic - no rng, so the bank's noise
@@ -118,13 +119,15 @@ func _tone(buf: PackedFloat32Array, start_s: float, dur: float, f0: float, f1: f
 
 
 ## Brown-ish noise burst with decay envelope; higher `smooth` = darker.
-func _noise(buf: PackedFloat32Array, start_s: float, dur: float, vol: float, decay := 2.0, wrap := false, smooth := 0.94) -> void:
+## Draws from `rng` (the bank's _rng when null).
+func _noise(buf: PackedFloat32Array, start_s: float, dur: float, vol: float, decay := 2.0, wrap := false, smooth := 0.94, rng: RandomNumberGenerator = null) -> void:
+	var r: RandomNumberGenerator = rng if rng != null else _rng
 	var n0 := int(start_s * RATE)
 	var n := int(dur * RATE)
 	var prev := 0.0
 	for i in n:
 		var t := float(i) / n
-		prev = prev * smooth + (_rng.randf() * 2.0 - 1.0) * (1.0 - smooth) * 5.0
+		prev = prev * smooth + (r.randf() * 2.0 - 1.0) * (1.0 - smooth) * 5.0
 		var idx := n0 + i
 		if wrap:
 			idx = idx % buf.size()
@@ -234,8 +237,9 @@ func build_bank() -> void:
 	_tone(b, 0.44, 0.45, 784, 784, 0.35, 1.2, 0.3)
 	_bank["win"] = _wav(b)
 
-	# fun-pass sounds, appended AFTER every older one so the noise draws above
-	# stay byte-identical (_noise is the only consumer of _rng)
+	# fun-pass sounds, appended AFTER every older one so the older sounds' noise
+	# draws stay byte-identical (the bank's _noise calls are _rng's only
+	# consumer; the music's bed draws from _music_rng and is unaffected either way)
 	b = _mk(0.22)  # combo chime (pitched up a step per combo in a step)
 	_tone(b, 0.0, 0.22, 784, 784, 0.22, 2.4, 0.35)
 	_tone(b, 0.0, 0.16, 1568, 1568, 0.07, 3.0)
@@ -284,6 +288,9 @@ func _render_music() -> void:
 ## 12-second seamless four-chord ambient loop (rendered off the main thread
 ## in play; called directly by the test suite).
 func render_music_stream() -> AudioStreamWAV:
+	# the music draws from its OWN generator, re-seeded per render, so a sound
+	# appended to build_bank (which draws from _rng) never shifts its noise bed
+	_music_rng.seed = 11
 	var chords := [[48, 55, 60, 64], [45, 52, 57, 60], [41, 48, 53, 57], [43, 50, 55, 59]]
 	var cd := 3.0
 	var buf := _mk(cd * chords.size())
@@ -296,7 +303,7 @@ func render_music_stream() -> AudioStreamWAV:
 			_tone(buf, t0 + k * cd / 8.0, 0.3, 440.0 * pow(2.0, (m2 - 69) / 12.0),
 				440.0 * pow(2.0, (m2 - 69) / 12.0), 0.075, 3.0, 0.25, true)
 	# wind bed: very quiet, very dark
-	_noise(buf, 0.0, cd * chords.size(), 0.006, 0.001, true, 0.99)
+	_noise(buf, 0.0, cd * chords.size(), 0.006, 0.001, true, 0.99, _music_rng)
 	return _wav(buf)
 
 
