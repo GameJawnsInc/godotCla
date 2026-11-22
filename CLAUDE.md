@@ -154,7 +154,12 @@ architecture below is designed to bend rather than block.
     to a readable size on the tightest shrine card, and `_check_cleanse_hint`
     holds CLEANSE's refusal to the truth; `_check_resume_stats` holds a
     resumed run's stats fold equal to an uninterrupted one, and every
-    `_bare_shell` keeps its career in a scratch `profile_path`
+    `_bare_shell` keeps its career in a scratch `profile_path`;
+    `_check_names` holds the one names module (short and long source names,
+    articles, the floor title card) and `_check_feedback` the feedback layer:
+    callouts, the cleanse gain, kill weight, the boss shield, log names / xN,
+    sound picks and the chime, the vocabulary tripwire, and two bot-driven runs
+    through `_act` (no raw id and no line over 60 chars in the log)
 - Bots live in one registry, `bots/roster.gd` (`Roster.names()/make(name, seed)`);
   every runner resolves persona names through it, and an unknown name fails
   loudly. `deeproot_rollout` is deeproot with rollout drafting (a separate
@@ -1416,6 +1421,53 @@ architecture below is designed to bend rather than block.
   `_check_aim_cancel` / `_check_modal_dpad` drive the notification itself and
   assert an adjacent enemy's HP, the tender's position, the charge and the turn
   counter are all untouched.
+- Shell feedback layer (fun pass): `shell/feedback.gd` is pure static
+  functions over `(events, pre, game, ctx)` - `pre` the facts from before the
+  step (`main._pre_step`: positions, enemy kinds, bloom, hp, floor), `ctx` the
+  RunStats StepCtx (`{}` = no multi-kill, room clear, streak, awaken banner or
+  cleanse number, everything else still works) - and never writes the game,
+  steps it or clones it. `Feedback.step` returns `{callouts, fx, banners, log,
+  sounds, shake, hitstop, lunge}` and `main._feedback` applies it. Names come
+  from `shell/names.gd`, the ONE names module (`ename`, `the_name` "the
+  Overseer", `boss_name` "The Furnace Core", `a_name`, `aname`,
+  `source_name`, `src_name` SHORT - cut at ":", so 8c's "(fire)" holds -
+  and `src_long` "Solar Lance fire" / "Water Jet slam"); no other file
+  defines a name or article helper. Callouts name every payoff over its tile
+  (CINDER GRIP, GROWTH +1 dmg, BURNING +1 dmg, ROOTED!, SURGE +1 dmg,
+  COLLISION, SHIELDED, BLOCKED n, IGNITE, TITHE -n, BOUNTY +4, DOUBLE KILL,
+  ROOM CLEAR, STREAK n), deduped per text and tile, sorted by priority, every
+  big one plus at most `CALLOUT_CAP` (4) regular ones; a dropped callout keeps
+  its log line. A `hook` LANDED only when `evs[i+1]` is its row's effect (a
+  `damage` with src = the hook id, its `status`, or a `terrain` on the hook
+  tile): 58% of hooks land nothing, and those get no word and no line. A
+  then-rider claims the run of unclaimed `status` events right before it.
+  Multi-kill, streak and room clear read ctx only (`step_kills`,
+  `turn_kills`, `turn_kills_prev`, `kill_streak`, `room_cleared`); the
+  cleanse float and line read `ctx.cleanse_gain`, because the `cleanse`
+  event's `bloom` is the running TOTAL (the float used to print it) and the
+  event must not gain a key - the hash sees `snapshot().events`. Kills land
+  with weight: the killing blow is gold, bold and 1.5x, the dead machine
+  leaves a white ghost, the tender lunges a quarter tile, and a kill or any
+  hit of 4+ is a 70 ms hit-stop - the FX CLOCK `main._fx_now()` holds still
+  (floats, callouts, slides); input never waits on it. The log's single
+  append point is `main._log(text, cat)` (`Feedback.log_push`: a repeat bumps
+  "x3" instead of vanishing, `log_cats` stays parallel, `LOG_KEEP` 60), each
+  line coloured by category (`LOG_COL`: hurt, reward, heal, combo, boss,
+  info); `_ev_text` delegates to `Feedback.ev_text`. Banners go through ONE
+  queue, `main._push_banner(lines, col, prio)` (`Feedback.BANNER_PRIO`: boss
+  90, danger 85, resonance 80, restored 60, stairs 50, career 10; at most 3
+  waiting). Sounds: at most 3 per step, sorted by `SOUND_PRIO` (worst first,
+  which the old cap only claimed), `extra` ids merged before the cap, a win or
+  a death alone, then the combo chime climbing `CHIME_STEPS` per combo
+  callout (delayed through `_sfx_q`); `shell/audio.gd` has 8 players, a
+  deterministic per-id pitch `jitter` cycle and six new sounds appended AFTER
+  the old ones (only `_noise` draws its rng). The boss explains itself:
+  `BOSS_PHASE_LINES` words each phase (it MIRRORS `_damage_enemy` and
+  `_compute_boss_intent`, whose comments say so - change both together), and
+  the read-only `Game.core_shield_up(id)` draws a cyan ring on the map and
+  SHIELDED on the boss bar before a hit is wasted. `_floor_card_lines(snap)`
+  is the floor title card: the boss floor reads "defeat the Overseer", never
+  "cleanse 0 to wake the stairs".
 - The tutorial floor (`shell/tutorial.gd` ROOM) puts its second slick OFF the
   golem's row on purpose: the guide teaches lancing down that row two steps
   before it asks for a cleanse, the lance ignites oil, and a burning tile is

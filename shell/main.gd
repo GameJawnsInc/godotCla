@@ -16,6 +16,8 @@ const Tutorial := preload("res://shell/tutorial.gd")
 const AudioKit := preload("res://shell/audio.gd")
 const Profile := preload("res://meta/profile.gd")
 const RunStats := preload("res://meta/run_stats.gd")
+const Names := preload("res://shell/names.gd")
+const Feedback := preload("res://shell/feedback.gd")
 const PROFILE_PATH := "user://tender_profile.json"
 const RUN_SAVE_PATH := "user://tender_run.save"
 # Replay compatibility rides on the sim's own version: a stale log replayed
@@ -195,6 +197,21 @@ var _shake_ms := -99999
 var _shake_mag := 0.0
 var _banner: Array = []
 var _banner_ms := -99999
+## The feedback layer's live state (shell/feedback.gd computes, this applies).
+const LOG_KEEP := 60       # log lines kept; log_cats is trimmed with them
+const BANNER_MS := 1600    # one banner's life (wall clock)
+const LUNGE_OUT := 45      # the tender's lean into a strike, ms out...
+const LUNGE_BACK := 70     # ...and back
+var log_cats: Array = []   # parallel to log_lines: a Feedback.LOG_COL category per line
+var _banner_col := COL_GOLD
+var _banner_q: Array = []  # pending {lines, col, prio}, prio desc, max 3
+var _sfx_q: Array = []     # delayed sounds {id, pitch, at} (the combo chime)
+var _frozen_total := 0     # hit-stop: ms the fx clock has been held in all
+var _freeze_start := -1
+var _freeze_end := -1
+var _lunge_dir := Vector2.ZERO
+var _lunge_ms := -99999
+var _lunge_hold := 0
 var _run_save: FileAccess = null  # open append handle for the live run's log
 ## Where the career profile is read and written. PROFILE_PATH in the app; the
 ## headless tests point it at a scratch file BEFORE _ready, so no test ever
@@ -307,7 +324,7 @@ func _new_game() -> void:
 		mode = "intro"
 	flash = ""
 	tooltip = []
-	log_lines = []
+	_reset_feedback()
 	queue_redraw()
 
 
@@ -322,8 +339,19 @@ func _start_tutorial() -> void:
 	mode = "normal"
 	flash = ""
 	tooltip = []
-	log_lines = []
+	_reset_feedback()
 	queue_redraw()
+
+
+## A new game starts with an empty log and no banner, chime or lean left over
+## from the last one.
+func _reset_feedback() -> void:
+	log_lines = []
+	log_cats = []
+	_banner = []
+	_banner_q = []
+	_sfx_q = []
+	_lunge_dir = Vector2.ZERO
 
 
 ## Restore the interrupted run: rebuild the game from its seed + config and
@@ -367,13 +395,15 @@ func _load_run() -> void:
 	_run_recorded = false
 	_run_unlocks = []
 	mode = "normal"
-	log_lines = []
-	for ev in game.snapshot()["events"]:
+	_reset_feedback()
+	# the snapshot's event tail, read context-free: no pre-step facts survive
+	# a restart, so a cleanse reads "Cleansed · green x/y" without its gain
+	var tail: Array = game.snapshot()["events"]
+	for ev in tail:
 		if String(ev.get("t", "")) == "draft_offer":
 			_draft_focus_spent = bool(ev.get("focus", false))
-		var s := _ev_text(ev)
-		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
-			log_lines.append(s)
+	for ln in Feedback.log_entries(tail, {}, game, {}):
+		_log(String(ln["text"]), String(ln["cat"]))
 	_run_save = FileAccess.open(RUN_SAVE_PATH, FileAccess.READ_WRITE)
 	if _run_save != null:
 		_run_save.seek_end()
@@ -503,10 +533,8 @@ func _save_settings() -> void:
 func _act(a: Dictionary) -> void:
 	if game == null or game.over:
 		return
-	var prev := {"player": Vector2(game.player["pos"])}
-	var prev_floor: int = game.floor_num
-	for e in game.enemies:
-		prev[e["id"]] = Vector2(e["pos"])
+	_ensure_stats()  # before the step: a fold begun after it would miss the step's bloom
+	var pre := _pre_step()
 	if screen == "tutorial" and not tut_done:
 		var st: Dictionary = Tutorial.STEPS[tut_step]
 		var kind := String(a.get("type", ""))
@@ -519,10 +547,9 @@ func _act(a: Dictionary) -> void:
 			return
 		var tevs: Array = game.step(a)
 		_ensure_stats()
-		stats.feed(game, tevs)
-		_arm_anim(prev, prev_floor)
-		_spawn_fx(tevs, prev)
-		_play_events(tevs)
+		var tctx: Dictionary = stats.feed(game, tevs)
+		_arm_anim(pre["pos"], int(pre["floor"]))
+		_feedback(tevs, pre, tctx)
 		if advances:
 			if st.get("until_dead", false):
 				if _tut_cleared(st["until_dead"]):
@@ -548,20 +575,14 @@ func _act(a: Dictionary) -> void:
 		_run_save.store_line(var_to_str(a).replace("\n", " "))
 		_run_save.flush()
 	_ensure_stats()
-	stats.feed(game, evs)
-	_arm_anim(prev, prev_floor)
-	_spawn_fx(evs, prev)
-	if game.over and _game_is_run and not _run_recorded:
-		_record_finished_run()
+	var ctx: Dictionary = stats.feed(game, evs)
+	_arm_anim(pre["pos"], int(pre["floor"]))
 	for ev in evs:
 		if String(ev.get("t", "")) == "draft_offer":
 			_draft_focus_spent = bool(ev.get("focus", false))
-		var s := _ev_text(ev)
-		if s != "" and (log_lines.is_empty() or log_lines.back() != s):
-			log_lines.append(s)
-	if log_lines.size() > 60:
-		log_lines = log_lines.slice(log_lines.size() - 60)
-	_play_events(evs)
+	_feedback(evs, pre, ctx)
+	if game.over and _game_is_run and not _run_recorded:
+		_record_finished_run()
 	mode = "normal"
 	if keep_shop and game.player["pos"] == game.map["shrine"] and not game.shop.is_empty():
 		mode = "shop"
@@ -571,117 +592,167 @@ func _act(a: Dictionary) -> void:
 	queue_redraw()
 
 
-## Map a step's events to at most three synthesized sounds, worst first.
-func _play_events(evs: Array) -> void:
-	if audio == null:
-		return
-	var picks: Array = []
-	for ev in evs:
-		var t := String(ev.get("t", ""))
-		var id := ""
-		match t:
-			"player_death": id = "death"
-			"boss_phase": id = "boss"
-			"damage": id = "hurt" if ev.get("who", "") == "player" else ""
-			"death": id = "kill"
-			"strike": id = "hit"
-			"ability": id = "cast"
-			"cleanse": id = "sparkle"
-			"heal": id = "heal"
-			"buy", "draft_upgrade", "item_pickup": id = "coin"
-			"room_bloom": id = "heal"
-			"stairs_awaken": id = "sparkle"
-			"verdant": id = "sparkle"
-			"seal_burst": id = "vent"
-			"floor_restored": id = "heal"
-			"item_use": id = "cast"
-			"assimilate": id = "drag"
-			"upcycle", "upcycle_ability": id = "sparkle"
-			"drag": id = "drag"
-			"reinforcement", "summon": id = "vent"
-			"smog_dim", "choke", "stoke": id = "dim"
-			"floor": id = "descend"
-			"move": id = "step" if ev.get("who", "") == "player" else ""
-		if id != "" and not picks.has(id):
-			picks.append(id)
-	if game != null and game.won:
-		picks = ["win"]
-	elif picks.has("death"):
-		picks = ["death"]
-	for i in mini(3, picks.size()):
-		audio.play(picks[i])
+## Facts from BEFORE a step, for the feedback layer: where everything stood
+## (the same dict _arm_anim slides from), what each enemy was, and the
+## tender's numbers - a body that dies in the step is gone from game.enemies
+## by the time its puff, ghost and log line are drawn.
+func _pre_step() -> Dictionary:
+	var pos := {"player": Vector2(game.player["pos"])}
+	var kinds := {}
+	for e in game.enemies:
+		pos[e["id"]] = Vector2(e["pos"])
+		kinds[e["id"]] = String(e["kind"])
+	return {
+		"pos": pos, "kinds": kinds, "bloom": int(game.bloom),
+		"hp": int(game.player["hp"]), "max_hp": int(game.player["max_hp"]),
+		"shield": int(game.player.get("shield", 0)),
+		"floor": int(game.floor_num), "total_turns": int(game.total_turns),
+	}
 
 
-## Turn a step's events into transient map effects: floating numbers over
-## whoever was hit, white hit flashes, gold cleanse bursts, grey death puffs.
-func _spawn_fx(evs: Array, prev: Dictionary) -> void:
-	var now := Time.get_ticks_msec()
-	var stack := {}  # tile -> count, so numbers landing together fan out in time
-	for ev in evs:
-		match String(ev.get("t", "")):
-			"damage":
-				var p := _fx_pos(ev, prev)
-				if p.x < -0.5:
-					continue
-				var k := str(p)
-				stack[k] = int(stack.get(k, -1)) + 1
-				var mine: bool = ev.get("who", "") == "player"
-				_fx.append({"kind": "float", "pos": p, "text": "-%d" % int(ev["amt"]),
-					"col": COL_RED if mine else COL_CREAM, "t0": now + int(stack[k]) * 110})
-				_fx.append({"kind": "flash", "pos": p, "col": Color(1, 1, 1), "t0": now})
-				if mine:
-					_shake(2.0 + minf(float(int(ev["amt"])) * 1.2, 6.0))
-			"heal":
-				_fx.append({"kind": "float", "pos": Vector2(game.player["pos"]),
-					"text": "+%d" % int(ev["amt"]), "col": Color("8fdc6a"), "t0": now})
-			"shield":
-				_fx.append({"kind": "float", "pos": Vector2(game.player["pos"]),
-					"text": "shield", "col": Color("7fb6d9"), "t0": now})
-			"cleanse":
-				var cp := Vector2(ev["tile"])
-				_fx.append({"kind": "burst", "pos": cp, "col": COL_GOLD, "t0": now})
-				_fx.append({"kind": "float", "pos": cp, "text": "+%d" % int(ev.get("bloom", 1)),
-					"col": COL_GOLD, "t0": now})
-			"death":
-				var dp := _fx_pos(ev, prev)
-				if dp.x > -0.5:
-					_fx.append({"kind": "puff", "pos": dp, "col": Color(0.62, 0.64, 0.66), "t0": now})
-			"room_bloom":
-				var bp := Vector2(game.player["pos"])
-				_fx.append({"kind": "burst", "pos": bp, "col": Color(0.91, 0.70, 0.82), "t0": now})
-				_fx.append({"kind": "float", "pos": bp, "text": "BLOOM +%d" % int(ev.get("bonus", 2)),
-					"col": COL_GOLD, "t0": now + 120})
-			"stairs_awaken":
-				_banner = ["THE STAIRS AWAKEN"]
-				_banner_ms = now
-				if ev.has("tile"):
-					_fx.append({"kind": "burst", "pos": Vector2(ev["tile"]), "col": COL_GOLD, "t0": now})
-			"floor_restored":
-				_banner = ["FLOOR RESTORED", "the skies clear"]
-				_banner_ms = now
-				_fx.append({"kind": "burst", "pos": Vector2(game.player["pos"]), "col": Color(0.6, 0.9, 0.5), "t0": now})
-			"verdant":
-				if ev.has("tile"):
-					_fx.append({"kind": "burst", "pos": Vector2(ev["tile"]), "col": Color(0.55, 0.9, 0.45), "t0": now})
-			"boss_phase", "ignite_all", "flood", "smoke_burst":
-				_shake(9.0)
+## Apply one step's feedback (shell/feedback.gd): map effects, shake, the
+## hit-stop, the tender's lunge, banners, log lines and sounds. Returned so a
+## test can read what the step produced.
+func _feedback(evs: Array, pre: Dictionary, ctx: Dictionary, extra_sounds: Array = []) -> Dictionary:
+	var res: Dictionary = Feedback.step(evs, pre, game, ctx, _fx_now(), extra_sounds)
+	_fx.append_array(res["fx"])
 	if _fx.size() > 40:
 		_fx = _fx.slice(_fx.size() - 40)
+	if float(res["shake"]) > 0.0:
+		_shake(float(res["shake"]))
+	if bool(res["hitstop"]):
+		_hit_stop(Feedback.HITSTOP_MS)
+	if Vector2(res["lunge"]) != Vector2.ZERO:
+		_lunge_dir = res["lunge"]
+		_lunge_ms = Time.get_ticks_msec()
+		_lunge_hold = Feedback.HITSTOP_MS if bool(res["hitstop"]) else 0
+	for b in res["banners"]:
+		_push_banner(b["lines"], b["col"], int(b["prio"]))
+	for ln in res["log"]:
+		_log(String(ln["text"]), String(ln["cat"]))
+	_play_picks(res["sounds"])
+	return res
 
 
-## Best-known tile for an event's subject: the player, a live enemy, or the
-## pre-step position of something that just died.
+## The single append point of the event log: repeats count up ("x3") instead
+## of vanishing, and both arrays keep the newest LOG_KEEP lines.
+func _log(s: String, cat: String = "info") -> void:
+	Feedback.log_push(log_lines, log_cats, s, cat)
+	if log_lines.size() > LOG_KEEP:
+		var cut := log_lines.size() - LOG_KEEP
+		log_lines = log_lines.slice(cut)
+		log_cats = log_cats.slice(cut)
+
+
+## The one banner path: shows at once when no banner is live, else waits in a
+## queue (priority first, then arrival; at most 3 waiting).
+func _push_banner(lines: Array, col: Color = COL_GOLD, prio: int = 0) -> void:
+	if lines.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	if now - _banner_ms >= BANNER_MS or _banner.is_empty():
+		_banner = lines.duplicate()
+		_banner_col = col
+		_banner_ms = now
+		return
+	var at := _banner_q.size()
+	for i in _banner_q.size():
+		if int(_banner_q[i]["prio"]) < prio:
+			at = i
+			break
+	_banner_q.insert(at, {"lines": lines.duplicate(), "col": col, "prio": prio})
+	if _banner_q.size() > 3:
+		_banner_q.resize(3)
+
+
+## From _process: the next queued banner takes over once the live one is done.
+func _tick_banner() -> void:
+	if _banner_q.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	if now - _banner_ms < BANNER_MS:
+		return
+	var b: Dictionary = _banner_q.pop_front()
+	_banner = b["lines"]
+	_banner_col = b["col"]
+	_banner_ms = now
+
+
+## Play the feedback layer's sound picks: now, or (the chime) after its delay.
+func _play_picks(picks: Array) -> void:
+	if audio == null:
+		return
+	var now := Time.get_ticks_msec()
+	for p in picks:
+		if int(p.get("delay", 0)) <= 0:
+			audio.play(String(p["id"]), float(p.get("pitch", 1.0)))
+		else:
+			_sfx_q.append({"id": String(p["id"]), "pitch": float(p.get("pitch", 1.0)), "at": now + int(p["delay"])})
+
+
+## The fx clock: wall time minus every hit-stop so far, held still while one
+## is running. Floats, callouts and the slide animation run on it, so a kill
+## freezes them for a beat; input never waits on it.
+func _fx_now() -> int:
+	var t := Time.get_ticks_msec()
+	if _freeze_start >= 0:
+		if t < _freeze_end:
+			return _freeze_start - _frozen_total
+		_frozen_total += _freeze_end - _freeze_start
+		_freeze_start = -1
+	return t - _frozen_total
+
+
+func _hit_stop(ms: int) -> void:
+	_fx_now()  # settle an expired freeze
+	var t := Time.get_ticks_msec()
+	if _freeze_start >= 0:
+		_freeze_end = maxi(_freeze_end, t + ms)
+		return
+	_freeze_start = t
+	_freeze_end = t + ms
+
+
+## The tender's lean into a strike, in tiles: out over LUNGE_OUT, held through
+## the hit-stop, back over LUNGE_BACK (wall clock, a quarter tile at most).
+func _lunge_off() -> Vector2:
+	var dt := Time.get_ticks_msec() - _lunge_ms
+	if _lunge_dir == Vector2.ZERO or dt < 0:
+		return Vector2.ZERO
+	var k := 0.0
+	if dt < LUNGE_OUT:
+		k = float(dt) / LUNGE_OUT
+	elif dt < LUNGE_OUT + _lunge_hold:
+		k = 1.0
+	elif dt < LUNGE_OUT + _lunge_hold + LUNGE_BACK:
+		k = 1.0 - float(dt - LUNGE_OUT - _lunge_hold) / LUNGE_BACK
+	return _lunge_dir * 0.25 * k
+
+
+## Compatibility wrapper: one step's sounds (computed even headless, where
+## nothing plays), played and returned.
+func _play_events(evs: Array, extra: Array = []) -> Array:
+	var picks: Array = Feedback.step(evs, {}, game, {}, _fx_now(), extra)["sounds"]
+	_play_picks(picks)
+	return picks
+
+
+## Compatibility wrapper: the map effects, shake and banners of a step with no
+## fold context.
+func _spawn_fx(evs: Array, prev: Dictionary) -> void:
+	var res: Dictionary = Feedback.step(evs, {"pos": prev}, game, {}, _fx_now())
+	_fx.append_array(res["fx"])
+	if _fx.size() > 40:
+		_fx = _fx.slice(_fx.size() - 40)
+	if float(res["shake"]) > 0.0:
+		_shake(float(res["shake"]))
+	for b in res["banners"]:
+		_push_banner(b["lines"], b["col"], int(b["prio"]))
+
+
+## Best-known tile for an event's subject (Feedback.ev_pos).
 func _fx_pos(ev: Dictionary, prev: Dictionary) -> Vector2:
-	if ev.get("who", "") == "player":
-		return Vector2(game.player["pos"])
-	var id = ev.get("id", null)
-	if id != null:
-		for e in game.enemies:
-			if e["id"] == id:
-				return Vector2(e["pos"])
-		if prev.has(id):
-			return prev[id]
-	return Vector2(-9, -9)
+	return Feedback.ev_pos(ev, {"pos": prev}, game)
 
 
 ## Brief screen shake; magnitudes from concurrent hits keep the strongest.
@@ -711,13 +782,13 @@ func _arm_anim(prev: Dictionary, prev_floor: int) -> void:
 		_floor_fade_ms = Time.get_ticks_msec()
 		return
 	_anim_from = prev
-	_anim_ms = Time.get_ticks_msec()
+	_anim_ms = _fx_now()
 
 
 ## Where to draw a creature right now: sliding from its previous tile for a
 ## beat after each step. Long jumps (teleports, dashes) snap instead.
 func _anim_pos(key, cur: Vector2i) -> Vector2:
-	var t := (Time.get_ticks_msec() - _anim_ms) / float(ANIM_MS)
+	var t := (_fx_now() - _anim_ms) / float(ANIM_MS)
 	if t >= 1.0 or not _anim_from.has(key):
 		return Vector2(cur)
 	var from: Vector2 = _anim_from[key]
@@ -870,20 +941,34 @@ func _unhandled_input(ev: InputEvent) -> void:
 
 
 func _process(_dt: float) -> void:
+	# delayed sounds (the combo chime) fire on the wall clock, menu or not
+	if not _sfx_q.is_empty():
+		var snow := Time.get_ticks_msec()
+		var due: Array = _sfx_q.filter(func(q): return int(q["at"]) <= snow)
+		if not due.is_empty():
+			_sfx_q = _sfx_q.filter(func(q): return int(q["at"]) > snow)
+			if audio != null:
+				for q in due:
+					audio.play(String(q["id"]), float(q["pitch"]))
 	if screen == "menu":
 		queue_redraw()  # spores drift across the title vista
 		return
 	if _held and tooltip.is_empty() and Time.get_ticks_msec() - _press_ms >= hold_ms:
 		_show_tooltip(_press_pos)
-	var animating: bool = Time.get_ticks_msec() - _anim_ms < ANIM_MS + 40
+	_tick_banner()
+	var fxt := _fx_now()
+	var animating: bool = fxt - _anim_ms < ANIM_MS + 40
 	var smoggy: bool = game != null and not game.over and (int(game.smog) > 0 or int(game.dim) > 0)
 	if not _fx.is_empty():
-		var fnow := Time.get_ticks_msec()
-		_fx = _fx.filter(func(f): return fnow - int(f["t0"]) < FX_MS)
+		_fx = _fx.filter(func(f): return fxt - int(f["t0"]) < int(f.get("dur", FX_MS)))
 		animating = true
 	if Time.get_ticks_msec() - _floor_fade_ms < 1450:
 		animating = true
-	if Time.get_ticks_msec() - _banner_ms < 1650:
+	if Time.get_ticks_msec() - _banner_ms < BANNER_MS + 50:
+		animating = true
+	if Time.get_ticks_msec() - _lunge_ms < LUNGE_OUT + _lunge_hold + LUNGE_BACK:
+		animating = true
+	if _freeze_start >= 0 or not _sfx_q.is_empty() or not _banner_q.is_empty():
 		animating = true
 	if game != null and not game.over and int(game.player["hp"]) <= maxi(2, int(game.player["max_hp"]) / 4):
 		animating = true  # danger vignette pulse
@@ -1621,146 +1706,9 @@ func _ename_by_id(id) -> String:
 	return "Something"
 
 
-## What a screened intent is called in the log. The raw type is the fallback,
-## so a new Content.SCREENED_INTENTS entry still reads as a sentence.
-func _screen_word(itype: String) -> String:
-	match itype:
-		"gum": return "tar"
-		"drain": return "drain"
-		"drag": return "grapple"
-	return itype
-
-
-## Purchase ids in words for the log ("bloom_surge" -> "Bloom Surge").
-func _shop_name(item: String, id: String) -> String:
-	match item:
-		"heal":
-			return "a heal"
-		"graft":
-			return String(Content.GRAFTS.get(id, {}).get("name", id))
-		"ability":
-			return String(Content.ABILITIES.get(id, {}).get("name", id))
-		"item":
-			return String(Content.ITEMS.get(id, {}).get("name", id))
-	return id if id != "" else item
-
-
+## One event in words, context-free (Feedback.ev_text: the log's templates).
 func _ev_text(ev: Dictionary) -> String:
-	match String(ev.get("t", "")):
-		"damage":
-			if ev.get("who", "") == "player":
-				# defensive: qualified sources ("fire:solar_lance") read as "fire"
-				var src := String(ev.get("src", "?"))
-				var ci := src.find(":")
-				return "You take %d dmg (%s)" % [ev["amt"], src.substr(0, ci) if ci >= 0 else src]
-			return "%s takes %d" % [_ename(ev["who"]), ev["amt"]]
-		"death":
-			return "%s destroyed" % _ename(ev["who"])
-		"player_death":
-			return "You die (%s)" % ev.get("cause", "?")
-		"heal":
-			return "Growth heals you +%d" % ev["amt"]
-		"cleanse":
-			return "Cleansed +bloom - the air thins"
-		"room_bloom":
-			return "Room BLOOMS - +%d bloom and a supply pod" % ev.get("bonus", 2)
-		"item_pickup":
-			return "Picked up %s" % Content.ITEMS[ev["id"]]["name"]
-		"item_use":
-			return "%s used" % Content.ITEMS[ev["id"]]["name"]
-		"satchel_full":
-			return "Satchel full (2 slots)"
-		"stairs_dormant":
-			return "Stairs dormant - green the floor (%d/%d)" % [ev.get("have", 0), ev.get("need", 0)]
-		"stairs_awaken":
-			return "The floor greens - THE STAIRS AWAKEN"
-		"quota_reclamp":
-			return "Corruption burned away - gate now needs %d" % ev.get("need", 0)
-		"seal_burst":
-			return "Overgrown vent chokes - spawn absorbed"
-		"floor_restored":
-			return "FLOOR RESTORED - skies clear (+%d bloom)" % ev.get("bonus", 5)
-		"verdant":
-			return "Verdant surge - the growth feeds your cast"
-		"assimilate":
-			return "The machines WELD into a hulk"
-		"upcycle":
-			return "Upcycled: %s" % Content.ITEMS[ev["id"]]["name"]
-		"upcycle_ability":
-			return "Forged %s" % Content.ABILITIES[ev["id"]]["name"]
-		"upcycle_scrap":
-			return "Scrapped %s for parts" % Content.ABILITIES[ev["id"]]["name"]
-		"choke":
-			return "The smog chokes you"
-		"smog_dim":
-			return "Skies dim - charge regen drops"
-		"reinforcement":
-			return "A vent releases a drill bot"
-		"gummed":
-			return "Tar gums up an ability"
-		"screened":
-			return "%s's %s is lost in the smoke" % [
-				_ename_by_id(ev.get("id", -1)), _screen_word(String(ev.get("intent", "")))]
-		"drain":
-			return "Drone drains %d banked charge" % ev["amt"]
-		"drag":
-			return "You are dragged"
-		"stoke":
-			return "Smokestack thickens the smog"
-		"boss_phase":
-			return "BOSS PHASE %d" % ev["phase"]
-		"vents_clogged":
-			return "The boss clogs the vents with goo"
-		"core_shielded":
-			return "Core shielded - cleanse the corruption round it"
-		"dredge":
-			return "The Dredge eats %d growth and heals" % ev["tiles"]
-		"summon":
-			return "The extractor summons a sludgeling"
-		"split":
-			return "The sludge splits"
-		"ignite_all":
-			return "ALL OIL IGNITES"
-		"flood":
-			return "Oil floods the arena"
-		"smoke_burst":
-			return "The golem bursts into smoke"
-		"buy":
-			var what := _shop_name(String(ev.get("item", "")), String(ev.get("id", "")))
-			if String(ev.get("discarded", "")) != "":
-				return "Bought %s (discarded %s)" % [what, _shop_name("graft", String(ev["discarded"]))]
-			return "Bought %s" % what
-		"reroll":
-			return "Rerolled (-%d bloom)" % int(ev.get("cost", 0))
-		"draft_upgrade":
-			return "Upgraded to %s" % str(ev["id"])
-		"draft_skip":
-			return "Skipped - next draft adds a focus offer"
-		"shield":
-			return "Shield up (%d)" % ev["total"]
-		"thorns":
-			return "Thorns up (%d dmg)" % ev["dmg"]
-		"anchor":
-			return "Anchored - drags can't move you"
-		"undim":
-			return "Air clears - regen recovers"
-		"immune":
-			return "The boss shrugs it off"
-		"stunned":
-			return "Enemy stunned"
-		"staggered":
-			return "Staggered - wind-up lost"
-		"rooted":
-			return "Enemy rooted in place"
-		"resisted":
-			return "Root cooldown - the snare slides off"
-		"ash":
-			return "The fire burns down to ash"
-		"floor":
-			return "— %s —" % str(ev.get("name", "next floor"))
-		"illegal":
-			return "Can't do that"
-	return ""
+	return Feedback.ev_text(ev, game)
 
 
 func _intent_words(e: Dictionary) -> String:
@@ -2493,7 +2441,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		var start: int = maxi(0, log_lines.size() - fit)
 		var ly := log_top + lfs
 		for i in range(start, log_lines.size()):
-			_txt(Vector2(vw * 0.025, ly), log_lines[i], COL_TEXT if i == log_lines.size() - 1 else COL_DIM_TEXT, lfs)
+			_txt_fit(Vector2(vw * 0.025, ly), log_lines[i], _log_col(i), lfs, vw * 0.95)
 			ly += lfs * 1.4
 
 	for t in snap["terrain"].keys():
@@ -2589,13 +2537,17 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 				var sang := TAU * float(sp) / 4.0 + PI / 4.0
 				draw_circle(r.get_center() + Vector2(cos(sang), sin(sang)) * _ts * 0.44, _ts * 0.045, Color(0.75, 0.78, 0.8))
 		var edef: Dictionary = Content.ENEMIES[e["kind"]]
+		if edef["traits"].has("boss") and game.core_shield_up(int(e["id"])):
+			# the core is shielded: say so BEFORE a hit is wasted on it
+			draw_arc(r.get_center(), _ts * 0.56, 0, TAU, 32,
+				Color(Feedback.CYAN, 0.55 + 0.3 * sin(Time.get_ticks_msec() / 220.0)), 2.5)
 		var maxhp: int = int(edef["hp"]) + (Content.ELITE_HP_BONUS if e.get("elite", false) else 0)
 		if e["hp"] < maxhp or edef["traits"].has("boss"):
 			var frac: float = clampf(float(e["hp"]) / maxf(1.0, float(maxhp)), 0.0, 1.0)
 			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2(_ts - 4, 3)), Color(0, 0, 0, 0.6))
 			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2((_ts - 4) * frac, 3)), COL_RED)
 
-	var pap := _anim_pos("player", snap["player"]["pos"])
+	var pap := _anim_pos("player", snap["player"]["pos"]) + _lunge_off()
 	_shadow_f(pap)
 	var bob := pap + Vector2(0, -0.02 - 0.02 * sin(Time.get_ticks_msec() / 480.0))
 	_sprite_f("player", bob)
@@ -2605,6 +2557,17 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		draw_rect(pr.grow(-2), Color("7a5a34"), false, 2.0)
 	if int(snap["player"].get("thorns_turns", 0)) > 0:
 		draw_rect(pr.grow(-4), Color("57b34a"), false, 1.5)
+	# the kill streak: a flame and a count once two turns running have a kill;
+	# it dims while this turn's kill is still owed (end the turn and it breaks)
+	if stats != null and _stats_for == game:
+		var sv: int = int(stats.streak_closed) + (1 if int(stats.open_turn_kills) > 0 else 0)
+		if sv >= 2 and _ts >= 8.0:
+			var fa := 1.0 if int(stats.open_turn_kills) > 0 else 0.45 + 0.2 * sin(Time.get_ticks_msec() / 200.0)
+			var ftx := Art.tex("fire", int(_ts * 0.42))
+			var fpos := pr.position + Vector2(_ts * 0.66, -_ts * 0.22)
+			if ftx != null:
+				draw_texture(ftx, fpos, Color(1, 1, 1, fa))
+			_txt(fpos + Vector2(_ts * 0.40, _ts * 0.32), str(sv), Color(COL_GOLD, fa), int(_ts * 0.30))
 
 	# ambient haze drifts across the world once the skies dim
 	var dimlvl: int = int(snap["dim"])
@@ -2648,10 +2611,16 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			draw_circle(Vector2(fx2, fy2), _ts * 0.10, Color(0.95, 0.85, 0.4, 0.10 * glow))
 			draw_circle(Vector2(fx2, fy2), _ts * 0.028, Color(0.98, 0.92, 0.6, 0.85 * glow))
 
-	# transient combat feedback: flashes, bursts, puffs, floating numbers
-	var fnow := Time.get_ticks_msec()
+	# the visible map rect: callouts clamp inside it, the vignette frames it
+	var mr := Rect2(_mox + _vx0 * _ts, _moy + _vy0 * _ts,
+		float(_vx1 - _vx0 + 1) * _ts, float(_vy1 - _vy0 + 1) * _ts)
+	# transient combat feedback: flashes, bursts, puffs, floating numbers,
+	# callouts, rings and the white ghost of a kill - all on the fx clock, so a
+	# hit-stop holds them still
+	var fnow := _fx_now()
 	for fx in _fx:
-		var age := float(fnow - int(fx["t0"])) / FX_MS
+		var dur := float(fx.get("dur", FX_MS))
+		var age := float(fnow - int(fx["t0"])) / dur
 		if age < 0.0 or age > 1.0:
 			continue
 		var fp: Vector2 = fx["pos"]
@@ -2679,12 +2648,35 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			"float":
 				var fcol: Color = fx["col"]
 				fcol.a = 1.0 if age < 0.55 else 1.0 - (age - 0.55) / 0.45
-				var fsz2 := int(_ts * 0.42)
+				var fsz2 := maxi(1, int(_ts * 0.42 * float(fx.get("scale", 1.0))))
 				var s2 := String(fx["text"])
 				var fy := fr.position.y - _ts * (0.15 + age * 0.75)
 				var tw2 := font.get_string_size(s2, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz2).x
 				draw_string(font, Vector2(c.x - tw2 / 2.0 + 1, fy + 1), s2, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz2, Color(0, 0, 0, fcol.a * 0.8))
 				draw_string(font, Vector2(c.x - tw2 / 2.0, fy), s2, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz2, fcol)
+				if bool(fx.get("bold", false)):
+					draw_string(font, Vector2(c.x - tw2 / 2.0 + maxf(1.0, fsz2 / 18.0), fy), s2, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz2, fcol)
+			"callout":
+				var ccol: Color = fx["col"]
+				ccol.a = 1.0 if age < 0.65 else 1.0 - (age - 0.65) / 0.35
+				var pop := 0.75 + 0.25 * clampf(age * dur / 90.0, 0.0, 1.0)
+				var csz := maxi(1, int(maxf(_ts * 0.40, vh * 0.0118) * float(fx.get("scale", 1.0)) * pop))
+				var cs := String(fx["text"])
+				var ctw := font.get_string_size(cs, HORIZONTAL_ALIGNMENT_LEFT, -1, csz).x
+				var cy := maxf(fr.position.y - _ts * (0.55 + float(fx.get("lift", 0.0)) + age * 0.55), mr.position.y + csz)
+				var cx := clampf(c.x - ctw / 2.0, mr.position.x + 2, maxf(mr.position.x + 2, mr.end.x - ctw - 2))
+				draw_string(font, Vector2(cx + 1.5, cy + 1.5), cs, HORIZONTAL_ALIGNMENT_LEFT, -1, csz, Color(0, 0, 0, 0.85 * ccol.a))
+				draw_string(font, Vector2(cx, cy), cs, HORIZONTAL_ALIGNMENT_LEFT, -1, csz, ccol)
+				draw_string(font, Vector2(cx + maxf(1.0, csz / 18.0), cy), cs, HORIZONTAL_ALIGNMENT_LEFT, -1, csz, ccol)
+			"ring":
+				var rcol: Color = fx["col"]
+				rcol.a = 1.0 - age
+				draw_arc(c, _ts * (0.45 + 0.35 * age), 0, TAU, 28, rcol, 3.0)
+			"ghost":
+				var gtx := Art.tex(String(fx.get("sprite", "")), int(_ts))
+				if gtx != null:
+					draw_texture(gtx, fr.position, Color(1, 1, 1, 1.0 - age))
+				draw_rect(fr, Color(1, 1, 1, 0.45 * (1.0 - age)))
 
 	if mode == "target_tile":
 		for t in mode_targets:
@@ -2695,8 +2687,6 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			draw_rect(_tile_rect(snap["player"]["pos"] + d).grow(-1), COL_TARGET, false, 2.0)
 
 	# soft vignette around the tile field for depth
-	var mr := Rect2(_mox + _vx0 * _ts, _moy + _vy0 * _ts,
-		float(_vx1 - _vx0 + 1) * _ts, float(_vy1 - _vy0 + 1) * _ts)
 	var vd := _ts * 0.9
 	var vc := Color(0, 0, 0, 0.28)
 	var v0 := Color(0, 0, 0, 0.0)
@@ -2725,12 +2715,19 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		var bfrac := clampf(float(e["hp"]) / maxf(1.0, float(edef2["hp"])), 0.0, 1.0)
 		draw_rect(Rect2(bx2 - vw * 0.015, by2 - vh * 0.024, bw2 + vw * 0.03, bh2 + vh * 0.031), Color(0.03, 0.05, 0.04, 0.82))
 		_txt(Vector2(bx2, by2 - vh * 0.006), String(edef2["name"]).to_upper(), COL_RED, int(vh * 0.017))
+		var shielded: bool = game.core_shield_up(int(e["id"]))
 		var hps := "%d / %d" % [int(e["hp"]), int(edef2["hp"])]
 		var hpw := font.get_string_size(hps, HORIZONTAL_ALIGNMENT_LEFT, -1, int(vh * 0.014)).x
 		_txt(Vector2(bx2 + bw2 - hpw, by2 - vh * 0.006), hps, COL_TEXT, int(vh * 0.014))
+		if shielded:
+			var shw := font.get_string_size("SHIELDED  ", HORIZONTAL_ALIGNMENT_LEFT, -1, int(vh * 0.014)).x
+			_txt(Vector2(bx2 + bw2 - hpw - shw, by2 - vh * 0.006), "SHIELDED  ", Feedback.CYAN, int(vh * 0.014))
 		draw_rect(Rect2(bx2, by2, bw2, bh2), Color(0, 0, 0, 0.6))
 		draw_rect(Rect2(bx2, by2, bw2 * bfrac, bh2), COL_RED)
-		draw_rect(Rect2(bx2, by2, bw2, bh2), Color(0.9, 0.4, 0.3, 0.7), false, 1.5)
+		if shielded:
+			draw_rect(Rect2(bx2, by2, bw2, bh2), Feedback.CYAN, false, 2.5)
+		else:
+			draw_rect(Rect2(bx2, by2, bw2, bh2), Color(0.9, 0.4, 0.3, 0.7), false, 1.5)
 		break
 
 	# danger vignette: the edges bleed red while the tender is nearly down
@@ -2764,23 +2761,49 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	if spl >= 0.0 and spl < 1.0:
 		var sa := 1.0 if spl < 0.55 else 1.0 - (spl - 0.55) / 0.45
 		var scy := (mr.position.y + mr.end.y) / 2.0
-		var nm := String(snap["floor_name"]).to_upper()
+		var card := _floor_card_lines(snap)
 		var nsz := int(vh * 0.032)
-		_txt_c(vw / 2.0 + 2, scy + 2, nm, Color(0, 0, 0, 0.6 * sa), nsz)
-		_txt_c(vw / 2.0, scy, nm, Color(COL_GOLD, sa), nsz)
-		_txt_c(vw / 2.0, scy + vh * 0.028, "floor %d of 7" % snap["floor"], Color(COL_CREAM, sa * 0.85), int(vh * 0.018))
-		_txt_c(vw / 2.0, scy + vh * 0.052, "cleanse %d to wake the stairs" % snap["green_need"],
-			Color(0.6, 0.85, 0.55, sa * 0.9), int(vh * 0.016))
+		_txt_c(vw / 2.0 + 2, scy + 2, card[0], Color(0, 0, 0, 0.6 * sa), nsz)
+		_txt_c(vw / 2.0, scy, card[0], Color(COL_GOLD, sa), nsz)
+		_txt_c(vw / 2.0, scy + vh * 0.028, card[1], Color(COL_CREAM, sa * 0.85), int(vh * 0.018))
+		if card.size() > 2:
+			_txt_c(vw / 2.0, scy + vh * 0.052, card[2], Color(0.6, 0.85, 0.55, sa * 0.9), int(vh * 0.016))
 
-	# event banners (stairs awaken, floor restored)
-	var bage := float(Time.get_ticks_msec() - _banner_ms) / 1600.0
+	# event banners (one queue: boss phases, awakenings, restored, stairs)
+	var bage := float(Time.get_ticks_msec() - _banner_ms) / float(BANNER_MS)
 	if bage >= 0.0 and bage < 1.0 and not _banner.is_empty():
 		var ba := 1.0 if bage < 0.6 else 1.0 - (bage - 0.6) / 0.4
 		var bcy := (mr.position.y + mr.end.y) / 2.0 - vh * 0.05
-		_txt_c(vw / 2.0 + 2, bcy + 2, String(_banner[0]), Color(0, 0, 0, 0.6 * ba), int(vh * 0.03))
-		_txt_c(vw / 2.0, bcy, String(_banner[0]), Color(COL_GOLD, ba), int(vh * 0.03))
+		_txt_c_fit(vw / 2.0 + 2, bcy + 2, String(_banner[0]), Color(0, 0, 0, 0.6 * ba), int(vh * 0.03), vw * 0.94)
+		_txt_c_fit(vw / 2.0, bcy, String(_banner[0]), Color(_banner_col, ba), int(vh * 0.03), vw * 0.94)
 		if _banner.size() > 1:
-			_txt_c(vw / 2.0, bcy + vh * 0.026, String(_banner[1]), Color(COL_CREAM, ba * 0.9), int(vh * 0.017))
+			_txt_c_fit(vw / 2.0, bcy + vh * 0.026, String(_banner[1]), Color(COL_CREAM, ba * 0.9), int(vh * 0.017), vw * 0.92)
+
+
+## The floor's title card: name, "floor N of 7", and what wakes the stairs -
+## on the boss floor "defeat the Overseer" (it has no quota, so the old line
+## read "cleanse 0 to wake the stairs"), and no third line on a floor that
+## needs nothing.
+func _floor_card_lines(snap: Dictionary) -> Array:
+	var out: Array = [String(snap["floor_name"]).to_upper(), "floor %d of 7" % int(snap["floor"])]
+	if int(snap["green_need"]) > 0:
+		out.append("cleanse %d to wake the stairs" % int(snap["green_need"]))
+	else:
+		for e in snap["enemies"]:
+			if Content.ENEMIES.get(String(e["kind"]), {}).get("traits", []).has("boss"):
+				out.append("defeat " + Names.the_name(String(e["kind"])))
+				break
+	return out
+
+
+## A log line's colour: its category's at full strength on the newest line;
+## older lines dim (an info line to the plain dim grey).
+func _log_col(i: int) -> Color:
+	var cat := String(log_cats[i]) if i < log_cats.size() else "info"
+	var col: Color = Feedback.LOG_COL.get(cat, COL_TEXT)
+	if i == log_lines.size() - 1:
+		return col
+	return COL_DIM_TEXT if cat == "info" else col.lerp(COL_DIM_TEXT, 0.55)
 
 
 func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
@@ -3289,7 +3312,7 @@ func _draw_logsheet(vw: float, vh: float) -> void:
 	var fsz := int(vh * 0.021)
 	var start: int = maxi(0, log_lines.size() - 28)
 	for i in range(start, log_lines.size()):
-		_txt(Vector2(vw * 0.06, y), log_lines[i], COL_TEXT if i == log_lines.size() - 1 else COL_DIM_TEXT, fsz)
+		_txt_fit(Vector2(vw * 0.06, y), log_lines[i], _log_col(i), fsz, vw * 0.88)
 		y += fsz * 1.45
 
 

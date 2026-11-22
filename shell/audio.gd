@@ -16,10 +16,17 @@ var _bank := {}
 var _music_thread: Thread
 var _rng := RandomNumberGenerator.new()
 
+## A repeated sound varies a little: each id walks this pitch cycle, one entry
+## per time it actually plays (deterministic - no rng, so the bank's noise
+## draws are untouched). Ids outside JITTER_IDS always play at 1.0.
+const JITTER := [1.0, 0.95, 1.04, 0.98, 1.06, 0.96, 1.02, 0.99]
+const JITTER_IDS := ["step", "hit", "kill", "hurt", "cast", "coin", "sparkle"]
+var _jit := {}
+
 
 func _ready() -> void:
 	_rng.seed = 7
-	for i in 4:
+	for i in 8:  # a four-note combo chime must not cut off the impact sounds
 		var p := AudioStreamPlayer.new()
 		add_child(p)
 		_players.append(p)
@@ -40,14 +47,25 @@ func _exit_tree() -> void:
 		_music_thread.wait_to_finish()
 
 
-func play(id: String) -> void:
-	if not sfx_on or not is_inside_tree() or not _bank.has(id):
+func play(id: String, pitch := 1.0) -> void:
+	if not sfx_on or not is_inside_tree() or not _bank.has(id) or _players.is_empty():
 		return
 	var p: AudioStreamPlayer = _players[_pi]
 	_pi = (_pi + 1) % _players.size()
 	p.stream = _bank[id]
 	p.volume_db = -7.0
+	p.pitch_scale = clampf(pitch * jitter(id), 0.5, 2.0)
 	p.play()
+
+
+## The next pitch factor for `id` from the JITTER cycle (1.0 for an id the
+## table does not vary). Advances the id's own cycle.
+func jitter(id: String) -> float:
+	if not JITTER_IDS.has(id):
+		return 1.0
+	var n := int(_jit.get(id, 0))
+	_jit[id] = n + 1
+	return float(JITTER[n % JITTER.size()])
 
 
 func _on_music_finished() -> void:
@@ -215,6 +233,41 @@ func build_bank() -> void:
 	_tone(b, 0.22, 0.25, 659, 659, 0.3, 1.5, 0.3)
 	_tone(b, 0.44, 0.45, 784, 784, 0.35, 1.2, 0.3)
 	_bank["win"] = _wav(b)
+
+	# fun-pass sounds, appended AFTER every older one so the noise draws above
+	# stay byte-identical (_noise is the only consumer of _rng)
+	b = _mk(0.22)  # combo chime (pitched up a step per combo in a step)
+	_tone(b, 0.0, 0.22, 784, 784, 0.22, 2.4, 0.35)
+	_tone(b, 0.0, 0.16, 1568, 1568, 0.07, 3.0)
+	_bank["combo"] = _wav(b)
+
+	b = _mk(0.34)  # two or more machines felled in one turn
+	_noise(b, 0.0, 0.08, 0.35, 2.0, false, 0.6)
+	_tone(b, 0.0, 0.12, 392, 392, 0.28, 2.0, 0.4)
+	_tone(b, 0.08, 0.26, 784, 784, 0.30, 1.6, 0.4)
+	_bank["multikill"] = _wav(b)
+
+	b = _mk(0.2)  # a draft card taken
+	_noise(b, 0.0, 0.03, 0.25, 2.0, false, 0.4)
+	_tone(b, 0.02, 0.08, 1568, 1760, 0.2, 2.5)
+	_tone(b, 0.08, 0.12, 2093, 2093, 0.18, 2.5)
+	_bank["card"] = _wav(b)
+
+	b = _mk(0.3)  # a hit glances off a shield
+	_noise(b, 0.0, 0.025, 0.4, 2.0, false, 0.3)
+	_tone(b, 0.0, 0.3, 1180, 1150, 0.22, 2.6, 0.9)
+	_tone(b, 0.0, 0.26, 1712, 1690, 0.12, 2.8)
+	_bank["shielded"] = _wav(b)
+
+	b = _mk(0.4)  # oil catches fire
+	_noise(b, 0.0, 0.38, 0.5, 1.3, false, 0.97)
+	_tone(b, 0.0, 0.32, 90, 170, 0.22, 1.6)
+	_bank["whoomph"] = _wav(b)
+
+	b = _mk(0.6)  # a new floor
+	_tone(b, 0.0, 0.6, 262, 262, 0.14, 1.5, 0.2)
+	_tone(b, 0.08, 0.52, 392, 392, 0.12, 1.5, 0.2)
+	_bank["arrive"] = _wav(b)
 
 
 func _render_music() -> void:

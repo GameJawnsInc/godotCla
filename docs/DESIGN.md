@@ -38,6 +38,9 @@ The theme should do mechanical work, not just paint.
   synergies emerge from primitives rather than being scripted.
 - **Greed has a shape.** Staying to cleanse earns Bloom and drafts; the Smog
   clock punishes lingering. The central dilemma of every floor.
+- **Payoffs are announced.** Every combo the sim resolves (rider, hook,
+  resonance, surge, collision) is named on the map and in the log; feedback
+  never invents outcomes, it reads the event stream.
 
 ## Systems
 
@@ -312,6 +315,9 @@ tests a different build muscle so no single draft strategy trivializes it.
   cooling vents are overgrown/cleansed. Tests the cleansing toolkit and burst
   under a hard clock.
 - All phase transitions and cycles are telegraphed like any other intent.
+- Each phase change surfaces as a banner saying what changed ("THE OVERSEER
+  QUICKENS · advances 3 · quakes all around it up close"), and a shielded
+  core shows a cyan ring and SHIELDED on its bar before a hit is wasted.
 
 ### Shops and Grafts
 

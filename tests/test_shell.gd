@@ -17,6 +17,8 @@ const AsciiView := preload("res://sim/ascii_view.gd")
 const Profile := preload("res://meta/profile.gd")
 const RunStatsT := preload("res://meta/run_stats.gd")
 const Roster := preload("res://bots/roster.gd")
+const Names := preload("res://shell/names.gd")
+const Feedback := preload("res://shell/feedback.gd")
 
 ## A kit that fills every slot with slot 0 held by a mobility ability - the one
 ## the forge may never scrap (sim/game.gd _is_mobility).
@@ -68,7 +70,21 @@ func _init() -> void:
 		_check(ak._bank[id].data.size() > 100, "sfx %s has samples" % id)
 	var mus = ak.render_music_stream()
 	_check(mus != null and mus.data.size() > 100000, "music loop renders")
+	for sid in ["combo", "multikill", "card", "shielded", "whoomph", "arrive"]:
+		_check(ak._bank.has(sid), "the fun-pass sound %s is in the bank" % sid)
 	ak.free()
+	# repeated sounds walk a fixed pitch cycle (no rng: the bank stays byte-identical)
+	var ak2 = AudioKit.new()
+	var jit: Array = []
+	for i in 9:
+		jit.append(ak2.jitter("step"))
+	var want_jit: Array = AudioKit.JITTER.duplicate()
+	want_jit.append(AudioKit.JITTER[0])
+	_check(jit == want_jit, "jitter('step') cycles the JITTER table: %s" % str(jit))
+	_check(ak2.jitter("boss") == 1.0, "an id outside JITTER_IDS plays at pitch 1.0")
+	ak2.play("step", 1.2)  # out of the tree: returns quietly
+	_check(true, "play(id, pitch) on an out-of-tree kit returns without error")
+	ak2.free()
 
 	# 2. menu boots, PLAY starts a run, input handlers drive the sim
 	OS.set_environment("SHELL_SEED", "")
@@ -238,6 +254,12 @@ func _init() -> void:
 	_check(shell5.game != null and shell5._game_is_run, "killed run auto-restores on boot")
 	_check(shell5.game.total_turns == saved_turns, "restored run is at the same turn")
 	_check(shell5.game.state_hash() == saved_hash, "restored run is byte-exact (replay determinism)")
+	_check(shell5.log_lines.size() == shell5.log_cats.size(),
+		"the rebuilt log keeps a category per line (%d / %d)" % [shell5.log_lines.size(), shell5.log_cats.size()])
+	var raw_ids := false
+	for ln in shell5.log_lines:
+		raw_ids = raw_ids or String(ln).contains("_")
+	_check(not raw_ids, "the rebuilt log names things, never raw ids: %s" % str(shell5.log_lines))
 	shell5._tap("resume")
 	_check(shell5.screen == "game", "RESUME enters the restored run")
 	shell5.free()
@@ -405,7 +427,28 @@ func _init() -> void:
 	_check(evsh._ev_text({"t": "damage", "who": "player", "amt": 1, "src": "goo"})
 		== "You take 1 dmg (goo)", "an unqualified source is untouched")
 	_check(evsh._ev_text({"t": "damage", "who": "drill_bot", "amt": 3}) == "Drill Bot takes 3",
-		"enemy damage lines never show a source")
+		"an enemy damage line with no src names no source")
+	_check(evsh._ev_text({"t": "damage", "who": "player", "amt": 2, "src": "drill_bot"})
+		== "You take 2 dmg (Drill Bot)", "an enemy source reads as its name")
+	_check(evsh._ev_text({"t": "damage", "who": "drill_bot", "amt": 3, "src": "solar_lance"})
+		== "Drill Bot takes 3 (Solar Lance)", "an ability hit names the ability")
+	_check(evsh._ev_text({"t": "damage", "who": "drill_bot", "amt": 3, "src": "strike"})
+		== "Drill Bot takes 3", "a plain strike names no source")
+	_check(evsh._ev_text({"t": "damage", "who": "drill_bot", "amt": 3, "src": "collision:water_jet"})
+		== "Drill Bot takes 3 (collision)", "a collision reads as a collision")
+	_check(evsh._ev_text({"t": "player_death", "cause": "drill_bot"}) == "You die (Drill Bot)",
+		"the death line names the killer")
+	_check(evsh._ev_text({"t": "draft_upgrade", "id": "solar_lance+noon"}) == "Upgraded to Noon Lance",
+		"an upgrade names the variant, not its id")
+	var rp: Vector2i = evsh.game.player["pos"] + _open_dir(evsh.game)
+	var rbot: Dictionary = _park_enemy(evsh.game, rp)
+	rbot["kind"] = "drill_bot"
+	_check(evsh._ev_text({"t": "rooted", "id": rbot["id"]}) == "Drill Bot is rooted in place",
+		"a rooted line names the enemy: %s" % evsh._ev_text({"t": "rooted", "id": rbot["id"]}))
+	rbot["pos"] = Vector2i(-9, -9)
+	evsh.game._spawn("coal_golem", rp)
+	_check(evsh._ev_text({"t": "reinforcement", "tile": rp}) == "A vent releases a Coal Golem",
+		"a reinforcement names what came out of the vent: %s" % evsh._ev_text({"t": "reinforcement", "tile": rp}))
 	_check(evsh._ev_text({"t": "buy", "item": "graft", "id": "bloom_surge", "discarded": "carapace"})
 		== "Bought Bloom Surge (discarded Carapace)", "a graft buy names the discarded offer")
 	_check(evsh._ev_text({"t": "buy", "item": "ability", "id": "sun_flare"})
@@ -646,6 +689,8 @@ func _init() -> void:
 	_check_card_text()
 	_check_tier_clamp()
 	_check_resume_stats()
+	_check_names()
+	_check_feedback()
 
 	shell.free()
 	shell2.free()
@@ -1331,3 +1376,417 @@ func _check_resume_stats() -> void:
 		rf.close()
 	print("resume stats: %d actions replayed, fold identical (kills %d, bloom earned %d)" % [
 		acts.size(), int(st.kills), int(st.bloom_earned)])
+
+
+## --- shell/names.gd: the one names module ------------------------------------
+## The log's brackets use the SHORT source name (8c pins "(fire)"), a recap's
+## attribution the LONG one; both come from here and nowhere else.
+func _check_names() -> void:
+	var short := {"fire:solar_lance": "fire", "collision:water_jet": "collision", "drill_bot": "Drill Bot",
+		"ember_sap": "Ember Sap", "spore": "spores", "goo": "goo"}
+	var long := {"fire:solar_lance": "Solar Lance fire", "collision:water_jet": "Water Jet slam",
+		"drill_bot": "Drill Bot", "ember_sap": "Ember Sap", "spore": "spores", "goo": "goo", "fire:env": "fire"}
+	for src in short:
+		_check(Names.src_name(src) == short[src], "src_name(%s) == %s (got %s)" % [src, short[src], Names.src_name(src)])
+	for src2 in long:
+		_check(Names.src_long(src2) == long[src2], "src_long(%s) == %s (got %s)" % [src2, long[src2], Names.src_long(src2)])
+	_check(Names.the_name("overseer") == "the Overseer", "the_name lowercases a leading The: %s" % Names.the_name("overseer"))
+	_check(Names.the_name("drill_bot") == "the Drill Bot", "the_name adds the article")
+	_check(Names.the_name("nope") == "it", "an unknown kind is 'it'")
+	_check(Names.boss_name("overseer") == "The Overseer" and Names.boss_name("furnace_core") == "The Furnace Core",
+		"boss_name starts a sentence: %s / %s" % [Names.boss_name("overseer"), Names.boss_name("furnace_core")])
+	_check(Names.a_name("oil_sludge") == "an Oil Sludge", "a_name picks 'an' before a vowel")
+	_check(Names.a_name("drill_bot") == "a Drill Bot", "a_name picks 'a' otherwise")
+	_check(Names.a_name("") == "a machine", "a_name of nothing is a machine")
+	_check(Names.a_name("overseer") == "the Overseer", "there is only one boss: a_name says 'the'")
+	_check(Names.aname("solar_lance+noon") == "Noon Lance", "aname reads the ABILITIES row")
+	_check(Names.source_name("cinder_grip") == "Cinder Grip" and Names.source_name("compost") == "Compost",
+		"source_name reads resonances and grafts")
+	# the floor title card: the boss floor names its boss and never asks for 0 cleanses
+	var fs = _bare_shell()
+	fs.game = Game.new(5, {})
+	fs.game._enter_floor(7)
+	var card: Array = fs._floor_card_lines(fs.game.snapshot())
+	var joined := " | ".join(card)
+	_check(joined.contains("defeat the") and not joined.contains("cleanse 0"),
+		"floor 7's title card says who to defeat: %s" % joined)
+	fs.game = Game.new(5, {})
+	var card1: Array = fs._floor_card_lines(fs.game.snapshot())
+	_check(card1.size() == 3 and String(card1[2]).begins_with("cleanse "),
+		"a quota floor's card still asks for its cleanses: %s" % " | ".join(card1))
+	fs.free()
+
+
+## A Game.new(4242) board with enemy 0 turned into a drill bot parked beside
+## the tender and every other enemy off the board: [game, enemy, tile].
+func _fb_board() -> Array:
+	var g = Game.new(4242, {})
+	var t: Vector2i = g.player["pos"] + _open_dir(g)
+	var e: Dictionary = _park_enemy(g, t)
+	e["kind"] = "drill_bot"
+	e["hp"] = 3
+	return [g, e, t]
+
+
+func _texts(calls: Array) -> Array:
+	var out: Array = []
+	for c in calls:
+		out.append(String(c["text"]))
+	return out
+
+
+func _log_texts(res: Dictionary) -> Array:
+	var out: Array = []
+	for ln in res["log"]:
+		out.append(String(ln["text"]))
+	return out
+
+
+func _any_has(lines: Array, needle: String) -> bool:
+	for l in lines:
+		if String(l).contains(needle):
+			return true
+	return false
+
+
+func _fx_of(fxs: Array, kind: String) -> Array:
+	return fxs.filter(func(f): return String(f["kind"]) == kind)
+
+
+## --- the feedback layer (shell/feedback.gd) ----------------------------------
+## Every payoff the sim resolves is named where it happens, the cleanse float
+## tells the truth, kills land with weight, the boss explains itself, the log
+## reads like a story and the sound cap really is worst-first. All asserted as
+## data: render_frame.gd draws no fx, and there is no display here.
+func _check_feedback() -> void:
+	var sh = _bare_shell()
+
+	# 1. cleanse gain through _act: the float is the GAIN, never the running total
+	var b1 := _fb_board()
+	var g1 = b1[0]
+	(b1[1] as Dictionary)["pos"] = Vector2i(-9, -9)
+	var ct: Vector2i = b1[2]
+	g1.terrain[ct] = {"kind": "oil"}
+	g1.bloom = 10
+	g1.player["charge"] = 3
+	sh.game = g1
+	sh._fx = []
+	sh._act({"type": "cleanse", "target": ct})
+	var floats: Array = _fx_of(sh._fx, "float").map(func(f): return [String(f["text"]), f["col"]])
+	_check(floats.has(["+1", Feedback.GOLD]) and not _any_has(floats.map(func(f): return f[0]), "+11"),
+		"the cleanse float is the real gain +1 in gold, not the balance: %s" % str(floats))
+	var cl_line := ""
+	for l in sh.log_lines:
+		if String(l).begins_with("Cleansed"):
+			cl_line = String(l)
+	_check(cl_line.begins_with("Cleansed +1 bloom · green 1/"), "the cleanse line says what it paid: %s" % cl_line)
+	g1.terrain[ct] = {"kind": "oil", "bloom": 0}
+	g1.player["charge"] = 3
+	sh._fx = []
+	sh._act({"type": "cleanse", "target": ct})
+	var floats2: Array = _fx_of(sh._fx, "float").map(func(f): return [String(f["text"]), f["col"]])
+	_check(floats2.has(["+0", Feedback.DIM]), "enemy-made oil floats a grey +0: %s" % str(floats2))
+	_check(_any_has(sh.log_lines, "enemy-made oil pays no bloom"), "...and the log says why: %s" % str(sh.log_lines))
+
+	# 2. a landed hook is named where it lands
+	var b2 := _fb_board()
+	var g2 = b2[0]
+	var e2: Dictionary = b2[1]
+	var t2: Vector2i = b2[2]
+	sh.game = g2
+	var pre2: Dictionary = sh._pre_step()
+	var r2: Dictionary = Feedback.step([{"t": "ignite", "tile": t2}, {"t": "hook", "id": "cinder_grip", "on": "ignite", "tile": t2},
+		{"t": "status", "id": e2["id"], "status": "root", "turns": 1}], pre2, g2, {}, 1000)
+	var cg: Array = r2["callouts"].filter(func(c): return String(c["text"]) == "CINDER GRIP")
+	_check(cg.size() == 1 and Vector2(cg[0]["pos"]) == Vector2(t2) and cg[0]["col"] == Feedback.GOLD,
+		"a landed resonance hook calls out CINDER GRIP in gold at its tile: %s" % str(_texts(r2["callouts"])))
+	_check(_any_has(_log_texts(r2), "Cinder Grip roots the Drill Bot") and not _any_has(_log_texts(r2), "rooted for"),
+		"the log names the hook, not a bare status: %s" % str(_log_texts(r2)))
+	_check(r2["sounds"].any(func(p): return String(p["id"]) == "combo"), "a combo rings the chime")
+
+	# 3. a hook on an empty tile is no landing
+	var r3: Dictionary = Feedback.step([{"t": "ignite", "tile": t2}, {"t": "hook", "id": "ember_sap", "on": "ignite", "tile": t2},
+		{"t": "ignite", "tile": t2 + Vector2i(5, 0)}], pre2, g2, {}, 1000)
+	_check(not _texts(r3["callouts"]).has("EMBER SAP") and not _any_has(_log_texts(r3), "Ember Sap"),
+		"an unlanded hook claims nothing: %s / %s" % [str(_texts(r3["callouts"])), str(_log_texts(r3))])
+
+	# 4. rider per
+	var r4: Dictionary = Feedback.step([{"t": "ability", "id": "grow_spike", "target": t2}, {"t": "rider", "id": "grow_spike", "kind": "per", "amt": 1},
+		{"t": "damage", "who": "drill_bot", "id": e2["id"], "amt": 4, "src": "grow_spike"}], pre2, g2, {}, 1000)
+	var gp: Array = r4["callouts"].filter(func(c): return String(c["text"]) == "GROWTH +1 dmg")
+	_check(gp.size() == 1 and Vector2(gp[0]["pos"]) == Vector2(t2), "a per rider calls GROWTH +1 dmg at the enemy: %s" % str(_texts(r4["callouts"])))
+	_check(_log_texts(r4).has("Grow Spike: +1 dmg (growth beside the target)"), "...and logs why: %s" % str(_log_texts(r4)))
+
+	# 5. rider bonus
+	var r5: Dictionary = Feedback.step([{"t": "ability", "id": "sun_flare", "target": null}, {"t": "rider", "id": "sun_flare", "kind": "bonus", "amt": 1},
+		{"t": "damage", "who": "drill_bot", "id": e2["id"], "amt": 2, "src": "sun_flare"}], pre2, g2, {}, 1000)
+	_check(_texts(r5["callouts"]).has("BURNING +1 dmg") and _log_texts(r5).has("Sun Flare: +1 dmg (target burning)"),
+		"a bonus rider reads BURNING +1 dmg: %s / %s" % [str(_texts(r5["callouts"])), str(_log_texts(r5))])
+
+	# 6. rider then claims its status: one callout, the combo one
+	var r6: Dictionary = Feedback.step([{"t": "ability", "id": "seed_bomb+tangle", "target": t2}, {"t": "growth", "tile": t2},
+		{"t": "status", "id": e2["id"], "status": "root", "turns": 1}, {"t": "rider", "id": "seed_bomb+tangle", "kind": "then", "amt": 1}],
+		pre2, g2, {}, 1000)
+	var at_e: Array = r6["callouts"].filter(func(c): return Vector2(c["pos"]) == Vector2(t2))
+	_check(at_e.size() == 1 and String(at_e[0]["text"]) == "ROOTED!" and at_e[0]["col"] == Feedback.GOLD,
+		"a then-rider's status is one gold ROOTED!: %s" % str(_texts(r6["callouts"])))
+	_check(_log_texts(r6).has("Tangle Bomb roots the Drill Bot"), "...logged as the ability's doing: %s" % str(_log_texts(r6)))
+
+	# 7. surge and verdant
+	var pp: Vector2i = g2.player["pos"]
+	var r7: Dictionary = Feedback.step([{"t": "verdant", "tile": pp}, {"t": "ability", "id": "grow_spike", "target": t2},
+		{"t": "surge", "id": "grow_spike", "keys": ["dmg"]}], pre2, g2, {}, 1000)
+	var sg: Array = r7["callouts"].filter(func(c): return String(c["text"]) == "SURGE +1 dmg")
+	_check(sg.size() == 1 and Vector2(sg[0]["pos"]) == Vector2(pp) and not _texts(r7["callouts"]).has("VERDANT"),
+		"a surge reads SURGE +1 dmg at the growth, no VERDANT: %s" % str(_texts(r7["callouts"])))
+	var r7b: Dictionary = Feedback.step([{"t": "verdant", "tile": pp}, {"t": "ability", "id": "seed_bomb", "target": t2}], pre2, g2, {}, 1000)
+	_check(_texts(r7b["callouts"]).has("VERDANT") and _log_texts(r7b).has("Verdant: Seed Bomb costs 1 less"),
+		"a discount-only verdant reads VERDANT: %s / %s" % [str(_texts(r7b["callouts"])), str(_log_texts(r7b))])
+
+	# 8. collision, block, ignite, tithe
+	var r8: Dictionary = Feedback.step([{"t": "damage", "who": "drill_bot", "id": e2["id"], "amt": 1, "src": "collision:water_jet"}],
+		pre2, g2, {}, 1000)
+	_check(_texts(r8["callouts"]).has("COLLISION"), "a collision calls COLLISION")
+	var r8b: Dictionary = Feedback.step([{"t": "shield_absorb", "amt": 1}], pre2, g2, {}, 1000)
+	_check(_texts(r8b["callouts"]).has("BLOCKED 1") and _log_texts(r8b).has("Your shield blocks 1"), "a block reads BLOCKED 1")
+	var r8c: Dictionary = Feedback.step([{"t": "ignite", "tile": t2}, {"t": "ignite", "tile": t2 + Vector2i(1, 0)},
+		{"t": "ignite", "tile": t2 + Vector2i(2, 0)}], pre2, g2, {}, 1000)
+	var bursts: Array = _fx_of(r8c["fx"], "burst").filter(func(f): return f["col"] == Color("ff8a2a"))
+	_check(_texts(r8c["callouts"]).count("IGNITE") == 1 and bursts.size() == 3 and _log_texts(r8c).has("Oil ignites (3 tiles)"),
+		"three ignites: one IGNITE, three bursts, one folded line: %s / %d / %s" % [str(_texts(r8c["callouts"])), bursts.size(), str(_log_texts(r8c))])
+	g2.player["grafts"] = ["oil_tithe"]
+	var r8d: Dictionary = Feedback.step([{"t": "tithe", "id": "solar_lance"}], pre2, g2, {}, 1000)
+	_check(_texts(r8d["callouts"]).has("TITHE -1") and _log_texts(r8d).has("Oil Tithe: Solar Lance costs 1 less"),
+		"a tithe names the graft: %s" % str(_log_texts(r8d)))
+	g2.player["grafts"] = []
+
+	# 9. the bounty is the constant, never the running total the event carries
+	var pre9: Dictionary = pre2.duplicate(true)
+	pre9["pos"][777] = Vector2(3, 4)
+	pre9["kinds"][777] = "drill_bot"
+	var r9: Dictionary = Feedback.step([{"t": "damage", "who": "drill_bot", "id": 777, "amt": 1, "src": "strike"},
+		{"t": "death", "who": "drill_bot", "id": 777}, {"t": "bounty", "bloom": 99}], pre9, g2, {}, 1000)
+	var bty: Array = r9["callouts"].filter(func(c): return String(c["text"]) == "BOUNTY +%d" % Content.ELITE_BOUNTY)
+	_check(bty.size() == 1 and Vector2(bty[0]["pos"]) == Vector2(3, 4), "the bounty floats where the elite fell: %s" % str(_texts(r9["callouts"])))
+	_check(_log_texts(r9).has("Elite bounty +%d bloom" % Content.ELITE_BOUNTY), "...and logs the bounty")
+	_check(not _any_has(_texts(r9["callouts"]) + _log_texts(r9), "99"), "the running total 99 appears nowhere")
+
+	# 10. the cap keeps four regular callouts, resonance first
+	var cap_evs: Array = [{"t": "shield_absorb", "amt": 1}, {"t": "immune", "id": e2["id"]},
+		{"t": "ignite", "tile": t2 + Vector2i(3, 0)}, {"t": "tithe", "id": "solar_lance"},
+		{"t": "damage", "who": "drill_bot", "id": e2["id"], "amt": 1, "src": "collision:water_jet"},
+		{"t": "verdant", "tile": pp}, {"t": "resisted", "id": e2["id"], "status": "root"},
+		{"t": "ignite", "tile": t2}, {"t": "hook", "id": "cinder_grip", "on": "ignite", "tile": t2},
+		{"t": "status", "id": e2["id"], "status": "root", "turns": 1}]
+	var all10: Array = Feedback.callouts(cap_evs, pre2, g2, {})
+	var reg10: Array = all10.filter(func(c): return not bool(c["big"]))
+	_check(reg10.size() <= Feedback.CALLOUT_CAP and String(all10[0]["text"]) == "CINDER GRIP",
+		"8 callouts: at most %d kept, the resonance first: %s" % [Feedback.CALLOUT_CAP, str(_texts(all10))])
+
+	# 11. the chime climbs, and a room clear adds the octave
+	var three: Array = []
+	for i in 3:
+		three.append({"text": "C%d" % i, "pos": Vector2(i, 0), "col": Feedback.GOLD, "prio": 70, "combo": true, "big": false})
+	var ch: Array = Feedback.sounds([], g2, {}, three, false).filter(func(p): return String(p["id"]) == "combo")
+	var pitches: Array = ch.map(func(p): return float(p["pitch"]))
+	var delays: Array = ch.map(func(p): return int(p["delay"]))
+	_check(ch.size() == 3 and absf(pitches[0] - 1.0) < 0.001 and absf(pitches[1] - 1.1225) < 0.001
+		and absf(pitches[2] - 1.2599) < 0.001 and delays == [120, 210, 300],
+		"three combos chime up the scale: %s at %s" % [str(pitches), str(delays)])
+	var ch4: Array = Feedback.sounds([], g2, {"room_cleared": true}, three, false).filter(func(p): return String(p["id"]) == "combo")
+	_check(ch4.size() == 4 and absf(float(ch4[3]["pitch"]) - 2.0) < 0.001, "a room clear adds an octave note")
+
+	# 12. the cap is worst-first, through the _play_events wrapper
+	sh.game = g2
+	var base12: Array = [{"t": "move", "who": "player", "to": pp}, {"t": "ability", "id": "seed_bomb", "target": t2},
+		{"t": "damage", "who": "player", "amt": 1, "src": "drill_bot"}, {"t": "death", "who": "drill_bot", "id": 9999},
+		{"t": "boss_phase", "phase": 2}]
+	var ids12: Array = sh._play_events(base12).map(func(p): return String(p["id"]))
+	_check(ids12 == ["boss", "hurt", "kill"], "three sounds, worst first: %s" % str(ids12))
+	var ids12b: Array = sh._play_events(base12 + [{"t": "player_death", "cause": "drill_bot"}]).map(func(p): return String(p["id"]))
+	_check(ids12b == ["death"], "a death silences the rest: %s" % str(ids12b))
+	g2.won = true
+	var ids12c: Array = sh._play_events(base12).map(func(p): return String(p["id"]))
+	g2.won = false
+	_check(ids12c == ["win"], "a win plays the fanfare alone: %s" % str(ids12c))
+
+	# 13. kill weight through _act: gold blow, ghost, hit-stop, lunge, shake
+	var b13 := _fb_board()
+	var g13 = b13[0]
+	var e13: Dictionary = b13[1]
+	e13["hp"] = 1
+	g13.player["charge"] = 3
+	var d13: Vector2i = Vector2i(b13[2]) - Vector2i(g13.player["pos"])
+	var sh13 = _bare_shell()
+	sh13.game = g13
+	sh13._act({"type": "strike", "dir": d13})
+	var blow: Array = _fx_of(sh13._fx, "float").filter(func(f): return String(f["text"]) == "-1")
+	_check(blow.size() == 1 and blow[0]["col"] == Feedback.GOLD and float(blow[0]["scale"]) == 1.5 and bool(blow[0]["bold"]),
+		"the killing blow is gold, bold and 1.5x: %s" % str(blow))
+	var ghosts: Array = _fx_of(sh13._fx, "ghost")
+	_check(ghosts.size() == 1 and Vector2(ghosts[0]["pos"]) == Vector2(b13[2]), "the dead machine leaves a ghost on its tile")
+	_check(sh13._freeze_end - sh13._freeze_start == Feedback.HITSTOP_MS, "a kill freezes the fx clock for %d ms" % Feedback.HITSTOP_MS)
+	_check(sh13._lunge_dir == Vector2(d13), "the tender lunges toward the strike: %s" % str(sh13._lunge_dir))
+	_check(sh13._shake_mag >= 2.5, "a kill shakes the screen (%.2f)" % sh13._shake_mag)
+	sh13.free()
+	var r13: Dictionary = Feedback.step([{"t": "damage", "who": "drill_bot", "id": e2["id"], "amt": 2, "src": "strike"}], pre2, g2, {}, 1000)
+	var nf: Array = _fx_of(r13["fx"], "float")
+	_check(not bool(r13["hitstop"]) and nf.size() == 1 and absf(float(nf[0]["scale"]) - 1.1) < 0.001 and not bool(nf[0]["bold"]),
+		"a non-lethal 2 is no hit-stop, scale 1.1, not bold: %s" % str(nf))
+
+	# 14. multi-kill, room clear and streak come from the fold's ctx
+	_check(_texts(Feedback.callouts([], pre2, g2, {"step_kills": 1, "turn_kills": 2})).has("DOUBLE KILL"), "two in a turn: DOUBLE KILL")
+	var dk: Array = Feedback.step([], pre2, g2, {"step_kills": 1, "turn_kills": 2}, 1000)["fx"].filter(
+		func(f): return String(f["kind"]) == "callout" and String(f["text"]) == "DOUBLE KILL")
+	_check(dk.size() == 1 and float(dk[0]["scale"]) == 1.35, "DOUBLE KILL is a big callout")
+	_check(_texts(Feedback.callouts([], pre2, g2, {"step_kills": 1, "turn_kills": 3})).has("TRIPLE KILL"), "three: TRIPLE KILL")
+	_check(Feedback.callouts([], pre2, g2, {"step_kills": 0, "turn_kills": 2}).is_empty(), "no kill this step: no callout")
+	_check(_texts(Feedback.callouts([], pre2, g2, {"room_cleared": true})).has("ROOM CLEAR"), "room_cleared: ROOM CLEAR")
+	_check(_texts(Feedback.callouts([], pre2, g2, {"step_kills": 1, "turn_kills": 1, "kill_streak": 3})).has("STREAK 3"),
+		"the first kill of a third turn running: STREAK 3")
+
+	# 15. a resonance lighting for the first time gets its banner
+	g2.player["kit"] = ["solar_lance", "sun_flare", "seed_bomb"]
+	g2.player["grafts"] = ["oil_tithe"]
+	var bn: Array = Feedback.banners([], pre2, g2, {"res_new": ["cinder_grip"]})
+	_check(not bn.is_empty() and String(bn[0]["lines"][0]) == "CINDER GRIP AWAKENS" and String(bn[0]["lines"][1]).begins_with("fire 3/3"),
+		"the awakening banner names the resonance and its count: %s" % str(bn))
+	g2.player["grafts"] = []
+
+	# 16. the boss shield is visible before the hit is wasted
+	var g16 = Game.new(4242, {})
+	g16.enemies.clear()
+	var d16: Vector2i = _open_dir(g16)
+	var bp: Vector2i = Vector2i(g16.player["pos"]) + d16
+	var boss: Dictionary = g16._spawn("overseer", bp)
+	boss["hp"] = 5
+	var goo_t := Vector2i(-1, -1)
+	for dd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var nb: Vector2i = bp + dd
+		g16.terrain.erase(nb)
+		if goo_t == Vector2i(-1, -1) and nb != Vector2i(g16.player["pos"]) and g16._tile(nb) == 1:
+			goo_t = nb
+	g16.terrain[goo_t] = {"kind": "goo"}
+	_check(g16.core_shield_up(int(boss["id"])), "a gated boss with goo beside it and no growth is shielded")
+	g16.player["charge"] = 3
+	sh.game = g16
+	var pre16: Dictionary = sh._pre_step()
+	var ev16: Array = g16.step({"type": "strike", "dir": d16})
+	_check(ev16.any(func(ev): return String(ev.get("t", "")) == "core_shielded"), "striking it emits core_shielded")
+	var r16: Dictionary = Feedback.step(ev16, pre16, g16, {}, 1000)
+	var shc: Array = r16["callouts"].filter(func(c): return String(c["text"]) == "SHIELDED")
+	_check(shc.size() == 1 and shc[0]["col"] == Feedback.CYAN and not _fx_of(r16["fx"], "ring").is_empty(),
+		"a wasted hit floats a cyan SHIELDED and a ring: %s" % str(_texts(r16["callouts"])))
+	_check(_log_texts(r16).has("The Overseer is shielded: cleanse or grow beside it"), "...and says how to break it: %s" % str(_log_texts(r16)))
+	for dd2 in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var nb2: Vector2i = bp + dd2
+		if nb2 != goo_t and nb2 != Vector2i(g16.player["pos"]) and g16._tile(nb2) == 1:
+			g16.terrain[nb2] = {"kind": "growth"}
+			break
+	_check(not g16.core_shield_up(int(boss["id"])), "growth beside the boss drops the shield")
+	var bph: Array = Feedback.banners([{"t": "boss_phase", "phase": 2}], pre16, g16, {})
+	_check(not bph.is_empty() and String(bph[0]["lines"][0]) == "THE OVERSEER QUICKENS" and bph[0]["col"] == Feedback.BOSS,
+		"a boss phase says what changed: %s" % str(bph))
+	var two_ph: Array = [{"t": "boss_phase", "phase": 2}, {"t": "boss_phase", "phase": 3}]
+	var bph2: Array = Feedback.banners(two_ph, pre16, g16, {})
+	var ph_lines: Array = Feedback.log_entries(two_ph, pre16, g16, {})
+	_check(bph2.size() == 1 and String(bph2[0]["lines"][0]) == "THE OVERSEER CLOGS ITS VENTS" and ph_lines.size() == 2,
+		"two phases in a step: one banner (the higher), two log lines: %s / %s" % [str(bph2), str(ph_lines)])
+
+	# 17. a reinforcement names its real kind
+	var b17 := _fb_board()
+	var g17 = b17[0]
+	(b17[1] as Dictionary)["pos"] = Vector2i(-9, -9)
+	sh.game = g17
+	var pre17: Dictionary = sh._pre_step()
+	var v1: Vector2i = b17[2]
+	g17._spawn("coal_golem", v1)
+	_check(Feedback.log_entries([{"t": "reinforcement", "tile": v1}], pre17, g17, {}).map(func(l): return l["text"])
+		== ["A vent releases a Coal Golem"], "the furnace's golem is named as it arrives")
+	var g17b = _fb_board()[0]
+	for e in g17b.enemies:
+		e["pos"] = Vector2i(-9, -9)
+	sh.game = g17b
+	var pre17b: Dictionary = sh._pre_step()
+	var pp17: Vector2i = g17b.player["pos"]
+	g17b._spawn("drill_bot", pp17 + Vector2i(30, 30))
+	g17b._spawn("drill_bot", pp17 + Vector2i(31, 30))
+	var lines17: Array = Feedback.log_entries([{"t": "reinforcement", "tile": pp17 + Vector2i(30, 30)},
+		{"t": "reinforcement", "tile": pp17 + Vector2i(31, 30)}], pre17b, g17b, {}).map(func(l): return l["text"])
+	_check(lines17 == ["Vents release 2 Drill Bots"], "two of a kind fold into one line: %s" % str(lines17))
+
+	# 18. repeats count up instead of vanishing
+	var ll: Array = []
+	var lc: Array = []
+	for s18 in ["A", "A", "A", "B", "B"]:
+		Feedback.log_push(ll, lc, s18, "info")
+	_check(ll == ["A x3", "B x2"] and lc.size() == ll.size(), "log_push counts repeats: %s / %s" % [str(ll), str(lc)])
+	var sh18 = _bare_shell()
+	sh18.game = Game.new(4242, {})
+	sh18._log("Can't do that")
+	sh18._log("Can't do that")
+	_check(sh18.log_lines == ["Can't do that x2"] and sh18.log_cats.size() == 1, "two identical lines merge: %s" % str(sh18.log_lines))
+	sh18.free()
+
+	# 19. vocabulary tripwire: every word table covers the shipped content
+	for aid in Content.ABILITIES:
+		var row: Dictionary = Content.ABILITIES[aid]
+		for eff in row.get("effects", []):
+			if eff.has("per"):
+				_check(Feedback.PER_WORDS.has(String(eff["per"].get("count", ""))), "PER_WORDS covers %s's count" % aid)
+				for k in eff["per"].get("add", {}):
+					_check(Feedback.UNIT.has(String(k)), "UNIT covers %s's per add key %s" % [aid, k])
+			if eff.has("bonus"):
+				var conds: Array = eff["bonus"].get("if", [])
+				if not conds.is_empty() and Dictionary(conds[0]).has("target_on"):
+					_check(Feedback.TARGET_ON_WORDS.has(String(conds[0]["target_on"][0])), "TARGET_ON_WORDS covers %s" % aid)
+		for sk in Dictionary(row.get("surge", {})):
+			if String(sk) != "cost":  # cost prices the cast; only stat keys reach a surge event
+				_check(Feedback.UNIT.has(String(sk)), "UNIT covers %s's surge key %s" % [aid, sk])
+	for st in Content.STATUSES:
+		_check(Feedback.STATUS_WORDS.has(String(st)), "STATUS_WORDS covers status %s" % st)
+	for table in [Content.GRAFTS, Content.RESONANCES, Content.ABILITIES]:
+		for sid in table:
+			for hrow in table[sid].get("hooks", []):
+				for heff in hrow.get("effects", []):
+					_check(Feedback.HOOK_LANDING_OPS.has(String(heff.get("op", ""))),
+						"hook op %s of %s has a landing signature" % [heff.get("op", ""), sid])
+	for kind in Content.ENEMIES:
+		if Content.ENEMIES[kind]["traits"].has("boss"):
+			_check(Feedback.BOSS_PHASE_LINES.has(kind) and Feedback.BOSS_PHASE_LINES[kind].has(2)
+				and Feedback.BOSS_PHASE_LINES[kind].has(3), "boss %s has phase 2 and 3 words" % kind)
+
+	# 20. bot-driven: real games through _act
+	var any_callout := false
+	var fx_ok := true
+	var raw := ""
+	var long_line := ""
+	var cats_ok := true
+	for seed_v in [1, 2]:
+		var sh20 = _bare_shell()
+		sh20.game = Game.new(seed_v, {"loadout": "flarekeeper", "grafts": ["ember_sap", "compost"]})
+		var bot = Roster.make("optimizer", seed_v)
+		if bot.has_method("set_sim"):
+			bot.set_sim(sh20.game)
+		var n := 0
+		while n < 400 and not sh20.game.over:
+			sh20.mode = "normal"
+			sh20._act(bot.choose_action(sh20.game.snapshot(), sh20.game.legal_actions()))
+			n += 1
+			fx_ok = fx_ok and sh20._fx.size() <= 40
+			for f in sh20._fx:
+				any_callout = any_callout or String(f["kind"]) == "callout"
+		for l in sh20.log_lines:
+			if String(l).contains("_") and raw == "":
+				raw = String(l)
+			if String(l).length() > 60 and long_line == "":
+				long_line = String(l)
+		cats_ok = cats_ok and sh20.log_lines.size() == sh20.log_cats.size()
+		sh20.free()
+	_check(any_callout, "real games produce callouts")
+	_check(fx_ok, "the fx list never grows past 40")
+	_check(raw == "", "no raw id reaches the log: %s" % raw)
+	_check(long_line == "", "no log line runs past 60 chars: %s" % long_line)
+	_check(cats_ok, "the log keeps one category per line")
+	sh.free()
+	print("feedback: 20 cases, chime %s, bot runs clean" % str(pitches))

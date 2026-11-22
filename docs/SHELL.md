@@ -90,6 +90,60 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
 - tap shop cards at a shrine, draft options between floors
 - after a run: tap anywhere for the next seed
 
+## Feedback: callouts, kills, log and sound
+
+`shell/feedback.gd` turns each step's events into what you see and hear; it
+reads the event stream and never invents an outcome.
+
+**Callouts** are short bold words over the tile where something paid off:
+
+| word | when | colour |
+|---|---|---|
+| `CINDER GRIP`, `COMPOST`, `EMBER SAP`, `UNDERTOW` | a hook that actually landed | gold |
+| `GROWTH +1 dmg`, `CROWD +2 dmg` | a `per` rider | gold |
+| `BURNING +1 dmg` | a `bonus` rider | gold |
+| `ROOTED!` / `STUNNED!` | a `then` rider's status (`COMBO` if it claimed none) | gold |
+| `SURGE +1 dmg` / `+1 push` / `+1 reach` | a verdant surge (first stat) | gold |
+| `COLLISION` | a slam into a wall or a body | gold |
+| `SHIELDED` | a hit on a shielded boss core | cyan |
+| `DOUBLE KILL`, `TRIPLE KILL`, `N KILLS` | kills in one player turn (big) | gold |
+| `ROOM CLEAR` | the last machine in your room fell (big) | green |
+| `STREAK N` | first kill of the Nth turn running | orange |
+| `BOUNTY +4`, `BLOCKED N`, `IGNITE`, `TITHE -1`, `VERDANT` | the rest | own colours |
+| `ROOTED`, `STUNNED`, `SPORED`, `IMMUNE`, `RESISTED` | plain statuses | status colours |
+
+One per word and tile, sorted by priority, every big one plus four regular
+ones; a dropped word still gets its log line.
+
+**Kills.** The killing number is gold, bold and half again as large; every
+number grows with its damage. A kill (or any hit of 4+) is a 70 ms hit-stop -
+the effects clock freezes while the dead machine flashes white - the tender
+leans a quarter tile into a strike, and kills shake the screen. A flame with a
+number beside the tender is your kill streak (two or more turns running with
+a kill); it dims while this turn's kill is still owed - end the turn without
+one and it breaks.
+
+**Boss.** A shielded core shows a pulsing cyan ring on the map and `SHIELDED`
+in cyan on the boss bar; a phase change shows a banner saying what changed.
+The floor-7 title card reads "defeat the Overseer".
+
+**Banners** share one queue (boss phase, then a resonance awakening, floor
+restored, stairs awaken); one shows at a time.
+
+**Log.** Names, never ids ("Cinder Grip roots the Coal Golem", "A vent
+releases a Coal Golem"); repeats count up ("Oil ignites x3"); each line is
+coloured by kind (hurt red, rewards gold, heals green, combos violet, boss
+orange) and long lines shrink to fit. A cleanse says what it paid: "Cleansed
++1 bloom · green 3/5", or "Cleansed - enemy-made oil pays no bloom".
+
+**Sound.** At most three sounds a step, worst first (win/death, boss, hurt,
+multi-kill, shielded, kill, ...), then a bell chime climbing a step for each
+combo word, with an octave on a room clear. Repeated sounds vary slightly in
+pitch on a fixed cycle.
+
+`tests/render_frame.gd` draws no effects, so all of this is tested as data
+(`tests/test_shell.gd` `_check_feedback`).
+
 ## Why CLEANSE refused
 
 `CLEANSE` reaches a tile **beside** you, and only corruption. Its refusal
