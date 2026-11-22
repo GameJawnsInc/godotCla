@@ -1014,6 +1014,117 @@ func unseen_of(kind: String) -> Array:
 	return out
 
 
+# --- in-run pings (fun pass, part 3) -----------------------------------------------
+
+## What THIS run can still earn, snapshotted at run start (or on resume - the
+## profile only moves when a run is recorded, so a resumed run rebuilds the
+## same ref). Pure data for the shell's pings and the objective line:
+## {runs, best_floor,
+##  floors: {need (int) -> [display names]}   unowned rows whose ONLY key is
+##                                            best_floor, grouped by the floor
+##  casts: [{base, need, had, names}]}        unowned rows whose only key is a
+##                                            single-ability casts count,
+##                                            merged by (base, need)
+## `best_floor` is exactly bests_snapshot(...).best_floor (both read the same
+## member), so the in-run DEEPEST YET and the sheet's agree. Never saved.
+func run_ref() -> Dictionary:
+	var floors := {}
+	var casts: Array = []
+	for m in _milestones():
+		var id := String(m["id"])
+		if _owned(id):
+			continue
+		var req: Dictionary = m.get("requires", {})
+		if req.size() != 1:
+			continue
+		if req.has("best_floor"):
+			var need := int(req["best_floor"])
+			if need <= best_floor:
+				continue
+			if not floors.has(need):
+				floors[need] = []
+			floors[need].append(unlock_name(id))
+		elif req.has("casts") and req["casts"] is Dictionary and req["casts"].size() == 1:
+			var aid := String(req["casts"].keys()[0])
+			var base := Content.base_id(aid)
+			var need := int(req["casts"][aid])
+			var had := int(casts_by_base.get(base, 0))
+			if had >= need:
+				continue
+			var merged := false
+			for c in casts:
+				if String(c["base"]) == base and int(c["need"]) == need:
+					c["names"].append(unlock_name(id))
+					merged = true
+			if not merged:
+				casts.append({"base": base, "need": need, "had": had, "names": [unlock_name(id)]})
+	return {"runs": runs, "best_floor": best_floor, "floors": floors, "casts": casts}
+
+
+## "Tidewarden unlocks when this run ends" / "A and B unlock when ...".
+static func _unlocks_at_end(names: Array) -> String:
+	return "%s %s when this run ends" % [join_names(names), "unlocks" if names.size() == 1 else "unlock"]
+
+
+## The banners the run has just earned on `floor_num` with this run's
+## `effective_uses` (Game.effective_uses, base id -> int), skipping every key
+## already in `fired`: [{key, keys, lines: [line1, line2]}]. The caller marks
+## EVERY id in `keys` fired - a DEEPEST YET that lands on a milestone floor is
+## one banner carrying both keys. An empty ref (the tutorial, a daily) earns
+## nothing. Keys: "floor:<n>", "deepest", "cast:<base>:<need>".
+static func ping_events(ref: Dictionary, floor_num: int, effective_uses: Dictionary, fired: Dictionary) -> Array:
+	var out: Array = []
+	if ref.is_empty():
+		return out
+	var fkey := "floor:%d" % floor_num
+	var names: Array = ref.get("floors", {}).get(floor_num, [])
+	var floor_hit: bool = not names.is_empty() and not fired.has(fkey)
+	var deep_hit: bool = int(ref.get("runs", 0)) >= 1 and int(ref.get("best_floor", 0)) >= 1 \
+		and floor_num > int(ref.get("best_floor", 0)) and not fired.has("deepest")
+	if deep_hit and floor_hit:
+		out.append({"key": "deepest", "keys": ["deepest", fkey],
+			"lines": ["DEEPEST YET", _unlocks_at_end(names)]})
+	elif deep_hit:
+		var fname := ""
+		if floor_num >= 1 and floor_num <= Content.FLOORS.size():
+			fname = String(Content.FLOORS[floor_num - 1].get("name", ""))
+		out.append({"key": "deepest", "keys": ["deepest"],
+			"lines": ["DEEPEST YET", "floor %d  ·  %s" % [floor_num, fname] if fname != "" else "floor %d" % floor_num]})
+	elif floor_hit:
+		out.append({"key": fkey, "keys": [fkey], "lines": ["FLOOR %d" % floor_num, _unlocks_at_end(names)]})
+	for c in ref.get("casts", []):
+		var base := String(c["base"])
+		var need := int(c["need"])
+		var ckey := "cast:%s:%d" % [base, need]
+		if fired.has(ckey):
+			continue
+		if int(c["had"]) + int(effective_uses.get(base, 0)) >= need:
+			out.append({"key": ckey, "keys": [ckey], "lines": [
+				"%s %d/%d" % [_ability_name(base).to_upper(), need, need], _unlocks_at_end(c["names"])]})
+	return out
+
+
+## Every ping key a run standing on `floor_num` with `effective_uses` has
+## already earned - what a resumed run marks fired so it never re-announces.
+## The floors are walked 1..floor_num, because a run reached every one of them.
+static func pings_fired_now(ref: Dictionary, floor_num: int, effective_uses: Dictionary) -> Dictionary:
+	var fired := {}
+	for f in range(1, maxi(1, floor_num) + 1):
+		for p in ping_events(ref, f, effective_uses, fired):
+			for k in p["keys"]:
+				fired[k] = true
+	return fired
+
+
+## The objective line's career part: "floor 5 unlocks Mycology" while the
+## NEXT floor is a milestone floor this career has not reached; "" otherwise.
+static func objective_hint(ref: Dictionary, floor_num: int) -> String:
+	var names: Array = ref.get("floors", {}).get(floor_num + 1, [])
+	if names.is_empty():
+		return ""
+	return "floor %d unlocks %s" % [floor_num + 1, join_names(names, 1)]
+
+
 ## Config for the next run: the tier, mutators, loadout and single package the
 ## menu asked for, each clamped to what the career has actually unlocked. The
 ## sim gets no "kit" key - the loadout carries the starting kit.

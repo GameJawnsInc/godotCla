@@ -269,13 +269,15 @@ static func unlock_label(id: String, unlocked_packages: Array) -> String:
 	return "UNLOCKED%s%s" % [SEP, Profile.unlock_name(id)]
 
 
-## The first `max_n` unlock labels, then "+n more" when there are more.
+## The first `max_n` unlock labels, then "+n more  ·  tap for all" when there
+## are more: the unlock rows are the tap target that opens the pager (every
+## unlock and feat as a card, main._draw_unlocks).
 static func unlock_lines(ids: Array, unlocked_packages: Array, max_n := 3) -> Array:
 	var out: Array = []
 	for i in mini(max_n, ids.size()):
 		out.append(unlock_label(String(ids[i]), unlocked_packages))
 	if ids.size() > max_n:
-		out.append("+%d more" % (ids.size() - max_n))
+		out.append("+%d more%stap for all" % [ids.size() - max_n, SEP])
 	return out
 
 

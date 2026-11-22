@@ -119,8 +119,9 @@ screen says about what is about to hurt you. Nothing here changes a run.
   hurt, `! INCOMING 2 - shield holds` when your shield takes it all; then the
   choke countdown (`Smog chokes in 3 - cleansing thins it`, or `- descend to
   escape it` once the stairs are awake; `NEXT TURN` in red); then `The vents
-  release next turn`; then the floor's usual hint. The forecast is the real
-  end turn played out on a copy, so the number is exact.
+  release next turn`; then the floor's objective line (see *Career and
+  difficulty*). The forecast is the real end turn played out on a copy, so
+  the number is exact.
 - **Lethal colours.** When the end turn would kill you, your outline pulses
   red (amber when something lands but you live), the HP chip and the screen
   edges go red, and END / END TURN get a red border. A satchel item that
@@ -163,7 +164,8 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
 - tap shop cards at a shrine, draft options between floors
 - after a run: the map holds for a beat, then the game-over sheet fades in
   with its buttons - NEW RUN, RETRY SEED (RETRY DAILY on a daily), MENU.
-  Nothing else on the sheet starts a run: a stray tap does nothing
+  Nothing else on the sheet starts a run: a stray tap does nothing. Tap the
+  unlock rows to page through everything the run unlocked
 
 ## Feedback: callouts, kills, log and sound
 
@@ -270,7 +272,7 @@ The sheet, top to bottom (`shell/main.gd` `_over_layout`, words from
 | best | `NEW BEST · was 1100`, `NEW BEST FOR TIDEWARDEN · was 900`, `best 1449 · this run 85%`, `your first score · beat it next run`; on a daily `RANKED · your first finish today`, `NEW DAILY BEST · was floor 3`, `today's best: floor 4 · 3 tries` |
 | floor best | `YOUR FIRST WIN`, `DEEPEST YET · floor 5 (was 3)` |
 | score parts | every non-zero part (`floor 500 · kills 120 · bloom 82`), then `x1.5 difficulty 2` |
-| unlocks | `NEW DIFFICULTY · Thicker Smog`, `UNLOCKED · Hydraulics package`, `UNLOCKED · Skyrunner loadout (needs Aeolian)`, `UNLOCKED · Slick Combine mutator`, then the run's new feats (`FEAT · Green Thumb`), then `+2 more` |
+| unlocks | `NEW DIFFICULTY · Thicker Smog`, `UNLOCKED · Hydraulics package`, `UNLOCKED · Skyrunner loadout (needs Aeolian)`, `UNLOCKED · Slick Combine mutator`, then the run's new feats (`FEAT · Green Thumb`), then `+2 more · tap for all` - the rows are one tap target that opens the unlock pager |
 | next | `NEXT · Land 30 Grow Spikes · 17/30 (+9 this run) · unlocks Wide Draft` (numbers only when the goal needs more than one); once every goal is owned, the nearest feat: `NEXT · Fell 250 machines across your career · 180/250 (+31 this run) · feat Scrap Heap` |
 | seed | `seed 123456 · Tender · Mycology`, plus `difficulty 2` and `daily` |
 
@@ -282,6 +284,18 @@ every row, the least important present row is dropped first (the seed line,
 then the third chip, then the score parts...), and the title, cause, score
 and best never go; `tests/test_shell.gd` `_check_over_text` holds every row
 to the card text floor at every phone shape.
+
+**The unlock pager.** Once the sheet is live, tapping its unlock rows (they
+draw a thin gold frame) opens NEW THIS RUN: every unlock and feat the run
+earned as a card, five to a page, the difficulty first. Each card names the
+thing in words with its kind on the badge (TIER 1, LOADOUT, PACKAGE,
+MUTATOR, FEAT) and says where to find it (`pick it under LOADOUT`); a
+loadout still waiting on its package reads `Skyrunner (needs Aeolian)` with
+what opens the package, and a package that makes an owned loadout playable
+ends `opens Skyrunner`. `<` / `>` page it (LEFT / RIGHT on a keyboard) with
+`2 / 3` above the row; DONE, ENTER or Back return to the sheet, and only the
+next Back leaves for the menu. The pager takes only its own buttons - a tap
+anywhere else, or R / N, does nothing, so it can never throw the result away.
 
 The score is cosmetic and transparent: `Content.RUN_SCORE` (100 a floor,
 500 a win, 5 a kill, 2 a bloom earned, 3 a combo, 10 a room bloomed, 50 a
@@ -302,6 +316,7 @@ disagree about what back means:
 | the settings, DAILY or CAREER sheet on the menu | closes it, back to the menu |
 | the forge's keep / scrap / fork step | one step back, ending on the shrine sheet |
 | the draft's drop sheet | back to the offer cards, nothing dropped |
+| the unlock pager (NEW THIS RUN) | back to the game-over sheet |
 | aiming an ability | cancels the aim — free, no turn, no strike |
 | the room camera (zoom) | back out to the whole floor |
 | normal play, the descent draft, the end-of-run beat and the game-over sheet, the tutorial | the menu |
@@ -524,6 +539,28 @@ best floor / feats. The CAREER sheet (below) is where all of it can be read
 back. Daily runs are scored but never counted
 toward the career: a finished daily is filed as that seed's best result
 (won, floor, turns) and unlocks nothing.
+
+**In-run pings.** A career run knows, from the moment it starts, what it can
+still earn, and says so as it happens with a gold banner (queued behind any
+other banner, never on the step that ends the run): `FLOOR 3 · Tidewarden
+unlocks when this run ends` on reaching a milestone floor (a first-ever run
+too), `DEEPEST YET · floor 5 · Pipeworks` past your best floor (from your
+second run on; on a milestone floor the two share one banner), and
+`GROW SPIKE 30/30 · Spiker unlocks when this run ends` when this run's
+effective casts complete a count. Each fires once a run, a resumed run never
+repeats one it already showed, and the tutorial and the daily ping nothing.
+The unlock is real either way - a death records the floor and the casts just
+as a win does; only an abandoned run is never recorded.
+
+**The objective line** is the context line's last arm, when no mode, flash or
+danger line holds it: the floor's goal (`Stairs dormant - cleanse 1/3 to
+green the floor`, `Reach the gold-ringed stairs`, `DESTROY THE BOSS`), then on
+a career run whose next floor is a milestone floor not yet reached, the
+career hint - `Reach the gold-ringed stairs · floor 5 unlocks Mycology`, the
+quota shortening to `cleanse 1/3 to wake the stairs` beside it. Alone, the
+goal is followed by `tap for log` as before (the quota never was). Parts
+drop from the hint backwards until the line draws at 1.3% of the screen
+height or more, so a long hint goes rather than shrinking the line.
 
 ## Career sheet
 

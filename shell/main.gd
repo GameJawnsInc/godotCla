@@ -141,7 +141,7 @@ const DRAFT_SLOT_LABEL := {
 var game
 var seed_v := 0
 var screen := "menu"  # menu | game | tutorial
-var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | up_keep | up_scrap | up_variant | intro | help | shop | log | settings | daily | career
+var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | up_keep | up_scrap | up_variant | intro | help | shop | log | settings | daily | career | unlocks
 ## Did the roll that produced the draft on screen spend an armed focus? Read
 ## off the draft_offer event, because a focus slot that found no candidate
 ## yields no FOCUS card and the snapshot cannot tell that from an ordinary
@@ -229,6 +229,7 @@ var _anim_ms := -99999
 const FX_MS := 700
 var _fx: Array = []  # transient map effects {kind, pos: Vector2 tile, text, col, t0}
 var _floor_fade_ms := -99999  # descend wipe: new floor fades in from dark
+const FLOOR_CARD_MS := 1400  # how long the floor title card hangs over the map
 var profile  # meta career: unlocks tiers/packages across runs (meta/profile.gd)
 ## The four run choices the title screen makes, all persisted in tender.cfg
 ## and all clamped to what the career unlocked (_clamp_selection). PLAY turns
@@ -342,6 +343,13 @@ var career_page := 0
 ## tab clears them from the profile at once (and saves), so this is what keeps
 ## them reading NEW on their cards until the sheet is opened again.
 var _career_fresh: Array = []
+## In-run pings (part 3): what this run can still earn (Profile.run_ref,
+## taken at run start or resume; {} for the tutorial, a daily or a game set
+## from outside) and the ping keys already announced this run.
+var _career_ref: Dictionary = {}
+var _pings_fired: Dictionary = {}
+## The unlock pager (mode "unlocks", over the game-over sheet): its page.
+var unlock_page := 0
 
 
 func _ready() -> void:
@@ -466,6 +474,11 @@ func _new_game() -> void:
 	_game_is_run = true
 	_run_recorded = false
 	_run_unlocks = []
+	unlock_page = 0
+	# what this run can still earn, for the pings and the objective line: the
+	# profile does not move again until this run is recorded
+	_career_ref = profile.run_ref() if run_kind == "career" else {}
+	_pings_fired = {}
 	save_lost = false  # the notice stands until the player starts a fresh run
 	if _run_save != null:
 		_run_save.close()
@@ -495,6 +508,9 @@ func _start_tutorial() -> void:
 	_new_stats()
 	_draft_focus_spent = false
 	_game_is_run = false
+	_career_ref = {}  # the tutorial earns nothing and pings nothing
+	_pings_fired = {}
+	unlock_page = 0
 	tut_step = 0
 	tut_done = false
 	mode = "normal"
@@ -612,6 +628,12 @@ func _load_run() -> void:
 	_game_is_run = true
 	_run_recorded = false
 	_run_unlocks = []
+	unlock_page = 0
+	# the same ref the run started with (the profile has not moved since), and
+	# every ping the replayed run already earned marked fired: a resumed run
+	# never announces a floor or a cast count twice
+	_career_ref = profile.run_ref() if run_kind == "career" else {}
+	_pings_fired = Profile.pings_fired_now(_career_ref, int(game.floor_num), game.effective_uses)
 	mode = "normal"
 	_reset_feedback()
 	_reset_danger()  # replayed through g.step, not _act: no cue fires for the replay
@@ -991,6 +1013,14 @@ func _act(a: Dictionary) -> void:
 	_feedback(evs, pre, ctx, cue.get("sounds", []))
 	if not Array(cue.get("banner", [])).is_empty():
 		_push_banner(cue["banner"], Danger.COL_AMBER, int(Feedback.BANNER_PRIO["danger"]))
+	# career pings (a milestone floor, DEEPEST YET, a cast count reached): the
+	# lowest banner priority, queued behind whatever the step itself announced.
+	# Never on the step that ends the run - the over sheet says it all then
+	if not game.over and _game_is_run and not _career_ref.is_empty():
+		for p in Profile.ping_events(_career_ref, int(game.floor_num), game.effective_uses, _pings_fired):
+			for k in p["keys"]:
+				_pings_fired[k] = true
+			_push_banner(p["lines"], COL_GOLD, int(Feedback.BANNER_PRIO["career"]))
 	# the end beat starts AFTER the step's own feedback (its bursts, its death
 	# sound) and clears the banners it queued; the record runs between the two
 	# so the sheet's facts read the bests from BEFORE it
@@ -1068,7 +1098,8 @@ func _push_banner(lines: Array, col: Color = COL_GOLD, prio: int = 0) -> void:
 	if lines.is_empty():
 		return
 	var now := Time.get_ticks_msec()
-	if now - _banner_ms >= BANNER_MS or _banner.is_empty():
+	var held := _career_held(prio)
+	if not held and (now - _banner_ms >= BANNER_MS or _banner.is_empty()):
 		_banner = lines.duplicate()
 		_banner_col = col
 		_banner_ms = now
@@ -1083,12 +1114,24 @@ func _push_banner(lines: Array, col: Color = COL_GOLD, prio: int = 0) -> void:
 		_banner_q.resize(3)
 
 
+## A career ping (a milestone floor, DEEPEST YET) lands on the step that
+## changes floor, the same step that raises the floor title card - so it waits
+## in the queue until the card has gone instead of drawing on top of it.
+func _career_held(prio: int) -> bool:
+	if prio > int(Feedback.BANNER_PRIO["career"]):
+		return false
+	var age := Time.get_ticks_msec() - _floor_fade_ms
+	return age >= 0 and age < FLOOR_CARD_MS
+
+
 ## From _process: the next queued banner takes over once the live one is done.
 func _tick_banner() -> void:
 	if _banner_q.is_empty():
 		return
 	var now := Time.get_ticks_msec()
 	if now - _banner_ms < BANNER_MS:
+		return
+	if _career_held(int(_banner_q[0]["prio"])):
 		return
 	var b: Dictionary = _banner_q.pop_front()
 	_banner = b["lines"]
@@ -1272,6 +1315,12 @@ func _back(quit_at_root: bool = false) -> String:
 			_tap("quit")  # is_inside_tree-guarded, so a test can call it
 			return "quit"
 		return "root"
+	if mode == "unlocks":
+		# the unlock pager sits OVER the game-over sheet: Back returns to the
+		# sheet, and only the next Back leaves it for the menu
+		mode = "normal"
+		queue_redraw()
+		return "unlocks"
 	if game == null or game.over or (screen == "tutorial" and tut_done):
 		# the end-of-run sheet and the tutorial's last card are read-only: the
 		# run is already recorded and archived, so there is nothing to lose
@@ -1574,6 +1623,16 @@ func _key(k: int) -> void:
 		return  # the end beat: a key still held from the last move must not skip it
 	if screen == "tutorial" and tut_done:
 		_tap("menu")
+		return
+	if mode == "unlocks":
+		# LEFT / RIGHT page the pager, ENTER / SPACE are its DONE; ESC (above)
+		# is Back. Nothing else - R and N must not start a run from under it
+		if k == KEY_LEFT:
+			_unlock_turn(-1)
+		elif k == KEY_RIGHT:
+			_unlock_turn(1)
+		elif k == KEY_ENTER or k == KEY_SPACE:
+			_tap("close")
 		return
 	if mode == "help":
 		if help_page < _help_pages() - 1:
@@ -1912,6 +1971,16 @@ func _click(pos: Vector2) -> void:
 	if screen == "tutorial" and tut_done:
 		_tap("menu")
 		return
+	if mode == "unlocks":
+		# the pager takes only its own buttons: a stray tap must neither close
+		# it into the sheet behind nor reach that sheet's NEW RUN - not even
+		# through a hotspot the sheet left before the pager's first frame
+		for hsp in hotspots:
+			var htag := String(hsp["tag"])
+			if hsp["rect"].has_point(pos) and (htag == "close" or htag.begins_with("unlock_page:")):
+				_tap(htag)
+				return
+		return
 	if mode == "help":
 		if help_page < _help_pages() - 1:
 			help_page += 1
@@ -2089,6 +2158,15 @@ func _tap(tag: String) -> void:
 		_career_select(tag.get_slice(":", 1))
 	elif tag.begins_with("career_page:"):
 		_career_turn(tag.get_slice(":", 1).to_int())
+	elif tag == "unlocks":
+		# the over sheet's unlock rows: the pager, only over a finished run
+		# that actually unlocked or earned something
+		if game != null and game.over and not _unlock_ids().is_empty():
+			unlock_page = 0
+			mode = "unlocks"
+			queue_redraw()
+	elif tag.begins_with("unlock_page:"):
+		_unlock_turn(tag.get_slice(":", 1).to_int())
 	elif tag == "daily_resume":
 		mode = "normal"  # the sheet closes behind the resumed try
 		_tap("resume")
@@ -2575,6 +2653,8 @@ func _draw() -> void:
 			_draw_over_beat(vw, vh)
 		else:
 			_draw_over(snap, vw, vh)
+			if mode == "unlocks":
+				_draw_unlocks(vw, vh)
 
 
 func _draw_menu(vw: float, vh: float) -> void:
@@ -3935,7 +4015,7 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			Color(0.02, 0.03, 0.03, 1.0 - maxf(fage, 0.0)))
 
 	# and its name hangs over the map for a moment
-	var spl := float(Time.get_ticks_msec() - _floor_fade_ms) / 1400.0
+	var spl := float(Time.get_ticks_msec() - _floor_fade_ms) / float(FLOOR_CARD_MS)
 	if spl >= 0.0 and spl < 1.0:
 		var sa := 1.0 if spl < 0.55 else 1.0 - (spl - 0.55) / 0.45
 		var scy := (mr.position.y + mr.end.y) / 2.0
@@ -4061,7 +4141,7 @@ func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
 
 func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 	var y := vh * Z_AB_END + (vh * (Z_CTX_END - Z_AB_END)) * 0.62
-	var cm := _context_msg(snap)
+	var cm := _context_msg(snap, vw, vh)
 	var col: Color = cm["col"]
 	if bool(cm["pulse"]):
 		col.a = 0.65 + 0.35 * sin(Time.get_ticks_msec() / 160.0)
@@ -4073,8 +4153,9 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 ## line above the D-pad. Mode prompts first, then a flash (red when it is a
 ## lethal-guard refusal), then the danger layer's line (Danger.context_line:
 ## incoming damage, the choke countdown, the vents - never in the tutorial),
-## then the floor's standing hint.
-func _context_msg(snap: Dictionary) -> Dictionary:
+## then the floor's objective line (_objective_line, fitted to vw x vh when
+## the caller knows them - _draw_context always does).
+func _context_msg(snap: Dictionary, vw: float = 0.0, vh: float = 0.0) -> Dictionary:
 	var msg := ""
 	var col := COL_DIM_TEXT
 	match mode:
@@ -4114,14 +4195,55 @@ func _context_msg(snap: Dictionary) -> Dictionary:
 			var dl: Dictionary = Danger.context_line(_danger_state(), Danger.stairs_awake(snap))
 			if not dl.is_empty():
 				return dl
-			if snap["floor"] == 7:
-				msg = "DESTROY THE BOSS  ·  tap for log"
-			elif int(snap["greened"]) < int(snap["green_need"]):
-				msg = "Stairs dormant - cleanse %d/%d to green the floor" % [snap["greened"], snap["green_need"]]
-				col = Color(0.6, 0.85, 0.55)
-			else:
-				msg = "Reach the gold-ringed stairs  ·  tap for log"
+			var ob := _objective_line(snap, vw, vh)
+			return {"text": String(ob["text"]), "col": ob["col"], "pulse": false}
 	return {"text": msg, "col": col, "pulse": false}
+
+
+## The line's last arm, as data {text, col, parts}: what the floor asks of
+## you, in priority order (1 = kept longest), joined with "  ·  ":
+##   1. the floor's own goal - the boss, the quota ("Stairs dormant - cleanse
+##      2/5 to green the floor", shortened to "cleanse 2/5 to wake the stairs"
+##      whenever another part rides with it) or the stairs
+##   2. the career hint (Profile.objective_hint: "floor 5 unlocks Mycology"),
+##      on a career run whose next floor is a milestone floor not yet reached
+##   3. "tap for log", only when nothing else rides with part 1 and part 1 is
+##      not the quota (which never carried it)
+## Given the viewport, parts drop from the lowest priority until the line
+## draws at >= OBJECTIVE_MIN_VH in the context line's box; vw/vh 0 keeps all.
+## The colour is the first part's (the quota's green, else dim).
+const OBJECTIVE_MIN_VH := 0.013
+
+func _objective_line(snap: Dictionary, vw: float = 0.0, vh: float = 0.0) -> Dictionary:
+	var col := COL_DIM_TEXT
+	var head := ""
+	var head_short := ""
+	if int(snap["floor"]) == Content.FLOORS.size():
+		head = "DESTROY THE BOSS"
+	elif int(snap["greened"]) < int(snap["green_need"]):
+		head = "Stairs dormant - cleanse %d/%d to green the floor" % [snap["greened"], snap["green_need"]]
+		head_short = "cleanse %d/%d to wake the stairs" % [snap["greened"], snap["green_need"]]
+		col = Color(0.6, 0.85, 0.55)
+	else:
+		head = "Reach the gold-ringed stairs"
+	var parts: Array = []
+	if screen == "game" and _game_is_run and not _career_ref.is_empty():
+		var hint := Profile.objective_hint(_career_ref, int(snap["floor"]))
+		if hint != "":
+			parts.append(hint)
+	if parts.is_empty() and head_short == "":
+		parts.append("tap for log")
+	var bits: Array = []
+	var text := ""
+	for _i in parts.size() + 1:
+		bits = [head if parts.is_empty() or head_short == "" else head_short]
+		bits.append_array(parts)
+		text = "  ·  ".join(bits)
+		if parts.is_empty() or vw <= 0.0 or vh <= 0.0 \
+				or float(_fit_size(text, int(vh * 0.022), vw * 0.95)) / vh >= OBJECTIVE_MIN_VH:
+			break
+		parts.pop_back()
+	return {"text": text, "col": col, "parts": bits}
 
 
 func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
@@ -4808,7 +4930,18 @@ func _over_layout(info: Dictionary, vw: float, vh: float) -> Dictionary:
 		var label := String(btns[k][0])
 		buttons.append({"rect": br, "label": label, "tag": String(btns[k][1]),
 			"size": _fit_size(label, int(bh * 0.36), bw * 0.92), "primary": k == 0 and String(btns[k][1]) != "menu"})
-	return {"items": items, "buttons": buttons, "dropped": dropped, "bottom": y, "button_top": by}
+	# the unlock rows are one tap target (the pager, "unlocks"): the band from
+	# the first drawn unlock row's cap height to the last one's descenders
+	var ur := Rect2()
+	for it in items:
+		if not String(it["id"]).begins_with("unlock"):
+			continue
+		var sz := float(it["size"])
+		var r := Rect2(vw * 0.04, float(it["y"]) - sz * 1.05, vw * 0.92,
+			sz * 1.05 + float(it["line_h"]) * (it["lines"].size() - 1) + sz * 0.45)
+		ur = r if ur.size.y <= 0.0 else ur.merge(r)
+	return {"items": items, "buttons": buttons, "dropped": dropped, "bottom": y, "button_top": by,
+		"unlock_rect": ur}
 
 
 ## The end beat's two banner lines, centred in the map band [top, bottom]:
@@ -4913,6 +5046,11 @@ func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 						_txt(Vector2(pp.x + isz2 - cs * 0.3, pp.y + cs * 0.8), "+",
 							Color(COL_GOLD.r, COL_GOLD.g, COL_GOLD.b, a), cs)
 	var locked := _over_locked()
+	var ur: Rect2 = lay["unlock_rect"]
+	if not locked and ur.size.y > 0.0 and not _unlock_ids().is_empty():
+		# the unlock rows open the pager (every unlock and feat as a card)
+		draw_rect(ur, Color(COL_GOLD.r, COL_GOLD.g, COL_GOLD.b, 0.35 * a), false, 1.5)
+		_hot(ur, "unlocks")
 	for b in lay["buttons"]:
 		var br: Rect2 = b["rect"]
 		if locked:
@@ -4925,6 +5063,139 @@ func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 		else:
 			_button(br, String(b["label"]), String(b["tag"]), int(b["size"]),
 				COL_GOLD if bool(b["primary"]) else COL_DIM_TEXT)
+
+
+# --- the unlock pager (fun pass, career part 3) -------------------------------------
+
+## What the pager lists: the run's unlocks ("tier:N" first, then milestone
+## ids - exactly last_report.unlocks) and then "feat:<id>" for each feat it
+## earned. Empty for a daily, the tutorial or an unrecorded game.
+func _unlock_ids() -> Array:
+	var ids: Array = _run_unlocks.duplicate()
+	for fid in _run_report.get("feats", []):
+		ids.append("feat:" + String(fid))
+	return ids
+
+
+## One card per unlock id, as data: [icon, name, desc, tag, badge] (tag "").
+## Names come from content - never a raw id - and a loadout still waiting on
+## its package says so in its name ("Skyrunner (needs Aeolian)"), with what
+## opens the package in its description.
+func _unlock_cards(ids: Array) -> Array:
+	var cards: Array = []
+	var pkgs: Array = profile.unlocked_packages if profile != null else []
+	for raw in ids:
+		var id := String(raw)
+		var icon := _unlock_icon(id)
+		match Profile.unlock_kind(id):
+			"tier":
+				var n := int(id.substr(5))
+				var tname := String(Content.TIERS[n - 1]["name"]) if n >= 1 and n <= Content.TIERS.size() \
+					else Profile.unlock_name(id)
+				cards.append([icon, tname, "Difficulty %d  ·  stacks on every tier below  ·  pick it under DIFFICULTY" % n,
+					"", "TIER %d" % n])
+			"loadout":
+				var ld: Dictionary = Content.LOADOUTS[id]
+				var gp := _gate_pkg(id)
+				if gp != "" and not pkgs.has(gp):
+					cards.append([icon, "%s (needs %s)" % [ld["name"], Profile.unlock_name(gp)],
+						"%s  ·  %s: %s" % [ld["desc"], Profile.unlock_name(gp), _milestone_desc(gp)], "", "LOADOUT"])
+				else:
+					cards.append([icon, String(ld["name"]), "%s  ·  pick it under LOADOUT" % ld["desc"], "", "LOADOUT"])
+			"package":
+				var names: Array = []
+				for aid in Content.PACKAGES.get(id, []):
+					names.append(Names.aname(String(aid)))
+				var info: Dictionary = Content.PACKAGE_INFO.get(id, {})
+				var desc := "%s  ·  %s" % [info.get("desc", ""), ", ".join(names)]
+				for lid in Content.LOADOUTS:
+					var req: Array = Content.LOADOUTS[lid].get("requires", {}).get("packages", [])
+					if req.has(id) and profile != null and profile.unlocked_loadouts.has(lid) \
+							and Profile.gate_of(String(lid), pkgs) == "":
+						desc += "  ·  opens %s" % Content.LOADOUTS[lid]["name"]
+				cards.append([icon, Profile.unlock_name(id), desc, "", "PACKAGE"])
+			"mutator":
+				cards.append([icon, Profile.unlock_name(id),
+					"%s  ·  pick it under MUTATOR" % Content.MUTATORS[id].get("desc", ""), "", "MUTATOR"])
+			"feat":
+				var fid := id.substr(5)
+				cards.append([icon, Profile.unlock_name(id), String(Content.FEATS.get(fid, {}).get("desc", "")), "", "FEAT"])
+			"graft":
+				cards.append([icon, Profile.unlock_name(id), String(Content.GRAFTS[id].get("desc", "")), "", "GRAFT"])
+			_:
+				cards.append([icon, Profile.unlock_name(id), "", "", ""])
+	return cards
+
+
+## Page `page` of the pager (clamped): {cards: [[icon, name, desc, tag,
+## badge]], pages, page}.
+func _unlock_page_info(page: int) -> Dictionary:
+	var all := _unlock_cards(_unlock_ids())
+	var pages := maxi(1, ceili(float(all.size()) / CARDS_PER_PAGE))
+	var pg := clampi(page, 0, pages - 1)
+	return {"cards": all.slice(pg * CARDS_PER_PAGE, (pg + 1) * CARDS_PER_PAGE), "pages": pages, "page": pg}
+
+
+## Turn the pager by `d` pages, clamped at both ends.
+func _unlock_turn(d: int) -> void:
+	unlock_page = int(_unlock_page_info(unlock_page + d)["page"])
+	queue_redraw()
+
+
+## Where the pager's pieces land, as data (_draw_unlocks draws it; the test
+## holds the geometry at every phone shape): {cards: [{rect, row}], page_line:
+## {text, y, size} ("" on one page), buttons: [{rect, label, tag, size, gold}]}.
+## Five cards of 0.105vh from 0.18vh end at 0.78vh; the page line sits under
+## them and the [<] [DONE] [>] row goes through _sheet_button_y.
+func _unlocks_layout(vw: float, vh: float, info: Dictionary) -> Dictionary:
+	var y := vh * 0.18
+	var ch := vh * 0.105
+	var cards: Array = []
+	for c in info["cards"]:
+		cards.append({"rect": Rect2(vw * 0.05, y, vw * 0.9, ch), "row": c})
+		y += ch + vh * 0.015
+	var pages := int(info.get("pages", 1))
+	var pg := int(info.get("page", 0))
+	var pl := "" if pages <= 1 else "%d / %d" % [pg + 1, pages]
+	var out := {"cards": cards,
+		"page_line": {"text": pl, "y": vh * (0.18 + 5 * 0.12) + vh * 0.03, "size": int(vh * 0.02)}}
+	var bh := vh * 0.065
+	var by := _sheet_button_y(vh * 0.845, bh, vh)
+	var specs: Array = []
+	if pg > 0:
+		specs.append([Rect2(vw * 0.06, by, vw * 0.18, bh), "<", "unlock_page:-1", false])
+	specs.append([Rect2(vw * 0.27, by, vw * 0.46, bh), "DONE", "close", true])
+	if pg < pages - 1:
+		specs.append([Rect2(vw * 0.76, by, vw * 0.18, bh), ">", "unlock_page:+1", false])
+	var buttons: Array = []
+	for b in specs:
+		var br: Rect2 = b[0]
+		buttons.append({"rect": br, "label": b[1], "tag": b[2], "gold": b[3],
+			"size": _fit_size(String(b[1]), int(bh * 0.34), br.size.x * 0.92)})
+	out["buttons"] = buttons
+	return out
+
+
+## The unlock pager over the game-over sheet: every unlock and feat this run
+## earned as a card, five to a page. DONE (or Back) returns to the sheet.
+func _draw_unlocks(vw: float, vh: float) -> void:
+	hotspots.clear()
+	_sheet(vw, vh, "NEW THIS RUN")
+	var info := _unlock_page_info(unlock_page)
+	unlock_page = int(info["page"])
+	var L := _unlocks_layout(vw, vh, info)
+	for c in L["cards"]:
+		var row: Array = c["row"]
+		_card(c["rect"], String(row[0]), String(row[1]), String(row[2]), String(row[3]), vh, String(row[4]))
+	var pl: Dictionary = L["page_line"]
+	if String(pl["text"]) != "":
+		_txt_c(vw / 2.0, float(pl["y"]), String(pl["text"]), COL_DIM_TEXT, int(pl["size"]))
+	for b in L["buttons"]:
+		var br: Rect2 = b["rect"]
+		_box(br, _sb_gold if bool(b["gold"]) else _sb)
+		var fs := int(b["size"])
+		_txt_c(br.get_center().x, br.get_center().y + fs * 0.35, String(b["label"]), COL_TEXT, fs)
+		_hot(br, String(b["tag"]))
 
 
 func _draw_intro(vw: float, vh: float) -> void:

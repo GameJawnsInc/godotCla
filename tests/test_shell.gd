@@ -903,6 +903,9 @@ func _init() -> void:
 	_check_run_end()
 	_check_over_facts()
 	_check_over_text()
+	_check_unlock_pager()
+	_check_career_pings()
+	_check_objective_line()
 
 	shell.free()
 	shell2.free()
@@ -1137,6 +1140,21 @@ func _check_card_text() -> void:
 			for pg in pages:
 				for c in sh._career_cards(tab, pg)["cards"]:
 					meta.append(c)
+	# ...and every unlock pager card (stage 8): every milestone id, every
+	# difficulty and every feat, against all three careers (a gated Skyrunner
+	# on the fresh and mid-way ones, the package that opens it on the maxed)
+	var n_career := meta.size() - n_daily
+	var all_ids: Array = []
+	for m in Content.MILESTONES:
+		all_ids.append(String(m["id"]))
+	for ti in Content.TIERS.size():
+		all_ids.append("tier:%d" % (ti + 1))
+	for fid in Content.FEATS:
+		all_ids.append("feat:" + String(fid))
+	for cp in _career_profiles():
+		sh.profile = cp
+		for c in sh._unlock_cards(all_ids):
+			meta.append(c)
 	sh.profile = keep_profile
 	var m_small := 0
 	var m_lines := 0
@@ -1169,8 +1187,8 @@ func _check_card_text() -> void:
 	_check(m_lines == 0, "%d meta card description(s) need more than %d lines" % [m_lines, CARD_MAX_LINES])
 	_check(m_name == 0, "%d meta card name(s) below %.2f%% vh (worst %s)" % [m_name, CARD_MIN_VH * 100.0, m_worst_at])
 	_check(m_col == 0, "%d meta card name(s) run into their badge" % m_col)
-	print("meta card text: %d daily + %d career cards x %d viewports, worst %.4f%% of vh (%s)" % [
-		n_daily, meta.size() - n_daily, CARD_VIEWPORTS.size(), m_worst * 100.0, m_worst_at])
+	print("meta card text: %d daily + %d career + %d unlock cards x %d viewports, worst %.4f%% of vh (%s)" % [
+		n_daily, n_career, meta.size() - n_daily - n_career, CARD_VIEWPORTS.size(), m_worst * 100.0, m_worst_at])
 	sh.free()
 
 
@@ -3106,7 +3124,8 @@ func _check_run_end() -> void:
 		and RunEnd.unlock_label("tier:1", []) == "NEW DIFFICULTY  ·  " + String(Content.TIERS[0]["name"]),
 		"unlock lines name the kind and the content's own name")
 	var ul: Array = RunEnd.unlock_lines(["tier:1", "hydraulics", "kit_of_3", "double_oil", "skyrunner"], [])
-	_check(ul.size() == 4 and String(ul[3]) == "+2 more", "three unlock lines, then +2 more (%s)" % str(ul))
+	_check(ul.size() == 4 and String(ul[3]) == "+2 more  ·  tap for all",
+		"three unlock lines, then +2 more and the pager's cue (%s)" % str(ul))
 	_check(RunEnd.cause_text("spikes", "welded_hulk") == "cut on a Welded Hulk's spikes"
 		and RunEnd.cause_text("smog") == "choked by the smog" and RunEnd.cause_text("fire") == "burned in the flames",
 		"cause words (%s)" % RunEnd.cause_text("spikes", "welded_hulk"))
@@ -3618,3 +3637,401 @@ func _check_career_layout() -> void:
 	_check(labels == ["<", "BACK  ·  2/4", ">"], "page 2 of 4: [<] [BACK  ·  2/4] [>] (%s)" % str(labels))
 	print("career sheet layout: %d tab-page x viewport layouts checked" % n)
 	cl.free()
+
+
+# --- the unlock pager, the in-run pings and the objective line (stage 8) -----------
+
+## A first win files many unlocks: the over sheet shows three and "+n more ·
+## tap for all", the unlock rows are the tap target, and the pager lists every
+## unlock and feat as a card - tier first, real names, the gated loadout saying
+## what it needs. The pager takes only its own buttons, pages and clamps, and
+## Back returns to the over sheet before the next Back leaves for the menu.
+func _check_unlock_pager() -> void:
+	var sh = _bare_shell()
+	sh.runs_dir = RUNEND_RUNS
+	sh.profile = Profile.new()
+	sh.run_kind = "career"
+	sh.seed_v = 4242
+	var g = Game.new(4242, {})
+	g.floor_num = 7
+	g.won = true
+	g.over = true
+	sh.game = g
+	sh._game_is_run = true
+	sh._run_recorded = false
+	sh._record_finished_run()
+	var ids: Array = sh._unlock_ids()
+	_check(sh._run_unlocks == sh.profile.last_report["unlocks"] and String(sh._run_unlocks[0]) == "tier:1",
+		"_run_unlocks is last_report.unlocks, the difficulty first (%s)" % str(sh._run_unlocks))
+	_check(ids.size() == sh._run_unlocks.size() + sh._run_report.get("feats", []).size() and ids.size() > 5,
+		"the pager lists every unlock and every feat (%d)" % ids.size())
+	var cards: Array = sh._unlock_cards(ids)
+	_check(cards.size() == ids.size(), "one pager card per id")
+	var by_id := {}
+	for i in ids.size():
+		by_id[String(ids[i])] = cards[i]
+		_check(not String(cards[i][1]).contains("_") and String(cards[i][1]) != "",
+			"pager card %s is named in words (%s)" % [ids[i], cards[i][1]])
+		_check(String(cards[i][4]) != "", "pager card %s wears a kind badge" % ids[i])
+	_check(by_id.has("double_oil") and String(by_id["double_oil"][1]) == "Slick Combine",
+		"double_oil reads Slick Combine on its card")
+	_check(by_id.has("skyrunner") and String(by_id["skyrunner"][1]) == "Skyrunner (needs Aeolian)"
+		and String(by_id["skyrunner"][2]).contains("Aeolian"),
+		"a gated loadout's card says what it needs (%s)" % str(by_id.get("skyrunner", [])))
+	_check(String(by_id["tier:1"][1]) == String(Content.TIERS[0]["name"]) and String(by_id["tier:1"][4]) == "TIER 1",
+		"a difficulty card is named for the tier and badged TIER 1")
+	# with Aeolian open, Aeolian's card says it opens Skyrunner
+	var p2 = Profile.new()
+	p2.unlocked_loadouts = ["skyrunner"]
+	p2.unlocked_packages = ["aeolian"]
+	sh.profile = p2
+	var ac: Array = sh._unlock_cards(["aeolian", "skyrunner"])
+	_check(String(ac[0][2]).ends_with("opens Skyrunner") and String(ac[1][1]) == "Skyrunner",
+		"the package that makes a loadout playable says so (%s / %s)" % [ac[0][2], ac[1][1]])
+	sh.profile = Profile.load_from(TEST_PROFILE)
+	sh.profile.last_report = {}
+	# the over sheet: three rows, then the pager's cue; the rows are its tap target
+	var info: Dictionary = sh._over_info_now()
+	var ul: Array = info["unlocks"]
+	_check(ul.size() == 4 and String(ul[3]) == "+%d more  ·  tap for all" % (ids.size() - 3),
+		"the over sheet shows three unlocks, then '+n more  ·  tap for all' (%s)" % str(ul))
+	var rect_bad := 0
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		var lay: Dictionary = sh._over_layout(info, vw, vh)
+		var ur: Rect2 = lay["unlock_rect"]
+		if ur.size.y <= 0.0 or ur.position.x < 0 or ur.end.x > vw or ur.position.y < 0 or ur.end.y > float(lay["button_top"]):
+			rect_bad += 1
+		for b in lay["buttons"]:
+			if Rect2(b["rect"]).intersects(ur):
+				rect_bad += 1
+		var shown := 0
+		for it in lay["items"]:
+			if String(it["id"]).begins_with("unlock"):
+				shown += 1
+				var top: float = float(it["y"]) - float(it["size"])
+				if not ur.has_point(Vector2(vw / 2.0, top + float(it["size"]) * 0.5)):
+					rect_bad += 1
+		if shown == 0:
+			rect_bad += 1
+	_check(rect_bad == 0, "the unlock rows' tap target covers every drawn row, clear of the buttons, at every viewport (%d faults)" % rect_bad)
+	# the pager opens, takes only its own buttons, pages and clamps
+	var g0 = sh.game
+	var seed0: int = sh.seed_v
+	sh._tap("unlocks")
+	_check(sh.mode == "unlocks" and sh.unlock_page == 0, "tapping the unlock rows opens the pager")
+	var vw0 := 1080.0
+	var vh0 := 2400.0
+	sh.hotspots.clear()
+	for b in sh._over_layout(info, vw0, vh0)["buttons"]:
+		sh.hotspots.append({"rect": b["rect"], "tag": b["tag"]})  # the sheet behind, not yet redrawn
+	for b in sh.hotspots.duplicate():
+		sh._click(Rect2(b["rect"]).get_center())
+	sh._click(Vector2(5, 5))
+	sh._key(KEY_N)
+	sh._key(KEY_R)
+	_check(sh.mode == "unlocks" and sh.game == g0 and sh.seed_v == seed0 and sh.screen == "game",
+		"a tap on the sheet behind, off-card or a run key starts nothing from the pager")
+	var pinfo: Dictionary = sh._unlock_page_info(0)
+	var pages: int = int(pinfo["pages"])
+	_check(pages == ceili(float(ids.size()) / Shell.CARDS_PER_PAGE) and pinfo["cards"].size() == mini(5, ids.size()),
+		"five cards a page, %d page(s)" % pages)
+	var pl: Dictionary = sh._unlocks_layout(vw0, vh0, pinfo)
+	sh.hotspots.clear()
+	for b in pl["buttons"]:
+		sh.hotspots.append({"rect": b["rect"], "tag": b["tag"]})
+	var tags0: Array = sh.hotspots.map(func(h): return String(h["tag"]))
+	_check(tags0 == ["close", "unlock_page:+1"], "page 1's row is DONE and > (%s)" % str(tags0))
+	sh._click(Rect2(sh.hotspots[1]["rect"]).get_center())
+	_check(sh.unlock_page == 1 and sh.mode == "unlocks", "> turns the page")
+	for i in pages + 2:
+		sh._key(KEY_RIGHT)
+	_check(sh.unlock_page == pages - 1, "paging clamps at the last page")
+	for i in pages + 2:
+		sh._tap("unlock_page:-1")
+	_check(sh.unlock_page == 0, "...and at the first")
+	sh._back()
+	_check(sh.mode == "normal" and sh.game.over and sh.screen == "game", "Back leaves the pager for the over sheet")
+	_check(sh._back() == "menu" and sh.screen == "menu", "...and the next Back goes to the menu")
+	sh.screen = "game"
+	sh._tap("unlocks")
+	sh._notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
+	_check(sh.mode == "normal" and sh.screen == "game", "Android's Back closes the pager into the sheet")
+	sh._tap("unlocks")
+	sh._key(KEY_ENTER)
+	_check(sh.mode == "normal", "ENTER is the pager's DONE")
+	# the geometry, every page, every phone shape
+	var geo_bad := 0
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		for pg in pages:
+			var L: Dictionary = sh._unlocks_layout(vw, vh, sh._unlock_page_info(pg))
+			var last_card := 0.0
+			for c in L["cards"]:
+				last_card = maxf(last_card, Rect2(c["rect"]).end.y)
+			var row_top := 9999.0
+			var rects: Array = []
+			for b in L["buttons"]:
+				var br: Rect2 = b["rect"]
+				row_top = minf(row_top, br.position.y)
+				if br.end.y > vh * 0.955 + 0.01 or float(b["size"]) / vh < CARD_MIN_VH or br.position.x < 0 or br.end.x > vw:
+					geo_bad += 1
+				for o in rects:
+					if Rect2(o).intersects(br):
+						geo_bad += 1
+				rects.append(br)
+			var pline: Dictionary = L["page_line"]
+			if String(pline["text"]) != "":
+				var py: float = float(pline["y"])
+				if py - float(pline["size"]) < last_card or py + float(pline["size"]) * 0.3 > row_top \
+						or float(pline["size"]) / vh < CARD_MIN_VH:
+					geo_bad += 1
+			if last_card > row_top:
+				geo_bad += 1
+	_check(geo_bad == 0, "the pager's cards, page line and button row fit at every viewport (%d faults)" % geo_bad)
+	# a daily (nothing unlocked) and a locked sheet never open it
+	sh.game = Game.new(77, {})
+	sh.game.over = true
+	sh._run_unlocks = []
+	sh._run_report = {}
+	sh._tap("unlocks")
+	_check(sh.mode == "normal", "no unlocks: the pager does not open")
+	if sh._run_save != null:
+		sh._run_save.close()
+		sh._run_save = null
+	sh.free()
+	_clear_runend_runs()
+	print("unlock pager: %d cards over %d page(s), only its own buttons, Back to the sheet" % [ids.size(), pages])
+
+
+## Pings through the real paths: a run driven by a bot through _act earns a
+## casts ping and DEEPEST YET as banners at career priority, once; a resumed
+## run marks what it already earned and never re-announces; the tutorial and
+## a daily carry no ref.
+func _check_career_pings() -> void:
+	var seed_v := 11
+	# where a sprout run on this seed gets to: its first effective base
+	var probe = Game.new(seed_v, {})
+	var pbot = Roster.make("sprout", seed_v)
+	var acts: Array = []
+	var base := ""
+	while acts.size() < 400 and not probe.over and (base == "" or int(probe.floor_num) < 2):
+		var a: Dictionary = pbot.choose_action(probe.snapshot(), probe.legal_actions())
+		probe.step(a)
+		if probe.over:
+			break
+		acts.append(a)
+		if base == "":
+			for b in probe.effective_uses:
+				if int(probe.effective_uses[b]) > 0:
+					base = String(b)
+					break
+	_check(base != "" and int(probe.floor_num) >= 2,
+		"the probe run casts something effective and reaches floor 2 (%s, floor %d)" % [base, int(probe.floor_num)])
+	var mk_profile := func():
+		var p = Profile.new()
+		p.runs = 1
+		p.best_floor = 1
+		p.milestone_rows = [{"id": "spiker", "kind": "loadout", "requires": {"casts": {base: 3}}, "desc": "x"}]
+		p.casts_by_base = {base: 2}
+		return p
+	# live: through _act, banner by banner
+	var sh = _bare_shell()
+	sh.profile = mk_profile.call()
+	sh.seed_v = seed_v
+	sh.run_kind = "career"
+	sh._new_game()
+	_check(not sh._career_ref.is_empty() and sh._pings_fired.is_empty(), "a career run starts with a ref and nothing fired")
+	var want_cast := "cast:%s:3" % base
+	var cast_lines: Array = []
+	var deep_lines: Array = []
+	var career_banners := 0
+	for a in acts:
+		sh._banner = []
+		sh._banner_q = []
+		sh._banner_ms = -99999
+		var had_cast: bool = sh._pings_fired.has(want_cast)
+		var had_deep: bool = sh._pings_fired.has("deepest")
+		sh._act(a)
+		var seen: Array = [sh._banner]
+		for q in sh._banner_q:
+			seen.append(q["lines"])
+		for ln in seen:
+			if ln.size() == 2 and String(ln[1]).ends_with("unlocks when this run ends"):
+				career_banners += 1
+				if not had_cast:
+					cast_lines = ln
+			if ln.size() == 2 and String(ln[0]) == "DEEPEST YET":
+				career_banners += 1
+				if not had_deep:
+					deep_lines = ln
+		if sh.game.over:
+			break
+	_check(sh._pings_fired.has(want_cast) and cast_lines == ["%s 3/3" % Profile._ability_name(base).to_upper(),
+		"Spiker unlocks when this run ends"], "the third cast pings the unlock (%s)" % str(cast_lines))
+	_check(sh._pings_fired.has("deepest") and String(deep_lines[1] if deep_lines.size() > 1 else "").begins_with("floor 2"),
+		"floor 2 on a best of 1 is DEEPEST YET (%s)" % str(deep_lines))
+	_check(career_banners == 2, "each ping is announced exactly once (%d)" % career_banners)
+	_check(int(Feedback.BANNER_PRIO["career"]) < int(Feedback.BANNER_PRIO["stairs"]), "pings queue at the lowest priority")
+	_check(int(sh._career_ref["best_floor"]) == int(sh.profile.bests_snapshot(sh.sel_loadout)["best_floor"]),
+		"the ref's best floor IS bests_snapshot's (C10)")
+	# a ping lands with the floor title card: it waits in the queue until the
+	# card has gone, and a higher-priority banner is never held
+	sh._banner = []
+	sh._banner_q = []
+	sh._banner_ms = -99999
+	sh._floor_fade_ms = Time.get_ticks_msec()
+	sh._push_banner(["DEEPEST YET", "floor 2"], Shell.COL_GOLD, int(Feedback.BANNER_PRIO["career"]))
+	var held_q: bool = sh._banner.is_empty() and sh._banner_q.size() == 1
+	sh._tick_banner()
+	held_q = held_q and sh._banner.is_empty()
+	sh._floor_fade_ms = Time.get_ticks_msec() - sh.FLOOR_CARD_MS - 1
+	sh._tick_banner()
+	_check(held_q and sh._banner == ["DEEPEST YET", "floor 2"] and sh._banner_q.is_empty(),
+		"a career ping waits out the floor title card, then shows (%s / %s)" % [str(sh._banner), str(sh._banner_q)])
+	sh._banner = []
+	sh._floor_fade_ms = Time.get_ticks_msec()
+	sh._push_banner(["THE STAIRS AWAKEN"], Shell.COL_GOLD, int(Feedback.BANNER_PRIO["stairs"]))
+	_check(sh._banner == ["THE STAIRS AWAKEN"], "only career priority waits for the card")
+	if sh._run_save != null:
+		sh._run_save.close()
+		sh._run_save = null
+	sh.free()
+	# resume: the same log, replayed - nothing it already earned re-fires
+	var rs = _bare_shell(true)
+	rs.profile = mk_profile.call()
+	rs._load_run()
+	_check(rs.game != null and not rs.game.over and rs.run_kind == "career", "the logged run resumes")
+	_check(rs._pings_fired.has(want_cast) and rs._pings_fired.has("deepest"),
+		"a resumed run marks the pings it already earned (%s)" % str(rs._pings_fired.keys()))
+	_check(Profile.ping_events(rs._career_ref, int(rs.game.floor_num), rs.game.effective_uses, rs._pings_fired).is_empty(),
+		"...so none re-fires")
+	rs._game_is_run = true
+	rs._banner = []
+	rs._banner_q = []
+	var more: Array = rs._legal_of("end_turn")
+	if not more.is_empty() and rs.game.phase == "play":
+		rs._act(more[0])
+	var again := false
+	for ln in [rs._banner] + rs._banner_q.map(func(q): return q["lines"]):
+		if ln.size() == 2 and (String(ln[0]) == "DEEPEST YET" or String(ln[1]).ends_with("when this run ends")):
+			again = true
+	_check(not again, "the next step after a resume announces nothing old")
+	if rs._run_save != null:
+		rs._run_save.close()
+		rs._run_save = null
+	rs.free()
+	DirAccess.remove_absolute(TEST_RUN_SAVE)
+	# the tutorial and a daily: no ref, no pings
+	var ds = _bare_shell()
+	ds._start_tutorial()
+	_check(ds._career_ref.is_empty(), "the tutorial carries no career ref")
+	ds._start_run("daily")
+	_check(ds.run_kind == "daily" and ds._career_ref.is_empty(), "a daily carries no career ref")
+	ds._start_run("career")
+	_check(not ds._career_ref.is_empty(), "a career run does")
+	if ds._run_save != null:
+		ds._run_save.close()
+		ds._run_save = null
+	ds.free()
+	DirAccess.remove_absolute(TEST_RUN_SAVE)
+	print("career pings: %s 3/3 and DEEPEST YET once each, none after a resume, none in the tutorial or a daily" % base)
+
+
+## The objective line: the floor's goal first, the career hint beside it on a
+## career run ("floor 5 unlocks Mycology"), "tap for log" only alone - and
+## every combination draws at >= OBJECTIVE_MIN_VH at every phone shape.
+func _check_objective_line() -> void:
+	var sh = _bare_shell()
+	sh.profile = Profile.new()
+	sh.game = Game.new(4242, {})
+	sh.game.floor_num = 4
+	sh._game_is_run = true
+	sh.screen = "game"
+	sh._career_ref = sh.profile.run_ref()
+	var snap: Dictionary = sh.game.snapshot()
+	snap["greened"] = int(snap["green_need"])
+	var ob: Dictionary = sh._objective_line(snap)
+	_check(String(ob["text"]) == "Reach the gold-ringed stairs  ·  floor 5 unlocks Mycology",
+		"floor 4, stairs awake: the career hint rides with the goal (%s)" % ob["text"])
+	var dsnap: Dictionary = snap.duplicate()
+	dsnap["greened"] = 1
+	dsnap["green_need"] = 5
+	ob = sh._objective_line(dsnap)
+	_check(String(ob["text"]) == "cleanse 1/5 to wake the stairs  ·  floor 5 unlocks Mycology",
+		"the quota shortens beside the hint (%s)" % ob["text"])
+	# no ref (a daily, the tutorial, a game set from outside): the old lines exactly
+	var keep_ref: Dictionary = sh._career_ref
+	sh._career_ref = {}
+	_check(String(sh._objective_line(snap)["text"]) == "Reach the gold-ringed stairs  ·  tap for log"
+		and String(sh._objective_line(dsnap)["text"]) == "Stairs dormant - cleanse 1/5 to green the floor",
+		"without a career hint the line is what it always was")
+	var bsnap: Dictionary = snap.duplicate()
+	bsnap["floor"] = Content.FLOORS.size()
+	_check(String(sh._objective_line(bsnap)["text"]) == "DESTROY THE BOSS  ·  tap for log", "the boss floor's line")
+	sh._career_ref = keep_ref
+	_check(String(sh._objective_line(bsnap)["text"]) == "DESTROY THE BOSS  ·  tap for log",
+		"no milestone past the boss floor: no hint there")
+	# the context line's last arm IS the objective line (no danger on an empty floor)
+	sh.game.enemies.clear()
+	sh._danger_rev += 1
+	var cm: Dictionary = sh._context_msg(snap, 1080, 2400)
+	_check(String(cm["text"]) == String(sh._objective_line(snap, 1080, 2400)["text"]),
+		"_context_msg ends in _objective_line (%s)" % cm["text"])
+	# the fit: every hint the shipped content can show (a fresh career's
+	# milestone floors) beside the longest quota the floor table asks for, at
+	# every phone shape - the hint must stay ON at >= OBJECTIVE_MIN_VH
+	var max_need := 1
+	for fr in Content.FLOORS:
+		max_need = maxi(max_need, int(fr.get("green_need", 0)))
+	var hint_floors: Array = keep_ref["floors"].keys()
+	# ...and past what fits - the longest name any milestone carries, and all
+	# six loadouts on one floor - the hint is DROPPED, never drawn under the floor
+	var lname := ""
+	for m in Content.MILESTONES:
+		var nm := Profile.unlock_name(String(m["id"]))
+		if nm.length() > lname.length():
+			lname = nm
+	var crowd: Array = []
+	for lid in Content.LOADOUTS:
+		crowd.append(String(Content.LOADOUTS[lid]["name"]))
+	var drop_bad := 0
+	var bad := 0
+	var worst := 9.9
+	var worst_at := ""
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		sh._career_ref = keep_ref
+		for hf in hint_floors:
+			for sn in [snap, dsnap]:
+				var big: Dictionary = sn.duplicate()
+				big["floor"] = int(hf) - 1
+				if int(big["greened"]) < int(big["green_need"]):
+					big["greened"] = max_need - 1
+					big["green_need"] = max_need
+				var o: Dictionary = sh._objective_line(big, vw, vh)
+				var f := float(sh._fit_size(String(o["text"]), int(vh * 0.022), vw * 0.95)) / vh
+				if f < worst:
+					worst = f
+					worst_at = "'%s' at %dx%d" % [o["text"], int(vw), int(vh)]
+				if f < Shell.OBJECTIVE_MIN_VH:
+					bad += 1
+				if not String(o["text"]).contains("floor %d unlocks" % int(hf)):
+					bad += 1
+					print("objective line dropped its career hint at %dx%d: %s" % [vw, vh, o["text"]])
+		for names in [[lname], crowd]:
+			sh._career_ref = {"runs": 0, "best_floor": 0, "floors": {5: names}, "casts": []}
+			var big2: Dictionary = dsnap.duplicate()
+			big2["greened"] = 99
+			big2["green_need"] = 100
+			var oc: Dictionary = sh._objective_line(big2, vw, vh)
+			if float(sh._fit_size(String(oc["text"]), int(vh * 0.022), vw * 0.95)) / vh < Shell.OBJECTIVE_MIN_VH:
+				drop_bad += 1
+	_check(drop_bad == 0, "a hint too long to fit is dropped, never drawn under the floor (%d)" % drop_bad)
+	_check(bad == 0, "%d objective line(s) under %.1f%% of vh or without the career hint (worst %s)" % [
+		bad, Shell.OBJECTIVE_MIN_VH * 100.0, worst_at])
+	sh.free()
+	print("objective line: hint kept at %d viewports, worst %.3f%% of vh (%s)" % [CARD_VIEWPORTS.size(), worst * 100.0, worst_at])

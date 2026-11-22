@@ -16,7 +16,9 @@ extends SceneTree
 ## draft and drop sheets, the log, help pages and intro, and the end of a run:
 ## both game-over sheets set from outside, the end beat (a smog death through
 ## _act, and a first win), the sheet fading in locked, the live sheet with its
-## unlock rows, and a tutorial death. Each phase asserts it reached the state
+## unlock rows, the unlock pager over it (first and last page), a career ping
+## banner beside an objective line carrying the career hint, and a tutorial
+## death. Each phase asserts it reached the state
 ## its draw code needs.
 ##
 ## Gate: an OS Logger counts every engine error, push_error and SCRIPT ERROR
@@ -339,6 +341,7 @@ func _build_phases() -> Array:
 		["help page 2", 2, "_help_setup", "_help_check", "", 2],
 		["help page 3", 2, "_help_setup", "_help_check", "", 3],
 		["intro", 2, "_sheet_setup", "_mode_check", "", "intro"],
+		["career ping + objective hint", 3, "_ping_setup", "_ping_check", "", null],
 		["game over (died)", 3, "_over_setup", "_over_check", "", false],
 		["game over (won)", 3, "_over_setup", "_over_check", "", true],
 		["end beat (died)", 3, "_beat_setup", "_beat_check", "", false],
@@ -346,6 +349,8 @@ func _build_phases() -> Array:
 		["over sheet (recorded, live)", 2, "_live_setup", "_live_check", "", null],
 		["end beat (won)", 3, "_beat_setup", "_beat_check", "", true],
 		["over sheet (first win)", 2, "_live_setup", "_live_check", "", null],
+		["unlock pager", 2, "_pager_setup", "_pager_check", "", 0],
+		["unlock pager (last page)", 2, "_pager_setup", "_pager_check", "", 99],
 		["tutorial death sheet", 2, "_tut_death_setup", "_tut_death_check", "", null],
 	]
 	var out: Array = []
@@ -869,7 +874,56 @@ func _live_check() -> String:
 		return "the sheet's buttons are not live (%s)" % str(tags)
 	if sh.game.won and sh._over_info.get("unlocks", []).is_empty():
 		return "a first win drew no unlock rows"
+	if sh.game.won and not tags.has("unlocks"):
+		return "a first win's unlock rows are not a live tap target (%s)" % str(tags)
 	return ""
+
+
+## The unlock pager over the first win's sheet, on page `phase_arg` (clamped:
+## 99 is the last page, which carries < and DONE).
+func _pager_setup() -> void:
+	sh._tap("unlocks")
+	for i in int(phase_arg):
+		sh._tap("unlock_page:+1")
+
+
+func _pager_check() -> String:
+	if sh.mode != "unlocks":
+		return "the pager is not up (%s)" % sh.mode
+	var tags: Array = sh.hotspots.map(func(h): return String(h["tag"]))
+	if not tags.has("close") or tags.has("new_run"):
+		return "the pager's own row is not what is live (%s)" % str(tags)
+	var pages: int = int(sh._unlock_page_info(0)["pages"])
+	if int(phase_arg) > 0 and (pages < 2 or sh.unlock_page != pages - 1 or not tags.has("unlock_page:-1")):
+		return "not on the last of several pages (%d of %d, %s)" % [sh.unlock_page + 1, pages, str(tags)]
+	return ""
+
+
+## A career run's floor 4 on an empty board: the objective line carries the
+## career hint ("floor 5 unlocks Mycology") and a ping banner is up.
+func _ping_setup() -> void:
+	var g = _bare_game()
+	g.floor_num = 4
+	_play(g)
+	sh._game_is_run = true  # the hint is a run's; nothing is acted, so nothing is recorded
+	sh._career_ref = Profile.new().run_ref()
+	var ev: Array = Profile.ping_events({"runs": 1, "best_floor": 3, "floors": {}, "casts": []}, 4, {}, {})
+	# a career ping waits out the floor title card (_career_held); draw it as
+	# it shows once an earlier phase's card has gone
+	sh._floor_fade_ms = Time.get_ticks_msec() - sh.FLOOR_CARD_MS - 1
+	sh._push_banner(ev[0]["lines"], Shell.COL_GOLD, int(Feedback.BANNER_PRIO["career"]))
+
+
+func _ping_check() -> String:
+	var why := ""
+	var cm: Dictionary = sh._context_msg(sh.game.snapshot(), float(VIEWPORTS[vi].x), float(VIEWPORTS[vi].y))
+	if not String(cm["text"]).contains("floor 5 unlocks Mycology"):
+		why = "the objective line has no career hint (%s)" % cm["text"]
+	elif sh._banner.is_empty() or String(sh._banner[0]) != "DEEPEST YET":
+		why = "the ping banner is not up (%s)" % str(sh._banner)
+	sh._game_is_run = false
+	sh._career_ref = {}
+	return why
 
 
 func _tut_death_setup() -> void:

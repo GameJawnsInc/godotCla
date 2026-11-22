@@ -287,6 +287,8 @@ func _init() -> void:
 	_check_feat_folds()
 	_check_feat_progress()
 	_check_goal_rows()
+	# 11) fun pass, career C: the in-run ping data
+	_check_run_ref()
 
 	if failures == 0:
 		print("meta: OK")
@@ -2062,3 +2064,97 @@ func _check_goal_rows() -> void:
 	_expect([String(rows[-2]["id"]), String(rows[-1]["id"])], ["tidewarden", "flarekeeper"],
 		"goal_rows: owned rows last, in table order")
 	print("goal rows: every milestone, unowned ranked then owned in table order: OK")
+
+
+## --- in-run pings (career part 3) ----------------------------------------------
+## run_ref is a pure snapshot of what a run can still earn; ping_events turns
+## it plus the run's floor and effective casts into banners, each key once;
+## pings_fired_now is what a resumed run has already earned; objective_hint the
+## objective line's career part.
+func _check_run_ref() -> void:
+	var p = Profile.new()
+	var ref: Dictionary = p.run_ref()
+	_expect(ref["floors"], {3: ["Tidewarden"], 4: ["Flarekeeper"], 5: ["Mycology"]},
+		"run_ref: a fresh career's milestone floors, by display name")
+	var casts := {}
+	for c in ref["casts"]:
+		casts[int(c["need"])] = [String(c["base"]), int(c["had"]), c["names"]]
+	_expect(casts, {30: ["grow_spike", 0, ["Spiker"]], 60: ["grow_spike", 0, ["Wide Draft"]]},
+		"run_ref: the single-ability casts rows")
+	_expect([int(ref["runs"]), int(ref["best_floor"])], [0, 0], "run_ref: runs and best floor")
+	# owned rows and floors already reached drop out; best_floor IS the snapshot's
+	var q = Profile.new()
+	q.runs = 6
+	q.best_floor = 4
+	q.unlocked_loadouts = ["tidewarden", "flarekeeper"]
+	q.casts_by_base = {"grow_spike": 41}
+	q.unlocked_loadouts.append("spiker")
+	var qr: Dictionary = q.run_ref()
+	_expect(qr["floors"], {5: ["Mycology"]}, "run_ref: owned and reached floors drop out")
+	_expect(qr["casts"].size(), 1, "run_ref: an owned casts row drops out")
+	_expect(int(qr["casts"][0]["had"]), 41, "run_ref: the casts row carries the career count")
+	for lid in Content.LOADOUTS:
+		_expect(int(qr["best_floor"]), int(q.bests_snapshot(String(lid))["best_floor"]),
+			"run_ref best_floor == bests_snapshot(%s).best_floor" % lid)
+	# merged by (base, need); a two-key row is never a ping
+	var m = Profile.new()
+	m.milestone_rows = [
+		{"id": "kit_of_3", "kind": "mutator", "requires": {"casts": {"vine_whip": 5}}, "desc": "a"},
+		{"id": "double_oil", "kind": "mutator", "requires": {"casts": {"vine_whip+lash": 5}}, "desc": "b"},
+		{"id": "brittle", "kind": "mutator", "requires": {"best_floor": 2, "wins": 1}, "desc": "c"},
+		{"id": "parched", "kind": "mutator", "requires": {"casts": {"vine_whip": 2, "seed_bomb": 2}}, "desc": "d"},
+	]
+	var mr: Dictionary = m.run_ref()
+	_expect(mr["floors"], {}, "run_ref: a two-key floor row is not a floor ping")
+	_expect(mr["casts"].size(), 1, "run_ref: same base and need merge, a two-ability row is skipped")
+	_expect(mr["casts"][0]["names"], ["Kit of Three", "Slick Combine"], "run_ref: merged names")
+	var ev: Array = Profile.ping_events(mr, 1, {"vine_whip": 5}, {})
+	_expect(ev.size(), 1, "ping: one merged cast banner")
+	if ev.size() == 1:
+		_expect(ev[0]["lines"], ["VINE WHIP 5/5", "Kit of Three and Slick Combine unlock when this run ends"],
+			"ping: a plural unlock reads 'unlock'")
+	# the three kinds, each once
+	_expect(Profile.ping_events({}, 3, {"grow_spike": 99}, {}), [], "ping: an empty ref earns nothing")
+	_expect(Profile.ping_events(ref, 2, {}, {}), [], "ping: floor 2 on a fresh career is nothing")
+	ev = Profile.ping_events(ref, 3, {}, {})
+	_expect(ev.size() == 1 and ev[0]["lines"] == ["FLOOR 3", "Tidewarden unlocks when this run ends"], true,
+		"ping: a first-ever run reaching floor 3 announces Tidewarden (%s)" % str(ev))
+	var deep := {"runs": 1, "best_floor": 3, "floors": {}, "casts": []}
+	ev = Profile.ping_events(deep, 4, {}, {})
+	_expect(ev.size() == 1 and String(ev[0]["lines"][0]) == "DEEPEST YET"
+		and String(ev[0]["lines"][1]) == "floor 4  ·  " + String(Content.FLOORS[3]["name"]), true,
+		"ping: DEEPEST YET names the floor (%s)" % str(ev))
+	var fired := {}
+	for e in ev:
+		for k in e["keys"]:
+			fired[k] = true
+	_expect(Profile.ping_events(deep, 4, {}, fired), [], "ping: DEEPEST YET fires once")
+	_expect(Profile.ping_events(deep, 5, {}, fired), [], "ping: ...and not again a floor deeper")
+	_expect(Profile.ping_events({"runs": 0, "best_floor": 0, "floors": {}, "casts": []}, 4, {}, {}), [],
+		"ping: no DEEPEST YET on a first-ever run")
+	var both := {"runs": 2, "best_floor": 2, "floors": {3: ["Tidewarden"]}, "casts": []}
+	ev = Profile.ping_events(both, 3, {}, {})
+	_expect(ev.size(), 1, "ping: DEEPEST YET on a milestone floor is ONE banner")
+	if ev.size() == 1:
+		_expect(ev[0]["lines"], ["DEEPEST YET", "Tidewarden unlocks when this run ends"], "ping: the merged banner's words")
+		_expect(ev[0]["keys"], ["deepest", "floor:3"], "ping: the merged banner carries both keys")
+	var g = Profile.new()
+	g.casts_by_base = {"grow_spike": 25}
+	var gr: Dictionary = g.run_ref()
+	_expect(Profile.ping_events(gr, 1, {"grow_spike": 4}, {}), [], "ping: 29/30 casts is not yet")
+	ev = Profile.ping_events(gr, 1, {"grow_spike": 5}, {})
+	_expect(ev.size() == 1 and ev[0]["lines"] == ["GROW SPIKE 30/30", "Spiker unlocks when this run ends"], true,
+		"ping: the cast count reached (%s)" % str(ev))
+	# resume: everything already earned is marked, nothing re-announces
+	var now := Profile.pings_fired_now(gr, 4, {"grow_spike": 10})
+	_expect(now.has("cast:grow_spike:30") and now.has("floor:3") and now.has("floor:4")
+		and not now.has("cast:grow_spike:60") and not now.has("floor:5"), true,
+		"pings_fired_now: what a resumed run already earned (%s)" % str(now.keys()))
+	_expect(Profile.ping_events(gr, 4, {"grow_spike": 10}, now), [], "ping: nothing re-fires after a resume")
+	# the objective line's career part
+	_expect(Profile.objective_hint(ref, 4), "floor 5 unlocks Mycology", "objective_hint: the next floor's unlock")
+	_expect(Profile.objective_hint(ref, 5), "", "objective_hint: no milestone on the next floor")
+	_expect(Profile.objective_hint({}, 2), "", "objective_hint: an empty ref says nothing")
+	_expect(Profile.objective_hint({"floors": {3: ["A", "B"]}}, 2), "floor 3 unlocks A and 1 more",
+		"objective_hint: one name, then a count")
+	print("run ref: floors, casts, DEEPEST YET, the merged banner, resume and the objective hint: OK")

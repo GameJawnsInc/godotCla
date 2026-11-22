@@ -164,7 +164,13 @@ architecture below is designed to bend rather than block.
     a req key with no fixture arm fails), earned once, dated off the summary,
     a legacy win earning nothing, dailies untouched; the career folds,
     `feat_progress`, `next_feats` and the NEXT fallback, `goal_rows`; the
-    career loop must earn >= `CAREER_MIN_FEATS` (5) feats by run 40
+    career loop must earn >= `CAREER_MIN_FEATS` (5) feats by run 40; then
+    `_check_run_ref`: `run_ref` (floors and casts by display name, owned and
+    reached rows out, merged by (base, need), multi-key rows skipped,
+    `best_floor` == `bests_snapshot`'s for every loadout), `ping_events`
+    (each kind once, the plural "unlock", the merged DEEPEST YET banner with
+    both keys, nothing on a first run's DEEPEST YET or an empty ref),
+    `pings_fired_now` and `objective_hint`
   - `godot --headless --path . --script tests/test_shell.gd` — shell smoke test
     (the shell reads the sim, so a sim change can break it), plus the two
     player-facing gates: `_check_card_text` holds every shipped description
@@ -207,7 +213,23 @@ architecture below is designed to bend rather than block.
     sheet at every `CARD_VIEWPORTS` shape: rows >= `CARD_MIN_VH` and <= 2
     lines, buttons legible, apart and inside 0.955vh, nothing with prio <= 13
     dropped in the worst case and nothing in the typical one, and the beat's
-    lines legible for every cause the banner can name)
+    lines legible for every cause the banner can name); `_check_unlock_pager`
+    a first win's pager (`_run_unlocks` == `last_report.unlocks`, tier first;
+    a card per id, named in words with a badge; "Skyrunner (needs Aeolian)";
+    "opens Skyrunner"; the "+n more · tap for all" row; the unlock rows' tap
+    target over every drawn row and clear of the buttons; stale sheet
+    hotspots, off-card taps and R / N start nothing; paging clamps; Back,
+    Android's Back and ENTER return to the sheet and the next Back to the
+    menu; cards, page line and row fit at every viewport),
+    `_check_career_pings` pings through `_act` on a sprout log (a casts ping
+    and DEEPEST YET once each at career priority, the ref's best floor ==
+    `bests_snapshot`'s), the same log resumed (nothing re-fires) and no ref
+    in the tutorial or a daily, and `_check_objective_line` the objective
+    line's words (the hint, the shortened quota, the pre-hint lines exactly,
+    `_context_msg` ending in it) and its fit gate (every shipped hint kept at
+    >= `OBJECTIVE_MIN_VH` beside the table's longest quota at every viewport;
+    a hint too long to fit is dropped); `_check_card_text` also sweeps every
+    `_unlock_cards` string (every milestone, tier and feat, three careers)
   - `godot --headless --path . --script tests/test_draw.gd` — the draw smoke
     test, and the ONLY test that runs the shell's `_draw` code: it hosts
     `shell/main.gd` in a `SubViewport` (`UPDATE_ALWAYS`) at the four named
@@ -224,7 +246,9 @@ architecture below is designed to bend rather than block.
     pages and intro, both game-over screens set from outside, and the end
     of a run through the real path (the end beat after a smog death through
     `_act`, and a first win's beat started by hand, the sheet fading in locked with no live
-    hotspot, the live recorded sheet with its buttons and unlock rows, a
+    hotspot, the live recorded sheet with its buttons and its unlock rows as
+    a live `unlocks` target, the unlock pager on its first and last page, a
+    career ping banner beside an objective line carrying the career hint, a
     tutorial death's TUTORIAL AGAIN), each phase asserting the state its draw
     code needs. The gate is an `OS.add_logger` `Logger` that
     counts every engine error, `push_error` and SCRIPT ERROR: any one exits 1.
@@ -1090,7 +1114,7 @@ architecture below is designed to bend rather than block.
   NEW BEST FOR <LOADOUT> / best + %, daily: RANKED / NEW DAILY BEST / today's
   best + tries off `record_daily`'s report), `floor_best_line`,
   `unlock_label`/`unlock_lines` (kind + `Profile.unlock_name`, a gated loadout
-  `(needs <Pkg>)`, then `+n more`), `next_goal_text` (numbers only when need
+  `(needs <Pkg>)`, then `+n more · tap for all`), `next_goal_text` (numbers only when need
   > 1) and `seed_line`); names come from `shell/names.gd` only. A death or win
   through `_act` calls `_begin_over` AFTER the step's `_feedback` (it clears
   `_banner` and `_banner_q`, lands three bursts and a shake) and BEFORE
@@ -1324,6 +1348,55 @@ architecture below is designed to bend rather than block.
   geometry (sizes >= `CARD_MIN_VH`, cards under the tabs, last bar above the
   row, row bottom <= vh*0.955, no overlap) at every `CARD_VIEWPORTS` shape;
   `tests/test_draw.gd` draws every tab, a middle and a last page.
+- Career layer (fun pass, part 3 of 3: the unlock pager, in-run pings, the
+  objective line). Still cosmetic and still shell + meta only: no sim read,
+  no event key, no stored snapshot key. **Pager**: `mode = "unlocks"`, over
+  the game-over sheet only. `_over_layout` returns `unlock_rect`, the band
+  over the drawn unlock rows, which `_draw_over` makes the `unlocks` hotspot
+  (a thin gold frame) once the sheet is unlocked and `_unlock_ids()` is
+  non-empty (`_run_unlocks` + `"feat:"+id` per `_run_report.feats`, so a
+  daily, a tutorial and an unrecorded game never open it); the button row is
+  unchanged (C14: no fourth button) and `RunEnd.unlock_lines`' overflow row
+  reads "+n more · tap for all". `_unlock_cards(ids)` -> `[icon, name, desc,
+  tag "", badge]` (tier: the tier's name / TIER N; loadout: name, or "X (needs
+  Pkg)" with the package milestone's desc while `_gate_pkg` is unmet; package:
+  `PACKAGE_INFO` desc + ability names + "opens X" when it makes an owned
+  loadout playable; mutator; feat; graft), `_unlock_page_info(page)` (clamped,
+  `CARDS_PER_PAGE`), `_unlocks_layout(vw, vh, info)` (cards from 0.18vh, a
+  "p / n" page line under them, `[<] [DONE] [>]` through `_sheet_button_y`),
+  `_draw_unlocks`; taps `unlocks` / `unlock_page:±1` / `close`. `_back` and
+  `_click` handle the mode BEFORE the game-over branch: Back returns to the
+  sheet, and `_click` resolves only `close` / `unlock_page:*` hotspots (a
+  stale sheet hotspot from before the pager's first frame must not start a
+  run); `_key` pages on LEFT / RIGHT, closes on ENTER / SPACE and ignores the
+  rest (R / N included). **Pings**: `Profile.run_ref()` -> `{runs, best_floor,
+  floors: {need: [names]}, casts: [{base, need, had, names}]}` over unowned
+  SINGLE-key rows only (best_floor rows above the career's best; one-ability
+  casts rows, merged by (base, need)); `ping_events(ref, floor, effective_uses,
+  fired)` -> `[{key, keys, lines}]` with keys `floor:<n>`, `deepest` (runs >=
+  1, best_floor >= 1, floor deeper) and `cast:<base>:<need>` (had + this run's
+  `effective_uses` >= need), a DEEPEST YET on a milestone floor being ONE
+  banner carrying both keys - so the caller marks every id in `keys`, never
+  only `key` (that would re-fire the floor key on the next step);
+  `pings_fired_now(ref, floor, eff)` walks floors
+  1..floor for a resume; `objective_hint(ref, floor)` is "floor N unlocks X"
+  for the next floor. The shell: `_career_ref` (`run_ref()` on a career run
+  in `_new_game` and `_load_run`, `{}` for a daily and in `_start_tutorial`)
+  and `_pings_fired` (`{}`, or `pings_fired_now` of the replayed game on
+  resume); `_act` (non-tutorial, after the danger cue, only while the game is
+  not over and `_game_is_run`) pushes each ping at `BANNER_PRIO.career`.
+  A floor or DEEPEST YET ping lands on the step that raises the floor title
+  card, so `_career_held(prio)` keeps a career-priority banner queued (both
+  in `_push_banner` and `_tick_banner`) until `FLOOR_CARD_MS` (1400) has
+  passed since `_floor_fade_ms` - the two never draw on top of each other.
+  **Objective line**: `_context_msg(snap, vw := 0, vh := 0)`'s last arm is
+  `_objective_line(snap, vw, vh)` -> `{text, col, parts}`: the floor's goal
+  (boss, quota - shortened to "cleanse a/b to wake the stairs" beside another
+  part - or stairs), the career hint (a career run's `_career_ref` only), and
+  "tap for log" only when the goal stands alone and is not the quota (so
+  every pre-stage line is byte-identical without a hint); given a viewport,
+  parts drop from the end until `_fit_size(text, vh*0.022, vw*0.95) / vh >=
+  OBJECTIVE_MIN_VH` (0.013). `_draw_context` passes its viewport.
 - Balance targets and the measurement discipline live in `docs/BALANCE.md`;
   `tests/daily_run.gd` generates the date-seeded daily challenge through
   `Profile.daily_config`.
@@ -1774,10 +1847,10 @@ architecture below is designed to bend rather than block.
   kills), drives the HP chip, the vignette and the `_process` pulse, which
   used to disagree (red at 3, vignette at `max(2, ...)`). `! INCOMING` left
   the status strip (9px and overlapping on a tall phone) for the context line,
-  whose ONE priority chain is `_context_msg(snap)`: mode prompts, flash (red
+  whose ONE priority chain is `_context_msg(snap, vw, vh)`: mode prompts, flash (red
   when `_flash_red`), `Danger.context_line` outside the tutorial ("! INCOMING
-  3 - LETHAL  ·  Drill Bot, smog", the choke countdown, the vents), then the
-  floor hints. The choke countdown says "descend to escape it" only when
+  3 - LETHAL  ·  Drill Bot, smog", the choke countdown, the vents), then
+  `_objective_line` (career part 3). The choke countdown says "descend to escape it" only when
   `Danger.stairs_awake(snap)` - a real stairs tile (the boss arena's is
   (-1, -1)) and `greened >= green_need`, so a quota RECLAMPED to 0 on an
   ordinary floor still offers the descent - and "cleansing thins it"
