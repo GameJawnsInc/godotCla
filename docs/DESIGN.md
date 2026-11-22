@@ -33,7 +33,16 @@ The theme should do mechanical work, not just paint.
   solvable puzzle; variety comes from the situation.
 - **Intent visibility is sacred.** Every enemy always shows what it does next.
   Disruption is allowed to attack the player's *options* (targeting, ability
-  slots, resources) but never the *information layer*.
+  slots, resources) but never the *information layer*. The shell draws every
+  intent as a badge with its number, sums the damage on each red tile, counts
+  the smog clock down (choke, vents, dimming) and forecasts the end turn where
+  the tender stands ("! INCOMING 3 - LETHAL"). The forecast reads only
+  visible, deterministic state: no rng is drawn between the start of the
+  enemy phase and the end of the smog tick (measured: identical under a
+  re-seeded rng in 32,205/32,205 states), so it shows what the board already
+  says, added up - it is not an oracle in the deeproot sense. An implicit end
+  turn into a lethal forecast (running dry on the D-pad) asks once; END never
+  asks.
 - **Terrain warfare is the combo engine.** Abilities and terrain compose;
   synergies emerge from primitives rather than being scripted.
 - **Greed has a shape.** Staying to cleanse earns Bloom and drafts; the Smog
@@ -58,7 +67,8 @@ The theme should do mechanical work, not just paint.
 ### Smog (the clock)
 
 - Per-floor meter that rises each turn (curve tunable per floor/biome).
-- Thresholds (all telegraphed in advance):
+- Thresholds (all telegraphed in advance, as countdown chips under the smog
+  bar: turns to choke, to the vents, to the next dim step):
   - Reinforcement spawns at marked vents.
   - Heavy smog dims solar regen (3 → 2 → 1 Charge per turn).
 - Deterministic: same seed and actions → same smog events.

@@ -18,6 +18,7 @@ const Profile := preload("res://meta/profile.gd")
 const RunStats := preload("res://meta/run_stats.gd")
 const Names := preload("res://shell/names.gd")
 const Feedback := preload("res://shell/feedback.gd")
+const Danger := preload("res://shell/danger.gd")
 const PROFILE_PATH := "user://tender_profile.json"
 const RUN_SAVE_PATH := "user://tender_run.save"
 # Replay compatibility rides on the sim's own version: a stale log replayed
@@ -68,7 +69,7 @@ const LEGEND := [
 	["player", "You, the Tender", "descend, cleanse, survive"],
 	["stairs", "Stairs", "the way down"],
 	["shrine", "Shrine", "stand here to shop"],
-	["vent", "Vent", "releases enemies as the smog rises"],
+	["vent", "Vent", "releases enemies as the smog rises - the number counts down"],
 	["supply", "Supply pod", "step on it to stock your satchel (2 slots)"],
 	["oil", "Oil", "corruption - cleanse from beside it for bloom. Burns"],
 	["goo", "Goo", "corruption - cleanse for bloom. Hurts to step in"],
@@ -78,6 +79,30 @@ const LEGEND := [
 	["fire", "Fire", "burns whoever stands in it. Leaves ash"],
 	["smoke", "Smoke", "blocks beams. Screens tar/drain/grapple from 2+ tiles away"],
 	["roots", "Roots", "blocks enemies for a while"],
+	# the danger readouts (shell/danger.gd): the two SKIES countdown chips, then
+	# one row per intent badge and per blocked-intent glyph - test_shell holds
+	# every Danger.BADGE / BLOCK_ICON icon to a row here
+	["ic_choke", "Choke countdown", "turns until the smog starts choking you"],
+	["ic_dim", "Dimming countdown", "turns until the sky dims - less charge"],
+	["in_attack", "Strike", "hits the red tile next turn for the number"],
+	["in_slam", "Slam", "hits the red cross next turn for the number"],
+	["in_quake", "Quake", "hits every tile around it for the number"],
+	["in_drain", "Drain", "takes banked charge from range"],
+	["in_gum", "Tar", "gums the ability slot outlined in brown"],
+	["in_drag", "Grapple", "drags you along the line toward it"],
+	["in_advance", "Advance", "lumbers that many tiles toward you"],
+	["in_summon", "Summon", "spawns a sludgeling when the count runs out"],
+	["in_ooze", "Ooze", "spills oil when the count runs out"],
+	["in_stoke", "Stoke", "thickens the smog when the count runs out"],
+	["in_fuse", "Weld", "two machines fuse into a hulk - break the pair"],
+	["in_dredge", "Dredge", "turns your growth in reach back into goo"],
+	["in_flood", "Flood", "floods the striped row with oil"],
+	["in_gather", "Gather", "the boss gathers heat"],
+	["in_ignite", "Ignite all", "every glowing oil tile catches fire"],
+	["in_stunned", "Stunned", "loses its next action"],
+	["in_rooted", "Rooted", "cannot move, advance or drag"],
+	["in_screened", "Lost in smoke", "its tar, drain or grapple will miss you"],
+	["in_anchored", "Anchored", "your roots hold - the grapple fails"],
 	["drill_bot", "Drill Bot", "melee - shows its strike a turn ahead"],
 	["oil_sludge", "Oil Sludge", "slow, leaves oil, splits when killed"],
 	["sludgeling", "Sludgeling", "weak spawn"],
@@ -213,6 +238,19 @@ var _lunge_dir := Vector2.ZERO
 var _lunge_ms := -99999
 var _lunge_hold := 0
 var _run_save: FileAccess = null  # open append handle for the live run's log
+## Danger readability (shell/danger.gd): Danger.compute(game) - the three sim
+## forecasts plus their verdicts - cached per state change, because the
+## end-turn forecast steps a clone (~2ms, and the lethal escape search ~6ms):
+## never per frame. `_danger_rev` is bumped after every step and on every new
+## or restored game; `_danger_at` is the rev the cache was built at and
+## `_danger_for` the game it was built from.
+var _danger := {}
+var _danger_rev := 0
+var _danger_at := -1
+var _danger_for = null
+## The lethal guard's armed press: {sig: Danger.guard_sig, ms}. Empty = unarmed.
+var _guard := {}
+var _flash_red := false  # the flash on screen is a guard refusal: draw it red
 ## Where the career profile is read and written. PROFILE_PATH in the app; the
 ## headless tests point it at a scratch file BEFORE _ready, so no test ever
 ## writes a player's real career.
@@ -325,6 +363,7 @@ func _new_game() -> void:
 	flash = ""
 	tooltip = []
 	_reset_feedback()
+	_reset_danger()
 	queue_redraw()
 
 
@@ -340,6 +379,7 @@ func _start_tutorial() -> void:
 	flash = ""
 	tooltip = []
 	_reset_feedback()
+	_reset_danger()
 	queue_redraw()
 
 
@@ -352,6 +392,54 @@ func _reset_feedback() -> void:
 	_banner_q = []
 	_sfx_q = []
 	_lunge_dir = Vector2.ZERO
+
+
+## A new (or restored) game: the danger cache is stale and no guard press may
+## carry over from the last one.
+func _reset_danger() -> void:
+	_danger_rev += 1
+	_guard = {}
+	_flash_red = false
+
+
+## The danger layer's view of the live game (Danger.compute), recomputed only
+## when the state moved (`_danger_rev`) or the game was swapped. _draw,
+## _process and the tooltips read it; only the guard forces a recompute,
+## because the tests mutate `game` by hand between presses.
+func _danger_state(force := false) -> Dictionary:
+	if game == null:
+		return {}
+	if force or _danger_at != _danger_rev or _danger_for != game:
+		_danger = Danger.compute(game)
+		_danger_at = _danger_rev
+		_danger_for = game
+	return _danger
+
+
+## May an IMPLICIT end turn go ahead? (A D-pad press or cleanse tap that ran
+## out of charge, or a tap on the tender's own tile.) When the forecast says
+## that end turn kills, the first press is refused with the reason - in red,
+## with the warn tick - and a second press within Danger.GUARD_MS, with
+## nothing changed in between (Danger.guard_sig), goes through. END TURN, the
+## D-pad's END, SPACE and ENTER are never asked: pressing END is a decision.
+## Off outside a live run's play phase, so the tutorial never asks.
+func _guard_lets_end() -> bool:
+	if screen != "game" or game == null or game.over or game.phase != "play":
+		return true
+	var d := _danger_state(true)
+	if not bool(d.get("lethal", false)):
+		_guard = {}
+		return true
+	var sig: Array = Danger.guard_sig(game)
+	var now := Time.get_ticks_msec()
+	if not _guard.is_empty() and _guard["sig"] == sig and now - int(_guard["ms"]) <= Danger.GUARD_MS:
+		_guard = {}
+		return true
+	_guard = {"sig": sig, "ms": now}
+	_flash_danger(Danger.guard_flash(d))
+	if audio != null:
+		audio.play("warn")
+	return false
 
 
 ## Restore the interrupted run: rebuild the game from its seed + config and
@@ -396,6 +484,7 @@ func _load_run() -> void:
 	_run_unlocks = []
 	mode = "normal"
 	_reset_feedback()
+	_reset_danger()  # replayed through g.step, not _act: no cue fires for the replay
 	# the snapshot's event tail, read context-free: no pre-step facts survive
 	# a restart, so a cleanse reads "Cleansed · green x/y" without its gain
 	var tail: Array = game.snapshot()["events"]
@@ -548,6 +637,7 @@ func _act(a: Dictionary) -> void:
 		var tevs: Array = game.step(a)
 		_ensure_stats()
 		var tctx: Dictionary = stats.feed(game, tevs)
+		_danger_rev += 1  # the tutorial draws the forecast too, but never cues
 		_arm_anim(pre["pos"], int(pre["floor"]))
 		_feedback(tevs, pre, tctx)
 		if advances:
@@ -570,17 +660,24 @@ func _act(a: Dictionary) -> void:
 		return
 	# a purchase or a reroll made from the sheet reopens it
 	var keep_shop := mode == "shop" and ["buy", "reroll"].has(String(a.get("type", "")))
+	var pre_d: Dictionary = _danger_state()
 	var evs: Array = game.step(a)
 	if _game_is_run and _run_save != null:
 		_run_save.store_line(var_to_str(a).replace("\n", " "))
 		_run_save.flush()
 	_ensure_stats()
 	var ctx: Dictionary = stats.feed(game, evs)
+	_danger_rev += 1
+	# danger transitions (lethal switching on, the choke window): a warn tick
+	# in the step's sound cap and, at choke 1, a banner (empty when over/draft)
+	var cue: Dictionary = Danger.cues(pre_d, _danger_state())
 	_arm_anim(pre["pos"], int(pre["floor"]))
 	for ev in evs:
 		if String(ev.get("t", "")) == "draft_offer":
 			_draft_focus_spent = bool(ev.get("focus", false))
-	_feedback(evs, pre, ctx)
+	_feedback(evs, pre, ctx, cue.get("sounds", []))
+	if not Array(cue.get("banner", [])).is_empty():
+		_push_banner(cue["banner"], Danger.COL_AMBER, int(Feedback.BANNER_PRIO["danger"]))
 	if game.over and _game_is_run and not _run_recorded:
 		_record_finished_run()
 	mode = "normal"
@@ -970,8 +1067,9 @@ func _process(_dt: float) -> void:
 		animating = true
 	if _freeze_start >= 0 or not _sfx_q.is_empty() or not _banner_q.is_empty():
 		animating = true
-	if game != null and not game.over and int(game.player["hp"]) <= maxi(2, int(game.player["max_hp"]) / 4):
-		animating = true  # danger vignette pulse
+	if game != null and not game.over and (String(_danger.get("hp", "ok")) != "ok"
+			or Danger.sky_alert(_danger.get("sky", {})) != ""):
+		animating = true  # danger vignette / lethal outline / amber sky pulse
 	if Time.get_ticks_msec() - _shake_ms < 360:
 		animating = true
 	if game != null and game.over:
@@ -1024,11 +1122,13 @@ func _show_tooltip(pos: Vector2) -> void:
 	if t.x < 0 or t.y < 0 or t.x >= int(snap["map"]["w"]) or t.y >= int(snap["map"]["h"]):
 		return
 	var lines: Array = []
+	var dz := _danger_state()
 	for e in snap["enemies"]:
 		if e["pos"] == t:
 			var row := _legend_of(e["kind"])
 			lines.append("%s - hp %d%s" % [_ename(e["kind"]), e["hp"], "  ELITE" if e.get("elite", false) else ""])
 			lines.append(_intent_words(e))
+			lines.append_array(_danger_tip(e, dz))
 			if e["traits"].has("spiked") or e.get("elite", false):
 				lines.append("SPIKED - melee costs you 1 HP")
 			# what the row refuses to walk through, straight off the data
@@ -1039,6 +1139,10 @@ func _show_tooltip(pos: Vector2) -> void:
 				lines.append(row[2])
 	if lines.is_empty() and snap["player"]["pos"] == t:
 		lines = ["You - HP %d/%d" % [snap["player"]["hp"], snap["player"]["max_hp"]], "tap yourself to end the turn"]
+		var fc: Dictionary = dz.get("fc", {})
+		if int(fc.get("dmg", 0)) > 0:
+			lines.insert(1, "ending here: %d incoming%s" % [int(fc["dmg"]),
+				" - LETHAL" if bool(fc.get("dies", false)) else ""])
 	if lines.is_empty():
 		var id := ""
 		if snap["terrain"].has(t):
@@ -1052,11 +1156,47 @@ func _show_tooltip(pos: Vector2) -> void:
 		var row := _legend_of(id)
 		if not row.is_empty():
 			lines = [row[1], row[2]]
+		if snap["map"]["vents"].has(t):
+			# a vent under growth is sealed whatever the terrain row says
+			if snap["terrain"].has(t) and String(snap["terrain"][t]["kind"]) == "growth":
+				lines.append("sealed - absorbs the next release")
+			else:
+				var vin := int(dz.get("sky", {}).get("spawn_in", -1))
+				if vin > 1:
+					lines.append("releases in %d turns" % vin)
+				elif vin == 1:
+					lines.append("releases next turn")
 	if lines.is_empty():
 		return
 	tooltip = lines
 	tooltip_tile = t
 	queue_redraw()
+
+
+## What the danger layer adds to an enemy's tooltip: why its intent will not
+## land (its telegraph entry's block), and for a stoker how much sooner it
+## brings the choke (the smog walk with and without the stokers counted).
+func _danger_tip(e: Dictionary, dz: Dictionary) -> Array:
+	var out: Array = []
+	for ent in dz.get("tele", {}).get("enemies", []):
+		if ent["id"] != e["id"]:
+			continue
+		match String(ent["blocked"]):
+			"stun":
+				out.append("stunned - loses this action")
+			"root":
+				out.append("rooted - cannot move, advance or drag")
+			"screened":
+				out.append("lost in the smoke - it will miss you")
+			"anchor":
+				out.append("your anchor holds - the grapple fails")
+		break
+	if String(e["intent"].get("type", "")) == "stoke":
+		var c := int(dz.get("sky", {}).get("choke_in", -1))
+		var calm := int(dz.get("sky_calm", {}).get("choke_in", -1))
+		if c > 0 and calm > c:
+			out.append("brings the choke %d turns sooner" % (calm - c))
+	return out
 
 
 func _dir_from_key(k: int) -> Vector2i:
@@ -1193,6 +1333,8 @@ func _cleanse_at(target: Vector2i) -> void:
 		if screen == "tutorial":
 			_flash("out of charge - press END to refill")
 			return
+		if not _guard_lets_end():
+			return
 		_act({"type": "end_turn"})
 		if game.over:
 			return
@@ -1242,6 +1384,8 @@ func _move_or_strike(d: Vector2i) -> void:
 	var open: bool = dest.x >= 0 and dest.y >= 0 and dest.x < int(m["w"]) and dest.y < int(m["h"]) \
 		and int(m["tiles"][dest.y * int(m["w"]) + dest.x]) == 1
 	if open:
+		if not _guard_lets_end():
+			return
 		_act({"type": "end_turn"})
 		if game.over:
 			return
@@ -1448,7 +1592,8 @@ func _click(pos: Vector2) -> void:
 				_try_ability_target(mode_slot, d)
 		"normal":
 			if t == pp:
-				_act({"type": "end_turn"})
+				if _guard_lets_end():
+					_act({"type": "end_turn"})
 			elif absi(t.x - pp.x) + absi(t.y - pp.y) == 1:
 				_move_or_strike(t - pp)
 
@@ -1688,6 +1833,14 @@ func _draft_pick(pick: int) -> void:
 
 func _flash(msg: String) -> void:
 	flash = msg
+	_flash_red = false
+	queue_redraw()
+
+
+## A guard refusal: the same context-line slot as _flash, drawn red.
+func _flash_danger(msg: String) -> void:
+	flash = msg
+	_flash_red = true
 	queue_redraw()
 
 
@@ -1766,21 +1919,13 @@ func _room_view(m: Dictionary) -> Rect2i:
 	return Rect2i(pp.x - 4, pp.y - 3, 9, 7)
 
 
-func _threat_tiles(snap: Dictionary) -> Dictionary:
-	var t := {}
-	for e in snap["enemies"]:
-		var it: Dictionary = e["intent"]
-		match String(it.get("type", "")):
-			"attack":
-				t[it["tile"]] = true
-			"slam":
-				t[it["tile"]] = true
-				for d in DIRS4.values():
-					t[it["tile"] + d] = true
-			"quake":
-				for d in DIRS4.values():
-					t[e["pos"] + d] = true
-	return t
+## The red tiles: {tile: summed damage} straight from the sim's own
+## Game.telegraph() (via the danger cache), so a stunned, rooted or screened
+## attacker paints nothing - the old shell-side mirror ignored statuses and
+## painted a false red tile under every stunned striker. `snap` is unused and
+## kept for the callers' signature.
+func _threat_tiles(_snap: Dictionary) -> Dictionary:
+	return _danger_state().get("tele", {}).get("tiles", {})
 
 
 func _tile_rect(p: Vector2i) -> Rect2:
@@ -2259,7 +2404,11 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	# row 1: vitals left, menu/help buttons right
 	var y := pad + row_h * 0.72
 	var x := vw * 0.025
-	x = _chip(x, y, "ic_hp", "%d/%d" % [pl["hp"], pl["max_hp"]], vw, vh, COL_TEXT if int(pl["hp"]) > 3 else COL_RED)
+	# one HP-danger rule (Danger.hp_state): red when low OR when ending the
+	# turn here would kill - the same verdict the vignette and the pulse use
+	var dz := _danger_state()
+	var hp_col := COL_RED if String(dz.get("hp", "ok")) != "ok" else COL_TEXT
+	x = _chip(x, y, "ic_hp", "%d/%d" % [pl["hp"], pl["max_hp"]], vw, vh, hp_col)
 	if int(pl["shield"]) > 0:
 		x = _chip(x, y, "ic_shield", str(pl["shield"]), vw, vh)
 	x = _chip(x, y, "ic_charge", "%d" % pl["charge"], vw, vh)
@@ -2277,9 +2426,23 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	var mw := vw * 0.5
 	var span := choke * 1.15
 	var frac: float = clampf(snap["smog"] / span, 0.0, 1.0)
-	_txt(Vector2(mx, y2 + mh + vh * 0.0155), "SKIES", COL_DIM_TEXT, int(vh * 0.0125))
-	_txt_fit(Vector2(mx + vw * 0.075, y2 + mh + vh * 0.0155), _config_line(snap),
-		COL_DIM_TEXT, int(vh * 0.0125), vw * 0.55)
+	# label row: SKIES, the countdown chips (choke, vents, dim), then the run's
+	# config line RIGHT-aligned in whatever the chips leave (_sky_row_layout)
+	var sky_y := y2 + mh + vh * 0.0155
+	_txt(Vector2(mx, sky_y), "SKIES", COL_DIM_TEXT, int(vh * 0.0125))
+	var sky: Dictionary = dz.get("sky", {})
+	var lay := _sky_row_layout(vw, vh, sky_y, Danger.sky_chips(sky))
+	for c in lay["chips"]:
+		var ir: Rect2 = c["icon_rect"]
+		var itx := Art.tex(String(c["icon"]), int(ir.size.x))
+		if itx != null:
+			draw_texture(itx, ir.position)
+		_txt(c["text_pos"], String(c["text"]), c["col"], int(c["nsz"]))
+	var cfg := _config_line(snap)
+	var cfg_box := vw * 0.975 - float(lay["cfg_x0"])
+	var cfg_sz := _fit_size(cfg, int(vh * 0.0125), cfg_box)
+	var cfg_w := font.get_string_size(cfg, HORIZONTAL_ALIGNMENT_LEFT, -1, cfg_sz).x
+	_txt(Vector2(maxf(float(lay["cfg_x0"]), vw * 0.975 - cfg_w), sky_y), cfg, COL_DIM_TEXT, cfg_sz)
 	draw_rect(Rect2(mx, y2, mw, mh), Color("6fae9c"))
 	draw_rect(Rect2(mx, y2, mw, mh * 0.45), Color("8cc7ae"))
 	draw_circle(Vector2(mx + mw * 0.93, y2 + mh * 0.42), mh * 0.30, Color("f2e4a0"))
@@ -2308,26 +2471,23 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 	if snap["smog"] >= choke:
 		var pulse := 0.45 + 0.35 * sin(Time.get_ticks_msec() / 180.0)
 		draw_rect(Rect2(mx - 2, y2 - 2, mw + 4, mh + 4), Color(0.88, 0.29, 0.23, pulse), false, 2.0)
-	# the floor and green readouts are RIGHT-aligned, so they have to be measured
-	# before "! INCOMING" is drawn - it used to start at a fixed x with no width
-	# budget at all and ran straight through them (~280px of overlap at
-	# 1080x2400, on the one line that is telling you something is about to hit)
+	elif Danger.sky_alert(sky) == "amber":
+		# the choke is 5 turns off or closer: the bar warns before it bites
+		var apulse := 0.45 + 0.35 * sin(Time.get_ticks_msec() / 180.0)
+		draw_rect(Rect2(mx - 2, y2 - 2, mw + 4, mh + 4), Color(0.91, 0.64, 0.23, apulse), false, 2.0)
+	# the floor and green readouts, right-aligned. (The old "! INCOMING" that
+	# was squeezed between them and the bar - 9px and overlapping on a tall
+	# phone - is now the context line's job, at full size: Danger.context_line.)
 	var fl := "floor %d/7" % snap["floor"]
 	var fsz := int(vh * 0.02)
 	var fw := font.get_string_size(fl, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x
 	_txt(Vector2(vw - fw - vw * 0.025, y2 + mh), fl, COL_GOLD, fsz)
-	var right_edge := vw - fw - vw * 0.045
 	if int(snap["green_need"]) > 0:
 		var gl := "green %d/%d" % [snap["greened"], snap["green_need"]]
 		var done: bool = int(snap["greened"]) >= int(snap["green_need"])
 		var gw := font.get_string_size(gl, HORIZONTAL_ALIGNMENT_LEFT, -1, int(vh * 0.016)).x
 		_txt(Vector2(vw - fw - gw - vw * 0.055, y2 + mh), gl,
 			Color(0.6, 0.85, 0.55) if not done else COL_DIM_TEXT, int(vh * 0.016))
-		right_edge = vw - fw - gw - vw * 0.075
-	if _threat_tiles(snap).has(pl["pos"]):
-		var ix := mx + mw + vw * 0.02
-		_txt_fit(Vector2(ix, y2 + mh), "! INCOMING", COL_RED, int(vh * 0.021),
-			maxf(right_edge - ix, vw * 0.06))
 	_status_end = pad + row_h * 1.35 + mh + vh * 0.022
 	# Block D5: the elements strip, drawn under the config line - a lit tag in
 	# caps, a tag still short of its threshold in lower case with its count.
@@ -2340,6 +2500,28 @@ func _draw_status(snap: Dictionary, vw: float, vh: float) -> void:
 			COL_GOLD if not snap.get("resonances", []).is_empty() else COL_DIM_TEXT,
 			int(vh * 0.0125), vw * 0.85)
 		_status_end += vh * 0.0155
+
+
+## The SKIES label row as data: each countdown chip's icon rect, number
+## position and size, then where the chips end and where the right-aligned
+## config line may start. `y` is the row's text baseline. Measured worst case
+## (chips 60/12/9) ends the chips by 0.41vw and leaves the config line at
+## least 0.55vw - never narrower than the box it had before the chips; the
+## icon tops clear the bar at every CARD_VIEWPORTS shape (test_shell).
+func _sky_row_layout(vw: float, vh: float, y: float, chips: Array) -> Dictionary:
+	var mx := vw * 0.025
+	var x := mx + font.get_string_size("SKIES", HORIZONTAL_ALIGNMENT_LEFT, -1, int(vh * 0.0125)).x + vw * 0.012
+	var isz := int(vh * 0.015)
+	var nsz := int(vh * 0.0145)
+	var out: Array = []
+	for c in chips:
+		var text := String(c["text"])
+		var tw := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, nsz).x
+		out.append({"icon_rect": Rect2(x, y - isz * 0.85, isz, isz),
+			"text_pos": Vector2(x + isz + vw * 0.005, y), "nsz": nsz, "text": text,
+			"icon": String(c["icon"]), "col": c["col"]})
+		x += isz + vw * 0.005 + tw + vw * 0.018
+	return {"chips": out, "end_x": x, "cfg_x0": x + vw * 0.02}
 
 
 func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
@@ -2480,13 +2662,36 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 					if mph < 0.6:
 						draw_circle(_tile_rect(t).get_center() + Vector2(_ts * 0.14 * sin(mph * 8.0), -_ts * (0.1 + mph * 0.8)),
 							_ts * 0.035, Color(0.95, 0.92, 0.65, 0.7 * (1.0 - mph / 0.6)))
+	var dz := _danger_state()
+	var tele: Dictionary = dz.get("tele", {})
+	var vmarks := {}
+	for vm in Danger.vent_marks(snap, dz.get("sky", {})):
+		vmarks[vm["pos"]] = vm
 	for v in m["vents"]:
 		if _vis(v):
 			_sprite("vent", v)
+			if vmarks.has(v):
+				# the release countdown, on the grate itself (red ring at 1)
+				var vm: Dictionary = vmarks[v]
+				var vcol := Danger.COL_AMBER
+				if bool(vm["urgent"]):
+					vcol = Danger.COL_RED
+					draw_arc(_tile_rect(v).get_center(), _ts * 0.46, 0, TAU, 20,
+						Color(Danger.COL_RED, 0.5 + 0.4 * sin(Time.get_ticks_msec() / 140.0)), 2.5)
+				elif bool(vm["sealed"]):
+					vcol = Danger.COL_SEALED
+				var vsz := maxi(1, int(_ts * 0.42))
+				var vr := _tile_rect(v)
+				_txt_c(vr.get_center().x + 1, vr.get_center().y + vsz * 0.35 + 1, String(vm["text"]), Color(0, 0, 0, 0.8), vsz)
+				_txt_c(vr.get_center().x, vr.get_center().y + vsz * 0.35, String(vm["text"]), vcol, vsz)
 			if snap["terrain"].has(v) and String(snap["terrain"][v]["kind"]) == "growth":
 				# sealed: the growth chokes the grate (drawn again over the vent)
 				_sprite("growth", v)
 				draw_rect(_tile_rect(v).grow(-2), Color(0.42, 0.72, 0.35, 0.85), false, 2.0)
+				if vmarks.has(v):
+					var svr := _tile_rect(v)
+					var ssz := maxi(1, int(_ts * 0.42))
+					_txt_c(svr.get_center().x, svr.get_center().y + ssz * 0.35, String(vmarks[v]["text"]), Danger.COL_SEALED, ssz)
 				continue
 			var vph := fposmod(Time.get_ticks_msec() / 2000.0 + float(v.x * 7 + v.y * 13) * 0.31, 1.0)
 			if vph < 0.55:
@@ -2514,6 +2719,31 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 	for t in _threat_tiles(snap):
 		if _vis(t):
 			draw_rect(_tile_rect(t), thc)
+	# what each red tile costs, summed over every attacker aiming at it (not on
+	# the tender's own tile: the INCOMING line speaks for that one)
+	if _ts >= 18.0:
+		var nsz := int(_ts * 0.30)
+		for t in Danger.tile_numbers(tele, snap["player"]["pos"]):
+			if not _vis(t):
+				continue
+			var tr := _tile_rect(t)
+			var ns := str(int(tele["tiles"][t]))
+			var nw := font.get_string_size(ns, HORIZONTAL_ALIGNMENT_LEFT, -1, nsz).x
+			var np := tr.end - Vector2(nw + _ts * 0.08, _ts * 0.08)
+			_txt(np + Vector2(1, 1), ns, Color(0, 0, 0, 0.85), nsz)
+			_txt(np, ns, Color(1, 0.86, 0.8), nsz)
+	# tiles a non-damage intent will change: the flood row, every oil tile an
+	# ignite-all will light, every growth tile a dredge will eat
+	for mk in Danger.marks(tele):
+		if not _vis(mk["pos"]):
+			continue
+		var mcol := Color(0.42, 0.32, 0.52, 0.30)
+		match String(mk["kind"]):
+			"ignite":
+				mcol = Color(0.95, 0.55, 0.2, 0.18 + 0.14 * sin(Time.get_ticks_msec() / 160.0))
+			"dredge":
+				mcol = Color(0.45, 0.33, 0.18, 0.28)
+		draw_rect(_tile_rect(mk["pos"]), mcol)
 	for e0 in snap["enemies"]:
 		if String(e0["intent"].get("type", "")) != "fuse":
 			continue
@@ -2522,7 +2752,23 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 				var wa := 0.5 + 0.4 * absf(sin(Time.get_ticks_msec() / 180.0))
 				draw_line(_tile_rect(e0["pos"]).get_center(), _tile_rect(e1["pos"]).get_center(),
 					Color(0.91, 0.45, 0.16, wa), 3.0)
+	# a grapple's tether: crane to tender, dashed, with a ring on the landing
+	# tile; grey and ringless when the drag is blocked (anchored, rooted...)
+	for tt in Danger.tethers(tele, snap["player"]["pos"]):
+		if not (_vis(tt["from"]) or _vis(tt["to"])):
+			continue
+		var tcol := Color(0.6, 0.62, 0.64, 0.5)
+		var tw := 2.0
+		if bool(tt["live"]):
+			tcol = Color(Color("7ec8e0"), 0.55 + 0.35 * absf(sin(Time.get_ticks_msec() / 180.0)))
+			tw = 3.0
+		draw_dashed_line(_tile_rect(tt["from"]).get_center(), _tile_rect(tt["to"]).get_center(), tcol, tw, 6.0)
+		if tt["land"] != null and _vis(tt["land"]):
+			draw_arc(_tile_rect(tt["land"]).get_center(), _ts * 0.32, 0, TAU, 16, tcol, 2.5)
 
+	var badge_of := {}
+	for bd in Danger.badges(snap, tele):
+		badge_of[bd["id"]] = bd
 	for e in snap["enemies"]:
 		if not _vis(e["pos"]):
 			continue
@@ -2546,13 +2792,22 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			var frac: float = clampf(float(e["hp"]) / maxf(1.0, float(maxhp)), 0.0, 1.0)
 			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2(_ts - 4, 3)), Color(0, 0, 0, 0.6))
 			draw_rect(Rect2(r.position + Vector2(2, -4), Vector2((_ts - 4) * frac, 3)), COL_RED)
+		if badge_of.has(e["id"]):
+			_draw_badge(r, badge_of[e["id"]])
 
 	var pap := _anim_pos("player", snap["player"]["pos"]) + _lunge_off()
 	_shadow_f(pap)
 	var bob := pap + Vector2(0, -0.02 - 0.02 * sin(Time.get_ticks_msec() / 480.0))
 	_sprite_f("player", bob)
 	var pr := _tile_rect_f(pap)
-	draw_rect(pr.grow(1), Color(0.56, 0.86, 0.42, 0.85), false, 2.0)
+	# the outline is the end-turn forecast: red pulsing when ending here kills,
+	# amber when something lands but you live, the usual green otherwise
+	if bool(dz.get("lethal", false)):
+		draw_rect(pr.grow(1), Color(0.88, 0.25, 0.15, 0.55 + 0.4 * absf(sin(Time.get_ticks_msec() / 150.0))), false, 3.0)
+	elif int(dz.get("fc", {}).get("dmg", 0)) > 0:
+		draw_rect(pr.grow(1), Danger.COL_AMBER, false, 2.0)
+	else:
+		draw_rect(pr.grow(1), Color(0.56, 0.86, 0.42, 0.85), false, 2.0)
 	if int(snap["player"].get("anchor_turns", 0)) > 0:
 		draw_rect(pr.grow(-2), Color("7a5a34"), false, 2.0)
 	if int(snap["player"].get("thorns_turns", 0)) > 0:
@@ -2731,9 +2986,11 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		break
 
 	# danger vignette: the edges bleed red while the tender is nearly down
-	var pl0: Dictionary = snap["player"]
-	if int(pl0["hp"]) <= maxi(2, int(pl0["max_hp"]) / 4) and not game.over:
+	var hp_st := String(dz.get("hp", "ok"))
+	if hp_st != "ok" and not game.over:
 		var da := 0.10 + 0.07 * sin(Time.get_ticks_msec() / 300.0)
+		if hp_st == "lethal":
+			da = 0.16 + 0.10 * sin(Time.get_ticks_msec() / 170.0)
 		var dc := Color(0.85, 0.2, 0.12, da)
 		var d0 := Color(0.85, 0.2, 0.12, 0.0)
 		var dd := _ts * 1.6
@@ -2780,6 +3037,32 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 			_txt_c_fit(vw / 2.0, bcy + vh * 0.026, String(_banner[1]), Color(COL_CREAM, ba * 0.9), int(vh * 0.017), vw * 0.92)
 
 
+## One intent badge at an enemy's top-right corner (Danger.badges): a dark
+## disc ringed in the intent's category colour carrying its glyph, the number
+## (damage, countdown, steps) just left of it. A ring at half strength is an
+## intent that is not aimed at the tender where it stands; a blocked intent
+## wears its block glyph (stars, roots, smoke, anchor) and no number.
+func _draw_badge(r: Rect2, bd: Dictionary) -> void:
+	var c := r.position + Vector2(_ts * 0.80, _ts * 0.20)
+	var col: Color = bd["col"]
+	draw_circle(c, _ts * 0.19, Color(0.06, 0.08, 0.07, 0.85))
+	var ring := col
+	if not bool(bd["live"]) and String(bd["cat"]) != "blocked":
+		ring.a = 0.5
+	draw_arc(c, _ts * 0.19, 0, TAU, 20, ring, 1.5)
+	var isz := maxi(8, int(_ts * 0.30))
+	var itx := Art.tex(String(bd["icon"]), isz)
+	if itx != null:
+		draw_texture(itx, c - Vector2(isz, isz) / 2.0)
+	var text := String(bd["text"])
+	if text != "" and _ts >= 18.0:
+		var nsz := int(_ts * 0.28)
+		var nw := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, nsz).x
+		var np := Vector2(c.x - _ts * 0.21 - nw, r.position.y + _ts * 0.30)
+		_txt(np + Vector2(1, 1), text, Color(0, 0, 0, 0.85), nsz)
+		_txt(np, text, col, nsz)
+
+
 ## The floor's title card: name, "floor N of 7", and what wakes the stairs -
 ## on the boss floor "defeat the Overseer" (it has no quota, so the old line
 ## read "cleanse 0 to wake the stairs"), and no third line on a floor that
@@ -2814,6 +3097,7 @@ func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
 	var total := n * b + (n - 1) * gap
 	var x := (vw - total) / 2.0
 	var y := vh * Z_MAP_END + (vh * (Z_AB_END - Z_MAP_END) - b) / 2.0
+	var gum_next: Array = Danger.gum_slots(snap, _danger_state().get("tele", {}))
 	for i in n:
 		var aid: String = pl["kit"][i]
 		var adef: Dictionary = Content.ABILITIES[aid]
@@ -2840,12 +3124,36 @@ func _draw_ability_bar(snap: Dictionary, vw: float, vh: float) -> void:
 			_txt(Vector2(r.position.x + b * 0.8, r.position.y + b * 0.24), "+", COL_GOLD, int(b * 0.3))
 		if pl["gummed"].has(i):
 			_txt_c(r.get_center().x, r.get_center().y + b * 0.12, "GUM %d" % pl["gummed"][i], COL_RED, int(b * 0.22))
+		elif gum_next.has(i):
+			# a live tar shot will gum THIS slot if the turn ends now
+			var gr := r.grow(-b * 0.03)
+			var gcol := Color("8a6a3a")
+			for edge in [[gr.position, Vector2(gr.end.x, gr.position.y)], [Vector2(gr.end.x, gr.position.y), gr.end],
+					[gr.end, Vector2(gr.position.x, gr.end.y)], [Vector2(gr.position.x, gr.end.y), gr.position]]:
+				draw_dashed_line(edge[0], edge[1], gcol, 2.5, b * 0.08)
+			var gtx := Art.tex("in_gum", int(b * 0.26))
+			if gtx != null:
+				draw_texture(gtx, r.position + Vector2(b * 0.04, b * 0.04))
 		_hot(r, "ability:%d" % i)
 		x += b + gap
 
 
 func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 	var y := vh * Z_AB_END + (vh * (Z_CTX_END - Z_AB_END)) * 0.62
+	var cm := _context_msg(snap)
+	var col: Color = cm["col"]
+	if bool(cm["pulse"]):
+		col.a = 0.65 + 0.35 * sin(Time.get_ticks_msec() / 160.0)
+	_txt_fit(Vector2(vw * 0.025, y), String(cm["text"]), col, int(vh * 0.022), vw * 0.95)
+	_hot(Rect2(0, vh * Z_AB_END, vw, vh * (Z_CTX_END - Z_AB_END)), "log")
+
+
+## The context line as data, {text, col, pulse}: the ONE priority chain for the
+## line above the D-pad. Mode prompts first, then a flash (red when it is a
+## lethal-guard refusal), then the danger layer's line (Danger.context_line:
+## incoming damage, the choke countdown, the vents - never in the tutorial),
+## then the floor's standing hint.
+func _context_msg(snap: Dictionary) -> Dictionary:
 	var msg := ""
 	var col := COL_DIM_TEXT
 	match mode:
@@ -2864,6 +3172,11 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 			msg = "Which way does it grow?  ·  BACK to redo the scrap"
 			col = COL_GOLD
 		"cleanse":
+			# a dry cleanse the lethal guard refused stays in cleanse mode (the
+			# second press is the confirmation), so the refusal must show HERE
+			# or the tap reads as a dead button
+			if flash != "" and _flash_red:
+				return {"text": flash, "col": COL_RED, "pulse": false}
 			msg = "Tap corruption beside you (or D-pad)"
 			col = COL_TARGET
 		"target_dir":
@@ -2874,19 +3187,21 @@ func _draw_context(snap: Dictionary, vw: float, vh: float) -> void:
 			col = COL_TARGET
 		_:
 			if flash != "":
-				msg = flash
-				col = COL_GOLD
-			elif screen == "tutorial":
-				msg = ""
-			elif snap["floor"] == 7:
+				return {"text": flash, "col": COL_RED if _flash_red else COL_GOLD, "pulse": false}
+			if screen == "tutorial":
+				return {"text": "", "col": col, "pulse": false}
+			var dl: Dictionary = Danger.context_line(_danger_state(),
+				int(snap["greened"]), int(snap["green_need"]))
+			if not dl.is_empty():
+				return dl
+			if snap["floor"] == 7:
 				msg = "DESTROY THE BOSS  ·  tap for log"
 			elif int(snap["greened"]) < int(snap["green_need"]):
 				msg = "Stairs dormant - cleanse %d/%d to green the floor" % [snap["greened"], snap["green_need"]]
 				col = Color(0.6, 0.85, 0.55)
 			else:
 				msg = "Reach the gold-ringed stairs  ·  tap for log"
-	_txt_fit(Vector2(vw * 0.025, y), msg, col, int(vh * 0.022), vw * 0.95)
-	_hot(Rect2(0, vh * Z_AB_END, vw, vh * (Z_CTX_END - Z_AB_END)), "log")
+	return {"text": msg, "col": col, "pulse": false}
 
 
 func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
@@ -2898,7 +3213,12 @@ func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
 	var dy := top + (zone_h - (b * 3 + gap * 2)) / 2.0
 	_arrow_button(Rect2(dx + b + gap, dy, b, b), "up")
 	_arrow_button(Rect2(dx, dy + b + gap, b, b), "left")
-	_button(Rect2(dx + b + gap, dy + b + gap, b, b), "END", "end_turn", int(b * 0.28))
+	# END and END TURN go red when ending the turn here kills - they still work
+	# with one press (never guarded), the border only says what that press does
+	var dz := _danger_state()
+	var lethal := bool(dz.get("lethal", false))
+	var end_border := COL_RED if lethal else COL_DIM_TEXT
+	_button(Rect2(dx + b + gap, dy + b + gap, b, b), "END", "end_turn", int(b * 0.28), end_border)
 	_arrow_button(Rect2(dx + (b + gap) * 2, dy + b + gap, b, b), "right")
 	_arrow_button(Rect2(dx + b + gap, dy + (b + gap) * 2, b, b), "down")
 	# the D-pad's empty top corners host the view toggles; the bottom corners
@@ -2915,6 +3235,9 @@ func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
 			_icon_button(ir, "it_" + String(items[i]).trim_suffix("+"), "item:%d" % i, false)
 			if String(items[i]).ends_with("+"):
 				_txt(Vector2(ir.position.x + ir.size.x * 0.74, ir.position.y + ir.size.y * 0.3), "+", COL_GOLD, int(ir.size.y * 0.3))
+			if lethal and dz.get("escapes", {}).get("item", []).has(i):
+				# this item, used now, survives the end turn: it glows
+				draw_rect(ir.grow(-b * 0.03), Color(COL_GOLD, 0.5 + 0.4 * sin(Time.get_ticks_msec() / 170.0)), false, 3.0)
 		else:
 			draw_rect(ir.grow(-b * 0.06), Color(1, 1, 1, 0.04))
 			draw_rect(ir.grow(-b * 0.06), Color(0.35, 0.44, 0.36, 0.45), false, 1.5)
@@ -2931,7 +3254,7 @@ func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
 		by += bh + zone_h * 0.03
 	_button(Rect2(bx, by, bw, bh), "CLEANSE", "cleanse", int(bh * 0.4))
 	by += bh + zone_h * 0.03
-	_button(Rect2(bx, by, bw, bh), "END TURN", "end_turn", int(bh * 0.42))
+	_button(Rect2(bx, by, bw, bh), "END TURN", "end_turn", int(bh * 0.42), end_border)
 	by += bh + zone_h * 0.03
 	if screen != "tutorial":
 		_txt(Vector2(bx, by + bh * 0.5), "seed %d" % seed_v, COL_DIM_TEXT, int(vh * 0.014))

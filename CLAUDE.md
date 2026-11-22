@@ -159,7 +159,20 @@ architecture below is designed to bend rather than block.
     articles, the floor title card) and `_check_feedback` the feedback layer:
     callouts, the cleanse gain, kill weight, the boss shield, log names / xN,
     sound picks and the chime, the vocabulary tripwire, and two bot-driven runs
-    through `_act` (no raw id and no line over 60 chars in the log)
+    through `_act` (no raw id and no line over 60 chars in the log);
+    `_check_danger_readouts` the danger layer's verdicts and words (the HP
+    rule table, the SKIES chips and bar alert, every context line and guard
+    flash, the cues) plus its two gates - the FIT gate (the worst INCOMING line,
+    built from the two longest `Content.ENEMIES` names, and the four guard
+    flashes draw at >= `CARD_MIN_VH` in the context line's box at every
+    `CARD_VIEWPORTS` shape) and the LAYOUT gate (`_sky_row_layout` with chips
+    60/12/9: numbers >= `CARD_MIN_VH`, chips end by 0.55vw, the config line
+    keeps >= 0.2vw, icon tops clear the bar) - and the cue reaching the banner
+    queue at danger priority with boss > warn > hurt; `_check_lethal_guard`
+    the guard through the real input paths; `_check_intent_badges` the badge
+    tables against `tests/test_content.gd` `INTENT_TYPES`, `Art.ART`, the
+    LEGEND and `Content.STATUSES`, then badges, tile numbers, tethers, vent
+    marks and gum slots on live states
 - Bots live in one registry, `bots/roster.gd` (`Roster.names()/make(name, seed)`);
   every runner resolves persona names through it, and an unknown name fails
   loudly. `deeproot_rollout` is deeproot with rollout drafting (a separate
@@ -1336,6 +1349,16 @@ architecture below is designed to bend rather than block.
   draft SHEET (`SHEET=shop|draft|drop`), which is where the reading happens —
   both are the agent's way to see the shell. Sprites are hand-written
   SVG strings in `shell/svg_art.gd`. The sim must never depend on the shell.
+  `render_frame.gd` draws the sim's own telegraph (red tiles with their
+  summed damage) and the `Danger.badges` glyphs, and its panel prints the
+  SKIES countdowns and "end turn here: N incoming"; `tests/autopsy.gd` prints
+  a `danger:` line (incoming, LETHAL, choke, vent) under every frame, so a
+  death autopsy shows whether the death was announced. The audio bank's
+  `warn` (the danger tick) is appended LAST in `build_bank`, like every
+  fun-pass sound. The LEGEND carries a row for every intent badge, every
+  blocked-intent glyph and the two SKIES countdown chips (`ic_choke`,
+  `ic_dim`) - 50 rows, four help pages - and `_check_intent_badges` fails
+  a badge icon without one.
 - Every choice card — shrine, draft, drop, forge — is ONE function
   (`shell/main.gd` `_card`) over ONE layout dict (`_card_layout`), and the
   three card lists (`_shop_cards` / `_draft_cards` / `_drop_cards`) are data
@@ -1381,10 +1404,11 @@ architecture below is designed to bend rather than block.
   it fitted each line to one `_txt_fit` line, so the ABILITY_DESC row a card
   shows at 34px landed there at 25px, and because the lines share one size the
   widest one dragged the enemy's name and HP down with it.
-- `! INCOMING` in the status strip is `_txt_fit` into the gap left by the
-  RIGHT-ALIGNED floor and green readouts, which have to be measured first: it
-  used to start at a fixed x with no width budget and ran ~280px through them
-  at 1080x2400, on the one line that is telling you something is about to hit.
+- `! INCOMING` is no longer in the status strip (it was `_txt_fit` into the
+  gap left by the right-aligned floor and green readouts, and before that ran
+  ~280px through them at 1080x2400): it is the context line now,
+  `_context_msg` / `Danger.context_line`, held to size by the danger FIT gate
+  - see the Danger readability bullet.
 - CLEANSE reaches a tile BESIDE the tender, and only corruption. Its refusal
   is `shell/main.gd` `_cleanse_hint`, because "no corruption beside you" was
   the only answer and it is a LIE in the two cases that happen: standing ON
@@ -1468,6 +1492,47 @@ architecture below is designed to bend rather than block.
   SHIELDED on the boss bar before a hit is wasted. `_floor_card_lines(snap)`
   is the floor title card: the boss floor reads "defeat the Overseer", never
   "cleanse 0 to wake the stairs".
+- Danger readability (fun pass): `shell/danger.gd` is the data layer -
+  static, no Node, never writes the game (every look-ahead runs on a
+  `clone()`) - from the three read-only sim forecasts (`smog_forecast`,
+  `telegraph`, `end_turn_forecast`; exact against reality, see the read-only
+  queries bullet) to what the shell draws: `compute(game)` ->
+  `{ok, floor, sky, sky_calm, tele, fc, lethal, hp, escapes}` (ok false and
+  only `hp` kept when over or drafting), the SKIES chips (`sky_chips`: choke,
+  vents, dim within 9; colours by `SKY_AMBER` 5), `context_line`, the intent
+  `badges` (`BADGE` / `NO_BADGE` / `BLOCK_ICON`: every `INTENT_TYPES` entry
+  has a decision, and a blocked intent wears its block glyph and paints no
+  red tile), `tile_numbers`, `tethers`, `marks`, `vent_marks`, `gum_slots`,
+  the guard's words and `cues(prev, cur)` (a `warn` when lethal switches on or
+  the choke enters 1..5; at choke 1 the banner THE SMOG THICKENS, pushed at
+  `BANNER_PRIO.danger`, its tick passed to `_feedback` as an extra sound).
+  The shell caches `compute` per state change (`_danger_state`, keyed on
+  `_danger_rev` - bumped after every step and on every new or restored game -
+  and the game instance), never per frame: the forecast steps a clone and the
+  escape search clones once per candidate action, only when lethal.
+  `_threat_tiles` IS the sim's telegraph now, so a stunned, rooted or
+  screened attacker no longer paints a false red tile. ONE HP-danger rule,
+  `Danger.hp_state` (`hp <= max(3, max_hp / 4)`, or "lethal" when the forecast
+  kills), drives the HP chip, the vignette and the `_process` pulse, which
+  used to disagree (red at 3, vignette at `max(2, ...)`). `! INCOMING` left
+  the status strip (9px and overlapping on a tall phone) for the context line,
+  whose ONE priority chain is `_context_msg(snap)`: mode prompts, flash (red
+  when `_flash_red`), `Danger.context_line` outside the tutorial ("! INCOMING
+  3 - LETHAL  ·  Drill Bot, smog", the choke countdown, the vents), then the
+  floor hints. The choke countdown says "descend to escape it" only when the
+  floor HAS stairs that are awake (`green_need > 0`, so never on the boss
+  floor) and "cleansing thins it" otherwise. A drag's tether is grey and
+  RINGLESS when blocked (`tethers` nulls `land`, since the sim fills `path`
+  before it applies the block). The lethal guard (`_guard_lets_end`) asks only before an
+  IMPLICIT end turn - a D-pad press or cleanse tap that ran out of charge,
+  and a tap on the tender's own tile: when the forecast kills, the first press
+  is refused with a red flash naming the way out (step off > strike first >
+  the glowing item > descend > tap again; a dry cleanse stays in cleanse mode,
+  so that arm of `_context_msg` shows a red flash too) and the `warn` tick, and a second press within
+  `GUARD_MS` (1500) with nothing changed (`guard_sig`) goes through. END TURN,
+  the D-pad's END, SPACE and ENTER are NEVER guarded. `HINT_ESCAPES` (true) is
+  the owner's one-line switch for the escape-aware words and the satchel
+  pulse: they reveal no rng but do solve a one-step puzzle.
 - The tutorial floor (`shell/tutorial.gd` ROOM) puts its second slick OFF the
   golem's row on purpose: the guide teaches lancing down that row two steps
   before it asks for a cleanse, the lance ignites oil, and a burning tile is

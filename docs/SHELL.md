@@ -61,16 +61,71 @@ scene.
 | N | next seed |
 
 Red-tinted tiles are telegraphed damage for the coming enemy turn (attack,
-slam cross, quake ring) — the intent-visibility pillar, drawn. The right
-panel lists every enemy's exact intent; the strip below the map is the
-event log. Elites wear a gold ring, bosses show HP bars, your buffs ring
-the player sprite (brown = anchored, green = thorns).
+slam cross, quake ring), read straight from the sim's own `Game.telegraph()`
+— the intent-visibility pillar, drawn. Each red tile carries the damage it
+will take in its bottom-right corner (summed over every attacker aiming at
+it; not on your own tile, where the context line speaks for it). Every enemy
+wears an intent badge at its top-right corner: a glyph on a dark disc ringed
+in the intent's colour (red: a hit, violet: drain / tar / grapple / advance,
+amber: a countdown, orange: a world change), with its number beside it —
+damage, the countdown, the steps, the drag count when above 1. A ring at
+half strength is an intent not aimed at you where you stand. A BLOCKED
+intent wears its block glyph instead (stars stunned, roots rooted, a slashed
+cloud lost in the smoke, an anchor when your roots hold the grapple) and
+paints no red tile — a stunned striker used to paint a false one. A grapple
+draws a dashed blue tether from the crane to you with a ring on the tile it
+will land you on (grey and ringless when blocked); a flood stripes the row it
+will oil, an ignite-all pulses every oil tile that will catch, a dredge tints
+the growth it will eat. Vents count down on the grate from 5 turns out, with a
+red pulsing ring at 1 (green on a vent your growth has sealed). A tar shot
+outlines the ability slot it will gum, in dashed brown. The legend (HELP) has
+a row for every badge. The strip below the map is the event log. Elites wear
+a gold ring, bosses show HP bars, your buffs ring the player sprite (brown =
+anchored, green = thorns).
 
 Holding an enemy adds an `avoids: fire` line when its `Content.ENEMIES` row
 carries an avoid list — it paths around those tiles unless the way round is
 far. When smoke swallows a telegraphed drain / gum / drag, the log says so
 (`Tar Spitter's tar is lost in the smoke`), so a screened intent reads as
 something you did rather than as the enemy skipping a turn.
+
+## Danger readouts
+
+`shell/danger.gd` turns the sim's three read-only forecasts into what the
+screen says about what is about to hurt you. Nothing here changes a run.
+
+- **The SKIES row.** Under the smog bar: `SKIES`, then up to three countdown
+  chips — a skull and the end turns until the smog starts choking you, a vent
+  and the end turns until the vents release, a dimming sun and the end turns
+  until the sky dims (only within 9). The choke chip turns amber at 5 or
+  fewer and red at 1 or while choking (it then counts to the next choke);
+  the vent chip turns amber at 1, green when every free vent is sealed by
+  growth and grey when every vent is occupied. The bar itself gets a pulsing
+  amber outline in the choke's last 5 turns, red once it chokes. Every number
+  is the soonest it can come — a cleanse, a kill or a stun can only push it
+  later.
+- **The context line** (above the D-pad) leads with danger: `! INCOMING 3 -
+  LETHAL  ·  Drill Bot, smog` in pulsing red when ending the turn where you
+  stand would kill you, `! INCOMING 2  ·  Drill Bot` in amber when it would
+  hurt, `! INCOMING 2 - shield holds` when your shield takes it all; then the
+  choke countdown (`Smog chokes in 3 - cleansing thins it`, or `- descend to
+  escape it` once the stairs are awake; `NEXT TURN` in red); then `The vents
+  release next turn`; then the floor's usual hint. The forecast is the real
+  end turn played out on a copy, so the number is exact.
+- **Lethal colours.** When the end turn would kill you, your outline pulses
+  red (amber when something lands but you live), the HP chip and the screen
+  edges go red, and END / END TURN get a red border. A satchel item that
+  would save you pulses gold. The HP chip and the red edges share one rule:
+  red at 3 HP or less (or a quarter of max HP, when that is more), or when
+  the coming end turn kills.
+- **Sounds and banners.** A double warning tick plays when the lethal
+  forecast switches on and when the choke enters its last 5 turns; at 1 turn
+  the banner THE SMOG THICKENS / it chokes from next turn.
+- **Tooltips.** Holding an enemy adds why its intent will not land (stunned,
+  rooted, lost in the smoke, your anchor holds) and for a smokestack how many
+  turns sooner it brings the choke; holding yourself reads `ending here: 3
+  incoming - LETHAL`; holding a vent reads `releases in 4 turns` or `sealed -
+  absorbs the next release`.
 
 ## Touch controls (Android / any touchscreen)
 
@@ -79,6 +134,12 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
 
 - D-pad arrows: move (into an enemy = strike); center END button ends turn
 - tap an adjacent tile: same as a D-pad press; tap your own tile: end turn
+- a D-pad (or arrow-key) press or cleanse tap that ran out of charge, or a
+  tap on yourself, asks for a second press when the forecast says that end
+  turn would kill you: the line above the D-pad says `LETHAL (3) - step off,
+  or tap again to end turn` (or `strike first` when only hitting the
+  attacker saves you, or names the glowing satchel item, or the stairs) and a second press within 1.5 s goes through. END TURN, the
+  D-pad's END, SPACE and ENTER never ask — pressing END is a decision
 - **hold your finger on any tile**: tooltip naming what's there, its HP,
   and exactly what it will do next turn
 - tap a kit line to cast — aim with the D-pad / adjacent tap for
@@ -219,10 +280,10 @@ for everyone and a content table that grows later cannot move an earlier
 date's run. Dailies ignore career unlocks entirely, and still score only
 to the daily board.
 
-The status strip names the live run's config under the skies bar —
-loadout, then package, then mutator (`Tidewarden · Aeolian · Brittle`) —
-read straight off the sim's snapshot, so a run never hides what it was
-set up as. Run saves already carry the whole config in their header, so
+The status strip names the live run's config under the skies bar,
+right-aligned after the countdown chips — loadout, then package, then
+mutator (`Tidewarden · Aeolian · Brittle`) — read straight off the sim's
+snapshot, so a run never hides what it was set up as. Run saves already carry the whole config in their header, so
 none of this changes the save format.
 
 ## Legend
@@ -230,7 +291,8 @@ none of this changes the save format.
 HELP opens the legend sheet; holding a tile shows the same row as a
 tooltip. The rows are `shell/main.gd` `LEGEND` (sprite id, name, blurb) —
 one row per drawable thing, and every `Content.TERRAIN` kind must have
-one (`tests/test_shell.gd` checks it). The terrain rows:
+one (`tests/test_shell.gd` checks it), as must every intent badge, every
+blocked-intent glyph and the two SKIES countdown chips (four pages). The terrain rows:
 
 | tile | ASCII | what it is |
 |---|---|---|

@@ -88,6 +88,29 @@ static var ART := {
 	"ic_lens": _svg('<circle cx="13" cy="13" r="8" fill="none" stroke="#cfe3c4" stroke-width="3"/><path d="M19.5 19.5L28 28" stroke="#cfe3c4" stroke-width="3.5"/><circle cx="13" cy="13" r="4" fill="#79a865" opacity="0.5"/>'),
 	"ic_shield": _svg('<path d="M16 3l10 4v9q0 8-10 13Q6 24 6 16V7z" fill="#7ec8e0"/>'),
 
+	# --- intent badges (shell/danger.gd BADGE / BLOCK_ICON): a glyph per enemy
+	# intent, drawn on a dark disc at the enemy's corner, plus the four "this
+	# intent is blocked" glyphs that replace it ---------------------------------
+	"in_attack": _svg('<path d="M8 6l6 20M14 5l5 20M20 6l5 18" stroke="#e04b3a" stroke-width="3.2" stroke-linecap="round" fill="none"/>'),
+	"in_slam": _svg('<rect x="7" y="5" width="18" height="9" rx="2" fill="#e04b3a"/><rect x="14" y="13" width="4" height="10" fill="#c3c8ce"/><path d="M5 27h22" stroke="#e04b3a" stroke-width="3"/>'),
+	"in_quake": _svg('<circle cx="16" cy="16" r="4" fill="#e04b3a"/><circle cx="16" cy="16" r="9" fill="none" stroke="#e04b3a" stroke-width="2.4"/><circle cx="16" cy="16" r="14" fill="none" stroke="#e04b3a" stroke-width="2" opacity="0.6"/>'),
+	"in_drain": _svg('<path d="M18 3L8 18h7l-2 11 11-16h-7z" fill="#b48ae0"/><path d="M3 8h7" stroke="#b48ae0" stroke-width="3"/>'),
+	"in_gum": _svg('<path d="M7 20q0-9 9-9t9 9q0 7-9 7t-9-7z" fill="#5a4636"/><path d="M12 11q1-5 4-6 2 3 0 6z" fill="#5a4636"/><circle cx="13" cy="18" r="1.6" fill="#b48ae0"/>'),
+	"in_drag": _svg('<path d="M8 6v10a8 8 0 0 0 16 0V6" stroke="#c23b30" stroke-width="5" fill="none"/><path d="M8 5v4M24 5v4" stroke="#d8dde0" stroke-width="5"/>'),
+	"in_fuse": _svg('<path d="M16 3l3 9 9 4-9 3-3 10-3-10-9-3 9-4z" fill="#ef933a"/>'),
+	"in_summon": _svg('<path d="M5 25q0-8 8-8t8 8z" fill="#4a3c50"/><path d="M23 5v11M17.5 10.5h11" stroke="#e8a33a" stroke-width="3.4"/>'),
+	"in_ooze": _svg('<path d="M16 4q8 10 8 15a8 8 0 0 1-16 0q0-5 8-15z" fill="#241c18" stroke="#8a76a0" stroke-width="2"/>'),
+	"in_stoke": _svg('<circle cx="11" cy="21" r="6" fill="#7d6f5c"/><circle cx="17" cy="17" r="6" fill="#6b5f50"/><path d="M25 15V4M21 8l4-4 4 4" stroke="#e8a33a" stroke-width="2.8" fill="none"/>'),
+	"in_dredge": _svg('<path d="M8 25q4-13 16-13-2 11-16 13z" fill="#57b34a"/><path d="M6 5l7 8M13 3l3 10M21 3l-2 10" stroke="#8a6a2a" stroke-width="2.6"/>'),
+	"in_advance": _svg('<path d="M6 8l8 8-8 8M16 8l8 8-8 8" stroke="#b48ae0" stroke-width="3.4" fill="none"/>'),
+	"in_flood": _svg('<path d="M3 13q4-5 8 0t8 0 8 0M3 22q4-5 8 0t8 0 8 0" stroke="#8a76a0" stroke-width="3.2" fill="none"/>'),
+	"in_gather": _svg('<circle cx="16" cy="16" r="5" fill="#ef933a"/><circle cx="16" cy="16" r="11" fill="none" stroke="#e8722a" stroke-width="2.4" stroke-dasharray="5,3"/>'),
+	"in_ignite": _svg('<path d="M16 3q7 8 5 13 3-1 4-4 3 9-3 13-4 3-9 1-6-3-4-11 1-4 4-6 0 3 1 4 1-5 2-10z" fill="#ef933a"/><path d="M15 15q4 5 1 9-3 2-5-1-1-5 4-8z" fill="#fdf0a8"/>'),
+	"in_stunned": _svg('<path d="M9 7l1.6 3.6 3.6 1-3.6 1L9 16l-1.6-3.4-3.6-1 3.6-1zM23 5l1.6 3.6 3.6 1-3.6 1L23 14l-1.6-3.4-3.6-1 3.6-1zM17 17l1.6 3.6 3.6 1-3.6 1L17 26l-1.6-3.4-3.6-1 3.6-1z" fill="#e8c840"/>'),
+	"in_rooted": _svg('<path d="M16 3v11M16 14q-6 4-10 13M16 14q6 4 10 13M16 14v14" stroke="#9a7444" stroke-width="3" fill="none"/>'),
+	"in_screened": _svg('<circle cx="12" cy="18" r="6" fill="#7d6f5c"/><circle cx="20" cy="15" r="7" fill="#6b5f50"/><path d="M5 27L27 5" stroke="#d8dde0" stroke-width="2.6"/>'),
+	"in_anchored": _svg('<path d="M16 6v20M10 11h12M7 19q1 7 9 7t9-7" stroke="#9a7444" stroke-width="3" fill="none"/><circle cx="16" cy="5" r="2.5" fill="#9a7444"/>'),
+
 	# --- bosses -----------------------------------------------------------------
 	"furnace_core": _svg('<rect x="4" y="8" width="24" height="20" rx="2" fill="#33291f"/><path d="M8 8V5h4v3M20 8V5h4v3" fill="#33291f"/><circle cx="16" cy="18" r="7" fill="#e8722a"/><circle cx="16" cy="18" r="4" fill="#f7c948"/><path d="M4 14h24M4 24h24" stroke="#211a12" stroke-width="1.5"/>'),
 	"overseer": _svg('<circle cx="16" cy="15" r="10" fill="#3a4148"/><circle cx="16" cy="15" r="6" fill="#c23b30"/><circle cx="16" cy="15" r="2.6" fill="#f7c948"/><path d="M6 15h-4M30 15h-4M16 5V1M16 29v-4M8 7L5 4M24 7l3-3" stroke="#3a4148" stroke-width="2.5"/><path d="M9 26q7 4 14 0" stroke="#565f66" stroke-width="2.5" fill="none"/>'),

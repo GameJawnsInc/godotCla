@@ -92,10 +92,21 @@ func _dump_frames(seed_v: int, cfg: Dictionary, actions: Array, last: int) -> vo
 		if i == start:
 			print("\n=== board before action %d ===" % i)
 			print(AsciiView.render(g.snapshot()))
+			print(_danger_line(g))
 		g.step(actions[i])
 		if i >= start:
 			print("\n=== action %d: %s ===" % [i, str(actions[i])])
 			print(AsciiView.render(g.snapshot()))
+			print(_danger_line(g))
+
+
+## What the shell's danger readout said at this frame (the two read-only sim
+## forecasts): was the death announced before the turn that dealt it?
+func _danger_line(g) -> String:
+	var fc: Dictionary = g.end_turn_forecast()
+	var sky: Dictionary = g.smog_forecast()
+	return "danger: incoming %d%s · choke %d · vent %d" % [int(fc["dmg"]),
+		" - LETHAL" if bool(fc["dies"]) else "", int(sky.get("choke_in", -1)), int(sky.get("spawn_in", -1))]
 
 
 func _config_from_env() -> Dictionary:

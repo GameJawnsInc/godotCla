@@ -269,6 +269,13 @@ func build_bank() -> void:
 	_tone(b, 0.08, 0.52, 392, 392, 0.12, 1.5, 0.2)
 	_bank["arrive"] = _wav(b)
 
+	# appended LAST, like every fun-pass sound: _noise draws from the bank's
+	# rng, so a sound inserted earlier would reshuffle every noise after it
+	b = _mk(0.22)  # danger tick: a lethal end turn / the choke countdown
+	_tone(b, 0.0, 0.07, 660, 640, 0.30, 6.0, 0.25)
+	_tone(b, 0.11, 0.07, 660, 640, 0.30, 6.0, 0.25)
+	_bank["warn"] = _wav(b)
+
 
 func _render_music() -> void:
 	call_deferred("_music_ready", render_music_stream())

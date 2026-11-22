@@ -13,6 +13,7 @@ const Content := preload("res://sim/content.gd")
 const Art := preload("res://shell/svg_art.gd")
 const Shell := preload("res://shell/main.gd")
 const AsciiView := preload("res://sim/ascii_view.gd")
+const Danger := preload("res://shell/danger.gd")
 const BOTS := {
 	"wanderer": preload("res://bots/wanderer.gd"),
 	"sprout": preload("res://bots/sprout.gd"),
@@ -109,21 +110,13 @@ func _init() -> void:
 	if m["shrine"] != Vector2i(-1, -1):
 		b += _sp("shrine", PAD + m["shrine"].x * T, PAD + m["shrine"].y * T)
 
-	var threat := {}
-	for e in snap["enemies"]:
-		var it: Dictionary = e["intent"]
-		match String(it.get("type", "")):
-			"attack":
-				threat[it["tile"]] = true
-			"slam":
-				threat[it["tile"]] = true
-				for d in [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
-					threat[it["tile"] + d] = true
-			"quake":
-				for d in [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
-					threat[e["pos"] + d] = true
-	for t in threat:
+	# the red tiles and their summed damage come from the sim's own telegraph -
+	# the same data the shell draws (shell/danger.gd), so a stunned attacker
+	# paints nothing here either
+	var tele: Dictionary = game.telegraph()
+	for t in tele["tiles"]:
 		b += '<rect x="%d" y="%d" width="%d" height="%d" fill="#e04b3a" fill-opacity="0.3"/>' % [PAD + t.x * T, PAD + t.y * T, T, T]
+		b += _text(PAD + t.x * T + T - 11, PAD + t.y * T + T - 4, str(int(tele["tiles"][t])), "#ffdccc", 11, true)
 
 	for e in snap["enemies"]:
 		var ex: int = PAD + e["pos"].x * T
@@ -138,6 +131,16 @@ func _init() -> void:
 			b += '<rect x="%d" y="%d" width="%d" height="3" fill="#000" fill-opacity="0.6"/><rect x="%d" y="%d" width="%.0f" height="3" fill="#e04b3a"/>' % [
 				ex + 3, ey - 4, T - 6, ex + 3, ey - 4, (T - 6) * frac]
 
+	# intent badges: the glyph at the enemy's top-right corner, its number left
+	for bd in Danger.badges(snap, tele):
+		var bx: int = PAD + bd["pos"].x * T
+		var by: int = PAD + bd["pos"].y * T
+		b += '<circle cx="%.0f" cy="%.0f" r="%.1f" fill="#0f1412" fill-opacity="0.85" stroke="#%s" stroke-width="1.5"/>' % [
+			bx + T * 0.79, by + T * 0.16, T * 0.21, Color(bd["col"]).to_html(false)]
+		b += _sp(String(bd["icon"]), bx + T * 0.58, by - T * 0.05, T * 0.42)
+		if String(bd["text"]) != "":
+			b += _text(bx + T * 0.40, by + T * 0.30, String(bd["text"]), "#" + Color(bd["col"]).to_html(false), 11, true)
+
 	var pl: Dictionary = snap["player"]
 	b += _sp("player", PAD + pl["pos"].x * T, PAD + pl["pos"].y * T)
 
@@ -146,7 +149,15 @@ func _init() -> void:
 	b += _text(panel_x, ty, "%s (floor %d)  turn %d" % [snap["floor_name"], snap["floor"], snap["turn"]]); ty += 20
 	b += _text(panel_x, ty, "smog %d  dim %d" % [snap["smog"], snap["dim"]], "#e04b3a" if snap["dim"] > 0 else "#8a958c"); ty += 24
 	b += _text(panel_x, ty, "HP %d/%d  shield %d" % [pl["hp"], pl["max_hp"], pl["shield"]], "#d8e0d4", 16, true); ty += 20
-	b += _text(panel_x, ty, "charge %d  bank %d  bloom %d" % [pl["charge"], pl["bank"], snap["bloom"]]); ty += 24
+	b += _text(panel_x, ty, "charge %d  bank %d  bloom %d" % [pl["charge"], pl["bank"], snap["bloom"]]); ty += 20
+	var dz: Dictionary = Danger.compute(game)
+	var sky: Dictionary = dz.get("sky", {})
+	b += _text(panel_x, ty, "skies: choke %s · vent %s · dim %s" % [_cd(sky, "choke_in"), _cd(sky, "spawn_in"),
+		_cd(sky, "dim_in")], "#e8a33a" if Danger.sky_alert(sky) != "" else "#8a958c", 13); ty += 18
+	var fc: Dictionary = dz.get("fc", {})
+	b += _text(panel_x, ty, "end turn here: %d incoming%s" % [int(fc.get("dmg", 0)),
+		" - LETHAL" if bool(fc.get("dies", false)) else ""],
+		"#e04b3a" if bool(fc.get("dies", false)) else "#8a958c", 13); ty += 24
 	for i in pl["kit"].size():
 		var adef: Dictionary = Content.ABILITIES[pl["kit"][i]]
 		b += _text(panel_x, ty, "%d  %s (%d)" % [i + 1, adef["name"], adef["cost"]]); ty += 18
@@ -169,6 +180,12 @@ func _init() -> void:
 		out, snap["floor"], snap["turn"], snap["enemies"].size(), ash_tiles,
 		", %d stamped" % ash_placed if ash_placed > 0 else ""])
 	quit(0)
+
+
+## A countdown for the panel: the number, or "-" when it is not on the clock.
+func _cd(sky: Dictionary, key: String) -> String:
+	var n := int(sky.get(key, -1))
+	return str(n) if n > 0 else "-"
 
 
 ## Put up to `want` ash tiles on empty walkable floor near the player, nearest

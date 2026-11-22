@@ -691,6 +691,9 @@ func _init() -> void:
 	_check_resume_stats()
 	_check_names()
 	_check_feedback()
+	_check_danger_readouts()
+	_check_lethal_guard()
+	_check_intent_badges()
 
 	shell.free()
 	shell2.free()
@@ -1790,3 +1793,420 @@ func _check_feedback() -> void:
 	_check(cats_ok, "the log keeps one category per line")
 	sh.free()
 	print("feedback: 20 cases, chime %s, bot runs clean" % str(pitches))
+
+
+## --- danger readability (shell/danger.gd) ------------------------------------
+## The sim's three forecasts are pinned in tests/test_grammar.gd "fq"; these
+## pin what the shell makes of them: the verdicts, the words, the sizes the
+## words draw at, the chips' layout, the lethal guard and the intent badges.
+
+## Every open direction from the tender, in DIRS order.
+func _open_dirs(g) -> Array:
+	var out: Array = []
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if g._open(g.player["pos"] + d):
+			out.append(d)
+	return out
+
+
+## Game 4242 with one drill bot beside the tender striking it for `dmg`,
+## charge `charge`, every other enemy and all terrain cleared, smog at 0.
+## Returns [game, a free direction to step, the attacker's direction].
+func _lethal_fixture(dmg: int, charge: int) -> Array:
+	var g = Game.new(4242)
+	g.terrain.clear()
+	g.enemies.clear()
+	g.smog = 0
+	var dirs := _open_dirs(g)
+	var dhit: Vector2i = dirs[0]
+	var dmove: Vector2i = dirs[1]
+	var a: Dictionary = g._spawn("drill_bot", g.player["pos"] + dhit)
+	a["intent"] = {"type": "attack", "tile": g.player["pos"], "dmg": dmg}
+	g.player["charge"] = charge
+	return [g, dmove, dhit]
+
+
+## A bare shell playing `g`, with the danger cache invalidated.
+func _danger_shell(g):
+	var sh = _bare_shell()
+	sh.game = g
+	sh._danger_rev += 1
+	return sh
+
+
+func _check_danger_readouts() -> void:
+	const Danger := preload("res://shell/danger.gd")
+	# one HP rule: hp <= max(3, max_hp / 4); a lethal forecast outranks it
+	for r in [[3, 10, "low"], [4, 10, "ok"], [4, 16, "low"], [5, 16, "ok"], [3, 7, "low"],
+			[4, 7, "ok"], [2, 7, "low"], [9, 10, "ok"]]:
+		_check(Danger.hp_state(r[0], r[1], false) == r[2], "hp %d/%d is %s" % [r[0], r[1], r[2]])
+	_check(Danger.hp_state(9, 10, true) == "lethal", "a lethal forecast outranks full HP")
+	# the SKIES chips and the bar's alert
+	var chips: Array = Danger.sky_chips({"choke_in": 5, "choking": false, "spawn_in": 11, "spawn_open": 1,
+		"spawn_sealed": 0, "dim_in": -1})
+	_check(chips.size() == 2 and chips[0]["icon"] == "ic_choke" and chips[0]["text"] == "5"
+		and chips[0]["col"] == Danger.COL_AMBER and chips[1]["icon"] == "vent" and chips[1]["text"] == "11"
+		and chips[1]["col"] == Danger.COL_TEXT, "chips: choke 5 amber, vent 11 cream (%s)" % str(chips))
+	_check(Danger.sky_alert({"choke_in": 5}) == "amber" and Danger.sky_alert({"choke_in": 6}) == ""
+		and Danger.sky_alert({"choking": true, "choke_in": 2}) == "red", "sky alert: amber at 5, none at 6, red while choking")
+	chips = Danger.sky_chips({"choke_in": 2, "choking": true, "spawn_in": 3, "spawn_open": 0, "spawn_sealed": 1, "dim_in": 4})
+	_check(chips.size() == 3 and chips[0]["col"] == Danger.COL_RED and chips[1]["col"] == Danger.COL_SEALED
+		and chips[2]["key"] == "dim", "choking chip red, sealed vents green, the dim chip within 9")
+	chips = Danger.sky_chips({"choke_in": 1, "spawn_in": 1, "spawn_open": 2, "dim_in": 12})
+	_check(chips.size() == 2 and chips[0]["col"] == Danger.COL_RED and chips[1]["col"] == Danger.COL_AMBER,
+		"choke 1 red, vent 1 amber, no dim chip beyond 9 turns")
+	chips = Danger.sky_chips({"choke_in": 9, "spawn_in": 4, "spawn_open": 0, "spawn_sealed": 0, "dim_in": -1})
+	_check(chips[1]["col"] == Danger.COL_DIM, "every vent occupied: the vent chip greys")
+	# the context line, word for word
+	var d := {"ok": true, "fc": {"dmg": 3, "absorbed": 0, "by_src": {"drill_bot": 2, "smog": 1}, "dies": true}, "sky": {}}
+	var cl: Dictionary = Danger.context_line(d, 0, 2)
+	_check(cl["text"] == "! INCOMING 3 - LETHAL  ·  Drill Bot, smog" and cl["col"] == Danger.COL_RED and cl["pulse"],
+		"lethal line names its sources, red and pulsing (%s)" % cl["text"])
+	d["fc"] = {"dmg": 2, "absorbed": 0, "by_src": {"drill_bot": 2}, "dies": false}
+	_check(Danger.context_line(d, 0, 2)["text"] == "! INCOMING 2  ·  Drill Bot", "incoming, not lethal")
+	d["fc"] = {"dmg": 4, "absorbed": 0, "by_src": {"drill_bot": 1, "rust_hound": 1, "smog": 1, "fire:solar_lance": 1}, "dies": false}
+	_check(Danger.context_line(d, 0, 2)["text"] == "! INCOMING 4  ·  Drill Bot, fire +2",
+		"four sources: two named (ties by id, the short form), then +2 (%s)" % Danger.context_line(d, 0, 2)["text"])
+	d["fc"] = {"dmg": 2, "absorbed": 2, "by_src": {}, "dies": false}
+	_check(Danger.context_line(d, 0, 2)["text"] == "! INCOMING 2 - shield holds", "shield holds")
+	d["fc"] = {"dmg": 0, "absorbed": 0, "by_src": {}, "dies": false}
+	d["sky"] = {"choke_in": 3, "choking": false, "spawn_in": 9, "spawn_open": 1}
+	_check(Danger.context_line(d, 1, 2)["text"] == "Smog chokes in 3 - cleansing thins it", "choke soon, stairs asleep")
+	_check(Danger.context_line(d, 2, 2)["text"] == "Smog chokes in 3 - descend to escape it", "choke soon, stairs awake")
+	d["sky"]["choke_in"] = 1
+	_check(Danger.context_line(d, 2, 2)["text"] == "Smog chokes NEXT TURN - descend to escape it"
+		and Danger.context_line(d, 1, 2)["text"] == "Smog chokes NEXT TURN - cleansing thins it", "choke next turn")
+	# the boss floor has no stairs (green 0/0): never "descend to escape it"
+	d["sky"]["choke_in"] = 3
+	_check(Danger.context_line(d, 0, 0)["text"] == "Smog chokes in 3 - cleansing thins it",
+		"boss floor: no descent offered (%s)" % Danger.context_line(d, 0, 0)["text"])
+	var g7 := Game.new(3)
+	g7._enter_floor(7)
+	var d7 := 0
+	for a in g7.legal_actions():
+		if String(a.get("type", "")) == "descend":
+			d7 += 1
+	_check(int(g7.snapshot()["green_need"]) == 0 and d7 == 0, "fixture: floor 7 needs no green and has no descent")
+	d["sky"] = {"choke_in": 20, "choking": false, "spawn_in": 1, "spawn_open": 1}
+	_check(Danger.context_line(d, 2, 2)["text"] == "The vents release next turn", "vents next turn")
+	d["sky"]["spawn_open"] = 0
+	_check(Danger.context_line(d, 2, 2).is_empty(), "every vent sealed or taken: nothing to say")
+	_check(Danger.context_line({"ok": false}, 0, 2).is_empty(), "over or drafting: nothing to say")
+	# the guard's words, by escape
+	var gd := {"fc": {"dmg": 3}, "escapes": {"move": true, "item": [0], "descend": true}}
+	_check(Danger.guard_flash(gd) == "LETHAL (3) - step off, or tap again to end turn", "guard: step off first")
+	gd["escapes"] = {"move": false, "strike": true, "item": [0], "descend": true}
+	_check(Danger.guard_flash(gd) == "LETHAL (3) - strike first, or tap again to end turn", "guard: only a strike saves")
+	gd["escapes"] = {"move": false, "item": [1], "descend": true}
+	_check(Danger.guard_flash(gd) == "LETHAL (3) - use the glowing item, or tap again", "guard: then the item")
+	gd["escapes"] = {"move": false, "item": [], "descend": true}
+	_check(Danger.guard_flash(gd) == "LETHAL (3) - descend, or tap again to end turn", "guard: then descend")
+	gd["escapes"] = {}
+	_check(Danger.guard_flash(gd) == "LETHAL (3) - tap again to end the turn", "guard: nothing saves you")
+	# cues: transitions only
+	var p0 := {"ok": true, "floor": 1, "lethal": false, "sky": {"choke_in": 6, "choking": false}}
+	var p1 := {"ok": true, "floor": 1, "lethal": false, "sky": {"choke_in": 5, "choking": false}}
+	_check(Danger.cues(p0, p1)["sounds"] == ["warn"] and Danger.cues(p0, p1)["banner"].is_empty(), "entering the amber window ticks")
+	_check(Danger.cues(p1, {"ok": true, "floor": 1, "lethal": false, "sky": {"choke_in": 4}})["sounds"].is_empty(), "staying in it does not")
+	var c1: Dictionary = Danger.cues({"ok": true, "floor": 1, "sky": {"choke_in": 2}}, {"ok": true, "floor": 1, "sky": {"choke_in": 1}})
+	_check(c1["banner"] == ["THE SMOG THICKENS", "it chokes from next turn"] and c1["sounds"] == ["warn"], "choke next turn: banner + one tick")
+	_check(Danger.cues({"ok": true, "floor": 1, "lethal": false, "sky": {}}, {"ok": true, "floor": 1, "lethal": true, "sky": {}})["sounds"] == ["warn"],
+		"lethal switching on ticks")
+	_check(Danger.cues({"ok": true, "floor": 1, "lethal": true, "sky": {}}, {"ok": true, "floor": 1, "lethal": true, "sky": {}})["sounds"].is_empty(),
+		"lethal staying on does not")
+	_check(Danger.cues({"ok": true, "floor": 1, "sky": {"choking": true, "choke_in": 2}}, {"ok": true, "floor": 1, "sky": {"choking": true, "choke_in": 1}})["sounds"].is_empty(),
+		"no choke cue while already choking")
+	_check(Danger.cues({"ok": true, "floor": 1, "lethal": true, "sky": {"choke_in": 4}}, {"ok": true, "floor": 2, "lethal": true, "sky": {"choke_in": 4}})["sounds"] == ["warn"],
+		"a new floor forgets the old one: lethal and the window both count as entered, one tick")
+	_check(Danger.cues(p0, {"ok": false})["sounds"].is_empty(), "nothing cues once the game is over or drafting")
+
+	var sh = _bare_shell()
+	# fit gate: the worst context line (the two longest enemy names, +9) and the
+	# four guard flashes, at the context line's own size in its own box
+	var names: Array = []
+	for k in Content.ENEMIES:
+		names.append(String(Content.ENEMIES[k]["name"]))
+	names.sort_custom(func(a, b): return a.length() > b.length())
+	var worst_ctx := "! INCOMING 99 - LETHAL  ·  %s, %s +9" % [names[0], names[1]]
+	var fit_lines: Array = [worst_ctx, "Smog chokes NEXT TURN - descend to escape it"]
+	for esc in [{"move": true}, {"strike": true}, {"item": [0]}, {"descend": true}, {}]:
+		fit_lines.append(Danger.guard_flash({"fc": {"dmg": 99}, "escapes": esc}))
+	var worst_fit := 1.0
+	var worst_what := ""
+	var lay_ok := true
+	var lay_bad := ""
+	var three := Danger.sky_chips({"choke_in": 60, "spawn_in": 12, "spawn_open": 1, "dim_in": 9})
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		for s in fit_lines:
+			var f := float(sh._fit_size(String(s), int(vh * 0.022), vw * 0.95)) / vh
+			if f < worst_fit:
+				worst_fit = f
+				worst_what = "%s at %dx%d" % [s, vw, vh]
+		# layout gate: chips 60/12/9 (the widest the clock makes)
+		var y2: float = sh._safe_top(vh) + vh * 0.036 * 1.35
+		var mh := vh * 0.024
+		var lay: Dictionary = sh._sky_row_layout(vw, vh, y2 + mh + vh * 0.0155, three)
+		var ok: bool = lay["chips"].size() == 3 and float(lay["end_x"]) <= vw * 0.55 \
+			and float(lay["cfg_x0"]) + 1.0 <= vw * 0.975 - vw * 0.2
+		for c in lay["chips"]:
+			ok = ok and float(c["nsz"]) / vh >= CARD_MIN_VH and Rect2(c["icon_rect"]).position.y >= y2 + mh
+		if not ok and lay_bad == "":
+			lay_bad = "%dx%d: %s" % [vw, vh, str(lay)]
+		lay_ok = lay_ok and ok
+	_check(worst_fit >= CARD_MIN_VH, "danger lines draw at >= %.2f%% of vh (worst %.3f%%: %s)" % [
+		CARD_MIN_VH * 100.0, worst_fit * 100.0, worst_what])
+	_check(lay_ok, "the SKIES chips fit their row at every viewport: %s" % lay_bad)
+
+	# the danger cue reaches the banner queue at danger priority, and its tick
+	# rides the step's sound cap: boss > warn > hurt
+	var g = Game.new(4242)
+	g.enemies.clear()
+	g.terrain.clear()
+	g.smog = int(g.floor_def(1)["smog_choke"]) - 2
+	sh.game = g
+	sh._danger_rev += 1
+	_check(int(sh._danger_state()["sky"]["choke_in"]) == 2, "fixture: the choke is two end turns off")
+	sh._banner = ["something else"]
+	sh._banner_ms = Time.get_ticks_msec()
+	sh._banner_q = []
+	sh._act({"type": "end_turn"})
+	var queued := false
+	for qb in sh._banner_q:
+		queued = queued or (qb["lines"] == ["THE SMOG THICKENS", "it chokes from next turn"]
+			and int(qb["prio"]) == int(Feedback.BANNER_PRIO["danger"]) and qb["col"] == Danger.COL_AMBER)
+	_check(queued, "choke 1: THE SMOG THICKENS waits in the banner queue at danger priority (%s)" % str(sh._banner_q))
+	var ids: Array = sh._play_events([{"t": "damage", "who": "player", "amt": 1, "src": "drill_bot"},
+		{"t": "boss_phase", "phase": 2}], ["warn"]).map(func(p): return String(p["id"]))
+	_check(ids == ["boss", "warn", "hurt"], "the warn tick ranks boss > warn > hurt: %s" % str(ids))
+	sh.free()
+	print("danger readouts: worst line %.3f%% of vh" % [worst_fit * 100.0])
+
+
+func _check_lethal_guard() -> void:
+	const Danger := preload("res://shell/danger.gd")
+	# a dry D-pad press into a lethal strike is refused once, with the reason
+	var fx := _lethal_fixture(99, 0)
+	var g = fx[0]
+	var sh = _danger_shell(g)
+	var pp: Vector2i = g.player["pos"]
+	var t0: int = g.total_turns
+	sh._dir_input(fx[1])
+	_check(g.total_turns == t0 and g.player["pos"] == pp and not g.over,
+		"dry D-pad into a lethal strike: refused, nothing moved")
+	_check(sh.flash.begins_with("LETHAL (99)") and sh._flash_red and not sh._guard.is_empty(),
+		"...the flash says why, in red (%s)" % sh.flash)
+	var cm: Dictionary = sh._context_msg(g.snapshot())
+	_check(cm["text"] == sh.flash and cm["col"] == Shell.COL_RED, "...and the context line draws it red")
+	sh._dir_input(fx[1])
+	_check(g.over and g.total_turns == t0, "a second press inside the window ends the turn (and the strike lands)")
+	sh.free()
+	fx = _lethal_fixture(99, 0)
+	g = fx[0]
+	sh = _danger_shell(g)
+	t0 = g.total_turns
+	sh._dir_input(fx[1])
+	sh._guard["ms"] = int(sh._guard["ms"]) - Danger.GUARD_MS - 1
+	sh._dir_input(fx[1])
+	_check(not g.over and g.total_turns == t0 and not sh._guard.is_empty(), "a press after the window asks again")
+	sh.free()
+	for how in ["tap", "space", "enter"]:
+		fx = _lethal_fixture(99, 0)
+		g = fx[0]
+		sh = _danger_shell(g)
+		match how:
+			"tap": sh._tap("end_turn")
+			"space": sh._key(KEY_SPACE)
+			"enter": sh._key(KEY_ENTER)
+		_check(g.over, "END TURN is never guarded (%s)" % how)
+		sh.free()
+	fx = _lethal_fixture(1, 0)
+	g = fx[0]
+	sh = _danger_shell(g)
+	pp = g.player["pos"]
+	t0 = g.total_turns
+	sh._dir_input(fx[1])
+	_check(g.total_turns == t0 + 1 and g.player["pos"] == pp + fx[1] and not g.over,
+		"not lethal: the dry press ends the turn and steps, as before")
+	sh.free()
+	# a balm fruit that saves: the flash points at it, it glows, and once eaten
+	# the press goes through
+	fx = _lethal_fixture(3, 0)
+	g = fx[0]
+	g.player["hp"] = 2
+	g.player["items"] = ["balm_fruit"]
+	sh = _danger_shell(g)
+	t0 = g.total_turns
+	sh._dir_input(fx[1])
+	_check(sh.flash.contains("glowing item") and sh._danger_state()["escapes"]["item"] == [0],
+		"dry, lethal, a balm fruit saves: the flash points at it (%s)" % sh.flash)
+	sh._tap("item:0")
+	sh._dir_input(fx[1])
+	_check(not g.over and g.total_turns == t0 + 1, "after the fruit the strike is no longer lethal: the press goes through")
+	sh.free()
+	# an action between the two presses re-arms the guard (still lethal)
+	fx = _lethal_fixture(99, 0)
+	g = fx[0]
+	g.player["items"] = ["iron_seed"]
+	sh = _danger_shell(g)
+	t0 = g.total_turns
+	sh._dir_input(fx[1])
+	sh._tap("item:0")
+	sh._dir_input(fx[1])
+	_check(not g.over and g.total_turns == t0, "an action between the presses re-arms the guard")
+	sh.free()
+	# a tap on your own tile with charge left: refused, step off offered
+	fx = _lethal_fixture(99, 3)
+	g = fx[0]
+	sh = _danger_shell(g)
+	pp = g.player["pos"]
+	sh.hotspots = []
+	sh._click(Vector2(sh._mox + (pp.x + 0.5) * sh._ts, sh._moy + (pp.y + 0.5) * sh._ts))
+	_check(not g.over and sh.flash.contains("step off"), "tap on yourself with charge: refused, step off offered (%s)" % sh.flash)
+	sh._click(Vector2(sh._mox + (pp.x + 0.5) * sh._ts, sh._moy + (pp.y + 0.5) * sh._ts))
+	_check(g.over, "...and the second tap ends the turn")
+	sh.free()
+	# a dry cleanse that would auto-end the turn
+	fx = _lethal_fixture(99, 0)
+	g = fx[0]
+	g.terrain[g.player["pos"] + fx[1]] = {"kind": "oil"}
+	sh = _danger_shell(g)
+	sh.mode = "cleanse"
+	t0 = g.total_turns
+	sh._cleanse_at(g.player["pos"] + fx[1])
+	_check(not g.over and g.total_turns == t0 and sh.flash.begins_with("LETHAL"), "dry cleanse into a lethal strike: refused")
+	_check(sh.mode == "cleanse" and String(sh._context_msg(g.snapshot())["text"]).begins_with("LETHAL"),
+		"...and the refusal shows on the context line while still aiming the cleanse (%s)" % sh._context_msg(g.snapshot())["text"])
+	sh.free()
+	# the tutorial never guards; the context line leads with the forecast
+	fx = _lethal_fixture(99, 0)
+	g = fx[0]
+	sh = _danger_shell(g)
+	_check(String(sh._context_msg(g.snapshot())["text"]).begins_with("! INCOMING 99 - LETHAL"),
+		"the context line leads with the lethal forecast: %s" % sh._context_msg(g.snapshot())["text"])
+	sh.screen = "tutorial"
+	_check(sh._guard_lets_end(), "the tutorial never guards")
+	_check(sh._context_msg(g.snapshot())["text"] == "", "...and draws no danger line")
+	sh.free()
+	print("lethal guard: refuse once, confirm within %d ms, END never asked" % Danger.GUARD_MS)
+
+
+func _check_intent_badges() -> void:
+	const Danger := preload("res://shell/danger.gd")
+	const TestContent := preload("res://tests/test_content.gd")
+	for t in TestContent.INTENT_TYPES:
+		_check(Danger.BADGE.has(t) or Danger.NO_BADGE.has(t), "intent %s has a badge decision" % t)
+	for t in Danger.BADGE:
+		_check(TestContent.INTENT_TYPES.has(t), "badge row %s is a real intent type" % t)
+	var legend := {}
+	for row in Shell.LEGEND:
+		legend[String(row[0])] = true
+	var icons: Array = []
+	for t in Danger.BADGE:
+		icons.append(String(Danger.BADGE[t]["icon"]))
+	for t in Danger.BLOCK_ICON:
+		icons.append(String(Danger.BLOCK_ICON[t]))
+	for ic in icons + ["ic_choke", "ic_dim"]:
+		_check(Art.ART.has(ic), "badge icon %s has art" % ic)
+		_check(legend.has(ic), "badge icon %s has a LEGEND row" % ic)
+	for sname in Content.STATUSES:
+		if not Content.STATUSES[sname].get("blocks", []).is_empty():
+			_check(Danger.BLOCK_ICON.has(sname), "blocking status %s has a glyph" % sname)
+	var hp_sh = Shell.new()
+	_check(hp_sh._help_pages() == 4, "the legend is four pages with the badge rows")
+	hp_sh.free()
+
+	# live state: a strike and a smokestack
+	var fx := _lethal_fixture(2, 3)
+	var g = fx[0]
+	var pp: Vector2i = g.player["pos"]
+	var st: Vector2i = pp + fx[1] * 3 if g._open(pp + fx[1] * 3) else pp + fx[1] * 2
+	var stack: Dictionary = g._spawn("smokestack", st)
+	stack["intent"] = {"type": "stoke", "in": 2}
+	var bs: Array = Danger.badges(g.snapshot(), g.telegraph())
+	_check(bs.size() == 2 and bs[0]["icon"] == "in_attack" and bs[0]["text"] == "2" and bs[0]["live"]
+		and bs[1]["icon"] == "in_stoke" and bs[1]["text"] == "2", "badges: strike 2 (live), stoke in 2 (%s)" % str(bs))
+	g.enemies[0]["status"] = {"stun": 1}
+	var tele: Dictionary = g.telegraph()
+	bs = Danger.badges(g.snapshot(), tele)
+	_check(bs[0]["icon"] == "in_stunned" and bs[0]["text"] == "" and not bs[0]["live"], "a stunned attacker wears the stun glyph")
+	_check(Danger.tile_numbers(tele, pp).is_empty(), "...and paints no number")
+	var sh = _danger_shell(g)
+	_check(sh._threat_tiles(g.snapshot()).is_empty(), "...and no red tile: the shell reads the sim's telegraph")
+	sh.free()
+	g.enemies[0]["status"] = {}
+	_check(Danger.tile_numbers(g.telegraph(), pp).is_empty() and g.telegraph()["tiles"].get(pp, 0) == 2,
+		"the tender's own tile carries no number (the INCOMING line speaks for it)")
+
+	# a grapple: tether to the landing tile, ringless when anchored
+	g = Game.new(4242)
+	g.enemies.clear()
+	g.terrain.clear()
+	pp = g.player["pos"]
+	var dl := Vector2i.ZERO
+	for dd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if g._open(pp + dd) and g._open(pp + dd * 2) and g._open(pp + dd * 3):
+			dl = dd
+			break
+	_check(dl != Vector2i.ZERO, "fixture: three open tiles in a line")
+	var crane: Dictionary = g._spawn("magnet_crane", pp + dl * 3)
+	crane["intent"] = {"type": "drag"}
+	var th: Array = Danger.tethers(g.telegraph(), pp)
+	_check(th.size() == 1 and th[0]["land"] == pp + dl and th[0]["live"] and th[0]["to"] == pp,
+		"tether: crane to tender, landing one tile closer (%s)" % str(th))
+	g.player["anchor_turns"] = 1
+	th = Danger.tethers(g.telegraph(), pp)
+	bs = Danger.badges(g.snapshot(), g.telegraph())
+	_check(th[0]["land"] == null and not th[0]["live"] and bs[0]["icon"] == "in_anchored",
+		"anchored: the tether goes dead and ringless, and the badge wears the anchor (%s)" % str(th))
+	g.player["anchor_turns"] = 0
+	crane["intent"] = {"type": "drag", "times": 2}
+	bs = Danger.badges(g.snapshot(), g.telegraph())
+	_check(bs[0]["icon"] == "in_drag" and bs[0]["text"] == "2", "a double drag shows its 2")
+	crane["intent"] = {"type": "drag"}
+	_check(Danger.badges(g.snapshot(), g.telegraph())[0]["text"] == "", "a single drag shows no number")
+
+	# vents count down on the map from 5; urgent at 1; a sealed vent says so
+	g = Game.new(4242)
+	g.enemies.clear()
+	g.terrain.clear()
+	g.smog = 0
+	var sky: Dictionary = g.smog_forecast()
+	g.smog = int(sky["spawn_in"]) - 3
+	sky = g.smog_forecast()
+	var vm: Array = Danger.vent_marks(g.snapshot(), sky)
+	_check(int(sky["spawn_in"]) == 3 and vm.size() == g.map["vents"].size() and vm[0]["text"] == "3"
+		and not vm[0]["urgent"], "vent marks at 3: the number, not urgent (%s)" % str(vm))
+	g.smog += 2
+	g.terrain[g.map["vents"][0]] = {"kind": "growth"}
+	sky = g.smog_forecast()
+	vm = Danger.vent_marks(g.snapshot(), sky)
+	_check(vm[0]["sealed"] and not vm[0]["urgent"] and (vm.size() == 1 or vm[1]["urgent"]),
+		"vent marks at 1: open vents urgent, the sealed one flagged (%s)" % str(vm))
+	g.smog = 0
+	_check(Danger.vent_marks(g.snapshot(), g.smog_forecast()).is_empty(), "no vent marks beyond 5 turns")
+
+	# a tar shot outlines the slot it will gum; smoke beside you screens it
+	g = Game.new(4242)
+	g.enemies.clear()
+	g.terrain.clear()
+	pp = g.player["pos"]
+	var sp := Vector2i(-1, -1)
+	for y in int(g.map["h"]):
+		for x in int(g.map["w"]):
+			var p := Vector2i(x, y)
+			if sp == Vector2i(-1, -1) and g._open(p) and absi(p.x - pp.x) + absi(p.y - pp.y) == 2:
+				sp = p
+	var spit: Dictionary = g._spawn("tar_spitter", sp)
+	spit["intent"] = {"type": "gum", "slot": 1}
+	_check(Danger.gum_slots(g.snapshot(), g.telegraph()) == [1], "a live tar shot outlines slot 1")
+	for dd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if g._open(pp + dd):
+			g.terrain[pp + dd] = {"kind": "smoke", "ttl": 3}
+			break
+	_check(Danger.gum_slots(g.snapshot(), g.telegraph()).is_empty()
+		and Danger.badges(g.snapshot(), g.telegraph())[0]["icon"] == "in_screened",
+		"smoke beside you screens it: no outline, the smoke glyph")
+	print("intent badges: %d intents, %d badge rows, %d block glyphs" % [TestContent.INTENT_TYPES.size(),
+		Danger.BADGE.size(), Danger.BLOCK_ICON.size()])
