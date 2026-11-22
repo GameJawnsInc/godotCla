@@ -106,7 +106,11 @@ architecture below is designed to bend rather than block.
     one-row-per-tag rule, and the planned rider rows), and the fun-pass
     `RUN_SCORE` / `RUN_SCORE_TIER_QUARTERS` / `RUN_SCORE_VERSION` /
     `RUN_STAT_KEYS` shapes with a bad-table self-test, and `Content.PACKAGE_INFO`
-    (keys equal `PACKAGES`, `{name, desc}` rows) with its own bad-table self-test
+    (keys equal `PACKAGES`, `{name, desc}` rows) with its own bad-table self-test,
+    and `Content.FEATS` (`_lint_feats`: req keys in `FEAT_REQ_KEYS`, stat keys
+    in `RUN_STAT_KEYS`, total keys in `FEAT_TOTAL_KEYS`, `boss` a boss-trait
+    row, `max_turns` / `max_grafts` / `stat_max` only beside `won: true`; 16
+    bad fixtures, each rejected; prints "feats: N rows (R run-scope, C career)")
   - `godot --headless --path . --script tests/test_grammar.gd` — effect grammar
     behaviour: rider evaluation, returned outcomes, the data tables driven
     through `Game._apply_effect` on hand-built states, the D4 draft slots
@@ -154,7 +158,13 @@ architecture below is designed to bend rather than block.
     then the career layer: `progress` per predicate, `next_goals` (grouping,
     the tier fold, ranking, the report's `delta`), the `unseen` store and its
     helpers, the daily streak / tries / ranked first finish, and the new stores
-    through the load filters and the wrong-type fixture
+    through the load filters and the wrong-type fixture; then feats: every
+    `Content.FEATS` row met at its bar and missed by one per req key, on
+    fixtures built from the row's OWN req (a new row is covered with no edit;
+    a req key with no fixture arm fails), earned once, dated off the summary,
+    a legacy win earning nothing, dailies untouched; the career folds,
+    `feat_progress`, `next_feats` and the NEXT fallback, `goal_rows`; the
+    career loop must earn >= `CAREER_MIN_FEATS` (5) feats by run 40
   - `godot --headless --path . --script tests/test_shell.gd` — shell smoke test
     (the shell reads the sim, so a sim change can break it), plus the two
     player-facing gates: `_check_card_text` holds every shipped description
@@ -1191,18 +1201,19 @@ architecture below is designed to bend rather than block.
   first id). Static display helpers: `unlock_kind`, `unlock_name` (never a raw
   id: `double_oil` -> "Slick Combine", `tier:2` -> "difficulty 2"),
   `join_names`, `gate_of(lid, unlocked_packages)`. NEW badges: `unseen` (ids
-  in `last_report.unlocks` order, no duplicates; `record_daily` never adds),
+  in `last_report.unlocks` order, then `"feat:<id>"` for each new feat, no
+  duplicates; `record_daily` never adds),
   `mark_seen(id) -> bool`, `unseen_of(kind)` (a loadout only once PLAYABLE, so
   a gated Skyrunner badges nothing); the menu's cyclers call
   `main._seen(id)`, which saves only on a change; `load_from` keeps an unseen
   id only while the career owns it (`tier:N` only up to `unlocked_tier`;
-  `feat:` entries wait for the feats table). The menu (`_menu_rows` ->
+  `feat:x` only while `x` is earned - part 2). The menu (`_menu_rows` ->
   `[label, tag, gold, badge, group]`, drawn from `_menu_layout(vw, vh)` at
   0.80vw; `tests/test_shell.gd` `_check_menu_layout` holds every label >= 1.5%
   vh at every `CARD_VIEWPORTS` shape) puts NEW on the DIFFICULTY / LOADOUT /
   PACKAGE / MUTATOR rows and WON / WON D<n> on the selected loadout, shares
   one line between TUTORIAL / SETTINGS / QUIT, and its footer is `runs ·
-  wins · best floor`. The daily is its own entry: `run_kind` ("career" |
+  wins · best floor` (part 2 adds `feats n/m` and CAREER beside DAILY). The daily is its own entry: `run_kind` ("career" |
   "daily") replaced the global seed mode, every run starts through
   `main._start_run(kind, keep_seed := -1)` (PLAY career, the DAILY sheet's
   PLAY daily, R = same kind and seed, N = career on seed + 1; in the
@@ -1252,6 +1263,67 @@ architecture below is designed to bend rather than block.
   second tap (`_daily_armed`, cleared when the sheet opens). A profile from
   before `daily_first` has its `daily_best` stand in as the ranked finish
   (backfilled in `load_from` and in `record_daily`).
+- Career layer (fun pass, part 2 of 3: FEATS, totals, records, the CAREER
+  sheet). Cosmetic all through: a feat or a record buys nothing and the sim
+  never reads either. `Content.FEATS` (21 rows `{name, desc, req}`, table
+  order = display order) keeps to the closed `Content.FEAT_REQ_KEYS` (`won`,
+  `min_tier`, `max_turns`, `max_grafts`, `stat_min`, `stat_max`, `boss`,
+  `total_min`, `all_bosses`, `all_loadouts_won`, `all_bases_cast`), each key
+  ONE arm in `Profile._feat_met` - a new key needs that arm, the lint's
+  vocabulary and a `tests/test_meta.gd` `_feat_fixture` arm in the same
+  change. `stat_*` keys are `Content.RUN_STAT_KEYS` (the interface pin with
+  `meta/run_stats.gd`: meta reads only flat int keys a summary is pinned to
+  carry) and `total_min` keys `Content.FEAT_TOTAL_KEYS`. A run key the summary
+  does not carry FAILS (`max_turns` needs turns >= 1, `max_grafts` a real
+  `grafts` array), so a legacy `{won, floor, tier}` win earns nothing by
+  saying nothing. The career sets are derived, never literals:
+  `Profile.boss_set()` (the last floor's `bosses`), `base_set()`
+  (`DRAFT_POOL` + `STARTING_KIT`, 15) and `LOADOUTS`. `record_run` order:
+  milestones (`_claim`), `_fold_career` (`totals` per FEAT_TOTAL_KEYS, only
+  keys that moved; `bosses_beaten`; `cast_ever` from RAW `uses_by_base`,
+  folded to base ids), `_fold_records`, `_claim_feats(summary, date)` (each
+  feat once, `_feat_rec(date, run)`, the date read off the summary the shell
+  stamped - the profile reads no clock), then the unseen appends (unlocks,
+  then `"feat:<id>"`), then `last_report` (`feats` = the new ids in table
+  order; `next` = `next_goals(1)`, or `next_feats(1)` once every goal and
+  difficulty is owned, delta and all - except a run-scope `stat_min` feat,
+  whose delta is always 0 because its have is the best run, not a running
+  count). `record_daily` touches none of it.
+  `feat_progress(fid)` -> `{have, need, frac, text}` (a lone `stat_min` reads
+  the career RECORD for that key, `total_min` the total, the `all_*` sets
+  their counts, anything else 0/1; an unearned feat is capped at need - 1, so
+  a record that predates feats never reads N/N); `next_feats(n)` is unearned feats with a
+  need above 1, frac descending then table order, in `next_goals`' exact
+  shape (ids `["feat:<id>"]`); `goal_rows()` is every milestone, unowned
+  ranked by the `next_goals` rank then owned in table order; `unlock_name`
+  names a feat off FEATS. `load_from` keeps feats of known ids with dict
+  entries, positive int totals of known keys, boss-trait kinds once and live
+  base ids once (a variant or pre-D6 `+` id folds to its base), and an unseen
+  `"feat:x"` only while `x` is earned. The shell: the menu's DAILY line now
+  holds CAREER too (NEW while a feat is unseen), the footer adds `feats n/m`,
+  and `mode = "career"` is the CAREER sheet - `_career_cards(tab, page)` ->
+  `{cards: [[icon, name, desc, tag, badge, frac]], pages, page, tab}` (data
+  first, `frac` -1 = no bar) laid out by `_career_layout(vw, vh, info)`:
+  `_career_head()`, three tabs (GOALS: the difficulty ladder card, then
+  `goal_rows` with counts / hints / DONE and "Skyrunner (needs Aeolian)" for
+  an owned gated loadout; FEATS: NEW / EARNED with its run, or progress;
+  RECORDS: `RECORD_SHOW`, one card per loadout - LOCKED / WON D<n> / WON /
+  FLOOR n - and the daily streak), `CARDS_PER_PAGE` (5, a shell const) cards
+  at 0.105vh with each progress bar in the GAP under its card, and one
+  `[<] [BACK · p/n] [>]` row through `_sheet_button_y` (the page count rides
+  in BACK: there is no room for a line above the row). Taps `career`,
+  `career_tab:<t>` (page 0; FEATS clears every `"feat:"` unseen entry and
+  saves, remembering them in `_career_fresh` so the cards still read NEW this
+  visit), `career_page:±1` (clamped); LEFT / RIGHT page it, Back / ESC close
+  it through `_back`, every other key is ignored. The over sheet's unlock rows
+  are `_run_unlocks` (still exactly `last_report.unlocks`) plus
+  `"feat:"+id` for each new feat ("FEAT · <Name>"). Gates in
+  `tests/test_shell.gd`: `_check_card_text` sweeps every career card (fresh,
+  mid-way and maxed careers, every tab and page) with the meta name floor,
+  `_check_career_sheet` the data and taps, `_check_career_layout` the
+  geometry (sizes >= `CARD_MIN_VH`, cards under the tabs, last bar above the
+  row, row bottom <= vh*0.955, no overlap) at every `CARD_VIEWPORTS` shape;
+  `tests/test_draw.gd` draws every tab, a middle and a last page.
 - Balance targets and the measurement discipline live in `docs/BALANCE.md`;
   `tests/daily_run.gd` generates the date-seeded daily challenge through
   `Profile.daily_config`.

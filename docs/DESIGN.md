@@ -531,8 +531,8 @@ tests a different build muscle so no single draft strategy trivializes it.
   Sporewright): a generalist bot drafts package abilities and then never casts
   them, so a flat generalist table means "no dilution", not "no power".
 - The career profile keeps a **50-run history of whole runs** — the kit and
-  grafts held at the end, bloom, turns, death cause, seed, tier, mutators and
-  packages — plus a cumulative count of *effective* casts per ability (a cast
+  grafts held at the end, the loadout, bloom, turns, death cause, seed, tier,
+  mutators, packages and score — plus a cumulative count of *effective* casts per ability (a cast
   that actually did something, so a milestone cannot be farmed by casting into
   empty air). Milestones read that history, so unlocks can ask for a **build**
   and not just a depth: win holding a named ability, win holding none of a
@@ -551,6 +551,16 @@ tests a different build muscle so no single draft strategy trivializes it.
   moments, its score against your best from before the run, what it unlocked
   and the next goal - and it waits a beat before it lets you leave, so a
   death is a moment rather than a cut.
+- **Feats and records are cosmetic too.** Twenty-one feats (`Content.FEATS`)
+  name feats of play - a double kill, three floors left unhurt, a win at 1 HP,
+  each boss shut down, every loadout won, all fifteen base abilities cast -
+  and the career keeps its bests per category (most machines felled, biggest
+  hit, fastest win) and per loadout. None of it unlocks anything or changes a
+  run: the goal ladder (milestones) is what opens content, and feats are what
+  is left to chase once it is all open, which is why the game-over sheet's
+  NEXT line falls back to the nearest feat when no goal remains. Feats are
+  earned by career runs only; a daily never earns one. The CAREER sheet reads
+  all of it back: goals with progress, feats, records.
 
 ### Run-start choices
 

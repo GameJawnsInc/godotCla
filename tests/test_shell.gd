@@ -898,6 +898,8 @@ func _init() -> void:
 	_check_tutorial_keys()
 	_check_menu_layout()
 	_check_daily_layout()
+	_check_career_sheet()
+	_check_career_layout()
 	_check_run_end()
 	_check_over_facts()
 	_check_over_text()
@@ -1123,6 +1125,19 @@ func _check_card_text() -> void:
 	for sd in range(1, 31):
 		for c in sh._daily_sheet(sd)["cards"]:
 			meta.append(c)
+	# ...and every CAREER sheet card, every tab and page, for a fresh career,
+	# one mid-way (hints, partial progress, a gated loadout) and a maxed one
+	# (every feat earned, the longest numbers a record can show)
+	var n_daily := meta.size()
+	var keep_profile = sh.profile
+	for cp in _career_profiles():
+		sh.profile = cp
+		for tab in Shell.CAREER_TABS:
+			var pages: int = int(sh._career_cards(tab, 0)["pages"])
+			for pg in pages:
+				for c in sh._career_cards(tab, pg)["cards"]:
+					meta.append(c)
+	sh.profile = keep_profile
 	var m_small := 0
 	var m_lines := 0
 	var m_name := 0
@@ -1154,8 +1169,8 @@ func _check_card_text() -> void:
 	_check(m_lines == 0, "%d meta card description(s) need more than %d lines" % [m_lines, CARD_MAX_LINES])
 	_check(m_name == 0, "%d meta card name(s) below %.2f%% vh (worst %s)" % [m_name, CARD_MIN_VH * 100.0, m_worst_at])
 	_check(m_col == 0, "%d meta card name(s) run into their badge" % m_col)
-	print("meta card text: %d daily cards x %d viewports, worst %.4f%% of vh (%s)" % [
-		meta.size(), CARD_VIEWPORTS.size(), m_worst * 100.0, m_worst_at])
+	print("meta card text: %d daily + %d career cards x %d viewports, worst %.4f%% of vh (%s)" % [
+		n_daily, meta.size() - n_daily, CARD_VIEWPORTS.size(), m_worst * 100.0, m_worst_at])
 	sh.free()
 
 
@@ -1267,6 +1282,17 @@ func _check_back() -> void:
 	bk._tap("daily")
 	bk._key(KEY_ESCAPE)
 	_check(bk.mode == "normal" and bk.screen == "menu", "ESC closes the daily sheet too")
+	bk._tap("career")
+	_check(bk.mode == "career", "the CAREER sheet opens")
+	bk._tap("career_tab:records")
+	bk._key(KEY_ENTER)
+	bk._key(KEY_X)
+	_check(bk.mode == "career" and bk.screen == "menu", "ENTER and a stray key leave the CAREER sheet up, starting nothing")
+	_check(bk._back(true) == "career" and bk.mode == "normal" and bk.screen == "menu",
+		"Back closes the CAREER sheet instead of quitting")
+	bk._tap("career")
+	bk._key(KEY_ESCAPE)
+	_check(bk.mode == "normal" and bk.screen == "menu", "ESC closes the CAREER sheet too")
 	_check(bk._back(false) == "root" and bk.screen == "menu", "ESC at the menu does not quit")
 	_check(bk._back(true) == "quit", "Back at the menu is the one press that quits")
 	# ESC is the same handler, so its gaps close with it: it used to page the
@@ -2823,7 +2849,10 @@ func _check_menu_layout() -> void:
 	ml.profile.unlocked_packages = Content.PACKAGES.keys()
 	ml.profile.unlocked_mutators = Content.MUTATORS.keys()
 	ml.profile.unlocked_loadouts = Content.LOADOUTS.keys().filter(func(l): return l != "tender")
-	ml.profile.unseen = ["tier:%d" % Content.TIERS.size(), "spinning_shrine", "hydraulics", "skyrunner"]
+	var nfid: String = Content.FEATS.keys()[0]
+	ml.profile.feats[nfid] = Profile._feat_rec("2026-01-01", 1)
+	ml.profile.unseen = ["tier:%d" % Content.TIERS.size(), "spinning_shrine", "hydraulics", "skyrunner",
+		"feat:" + nfid]
 	# the longest name each cycler can show
 	var longest := func(ids: Array, name_of: Callable) -> String:
 		var best := ""
@@ -2848,6 +2877,7 @@ func _check_menu_layout() -> void:
 		tags.append(String(row[1]))
 	_check(tags.has("resume") and tags.has("set:tier") and tags.has("daily"),
 		"the maxed menu shows RESUME, DIFFICULTY and DAILY (%s)" % str(tags))
+	_check(_badge_of(ml, "career") == "NEW", "an unseen feat badges CAREER NEW (%s)" % _badge_of(ml, "career"))
 	var small := 0
 	var outside := 0
 	var worst := 9.9
@@ -2878,7 +2908,7 @@ func _check_menu_layout() -> void:
 					small_badge += 1
 	_check(small == 0, "%d menu label(s) below 1.5%% of the screen height (worst %s)" % [small, worst_at])
 	_check(outside == 0, "%d menu row(s) leave the viewport or run into their badge" % outside)
-	_check(badges >= 4 * CARD_VIEWPORTS.size(), "the maxed menu carries its badges (%d)" % badges)
+	_check(badges >= 5 * CARD_VIEWPORTS.size(), "the maxed menu carries its badges (%d)" % badges)
 	_check(small_badge == 0, "%d menu badge(s) below %.2f%% of vh" % [small_badge, CARD_MIN_VH * 100.0])
 	print("menu layout: %d viewports, worst label %.4f%% of vh (%s)" % [CARD_VIEWPORTS.size(), worst * 100.0, worst_at])
 	ml.game = null
@@ -3354,3 +3384,237 @@ func _check_over_text() -> void:
 	print("over sheet: %d viewports, worst row %.3f%% of vh (%s), beat %.3f%% (%s)" % [
 		CARD_VIEWPORTS.size(), worst_frac * 100.0, worst_at, beat_worst * 100.0, beat_at])
 	sh.free()
+
+
+# --- the CAREER sheet (stage 7) ---------------------------------------------------
+
+## Three careers the CAREER sheet must read well for: fresh, mid-way (history
+## hints, partial casts, a loadout owned but gated on its package, some feats
+## earned and unseen, records) and maxed (everything owned and earned, the
+## longest numbers a record can show).
+func _career_profiles() -> Array:
+	var fresh = Profile.new()
+	var mid = Profile.new()
+	mid.runs = 14
+	mid.wins = 1
+	mid.best_floor = 7
+	mid.unlocked_tier = 1
+	mid.casts_by_base = {"grow_spike": 41}
+	for i in 14:
+		# thirteen lance-free losses holding a Tangle Bomb (hints for no_lance
+		# and upgrades_only) and one win that held the lance and Vine Whip
+		var kit: Array = ["solar_lance", "vine_whip", "mycelium_dash"] if i == 3 \
+			else ["vine_whip", "seed_bomb+tangle", "mycelium_dash"]
+		mid.history.append(mid._compact({"won": i == 3, "floor": 6 if i != 3 else 7, "tier": 0, "turns": 120,
+			"seed": i, "kit": kit, "grafts": [], "loadout": "tender"}))
+	mid._claim()
+	mid.unlocked_loadouts.append("skyrunner")  # owned, but Aeolian is not
+	mid.feats = {"green_thumb": Profile._feat_rec("2026-01-02", 4), "two_for_one": Profile._feat_rec("2026-01-03", 6)}
+	mid.unseen = ["feat:green_thumb"]
+	mid.totals = {"kills": 180, "rooms_bloomed": 44}
+	mid.bosses_beaten = ["overseer"]
+	mid.cast_ever = ["vine_whip", "seed_bomb", "solar_lance"]
+	mid.records["best"]["score"] = Profile._rec(2140, 9, "tender", 0)
+	mid.records["best"]["rooms_bloomed"] = Profile._rec(4, 9, "tender", 0)
+	mid.records["best"]["fastest_win"] = Profile._rec(131, 4, "tender", 0)
+	mid.records["loadouts"]["tender"] = Profile._loadout_rec(7, 2140, 0, 14, 1)
+	var mx = Profile.new()
+	mx.runs = 9999
+	mx.wins = 999
+	mx.best_floor = 7
+	mx.unlocked_tier = Content.TIERS.size()
+	for m in Content.MILESTONES:
+		mx._bucket(String(m["kind"])).append(String(m["id"]))
+	for fid in Content.FEATS:
+		mx.feats[fid] = Profile._feat_rec("2026-12-31", 9999)
+	mx.unseen = ["feat:overcharged", "feat:six_ways_home"]
+	for row in Profile.RECORD_SHOW:
+		mx.records["best"][row[0]] = Profile._rec(99999, 9999, "flarekeeper", Content.TIERS.size())
+	for lid in Content.LOADOUTS:
+		mx.records["loadouts"][lid] = Profile._loadout_rec(7, 99999, Content.TIERS.size(), 9999, 999)
+	return [fresh, mid, mx]
+
+
+func _check_career_sheet() -> void:
+	var cs = _bare_shell()
+	cs.screen = "menu"
+	cs.mode = "normal"
+	cs.profile = Profile.new()
+	DirAccess.remove_absolute(TEST_PROFILE)
+	# the menu row: CAREER shares DAILY's line
+	var groups := {}
+	for row in cs._menu_rows():
+		groups[String(row[1])] = String(row[4])
+	_check(groups.has("career") and groups["career"] == groups.get("daily", "?") and groups["career"] != "",
+		"the menu carries CAREER on DAILY's line (%s)" % str(groups))
+	cs._tap("career")
+	_check(cs.mode == "career" and cs.career_tab == "goals" and cs.career_page == 0,
+		"CAREER opens on GOALS, page 0 (%s %s %d)" % [cs.mode, cs.career_tab, cs.career_page])
+	var g0: Dictionary = cs._career_cards("goals", 0)
+	_check(g0["cards"].size() == Shell.CARDS_PER_PAGE and String(g0["cards"][0][1]) == "Difficulty ladder"
+		and String(g0["cards"][0][4]) == "0/%d" % Content.TIERS.size(),
+		"GOALS: five cards a page, the difficulty ladder first (%s)" % str(g0["cards"][0]))
+	_check(String(g0["cards"][0][2]) == "Shut down the Furnace to open difficulty 1",
+		"a fresh ladder says how to open difficulty 1 (%s)" % g0["cards"][0][2])
+	var n_ms: int = Content.MILESTONES.size()
+	_check(int(g0["pages"]) == ceili((n_ms + 1) / 5.0), "GOALS pages: ladder + %d milestones -> %d (%d)" % [
+		n_ms, ceili((n_ms + 1) / 5.0), int(g0["pages"])])
+	_check(String(g0["cards"][1][1]) == "Tidewarden" and String(g0["cards"][1][4]) == "0/3",
+		"the first goal is the closest milestone, named and counted (%s)" % str(g0["cards"][1]))
+	for pg in int(g0["pages"]):
+		for c in cs._career_cards("goals", pg)["cards"]:
+			if String(c[1]).contains("_"):
+				_check(false, "a raw id leaked onto a GOALS card: %s" % c[1])
+	# paging clamps at both ends, by tap and by key
+	cs._tap("career_page:-1")
+	_check(cs.career_page == 0, "paging back from page 0 stays on page 0")
+	for i in 9:
+		cs._tap("career_page:+1")
+	_check(cs.career_page == int(g0["pages"]) - 1, "paging forward stops on the last page (%d)" % cs.career_page)
+	cs._key(KEY_LEFT)
+	_check(cs.career_page == int(g0["pages"]) - 2, "LEFT pages back (%d)" % cs.career_page)
+	cs._key(KEY_RIGHT)
+	_check(cs.career_page == int(g0["pages"]) - 1, "RIGHT pages forward (%d)" % cs.career_page)
+	_check(int(cs._career_cards("goals", 99)["page"]) == int(g0["pages"]) - 1, "a stale page is clamped")
+	# tabs switch and reset the page; an unknown tab changes nothing
+	cs._tap("career_tab:records")
+	_check(cs.career_tab == "records" and cs.career_page == 0, "a tab switch resets the page")
+	cs._tap("career_tab:bogus")
+	_check(cs.career_tab == "records", "an unknown tab is ignored")
+	var r0: Dictionary = cs._career_cards("records", 0)
+	var n_rec: int = Profile.RECORD_SHOW.size() + Content.LOADOUTS.size() + 1
+	_check(int(r0["pages"]) == ceili(n_rec / 5.0) and String(r0["cards"][0][4]) == "-"
+		and String(r0["cards"][0][2]) == "no record yet", "RECORDS: %d cards, a fresh one reads no record yet" % n_rec)
+	# FEATS: NEW for an unseen earned feat, EARNED for a seen one, progress
+	# otherwise; opening the tab clears the badges and saves
+	cs.profile.feats = {"green_thumb": Profile._feat_rec("2026-01-02", 3), "barefoot": Profile._feat_rec("2026-01-01", 1)}
+	cs.profile.unseen = ["feat:green_thumb"]
+	cs.profile.records["best"]["best_multi_kill"] = Profile._rec(1, 2, "tender", 0)
+	_check(_badge_of(cs, "career") == "NEW", "an unseen feat badges the CAREER row NEW (%s)" % _badge_of(cs, "career"))
+	var tl: Array = cs._career_layout(1080, 2400, cs._career_cards("goals", 0))["tabs"]
+	_check(String(tl[1]["label"]) == "FEATS NEW", "...and the FEATS tab (%s)" % tl[1]["label"])
+	cs._tap("career_tab:feats")
+	var f0: Dictionary = cs._career_cards("feats", 0)
+	var by_name := {}
+	for pg in int(f0["pages"]):
+		for c in cs._career_cards("feats", pg)["cards"]:
+			by_name[String(c[1])] = c
+	_check(by_name.size() == Content.FEATS.size() and int(f0["pages"]) == ceili(Content.FEATS.size() / 5.0),
+		"FEATS: one card per feat (%d)" % by_name.size())
+	_check(String(by_name["Green Thumb"][4]) == "NEW" and String(by_name["Green Thumb"][2]).ends_with("run 3"),
+		"an earned feat opened fresh reads NEW and names its run (%s)" % str(by_name["Green Thumb"]))
+	_check(String(by_name["Barefoot"][4]) == "EARNED", "a seen earned feat reads EARNED")
+	_check(String(by_name["Two for One"][4]) == "1/2" and float(by_name["Two for One"][5]) == 0.5,
+		"an unearned feat shows its progress off the career record (%s)" % str(by_name["Two for One"]))
+	_check(String(by_name["Barefoot"][4]) == "EARNED" and String(by_name["Overcharged"][4]) == "",
+		"a binary unearned feat has no count")
+	_check(cs.profile.unseen_of("feat").is_empty() and FileAccess.file_exists(TEST_PROFILE),
+		"opening FEATS clears the feat badges and saves to profile_path")
+	_check(_badge_of(cs, "career") == "", "...so the CAREER row badge goes")
+	cs._tap("close")
+	cs._tap("career")
+	cs._tap("career_tab:feats")
+	var again: Array = cs._career_cards("feats", 0)["cards"]
+	_check(String(again[0][4]) == "EARNED", "the next visit reads EARNED (%s)" % again[0][4])
+	# a loadout owned but waiting on its package says so; records name their run
+	var mid = _career_profiles()[1]
+	cs.profile = mid
+	var gated := ""
+	for pg in int(cs._career_cards("goals", 0)["pages"]):
+		for c in cs._career_cards("goals", pg)["cards"]:
+			if String(c[1]).begins_with("Skyrunner"):
+				gated = "%s | %s | %s" % [c[1], c[4], c[2]]
+	_check(gated.begins_with("Skyrunner (needs Aeolian) | DONE") and gated.contains("needs Aeolian: Win at difficulty 1"),
+		"an owned, gated loadout names its package (%s)" % gated)
+	var hint := false
+	for pg in int(cs._career_cards("goals", 0)["pages"]):
+		for c in cs._career_cards("goals", pg)["cards"]:
+			if String(c[2]).contains("without Solar Lance: best floor"):
+				hint = String(c[4]) == ""
+	_check(hint, "a binary goal carries its history hint and no count")
+	var rec: Dictionary = {}
+	for pg in int(cs._career_cards("records", 0)["pages"]):
+		for c in cs._career_cards("records", pg)["cards"]:
+			rec[String(c[1])] = c
+	_check(String(rec["Best score"][4]) == "2140" and String(rec["Best score"][2]) == "run 9  ·  Tender  ·  base run",
+		"a record names its value, run, loadout and difficulty (%s)" % str(rec["Best score"]))
+	_check(String(rec["Fastest win"][2]).begins_with("turns  ·  run 4"), "the fastest win is in turns")
+	_check(String(rec["Tender"][4]) == "WON" and String(rec["Tender"][2]).contains("1 win in 14 runs"),
+		"a loadout card reads WON and its wins in runs (%s)" % str(rec["Tender"]))
+	cs.profile = Profile.new()
+	var fresh_rec: Dictionary = {}
+	for pg in int(cs._career_cards("records", 0)["pages"]):
+		for c in cs._career_cards("records", pg)["cards"]:
+			fresh_rec[String(c[1])] = c
+	_check(String(fresh_rec["Flarekeeper"][4]) == "LOCKED" and String(fresh_rec["Flarekeeper"][2]) == "Reach the Cracking Yard",
+		"a locked loadout reads LOCKED with its milestone (%s)" % str(fresh_rec["Flarekeeper"]))
+	_check(String(fresh_rec["Tender"][4]) == "" and String(fresh_rec["Tender"][2]) == "not played yet",
+		"a loadout never played has no badge (%s)" % str(fresh_rec["Tender"]))
+	_check(rec.has("Daily streak"), "the RECORDS tab ends on the daily streak")
+	cs.free()
+
+
+## The CAREER sheet's geometry at every phone shape, for every tab and page of
+## every test career: head, tabs, card names and descriptions, and buttons at
+## >= CARD_MIN_VH; cards below the tab row; each progress bar in the gap under
+## its card; the last bar above the button row; the row through
+## _sheet_button_y (bottom <= vh * 0.955) with no two buttons overlapping.
+func _check_career_layout() -> void:
+	var cl = _bare_shell()
+	cl.screen = "menu"
+	var bad := 0
+	var first_bad := ""
+	var n := 0
+	for cp in _career_profiles():
+		cl.profile = cp
+		for tab in Shell.CAREER_TABS:
+			for pg in int(cl._career_cards(tab, 0)["pages"]):
+				var info: Dictionary = cl._career_cards(tab, pg)
+				for vp in CARD_VIEWPORTS:
+					var vw: float = vp.x
+					var vh: float = vp.y
+					var L: Dictionary = cl._career_layout(vw, vh, info)
+					n += 1
+					var why := ""
+					if float(L["head"]["size"]) / vh < CARD_MIN_VH:
+						why = "head %dpx" % int(L["head"]["size"])
+					var tab_end := 0.0
+					for t in L["tabs"]:
+						tab_end = maxf(tab_end, t["rect"].end.y)
+						if float(t["size"]) / vh < CARD_MIN_VH:
+							why = "tab %s %dpx" % [t["label"], int(t["size"])]
+					var last_end := 0.0
+					for i in L["cards"].size():
+						var r: Rect2 = L["cards"][i]["rect"]
+						if r.position.y < tab_end:
+							why = "card under the tabs"
+						last_end = maxf(last_end, r.end.y)
+					for b in L["bars"]:
+						last_end = maxf(last_end, b["track"].end.y)
+					var btop := 99999.0
+					for i in L["buttons"].size():
+						var br: Rect2 = L["buttons"][i]["rect"]
+						btop = minf(btop, br.position.y)
+						if br.end.y > vh * 0.955 + 0.01:
+							why = "button past vh*0.955"
+						if float(L["buttons"][i]["size"]) / vh < CARD_MIN_VH:
+							why = "button %s %dpx" % [L["buttons"][i]["label"], int(L["buttons"][i]["size"])]
+						for j in range(i + 1, L["buttons"].size()):
+							if br.intersects(L["buttons"][j]["rect"]):
+								why = "buttons overlap"
+					if last_end >= btop:
+						why = "the last card or bar (%.1f) reaches the button row (%.1f)" % [last_end, btop]
+					if why != "":
+						bad += 1
+						if first_bad == "":
+							first_bad = "%s p%d at %dx%d: %s" % [tab, pg, int(vw), int(vh), why]
+	_check(bad == 0, "%d CAREER layout(s) broken (first: %s)" % [bad, first_bad])
+	# the page count rides in BACK, never a line of its own
+	cl.profile = Profile.new()
+	var L2: Dictionary = cl._career_layout(1080, 2400, cl._career_cards("goals", 1))
+	var labels: Array = []
+	for b in L2["buttons"]:
+		labels.append(String(b["label"]))
+	_check(labels == ["<", "BACK  ·  2/4", ">"], "page 2 of 4: [<] [BACK  ·  2/4] [>] (%s)" % str(labels))
+	print("career sheet layout: %d tab-page x viewport layouts checked" % n)
+	cl.free()

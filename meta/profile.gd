@@ -62,9 +62,10 @@ const DAILY_LOOKBACK := 400
 ## next_goals() breaks frac ties with it (a floor to reach before a win).
 const GOAL_KEY_ORDER := ["best_floor", "wins", "tier_wins", "casts", "won_with",
 	"wins_without", "grafts_owned_at_win"]
-## Ids announced but not yet looked at - milestone ids and "tier:N" ("feat:x"
-## arrives with the feats) - newest last, no duplicates. Drives the menu's NEW
-## badges; cycling onto the thing (mark_seen) clears it.
+## Ids announced but not yet looked at - milestone ids, "tier:N" and
+## "feat:<id>" - newest last, no duplicates. Drives the menu's NEW badges;
+## cycling onto the thing (mark_seen) clears it, and opening the CAREER
+## sheet's FEATS tab clears every "feat:" entry.
 var unseen: Array = []
 ## str(daily seed) -> STARTED attempts (note_daily_try, at PLAY).
 var daily_tries: Dictionary = {}
@@ -90,21 +91,44 @@ const RECORD_SHOW := [["score", "Best score"], ["kills", "Most machines felled"]
 var records: Dictionary = {"best": {}, "loadouts": {}, "score_v": 0}
 ## What the last record_run did, for the game-over sheet. NOT saved:
 ## {run, unlocks ("tier:N" first when a tier opened, then milestone ids),
-##  feats (none yet), records ([{key, v, was}] for RECORD_SHOW keys beaten
-##  where an earlier record existed - run 1 never spams NEW RECORD), next}
+##  feats (ids newly earned, Content.FEATS order), records ([{key, v, was}]
+##  for RECORD_SHOW keys beaten where an earlier record existed - run 1 never
+##  spams NEW RECORD), next (next_goals(1), or next_feats(1) once every goal
+##  is owned, each with "delta" - always 0 on a run-scope stat_min feat,
+##  whose have is the best run rather than a running count)}
 var last_report: Dictionary = {}
+
+## Cosmetic feats (fun pass, Content.FEATS; a feat buys nothing). Folded by
+## CAREER runs only - record_daily touches none of these:
+## feat id -> _feat_rec(date, run): the UTC date the shell stamped on the
+## summary (the profile reads no clock) and the run that earned it.
+var feats: Dictionary = {}
+## Content.FEAT_TOTAL_KEYS -> that summary key summed over career runs (only
+## keys that ever moved are stored).
+var totals: Dictionary = {}
+## Boss kinds (ENEMIES rows with the "boss" trait) shut down in career runs,
+## first kill first.
+var bosses_beaten: Array = []
+## Base ability ids with at least one RAW cast (uses_by_base) in a career run -
+## raw, not effective: a self-only ability (thorn_shield, bramble_coat) never
+## counts as effective, and "cast it" is what Field Botanist asks.
+var cast_ever: Array = []
 
 
 ## Record a finished run and return newly unlocked milestone ids. `summary` is
 ## a `Game.run_summary()` dict - in the shell merged with RunStats.summary()
-## and stamped with `score` / `score_v` - and the legacy {won, floor, tier}
-## shape still works (history then records an empty kit and no casts for that
-## run, and no record moves). Also folds the run into `records` and leaves
+## and stamped with `score` / `score_v` / `date` - and the legacy {won, floor,
+## tier} shape still works (history then records an empty kit and no casts for
+## that run, and no record, total or feat moves). After the milestones it
+## folds the career feat stores (_fold_career), the records (_fold_records),
+## earns feats (_claim_feats, dated off the summary - the profile reads no
+## clock), files the unlocks and new feats as unseen, and leaves
 ## `last_report` for the game-over sheet.
 func record_run(summary: Dictionary) -> Array:
 	var entry := _compact(summary)
 	var prev_tier := unlocked_tier
 	var goals_before := next_goals(1 << 20)
+	var feats_before := next_feats(1 << 20)
 	runs += 1
 	best_floor = maxi(best_floor, int(entry["floor"]))
 	if entry["won"]:
@@ -122,17 +146,32 @@ func record_run(summary: Dictionary) -> Array:
 	history.append(entry)
 	if history.size() > HISTORY_MAX:
 		history = history.slice(history.size() - HISTORY_MAX)
-	var beaten := _fold_records(summary, entry)
 	var news := _claim()
+	_fold_career(summary)
+	var beaten := _fold_records(summary, entry)
+	var new_feats := _claim_feats(summary, _as_str(summary.get("date")))
 	var unlocks: Array = []
 	if unlocked_tier > prev_tier:
 		unlocks.append("tier:%d" % unlocked_tier)
 	unlocks.append_array(news)
-	for id in unlocks:
+	var announce: Array = unlocks.duplicate()
+	for fid in new_feats:
+		announce.append("feat:" + String(fid))
+	for id in announce:
 		if not unseen.has(id):
 			unseen.append(id)
-	last_report = {"run": runs, "unlocks": unlocks, "feats": [], "records": beaten,
-		"next": _with_delta(next_goals(1), goals_before)}
+	# the next goal; once every milestone and difficulty is owned, the next
+	# feat with a number to chase stands in (same shape, delta and all)
+	var nxt := _with_delta(next_goals(1), goals_before)
+	if nxt.is_empty():
+		nxt = _with_delta(next_feats(1), feats_before)
+		# a run-scope (stat_min) feat's have is the career's BEST run, so a
+		# rise in it is not "this run's contribution": no delta there
+		for g in nxt:
+			if String(g["key"]) == "stat_min":
+				g["delta"] = 0
+	last_report = {"run": runs, "unlocks": unlocks, "feats": new_feats, "records": beaten,
+		"next": nxt}
 	return news
 
 
@@ -243,6 +282,201 @@ func bests_snapshot(loadout: String) -> Dictionary:
 		"best_score_loadout": int(lr.get("best_score", 0)),
 		"loadout": loadout,
 	}
+
+
+# --- feats (fun pass, cosmetic) ---------------------------------------------------
+
+## The sets the career feats read, derived from content - never literals, so a
+## fourth boss or a sixteenth base joins the feat with no edit here.
+## The final floor's bosses (Content.FLOORS' last row).
+static func boss_set() -> Array:
+	return Content.FLOORS[Content.FLOORS.size() - 1].get("bosses", []).duplicate()
+
+
+## The base abilities a career can cast: DRAFT_POOL plus STARTING_KIT (15).
+static func base_set() -> Array:
+	var out: Array = Content.DRAFT_POOL.duplicate()
+	for aid in Content.STARTING_KIT:
+		if not out.has(aid):
+			out.append(aid)
+	return out
+
+
+## Is `kind` an ENEMIES row with the "boss" trait?
+static func _is_boss(kind: String) -> bool:
+	return Content.ENEMIES.get(kind, {}).get("traits", []).has("boss")
+
+
+## One earned feat, sorted keys (record path and load_from share it).
+static func _feat_rec(date: String, run: int) -> Dictionary:
+	return {"date": date, "run": run}
+
+
+## Fold one career run into the feat stores: the FEAT_TOTAL_KEYS sums, the
+## bosses it shut down and the bases it cast at all. A legacy summary carries
+## none of these keys and folds nothing.
+func _fold_career(summary: Dictionary) -> void:
+	for k in Content.FEAT_TOTAL_KEYS:
+		var v := _as_int(summary.get(k), 0)
+		if v > 0:
+			totals[k] = int(totals.get(k, 0)) + v
+	var bosses = summary.get("bosses_killed", [])
+	if bosses is Array:
+		for b in bosses:
+			var kind := _as_str(b)
+			if _is_boss(kind) and not bosses_beaten.has(kind):
+				bosses_beaten.append(kind)
+	var uses = summary.get("uses_by_base", {})
+	if uses is Dictionary:
+		for aid in uses:
+			var base := Content.base_id(_as_str(aid))
+			if Content.ABILITIES.has(base) and _as_int(uses[aid], 0) > 0 and not cast_ever.has(base):
+				cast_ever.append(base)
+
+
+## Earn every feat this run (and the career it just joined) now meets; each is
+## earned once, ever. Returns the new ids in Content.FEATS order.
+func _claim_feats(summary: Dictionary, date: String) -> Array:
+	var out: Array = []
+	for fid in Content.FEATS:
+		if feats.has(fid):
+			continue
+		if _feat_met(Content.FEATS[fid]["req"], summary):
+			feats[fid] = _feat_rec(date, runs)
+			out.append(fid)
+	return out
+
+
+## Every key of `req` must hold. One arm per Content.FEAT_REQ_KEYS entry; an
+## unknown key never holds (tests/test_content.gd rejects one first). A run
+## key the summary does not carry fails rather than defaulting into a pass, so
+## a legacy {won, floor, tier} summary earns no "in 100 turns" or "holding no
+## grafts" feat by saying nothing.
+func _feat_met(req: Dictionary, summary: Dictionary) -> bool:
+	for k in req:
+		var v = req[k]
+		match String(k):
+			"won":
+				if _as_bool(summary.get("won"), false) != bool(v):
+					return false
+			"min_tier":
+				if _as_int(summary.get("tier"), 0) < int(v):
+					return false
+			"max_turns":
+				var t := _as_int(summary.get("turns"), 0)
+				if t < 1 or t > int(v):
+					return false
+			"max_grafts":
+				var g = summary.get("grafts")
+				if not (g is Array) or g.size() > int(v):
+					return false
+			"stat_min":
+				for sk in v:
+					if _as_int(summary.get(sk), 0) < int(v[sk]):
+						return false
+			"stat_max":
+				for sk in v:
+					if _as_int(summary.get(sk), 1 << 30) > int(v[sk]):
+						return false
+			"boss":
+				var bk = summary.get("bosses_killed", [])
+				if not (bk is Array) or not bk.has(String(v)):
+					return false
+			"total_min":
+				for tk in v:
+					if int(totals.get(tk, 0)) < int(v[tk]):
+						return false
+			"all_bosses":
+				for b in boss_set():
+					if not bosses_beaten.has(b):
+						return false
+			"all_loadouts_won":
+				for lid in Content.LOADOUTS:
+					if int(records["loadouts"].get(lid, {}).get("wins", 0)) < 1:
+						return false
+			"all_bases_cast":
+				for b in base_set():
+					if not cast_ever.has(b):
+						return false
+			_:
+				return false
+	return true
+
+
+## How far the career is along one feat: {have, need, frac, text}. Numeric
+## where the feat has one number to chase - a lone stat_min reads the career
+## record for that key (the best one run has done), total_min the career
+## total, the all_* sets how many are done - else 0/1. An earned feat reads
+## have == need; an unearned one is capped at need - 1 (a record that predates
+## feats can stand at the bar without the feat ever having been claimed).
+func feat_progress(fid: String) -> Dictionary:
+	var req: Dictionary = Content.FEATS.get(fid, {}).get("req", {})
+	var have := 0
+	var need := 1
+	if req.size() == 1:
+		var k := String(req.keys()[0])
+		var v = req[k]
+		match k:
+			"stat_min", "total_min":
+				if v is Dictionary and v.size() == 1:
+					var sk := String(v.keys()[0])
+					need = maxi(1, int(v[sk]))
+					if k == "stat_min":
+						have = int(records["best"][sk]["v"]) if records["best"].has(sk) else 0
+					else:
+						have = int(totals.get(sk, 0))
+			"all_bosses":
+				need = boss_set().size()
+				for b in boss_set():
+					if bosses_beaten.has(b):
+						have += 1
+			"all_loadouts_won":
+				need = Content.LOADOUTS.size()
+				for lid in Content.LOADOUTS:
+					if int(records["loadouts"].get(lid, {}).get("wins", 0)) >= 1:
+						have += 1
+			"all_bases_cast":
+				need = base_set().size()
+				for b in base_set():
+					if cast_ever.has(b):
+						have += 1
+	need = maxi(1, need)
+	if feats.has(fid):
+		have = need
+	else:
+		have = mini(have, need - 1)
+	return {"have": have, "need": need, "frac": float(have) / float(need), "text": "%d/%d" % [have, need]}
+
+
+## The next `n` feats worth chasing: unearned feats with a number above 1 to
+## reach, ranked by fraction done (descending) then table order - in the SAME
+## shape as next_goals ({desc, ids: ["feat:<id>"], names: [feat name], have,
+## need, frac, key, text, hint}), so the game-over sheet's NEXT line reads
+## either. The fallback once next_goals is empty (a maxed career).
+func next_feats(n: int) -> Array:
+	var cands: Array = []
+	var idx := 0
+	for fid in Content.FEATS:
+		idx += 1
+		if feats.has(fid):
+			continue
+		var fp := feat_progress(fid)
+		if int(fp["need"]) <= 1:
+			continue
+		var row: Dictionary = Content.FEATS[fid]
+		cands.append({"desc": String(row["desc"]), "ids": ["feat:" + fid], "names": [String(row["name"])],
+			"have": int(fp["have"]), "need": int(fp["need"]), "frac": float(fp["frac"]),
+			"key": String(row["req"].keys()[0]), "text": String(fp["text"]), "hint": "",
+			"rank": [-float(fp["frac"]), idx]})
+	cands.sort_custom(func(a, b):
+		if a["rank"][0] != b["rank"][0]:
+			return a["rank"][0] < b["rank"][0]
+		return a["rank"][1] < b["rank"][1])
+	var out: Array = []
+	for c in cands.slice(0, n):
+		c.erase("rank")
+		out.append(c)
+	return out
 
 
 ## Daily challenge result: best-per-seed only, never career progress (no
@@ -641,6 +875,36 @@ func next_goals(n: int) -> Array:
 	return out
 
 
+## Every milestone the way the CAREER sheet lists it, one entry per row (no
+## grouping): the unowned rows first, ranked by the same key next_goals ranks
+## its groups by ([-frac, GOAL_KEY_ORDER, need, table index]), then the owned
+## rows in table order. -> [{id, row, p: progress(row), owned}]
+func goal_rows() -> Array:
+	var open: Array = []
+	var owned: Array = []
+	var idx := 0
+	for m in _milestones():
+		var id := String(m["id"])
+		var pr := progress(m)
+		var e := {"id": id, "row": m, "p": pr, "owned": _owned(id),
+			"rank": [-float(pr["frac"]), GOAL_KEY_ORDER.find(String(pr["key"])), int(pr["need"]), idx]}
+		idx += 1
+		if e["owned"]:
+			owned.append(e)
+		else:
+			open.append(e)
+	open.sort_custom(func(a, b):
+		for i in 4:
+			if a["rank"][i] != b["rank"][i]:
+				return a["rank"][i] < b["rank"][i]
+		return false)
+	var out: Array = []
+	for e in open + owned:
+		e.erase("rank")
+		out.append(e)
+	return out
+
+
 static func _goal(desc: String, ids: Array, p: Dictionary, idx: int) -> Dictionary:
 	var names: Array = []
 	for id in ids:
@@ -676,13 +940,16 @@ static func unlock_kind(id: String) -> String:
 
 ## The player-facing name of an unlock id - never the raw id: "tier:2" ->
 ## "difficulty 2", a package -> its Content.PACKAGE_INFO name, a loadout,
-## mutator or graft -> its table's name ("double_oil" -> "Slick Combine").
-## ("feat:x" reads x until the feats table lands.)
+## mutator or graft -> its table's name ("double_oil" -> "Slick Combine"),
+## "feat:x" -> Content.FEATS[x].name.
 static func unlock_name(id: String) -> String:
 	if id.begins_with("tier:"):
 		return "difficulty %s" % id.substr(5)
 	if id.begins_with("feat:"):
-		return id.substr(5).replace("_", " ").capitalize()
+		var fid := id.substr(5)
+		if Content.FEATS.has(fid):
+			return String(Content.FEATS[fid]["name"])
+		return fid.replace("_", " ").capitalize()
 	if Content.PACKAGE_INFO.has(id):
 		return String(Content.PACKAGE_INFO[id]["name"])
 	for table in [Content.LOADOUTS, Content.MUTATORS, Content.GRAFTS]:
@@ -852,6 +1119,10 @@ func to_dict() -> Dictionary:
 			"loadouts": _sorted(records["loadouts"].duplicate(true)),
 			"score_v": int(records["score_v"]),
 		},
+		"feats": _sorted(feats.duplicate(true)),
+		"totals": _sorted(totals),
+		"bosses_beaten": bosses_beaten.duplicate(),
+		"cast_ever": cast_ever.duplicate(),
 	}
 
 
@@ -961,10 +1232,46 @@ static func load_from(path: String):  # -> Profile (or fresh if missing)
 				tries[_as_str(k)] = n
 	profile.daily_tries = tries
 	profile.records = _load_records(data.get("records", {}))
-	# after the unlocks are filtered: an unseen id must name something this
-	# career owns NOW (a renamed milestone, or a tier past unlocked_tier, would
-	# badge a row with nothing new on it). Feats are not in the tables yet, so
-	# a "feat:" entry has nothing to name and is dropped.
+	# the feat stores: ids filtered against Content.FEATS, keys against
+	# FEAT_TOTAL_KEYS, kinds against the boss-trait rows and ids against the
+	# live base abilities, every number through a type guard
+	var fts: Dictionary = {}
+	var stored_feats = data.get("feats", {})
+	if stored_feats is Dictionary:
+		for k in stored_feats:
+			var fid := _as_str(k)
+			var e = stored_feats[k]
+			if Content.FEATS.has(fid) and e is Dictionary:
+				fts[fid] = _feat_rec(_as_str(e.get("date")), maxi(0, _as_int(e.get("run"), 0)))
+	profile.feats = fts
+	var tots: Dictionary = {}
+	var stored_totals = data.get("totals", {})
+	if stored_totals is Dictionary:
+		for k in stored_totals:
+			var tk := _as_str(k)
+			var n := _as_int(stored_totals[k], 0)
+			if Content.FEAT_TOTAL_KEYS.has(tk) and n > 0:
+				tots[tk] = n
+	profile.totals = tots
+	var bb: Array = []
+	var stored_bb = data.get("bosses_beaten", [])
+	if stored_bb is Array:
+		for b in stored_bb:
+			var kind := _as_str(b)
+			if _is_boss(kind) and not bb.has(kind):
+				bb.append(kind)
+	profile.bosses_beaten = bb
+	var ce: Array = []
+	var stored_ce = data.get("cast_ever", [])
+	if stored_ce is Array:
+		for a in stored_ce:
+			var base := Content.base_id(_migrate_ability_id(_as_str(a)))
+			if base != "" and Content.ABILITIES.has(base) and not ce.has(base):
+				ce.append(base)
+	profile.cast_ever = ce
+	# after the unlocks and feats are filtered: an unseen id must name
+	# something this career owns NOW (a renamed milestone, a tier past
+	# unlocked_tier or a feat not earned would badge a row with nothing new)
 	var seen_ok: Array = []
 	var stored_unseen = data.get("unseen", [])
 	if stored_unseen is Array:
@@ -976,7 +1283,10 @@ static func load_from(path: String):  # -> Profile (or fresh if missing)
 				var t := id.substr(5)
 				if t.is_valid_int() and int(t) >= 1 and int(t) <= profile.unlocked_tier:
 					seen_ok.append(id)
-			elif not id.begins_with("feat:") and profile._owned(id):
+			elif id.begins_with("feat:"):
+				if profile.feats.has(id.substr(5)):
+					seen_ok.append(id)
+			elif profile._owned(id):
 				seen_ok.append(id)
 	profile.unseen = seen_ok
 	return profile

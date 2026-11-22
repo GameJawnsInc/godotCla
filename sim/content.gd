@@ -1134,6 +1134,71 @@ const RUN_STAT_KEYS := ["kills", "best_multi_kill", "best_kill_streak", "biggest
 	"closest_hp", "combos", "rooms_bloomed", "floors_restored", "bloom_earned", "cleanses",
 	"elites_killed", "resonances_lit", "floors_unhurt"]
 
+## Cosmetic feats (fun pass). The SIM NEVER READS THIS TABLE: meta/profile.gd
+## evaluates every row when a CAREER run is recorded (dailies never earn
+## feats), and a feat grants nothing (docs/DESIGN.md: no permanent power). A
+## row is {name, desc, req}; ids are ^[a-z_]+$ and table order is display
+## order. req keys are the closed FEAT_REQ_KEYS, each one CODE in
+## Profile._feat_met (a new key needs an arm there and the lint's vocabulary):
+##   won: bool | min_tier: int | max_turns: int | max_grafts: int
+##   stat_min: {RUN_STAT_KEYS key: int}  stat_max: {...}  (this run's summary)
+##   boss: ENEMIES id with the "boss" trait (met when bosses_killed has it)
+##   total_min: {FEAT_TOTAL_KEYS key: int}                (career totals)
+##   all_bosses / all_loadouts_won / all_bases_cast: true  (career sets,
+##     derived from content: the last floor's bosses, LOADOUTS, and
+##     DRAFT_POOL + STARTING_KIT)
+## max_turns, max_grafts and stat_max only mean something on a win, so the
+## lint requires `won: true` beside them (tests/test_content.gd).
+const FEAT_REQ_KEYS := ["won", "min_tier", "max_turns", "max_grafts", "stat_min",
+	"stat_max", "boss", "total_min", "all_bosses", "all_loadouts_won", "all_bases_cast"]
+## RunStats.summary() keys summed over career runs into Profile.totals.
+const FEAT_TOTAL_KEYS := ["kills", "rooms_bloomed", "cleanses", "floors_restored",
+	"elites_killed", "bloom_earned"]
+const FEATS := {
+	"green_thumb": {"name": "Green Thumb", "desc": "Bloom 5 rooms in one run",
+		"req": {"stat_min": {"rooms_bloomed": 5}}},
+	"two_for_one": {"name": "Two for One", "desc": "Fell two machines in one turn",
+		"req": {"stat_min": {"best_multi_kill": 2}}},
+	"light_step": {"name": "Light Step", "desc": "Leave 3 floors in one run without taking damage",
+		"req": {"stat_min": {"floors_unhurt": 3}}},
+	"resonant": {"name": "Resonant", "desc": "Light a resonance",
+		"req": {"stat_min": {"resonances_lit": 1}}},
+	"chain_reaction": {"name": "Chain Reaction", "desc": "Set off 20 combos in one run",
+		"req": {"stat_min": {"combos": 20}}},
+	"triple_harvest": {"name": "Triple Harvest", "desc": "Fell three machines in one turn",
+		"req": {"stat_min": {"best_multi_kill": 3}}},
+	"bounty_hunter": {"name": "Bounty Hunter", "desc": "Fell 3 elites in one run",
+		"req": {"stat_min": {"elites_killed": 3}}},
+	"clean_sweep": {"name": "Clean Sweep", "desc": "Restore a floor: no corruption left",
+		"req": {"stat_min": {"floors_restored": 1}}},
+	"heavy_hand": {"name": "Heavy Hand", "desc": "Land a 6-damage hit",
+		"req": {"stat_min": {"biggest_hit_amt": 6}}},
+	"barefoot": {"name": "Barefoot", "desc": "Win holding no grafts",
+		"req": {"won": true, "max_grafts": 0}},
+	"swift_season": {"name": "Swift Season", "desc": "Win in 100 turns or fewer",
+		"req": {"won": true, "max_turns": 100}},
+	"by_a_thread": {"name": "By a Thread", "desc": "Win a run in which you fell to 1 HP",
+		"req": {"won": true, "stat_max": {"closest_hp": 1}}},
+	"core_breaker": {"name": "Core Breaker", "desc": "Shut down the Furnace Core",
+		"req": {"boss": "furnace_core"}},
+	"eyes_closed": {"name": "Eyes Closed", "desc": "Shut down the Overseer",
+		"req": {"boss": "overseer"}},
+	"dredged": {"name": "Dredged", "desc": "Shut down the Dredge",
+		"req": {"boss": "the_dredge"}},
+	"warden_of_wardens": {"name": "Warden of Wardens", "desc": "Shut down all three bosses",
+		"req": {"all_bosses": true}},
+	"scrap_heap": {"name": "Scrap Heap", "desc": "Fell 250 machines across your career",
+		"req": {"total_min": {"kills": 250}}},
+	"head_gardener": {"name": "Head Gardener", "desc": "Bloom 100 rooms across your career",
+		"req": {"total_min": {"rooms_bloomed": 100}}},
+	"field_botanist": {"name": "Field Botanist", "desc": "Cast all 15 base abilities",
+		"req": {"all_bases_cast": true}},
+	"six_ways_home": {"name": "Six Ways Home", "desc": "Win with every loadout",
+		"req": {"all_loadouts_won": true}},
+	"overcharged": {"name": "Overcharged", "desc": "Win at difficulty 8",
+		"req": {"won": true, "min_tier": 8}},
+}
+
 ## Terrain vaults: hand-authored set-pieces stamped into a room. Terrain-only
 ## (never walls), so they can't sever connectivity. Legend: ~ oil, ; goo,
 ## & rich goo (cleanse for +3 bloom), " growth, . leave as-is.

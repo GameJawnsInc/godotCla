@@ -3,8 +3,9 @@
 ## Menu, settings, tutorial
 
 The shell boots to a main menu: RESUME (when a run is live), PLAY (a fresh
-career run), DAILY (see *Daily challenge*), the run-setup rows (see
-*Setting up a run*), and TUTORIAL / SETTINGS / QUIT sharing the last line.
+career run), DAILY and CAREER sharing a line (see *Daily challenge* and
+*Career sheet*), the run-setup rows (see *Setting up a run*), and TUTORIAL /
+SETTINGS / QUIT sharing the last line.
 Settings persist to `user://tender.cfg`: hold-to-inspect delay, intro-tips
 frequency and the sound toggles, alongside the run choices the title screen
 makes (difficulty, loadout, package, mutator). (The old "Run seed" toggle is
@@ -269,8 +270,8 @@ The sheet, top to bottom (`shell/main.gd` `_over_layout`, words from
 | best | `NEW BEST · was 1100`, `NEW BEST FOR TIDEWARDEN · was 900`, `best 1449 · this run 85%`, `your first score · beat it next run`; on a daily `RANKED · your first finish today`, `NEW DAILY BEST · was floor 3`, `today's best: floor 4 · 3 tries` |
 | floor best | `YOUR FIRST WIN`, `DEEPEST YET · floor 5 (was 3)` |
 | score parts | every non-zero part (`floor 500 · kills 120 · bloom 82`), then `x1.5 difficulty 2` |
-| unlocks | `NEW DIFFICULTY · Thicker Smog`, `UNLOCKED · Hydraulics package`, `UNLOCKED · Skyrunner loadout (needs Aeolian)`, `UNLOCKED · Slick Combine mutator`, then `+2 more` |
-| next | `NEXT · Land 30 Grow Spikes · 17/30 (+9 this run) · unlocks Wide Draft` (numbers only when the goal needs more than one) |
+| unlocks | `NEW DIFFICULTY · Thicker Smog`, `UNLOCKED · Hydraulics package`, `UNLOCKED · Skyrunner loadout (needs Aeolian)`, `UNLOCKED · Slick Combine mutator`, then the run's new feats (`FEAT · Green Thumb`), then `+2 more` |
+| next | `NEXT · Land 30 Grow Spikes · 17/30 (+9 this run) · unlocks Wide Draft` (numbers only when the goal needs more than one); once every goal is owned, the nearest feat: `NEXT · Fell 250 machines across your career · 180/250 (+31 this run) · feat Scrap Heap` |
 | seed | `seed 123456 · Tender · Mycology`, plus `difficulty 2` and `daily` |
 
 Every "was" on the sheet is the career's best from BEFORE the run
@@ -298,7 +299,7 @@ disagree about what back means:
 |---|---|
 | a held tooltip | drops the tooltip (and the hold with it, so it stays gone) |
 | any sheet — legend, log, intro, shrine | closes it, back to the map |
-| the settings or DAILY sheet on the menu | closes it, back to the menu |
+| the settings, DAILY or CAREER sheet on the menu | closes it, back to the menu |
 | the forge's keep / scrap / fork step | one step back, ending on the shrine sheet |
 | the draft's drop sheet | back to the offer cards, nothing dropped |
 | aiming an ability | cancels the aim — free, no turn, no strike |
@@ -516,11 +517,40 @@ MUTATOR rows above are what a career spends its unlocks on, and each one
 carries a NEW badge until the new thing is cycled onto. Unlocks are named by
 `Profile.unlock_name` (never a raw id), and after a career run the profile
 works out the next goal (`Profile.next_goals`: "Land 30 Grow Spikes · 17/30",
-with what this run added). The win
-screen lists newly unlocked tiers/packages/mutators, and the menu footer
-shows runs / wins / best floor. Daily runs are scored but never counted
+with what this run added; once every goal is owned, the next feat stands in).
+The game-over sheet lists newly unlocked tiers/packages/mutators and the feats
+the run earned ("FEAT · Green Thumb"), and the menu footer shows runs / wins /
+best floor / feats. The CAREER sheet (below) is where all of it can be read
+back. Daily runs are scored but never counted
 toward the career: a finished daily is filed as that seed's best result
 (won, floor, turns) and unlocks nothing.
+
+## Career sheet
+
+CAREER on the menu opens a sheet with three tabs, five cards a page. Its head
+line reads `runs · wins · best floor · feats n/m`; a thin gold bar under a
+card shows how far along it is. The page count rides in the BACK button
+(`BACK · 2/4`), with `<` and `>` either side when there is a page that way;
+LEFT / RIGHT page it from a keyboard, and Back or ESC closes it.
+
+- **GOALS** starts with the **difficulty ladder** ("next: win at difficulty 2
+  to open Rich Veins"), then every unlock the career has not earned, closest
+  first, each with its count ("4/5", "17/30") or, for a "win holding / win
+  without" goal, what the history says ("held it in 3 runs (best floor 5)").
+  Earned unlocks follow as DONE; a loadout earned before its package says so
+  ("Skyrunner (needs Aeolian)").
+- **FEATS** lists every feat: cosmetic feats of play such as *Two for One*
+  (fell two machines in one turn), *By a Thread* (win a run in which you fell
+  to 1 HP) or *Six Ways Home* (win with every loadout). An earned feat names
+  the run that earned it and reads NEW until the tab has been opened once
+  (which is also what clears the CAREER button's NEW badge); one still open
+  shows its progress where it has a number to chase. Feats are earned by
+  career runs only - a daily never earns one - and they buy nothing.
+- **RECORDS** shows the career's bests (score, machines felled, biggest hit,
+  most felled in one turn, rooms bloomed, bloom earned, combos, fastest win)
+  with the run, loadout and difficulty that set each, then one card per
+  loadout (LOCKED, or how it has gone: WON D3, WON, FLOOR 5) and the daily
+  streak.
 
 ## Satchel
 

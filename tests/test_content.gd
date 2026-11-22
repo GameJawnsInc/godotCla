@@ -57,6 +57,11 @@ extends SceneTree
 ##     lotteries - and so would a loadout kit made only of ignored-tag
 ##     abilities, which is checked against LOADOUTS here. Same self-test
 ##     discipline: one bad fixture per shape.
+## 15-17) fun pass (tables the sim never reads): RUN_SCORE / RUN_STAT_KEYS,
+##     PACKAGE_INFO mirroring PACKAGES, and FEATS keeping to the closed
+##     FEAT_REQ_KEYS vocabulary (stat keys in RUN_STAT_KEYS, total keys in
+##     FEAT_TOTAL_KEYS, `boss` a boss-trait ENEMIES row, max_turns /
+##     max_grafts / stat_max only beside won: true). Same self-test discipline.
 ## Run: godot --headless --path . --script tests/test_content.gd
 
 const Content := preload("res://sim/content.gd")
@@ -436,6 +441,24 @@ func _init() -> void:
 	failures.append_array(_lint_package_info_selftest())
 	print("package info: %d rows (%s), keys equal PACKAGES" % [Content.PACKAGE_INFO.size(),
 		", ".join(Content.PACKAGE_INFO.keys().map(func(k): return String(Content.PACKAGE_INFO[k]["name"])))])
+
+	# 17) fun pass, career B: FEATS (cosmetic, read by meta/profile.gd only)
+	# keep to the closed req vocabulary, then the lint's own self-test
+	failures.append_array(_lint_feats(Content.FEATS))
+	failures.append_array(_lint_name_list("FEAT_REQ_KEYS", Content.FEAT_REQ_KEYS))
+	failures.append_array(_lint_name_list("FEAT_TOTAL_KEYS", Content.FEAT_TOTAL_KEYS))
+	for k in Content.FEAT_TOTAL_KEYS:
+		if not Content.RUN_STAT_KEYS.has(k):
+			failures.append("FEAT_TOTAL_KEYS: '%s' is not a RUN_STAT_KEYS key (nothing would ever sum it)" % k)
+	failures.append_array(_lint_feats_selftest())
+	var career_rows := 0
+	for fid in Content.FEATS:
+		for k in Content.FEATS[fid]["req"]:
+			if FEAT_CAREER_KEYS.has(k):
+				career_rows += 1
+				break
+	print("feats: %d rows (%d run-scope, %d career)" % [Content.FEATS.size(),
+		Content.FEATS.size() - career_rows, career_rows])
 
 	if failures.is_empty():
 		print("content: OK")
@@ -2066,4 +2089,128 @@ func _lint_package_info_selftest() -> Array:
 	for f in _lint_package_info({"alpha": {"name": "Alpha", "desc": "a"}, "beta": {"name": "Beta", "desc": "b"}}, PKG_FIXTURE):
 		out.append("package-info lint self-test: a good table was rejected: %s" % f)
 	print("package-info lint self-test: %d bad tables -> %d rejected; good -> clean" % [BAD_PACKAGE_INFOS.size(), rejected])
+	return out
+
+
+# --- 17) fun pass, career B: FEATS -----------------------------------------------
+
+## req keys that read the CAREER (totals and sets) rather than this run.
+const FEAT_CAREER_KEYS := ["total_min", "all_bosses", "all_loadouts_won", "all_bases_cast"]
+## req keys that only mean something on a win: each needs `won: true` beside it.
+const FEAT_WIN_ONLY_KEYS := ["max_turns", "max_grafts", "stat_max"]
+
+## FEATS rows are {name, desc, req}: ids ^[a-z_]+$, name and desc non-empty
+## Strings (names unique), req a non-empty Dictionary whose keys are in
+## Content.FEAT_REQ_KEYS; stat_min / stat_max name RUN_STAT_KEYS keys and
+## total_min FEAT_TOTAL_KEYS keys, each an int (>= 1, stat_max >= 0); boss
+## names an ENEMIES row with the "boss" trait; won is a bool and min_tier /
+## max_turns / max_grafts ints (min_tier 1..TIERS.size()); max_turns,
+## max_grafts and stat_max require won: true; the all_* values are true.
+func _lint_feats(feats) -> Array:
+	var out: Array = []
+	if not (feats is Dictionary) or feats.is_empty():
+		return ["FEATS: must be a non-empty Dictionary"]
+	var id_re := RegEx.create_from_string("^[a-z_]+$")
+	var names := {}
+	for fid in feats:
+		var tag := "FEATS[%s]" % str(fid)
+		if not (fid is String) or id_re.search(fid) == null:
+			out.append("%s: id must match ^[a-z_]+$" % tag)
+		var row = feats[fid]
+		if not (row is Dictionary):
+			out.append("%s: not a Dictionary" % tag)
+			continue
+		for k in row:
+			if not ["name", "desc", "req"].has(k):
+				out.append("%s: unknown key '%s'" % [tag, str(k)])
+		for k in ["name", "desc"]:
+			if not (row.get(k) is String) or String(row.get(k)) == "":
+				out.append("%s: %s must be a non-empty String" % [tag, k])
+		var nm = row.get("name")
+		if nm is String and nm != "":
+			if names.has(nm):
+				out.append("%s: name '%s' is also %s's" % [tag, nm, names[nm]])
+			names[nm] = fid
+		var req = row.get("req")
+		if not (req is Dictionary) or req.is_empty():
+			out.append("%s: req must be a non-empty Dictionary" % tag)
+			continue
+		for k in req:
+			var v = req[k]
+			if not Content.FEAT_REQ_KEYS.has(k):
+				out.append("%s: unknown req key '%s'" % [tag, str(k)])
+				continue
+			match String(k):
+				"won":
+					if not (v is bool):
+						out.append("%s: won must be a bool" % tag)
+				"min_tier":
+					if not (v is int) or v < 1 or v > Content.TIERS.size():
+						out.append("%s: min_tier must be an int in 1..%d" % [tag, Content.TIERS.size()])
+				"max_turns":
+					if not (v is int) or v < 1:
+						out.append("%s: max_turns must be an int >= 1" % tag)
+				"max_grafts":
+					if not (v is int) or v < 0:
+						out.append("%s: max_grafts must be an int >= 0" % tag)
+				"stat_min", "stat_max", "total_min":
+					var vocab: Array = Content.FEAT_TOTAL_KEYS if k == "total_min" else Content.RUN_STAT_KEYS
+					var floor_v := 0 if k == "stat_max" else 1
+					if not (v is Dictionary) or v.is_empty():
+						out.append("%s: %s must be a non-empty Dictionary" % [tag, k])
+						continue
+					for sk in v:
+						if not vocab.has(sk):
+							out.append("%s: %s key '%s' is not in %s" % [tag, k, str(sk),
+								"FEAT_TOTAL_KEYS" if k == "total_min" else "RUN_STAT_KEYS"])
+						if not (v[sk] is int) or v[sk] < floor_v:
+							out.append("%s: %s.%s must be an int >= %d" % [tag, k, str(sk), floor_v])
+				"boss":
+					if not (v is String) or not Content.ENEMIES.has(v) \
+							or not Content.ENEMIES[v].get("traits", []).has("boss"):
+						out.append("%s: boss '%s' is not an ENEMIES row with the boss trait" % [tag, str(v)])
+				"all_bosses", "all_loadouts_won", "all_bases_cast":
+					if not (v is bool) or v != true:
+						out.append("%s: %s must be true" % [tag, k])
+		for k in FEAT_WIN_ONLY_KEYS:
+			if req.has(k) and not (req.get("won") is bool and req.get("won") == true):
+				out.append("%s: %s needs won: true beside it" % [tag, k])
+	return out
+
+
+## One bad FEATS shape each: every one must be rejected on its own.
+const BAD_FEATS := {
+	"unknown_req_key": {"x": {"name": "X", "desc": "x", "req": {"luck": 3}}},
+	"stat_outside_vocab": {"x": {"name": "X", "desc": "x", "req": {"stat_min": {"hugs": 3}}}},
+	"total_outside_vocab": {"x": {"name": "X", "desc": "x", "req": {"total_min": {"best_multi_kill": 3}}}},
+	"non_boss_boss": {"x": {"name": "X", "desc": "x", "req": {"boss": "drill_bot"}}},
+	"max_turns_no_won": {"x": {"name": "X", "desc": "x", "req": {"max_turns": 100}}},
+	"max_grafts_lost": {"x": {"name": "X", "desc": "x", "req": {"won": false, "max_grafts": 0}}},
+	"stat_max_no_won": {"x": {"name": "X", "desc": "x", "req": {"stat_max": {"closest_hp": 1}}}},
+	"zero_stat_min": {"x": {"name": "X", "desc": "x", "req": {"stat_min": {"kills": 0}}}},
+	"float_stat": {"x": {"name": "X", "desc": "x", "req": {"stat_min": {"kills": 2.5}}}},
+	"all_false": {"x": {"name": "X", "desc": "x", "req": {"all_bosses": false}}},
+	"tier_too_high": {"x": {"name": "X", "desc": "x", "req": {"won": true, "min_tier": 99}}},
+	"empty_req": {"x": {"name": "X", "desc": "x", "req": {}}},
+	"no_name": {"x": {"desc": "x", "req": {"stat_min": {"kills": 3}}}},
+	"bad_id": {"Big-Feat": {"name": "X", "desc": "x", "req": {"stat_min": {"kills": 3}}}},
+	"duplicate_name": {"x": {"name": "Same", "desc": "x", "req": {"stat_min": {"kills": 3}}},
+		"y": {"name": "Same", "desc": "y", "req": {"stat_min": {"kills": 4}}}},
+	"unknown_field": {"x": {"name": "X", "desc": "x", "req": {"stat_min": {"kills": 3}}, "reward": 1}},
+}
+
+
+func _lint_feats_selftest() -> Array:
+	var out: Array = []
+	var rejected := 0
+	for k in BAD_FEATS:
+		if _lint_feats(BAD_FEATS[k]).is_empty():
+			out.append("feats lint self-test: bad fixture '%s' was accepted" % k)
+		else:
+			rejected += 1
+	var good := {"x": {"name": "X", "desc": "x", "req": {"won": true, "max_turns": 90, "stat_max": {"closest_hp": 0}}},
+		"y": {"name": "Y", "desc": "y", "req": {"boss": "overseer"}}}
+	for f in _lint_feats(good):
+		out.append("feats lint self-test: a good table was rejected: %s" % f)
+	print("feats lint self-test: %d bad tables -> %d rejected; good -> clean" % [BAD_FEATS.size(), rejected])
 	return out

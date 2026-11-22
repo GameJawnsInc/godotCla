@@ -28,6 +28,12 @@ extends SceneTree
 ## 9) the career layer: progress() per predicate, next_goals() (grouping, the
 ##    tier fold, ranking, the report's delta), the unseen NEW-badge store and
 ##    its display helpers, and the daily streak / tries / ranked first finish.
+## 10) feats (Content.FEATS): every row met and missed by one on fixtures
+##    built from its own req, earned once, dated off the summary, dailies
+##    untouched; the career totals / bosses / casts folds; feat_progress,
+##    next_feats and the NEXT fallback; goal_rows. The career loop in 1) must
+##    earn at least CAREER_MIN_FEATS feats and its save/load roundtrip in 2)
+##    covers every feat store.
 ## Run: godot --headless --path . --script tests/test_meta.gd
 
 const Content := preload("res://sim/content.gd")
@@ -38,6 +44,9 @@ const Roster := preload("res://bots/roster.gd")
 const RunStats := preload("res://meta/run_stats.gd")
 
 const CAREER_RUNS := 40
+## Feats the 40-run optimizer career must earn (measured: comfortably more;
+## spec_meta §1 measured >= 8 by run 6 on the default optimizer).
+const CAREER_MIN_FEATS := 5
 const TIER0_CAREER_RUNS := 63
 const MUTATOR_SEEDS := 8
 ## Winnability floor per starting loadout (review §6.1 item 7): the optimizer
@@ -133,6 +142,18 @@ func _init() -> void:
 		_fail("career recorded no effective casts (summaries not reaching the profile?)")
 	print("career record: history %d, casts over %d bases, grow_spike %d" % [
 		profile.history.size(), profile.casts_by_base.size(), int(profile.casts_by_base.get("grow_spike", 0))])
+	# the feats a real career earns (the shell's exact merge, dated)
+	print("career feats: %d of %d by run %d %s; totals %s; bosses %s; bases cast %d" % [
+		profile.feats.size(), Content.FEATS.size(), CAREER_RUNS, str(profile.feats.keys()),
+		str(profile.totals), str(profile.bosses_beaten), profile.cast_ever.size()])
+	if profile.feats.size() < CAREER_MIN_FEATS:
+		_fail("the career earned %d feats by run %d, want at least %d" % [profile.feats.size(), CAREER_RUNS, CAREER_MIN_FEATS])
+	for fid in profile.feats:
+		if String(profile.feats[fid]["date"]) != "2026-01-01":
+			_fail("feat %s is not dated off the summary (%s)" % [fid, str(profile.feats[fid])])
+			break
+	if profile.totals.is_empty() or profile.cast_ever.is_empty():
+		_fail("the career folded no totals or casts (%s / %s)" % [str(profile.totals), str(profile.cast_ever)])
 
 	# 2) save/load roundtrip (the career layer's stores included: the NEW
 	# badges the career loop left in `unseen`, plus a daily's tries, first and
@@ -261,6 +282,12 @@ func _init() -> void:
 	_check_unseen()
 	_check_daily_streak()
 
+	# 10) fun pass, career B: feats
+	_check_feats()
+	_check_feat_folds()
+	_check_feat_progress()
+	_check_goal_rows()
+
 	if failures == 0:
 		print("meta: OK")
 	quit(1 if failures > 0 else 0)
@@ -314,6 +341,7 @@ func _career_summary(seed_v: int, cfg: Dictionary) -> Dictionary:
 	summary["tier"] = int(cfg.get("tier", 0))
 	summary["score"] = int(RunStats.score(summary)["total"])
 	summary["score_v"] = Content.RUN_SCORE_VERSION
+	summary["date"] = "2026-01-01"
 	for k in Content.RUN_STAT_KEYS:
 		if not (summary.get(k, null) is int):
 			_pin("summary key '%s' is not an int (%s)" % [k, str(summary.get(k, null))])
@@ -354,10 +382,16 @@ func _check_load_filters() -> void:
 		}],
 		# career layer: junk in every new store
 		"unseen": ["mycology", "hydraulics", "ghost_package", "tier:1", "tier:5", "tier:x",
-			"feat:ghost_feat", 7, "mycology"],
+			"feat:ghost_feat", "feat:heavy_hand", "feat:green_thumb", 7, "mycology"],
 		"daily_tries": {"42": 3.0, "43": "lots", "not_a_seed": 2, "44": -1},
 		"daily_first": {"42": {"won": false, "floor": 4, "turns": 50, "score": "high"},
 			"x": {"won": true, "floor": 9, "turns": 1}, "45": "junk"},
+		# career B: junk in every feat store
+		"feats": {"green_thumb": {"date": "2026-01-02", "run": 2.0}, "ghost_feat": {"date": "x", "run": 1},
+			"heavy_hand": "junk", "barefoot": {"date": 5, "run": "two"}},
+		"totals": {"kills": 120.0, "ghost_key": 9, "cleanses": "lots", "rooms_bloomed": -3},
+		"bosses_beaten": ["overseer", "drill_bot", "ghost_boss", 4, "overseer"],
+		"cast_ever": ["vine_whip", "ghost_ability", "seed_bomb+tangle", "seed_bomb", 3, "grow_spike+"],
 	}
 	var path := "user://test_profile_dirty.json"
 	var f := FileAccess.open(path, FileAccess.WRITE)
@@ -385,7 +419,17 @@ func _check_load_filters() -> void:
 	# (hydraulics is not unlocked, tier 5 is past unlocked_tier, feats are not
 	# in the tables yet), each once; tries are positive ints keyed by a seed;
 	# a daily result is rebuilt, its non-number score dropped
-	_expect(p.unseen, ["mycology", "tier:1"], "load_from filters unseen to what the career owns")
+	_expect(p.unseen, ["mycology", "tier:1", "feat:green_thumb"],
+		"load_from filters unseen to what the career owns (an unearned or unknown feat goes)")
+	# the feat stores: a known feat with a dict entry loads (a bad date or run
+	# reads its default), totals keep positive ints of known keys, bosses keep
+	# boss-trait kinds once, cast_ever keeps live BASE ids once (a variant or a
+	# pre-D6 "+" id folds to its base)
+	_expect(str(p.feats), str({"barefoot": {"date": "", "run": 0}, "green_thumb": {"date": "2026-01-02", "run": 2}}),
+		"load_from filters feats to known ids with dictionary entries")
+	_expect(str(p.totals), str({"kills": 120}), "load_from keeps only positive int totals of known keys")
+	_expect(p.bosses_beaten, ["overseer"], "load_from keeps only boss kinds, once")
+	_expect(p.cast_ever, ["vine_whip", "seed_bomb", "grow_spike"], "load_from keeps live base ids, folded, once")
 	_expect(str(p.daily_tries), str({"42": 3}), "load_from keeps only int tries keyed by a seed")
 	_expect(str(p.daily_first), str({"42": {"won": false, "floor": 4, "turns": 50}}),
 		"load_from rebuilds daily_first and drops a non-number score")
@@ -932,6 +976,10 @@ func _check_wrong_type_profile() -> void:
 			"daily_first": {"42": {"won": bad, "floor": bad, "turns": bad, "score": bad}, "43": bad},
 			"daily_tries": {"42": bad, "44": 2},
 			"unseen": [bad, "mycology"],
+			"feats": {"green_thumb": {"date": bad, "run": bad}, "two_for_one": bad},
+			"totals": {"kills": bad, "cleanses": 4},
+			"bosses_beaten": [bad, "overseer"],
+			"cast_ever": [bad, "vine_whip"],
 			"records": {
 				"best": {"kills": rec_e, "score": {"v": 300, "run": bad, "loadout": bad, "tier": bad}, "bloom_earned": bad},
 				"loadouts": {"tender": {"best_floor": bad, "best_score": bad, "best_tier_won": bad,
@@ -969,6 +1017,12 @@ func _check_wrong_type_profile() -> void:
 		_expect(p.records["loadouts"].keys(), ["spiker", "tender"] if is_d else ["tender"], "%s: a dictionary loadout record loads" % label)
 		_expect(int(p.records["loadouts"]["tender"]["best_tier_won"]), -1,
 			"%s: a loadout record's numbers read their defaults" % label)
+		_expect(p.feats.keys(), ["green_thumb", "two_for_one"] if is_d else ["green_thumb"],
+			"%s: a dictionary feat entry loads, a bad one is dropped" % label)
+		_expect(p.feats["green_thumb"]["date"] is String and p.feats["green_thumb"]["run"] is int, true,
+			"%s: a feat entry's date and run have their types" % label)
+		_expect([str(p.totals), p.bosses_beaten, p.cast_ever], [str({"cleanses": 4}), ["overseer"], ["vine_whip"]],
+			"%s: totals, bosses and casts keep their good entries" % label)
 		_expect(p.available_loadouts().has("tender"), true, "%s: the menu still fills" % label)
 		_expect(bool(p.history[0]["has_kit"]), false, "%s: a garbage kit is no kit (never an empty one)" % label)
 		var muts_before: Array = p.unlocked_mutators.duplicate()
@@ -1775,3 +1829,236 @@ func _check_daily_streak() -> void:
 	_expect(str(ds.daily_best["3"]), str({"won": true, "floor": 7, "turns": 90, "score": 1500}),
 		"record_daily stores a score only when the summary has one")
 	print("daily streak: current / longest / missed day, tries, ranked first, new best, score: OK")
+
+
+# --- 10) fun pass, career B: feats -------------------------------------------------
+
+## A summary every fixture starts from: a career loss that meets nothing.
+func _feat_base() -> Dictionary:
+	return {"won": false, "floor": 3, "tier": 0, "turns": 50, "seed": 1, "loadout": "tender",
+		"kit": ["seed_bomb"], "grafts": [], "score": 100, "score_v": Content.RUN_SCORE_VERSION,
+		"date": "2026-03-04", "bosses_killed": [], "uses_by_base": {}}
+
+
+## A fresh profile and summary that meet ONE req key exactly (`miss` false) or
+## miss it by one (`miss` true), built from the key's own value - so a new
+## FEATS row is covered with no edit here, and a req key with no arm fails.
+## Returns false for a req key with no fixture arm.
+func _feat_fixture(p, s: Dictionary, k: String, v, miss: bool) -> bool:
+	match k:
+		"won":
+			s["won"] = (not bool(v)) if miss else bool(v)
+		"min_tier":
+			s["tier"] = int(v) - 1 if miss else int(v)
+		"max_turns":
+			s["turns"] = int(v) + 1 if miss else int(v)
+		"max_grafts":
+			var gids: Array = Content.GRAFTS.keys()
+			s["grafts"] = gids.slice(0, int(v) + 1) if miss else gids.slice(0, int(v))
+		"stat_min":
+			for sk in v:
+				s[sk] = int(v[sk]) - 1 if miss else int(v[sk])
+		"stat_max":
+			for sk in v:
+				s[sk] = int(v[sk]) + 1 if miss else int(v[sk])
+		"boss":
+			s["bosses_killed"] = [] if miss else [String(v)]
+		"total_min":
+			# the career holds n - 1; this run adds 1 (met) or 0 (missed)
+			for tk in v:
+				p.totals[tk] = int(v[tk]) - 1
+				s[tk] = 0 if miss else 1
+		"all_bosses":
+			var bs: Array = Profile.boss_set()
+			p.bosses_beaten = bs.slice(0, bs.size() - 1)
+			s["bosses_killed"] = [] if miss else [bs.back()]
+		"all_loadouts_won":
+			var lids: Array = Content.LOADOUTS.keys()
+			for lid in lids.slice(0, lids.size() - 1):
+				p.records["loadouts"][lid] = Profile._loadout_rec(7, 0, 0, 1, 1)
+			s["loadout"] = lids.back()
+			s["won"] = not miss
+		"all_bases_cast":
+			var bases: Array = Profile.base_set()
+			p.cast_ever = bases.slice(0, bases.size() - 1)
+			s["uses_by_base"] = {} if miss else {bases.back(): 1}
+		_:
+			return false
+	return true
+
+
+func _check_feats() -> void:
+	var met := 0
+	var missed := 0
+	for fid in Content.FEATS:
+		var req: Dictionary = Content.FEATS[fid]["req"]
+		# met: every key at its exact bar
+		var p = Profile.new()
+		var s := _feat_base()
+		var known := true
+		for k in req:
+			if not _feat_fixture(p, s, String(k), req[k], false):
+				_fail("feat %s: req key '%s' has no fixture arm (add one, and an arm in Profile._feat_met)" % [fid, k])
+				known = false
+		if not known:
+			continue
+		p.record_run(s)
+		if p.feats.has(fid) and p.last_report["feats"].has(fid):
+			met += 1
+		else:
+			_fail("feat %s: a run meeting %s exactly did not earn it" % [fid, str(req)])
+		# missed by one: each key on its own, the others still met
+		for miss_k in req:
+			var pm = Profile.new()
+			var sm := _feat_base()
+			for k in req:
+				_feat_fixture(pm, sm, String(k), req[k], k == miss_k)
+			pm.record_run(sm)
+			if pm.feats.has(fid):
+				_fail("feat %s: a run missing '%s' by one still earned it" % [fid, miss_k])
+			else:
+				missed += 1
+	# earned once only, dated off the summary, and named in the report once
+	var p1 = Profile.new()
+	var s1 := _feat_base()
+	s1["rooms_bloomed"] = 6
+	p1.record_run(s1)
+	_expect(str(p1.feats.get("green_thumb", {})), str({"date": "2026-03-04", "run": 1}), "feat: stored as {date, run}")
+	_expect(p1.unseen.has("feat:green_thumb"), true, "feat: a new feat is filed unseen")
+	var s2 := _feat_base()
+	s2["rooms_bloomed"] = 9
+	s2["date"] = "2026-03-05"
+	p1.record_run(s2)
+	_expect(str(p1.feats["green_thumb"]), str({"date": "2026-03-04", "run": 1}), "feat: earned once, never re-dated")
+	_expect(p1.last_report["feats"].has("green_thumb"), false, "feat: a second qualifying run does not report it again")
+	_expect(p1.last_report["unlocks"].has("feat:green_thumb"), false, "feat: feats never ride in last_report.unlocks")
+	# a legacy summary says nothing, so it earns nothing by saying nothing
+	var lg = Profile.new()
+	lg.record_run({"won": true, "floor": 7, "tier": 0})
+	_expect(lg.feats.has("barefoot") or lg.feats.has("swift_season"), false,
+		"feat: a legacy {won, floor, tier} win earns no turns or grafts feat")
+	# dailies touch no feat store
+	var d = Profile.new()
+	var before := [str(d.feats), str(d.records), str(d.totals), str(d.unseen), str(d.bosses_beaten), str(d.cast_ever)]
+	var ds := _feat_base()
+	ds.merge({"won": true, "rooms_bloomed": 9, "kills": 300, "bosses_killed": ["overseer"], "uses_by_base": {"vine_whip": 3}}, true)
+	d.record_daily(ds)
+	_expect([str(d.feats), str(d.records), str(d.totals), str(d.unseen), str(d.bosses_beaten), str(d.cast_ever)], before,
+		"record_daily leaves feats, records, totals, unseen, bosses and casts untouched")
+	print("feats: %d rows met at the bar, %d single-key misses rejected, once only, dated, legacy and daily isolation: OK" % [met, missed])
+
+
+func _check_feat_folds() -> void:
+	var p = Profile.new()
+	var s := _feat_base()
+	s.merge({"kills": 30, "cleanses": 12, "rooms_bloomed": 0, "bosses_killed": ["the_dredge", "drill_bot"],
+		"uses_by_base": {"vine_whip": 2, "solar_lance": 0, "seed_bomb": 1}}, true)
+	p.record_run(s)
+	p.record_run(s)
+	_expect(str(p.totals), str({"kills": 60, "cleanses": 24}), "totals: summed over career runs, zero keys not stored")
+	_expect(p.bosses_beaten, ["the_dredge"], "bosses_beaten: boss kinds only, once")
+	_expect(p.cast_ever, ["vine_whip", "seed_bomb"], "cast_ever: raw casts > 0, once")
+	var v := _feat_base()
+	v["uses_by_base"] = {"seed_bomb+tangle": 2}
+	var pv = Profile.new()
+	pv.record_run(v)
+	_expect(pv.cast_ever, ["seed_bomb"], "cast_ever folds a variant to its base")
+	_expect(Profile.boss_set(), Content.FLOORS[Content.FLOORS.size() - 1]["bosses"], "boss_set is the last floor's bosses")
+	_expect(Profile.base_set().size(), 15, "base_set is DRAFT_POOL + STARTING_KIT (15)")
+	# the codec keeps every store
+	var path := "user://test_profile_feats.json"
+	p.save(path)
+	var back = Profile.load_from(path)
+	var pd: Dictionary = p.to_dict()
+	var bd: Dictionary = back.to_dict()
+	_expect([str(bd["feats"]), str(bd["totals"]), bd["bosses_beaten"], bd["cast_ever"]],
+		[str(pd["feats"]), str(pd["totals"]), pd["bosses_beaten"], pd["cast_ever"]], "feat stores round-trip")
+	DirAccess.remove_absolute(path)
+	print("feat folds: totals, bosses, casts (variants folded), derived sets, codec: OK")
+
+
+func _check_feat_progress() -> void:
+	var p = Profile.new()
+	_expect(str(p.feat_progress("green_thumb")), str({"have": 0, "need": 5, "frac": 0.0, "text": "0/5"}),
+		"feat_progress: a lone stat_min reads the career record")
+	p.record_run(_rec_summary(10, {"rooms_bloomed": 3}))
+	_expect(int(p.feat_progress("green_thumb")["have"]), 3, "feat_progress: ...the best one run did")
+	p.totals = {"kills": 100}
+	_expect([p.feat_progress("scrap_heap")["have"], p.feat_progress("scrap_heap")["need"]], [100, 250],
+		"feat_progress: total_min reads the career total")
+	p.bosses_beaten = ["overseer"]
+	_expect(p.feat_progress("warden_of_wardens")["text"], "1/3", "feat_progress: all_bosses counts the set")
+	p.cast_ever = ["vine_whip", "seed_bomb"]
+	_expect(p.feat_progress("field_botanist")["text"], "2/15", "feat_progress: all_bases_cast counts the set")
+	_expect(p.feat_progress("six_ways_home")["need"], Content.LOADOUTS.size(), "feat_progress: all_loadouts_won counts loadouts")
+	_expect([p.feat_progress("barefoot")["have"], p.feat_progress("barefoot")["need"]], [0, 1],
+		"feat_progress: a multi-key feat is binary")
+	p.feats["barefoot"] = Profile._feat_rec("2026-01-01", 1)
+	_expect(p.feat_progress("barefoot")["frac"], 1.0, "feat_progress: an earned feat is done")
+	# next_feats: numeric needs only, frac descending, the next_goals shape
+	var nf: Array = p.next_feats(99)
+	for g in nf:
+		if int(g["need"]) <= 1 or not String(g["ids"][0]).begins_with("feat:"):
+			_fail("next_feats lists a binary or non-feat goal: %s" % str(g))
+		if g.keys() != ["desc", "ids", "names", "have", "need", "frac", "key", "text", "hint"]:
+			_fail("next_feats row shape: %s" % str(g.keys()))
+			break
+	_expect(String(nf[0]["ids"][0]), "feat:green_thumb", "next_feats: the closest feat first (3/5)")
+	for i in range(1, nf.size()):
+		if float(nf[i]["frac"]) > float(nf[i - 1]["frac"]):
+			_fail("next_feats is not ranked by fraction")
+			break
+	_expect(str(p.next_feats(2)), str(p.next_feats(2)), "next_feats: pure")
+	# the NEXT fallback: a maxed career's report names the next feat, with delta
+	var mx = Profile.new()
+	mx.unlocked_tier = Content.TIERS.size()
+	for m in Content.MILESTONES:
+		mx._bucket(String(m["kind"])).append(String(m["id"]))
+	mx.records["best"]["rooms_bloomed"] = Profile._rec(2, 1, "tender", 0)
+	var ms := _feat_base()
+	ms["rooms_bloomed"] = 4
+	mx.record_run(ms)
+	var nx: Dictionary = mx.last_report["next"][0]
+	_expect([nx["ids"], nx["have"], nx["need"], nx["delta"]], [["feat:green_thumb"], 4, 5, 0],
+		"last_report.next falls back to the next feat once every goal is owned; a run-scope feat's have is the best run, so no delta")
+	# a cumulative feat keeps its delta: the career total this run added to
+	var tx = Profile.new()
+	tx.unlocked_tier = Content.TIERS.size()
+	for m in Content.MILESTONES:
+		tx._bucket(String(m["kind"])).append(String(m["id"]))
+	tx.totals = {"kills": 240}
+	var ts := _feat_base()
+	ts["kills"] = 7
+	var tbefore: Array = tx.next_feats(1 << 20)
+	tx.record_run(ts)
+	var scrap := {}
+	for a in Profile._with_delta(tx.next_feats(1 << 20), tbefore):
+		if String(a["ids"][0]) == "feat:scrap_heap":
+			scrap = a
+	_expect([scrap.get("have"), scrap.get("delta")], [247, 7], "a total_min feat's delta is what this run added")
+	# a record that predates feats can stand at the bar: unearned reads need - 1
+	var old_p = Profile.new()
+	old_p.records["best"]["rooms_bloomed"] = Profile._rec(5, 1, "tender", 0)
+	_expect(old_p.feat_progress("green_thumb")["text"], "4/5", "feat_progress: an unearned feat never reads done")
+	_expect([Profile.unlock_name("feat:heavy_hand"), Profile.unlock_kind("feat:heavy_hand")], ["Heavy Hand", "feat"],
+		"unlock_name names a feat from Content.FEATS")
+	print("feat progress: stat/total/set/binary, next_feats ranking and shape, the NEXT fallback: OK")
+
+
+func _check_goal_rows() -> void:
+	var p = Profile.new()
+	p.best_floor = 4
+	p.unlocked_loadouts = ["tidewarden", "flarekeeper"]
+	var rows: Array = p.goal_rows()
+	_expect(rows.size(), Content.MILESTONES.size(), "goal_rows: one entry per milestone")
+	var seen_owned := false
+	for e in rows:
+		if bool(e["owned"]):
+			seen_owned = true
+		elif seen_owned:
+			_fail("goal_rows: an unowned row after the owned ones")
+			break
+	_expect(String(rows[0]["id"]), "mycology", "goal_rows: the closest unowned row first (floor 4/5)")
+	_expect([String(rows[-2]["id"]), String(rows[-1]["id"])], ["tidewarden", "flarekeeper"],
+		"goal_rows: owned rows last, in table order")
+	print("goal rows: every milestone, unowned ranked then owned in table order: OK")

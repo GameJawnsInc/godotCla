@@ -141,7 +141,7 @@ const DRAFT_SLOT_LABEL := {
 var game
 var seed_v := 0
 var screen := "menu"  # menu | game | tutorial
-var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | up_keep | up_scrap | up_variant | intro | help | shop | log | settings
+var mode := "normal"  # normal | target_dir | target_tile | cleanse | draft_drop | up_keep | up_scrap | up_variant | intro | help | shop | log | settings | daily | career
 ## Did the roll that produced the draft on screen spend an armed focus? Read
 ## off the draft_offer event, because a focus slot that found no candidate
 ## yields no FOCUS card and the snapshot cannot tell that from an ordinary
@@ -332,6 +332,16 @@ var _daily_armed := false
 ## The menu's PLAY was tapped once while a daily try is resumable (its try is
 ## already counted): the next tap abandons it. Any other tap disarms it.
 var _play_armed := false
+## The CAREER sheet (mode "career" on the menu): GOALS / FEATS / RECORDS, paged
+## CARDS_PER_PAGE cards at a time (layout, so a shell const, not a Profile one).
+const CARDS_PER_PAGE := 5
+const CAREER_TABS := ["goals", "feats", "records"]
+var career_tab := "goals"
+var career_page := 0
+## The "feat:" ids that were unseen when the FEATS tab was opened. Opening the
+## tab clears them from the profile at once (and saves), so this is what keeps
+## them reading NEW on their cards until the sheet is opened again.
+var _career_fresh: Array = []
 
 
 func _ready() -> void:
@@ -818,7 +828,13 @@ func _build_over_info() -> Dictionary:
 	info["best"] = RunEnd.best_line(summary, prev, daily, _daily_report if recorded else {})
 	info["floor_best"] = RunEnd.floor_best_line(summary, prev, daily)
 	if recorded and not daily:
-		info["unlocks"] = RunEnd.unlock_lines(_run_unlocks, profile.unlocked_packages)
+		# the unlocks ("tier:N" first, then milestones), then the feats this
+		# run earned ("FEAT  ·  <Name>") - _run_unlocks itself stays exactly
+		# last_report.unlocks
+		var ann: Array = _run_unlocks.duplicate()
+		for fid in _run_report.get("feats", []):
+			ann.append("feat:" + String(fid))
+		info["unlocks"] = RunEnd.unlock_lines(ann, profile.unlocked_packages)
 		var nxt: Array = _run_report.get("next", [])
 		if not nxt.is_empty():
 			info["next"] = RunEnd.next_goal_text(nxt[0])
@@ -1247,7 +1263,7 @@ func _back(quit_at_root: bool = false) -> String:
 		queue_redraw()
 		return "tooltip"
 	if screen == "menu":
-		if mode == "settings" or mode == "daily":
+		if mode == "settings" or mode == "daily" or mode == "career":
 			var closed := mode
 			mode = "normal"
 			queue_redraw()
@@ -1544,6 +1560,13 @@ func _key(k: int) -> void:
 			# and every other key is ignored
 			if k == KEY_ENTER or k == KEY_SPACE:
 				_tap(String(_daily_sheet(int(_daily_now()["seed"]))["play_tag"]))
+		elif mode == "career":
+			# LEFT / RIGHT page the CAREER sheet; ESC (above) closes it and
+			# every other key is ignored - it must never start a run
+			if k == KEY_LEFT:
+				_career_turn(-1)
+			elif k == KEY_RIGHT:
+				_career_turn(1)
 		elif k == KEY_ENTER or k == KEY_SPACE:
 			_tap("play")
 		return
@@ -2056,6 +2079,16 @@ func _tap(tag: String) -> void:
 		else:
 			_daily_armed = false
 			_start_run("daily")
+	elif tag == "career":
+		career_tab = "goals"
+		career_page = 0
+		_career_fresh = []
+		mode = "career"
+		queue_redraw()
+	elif tag.begins_with("career_tab:"):
+		_career_select(tag.get_slice(":", 1))
+	elif tag.begins_with("career_page:"):
+		_career_turn(tag.get_slice(":", 1).to_int())
 	elif tag == "daily_resume":
 		mode = "normal"  # the sheet closes behind the resumed try
 		_tap("resume")
@@ -2135,11 +2168,11 @@ static func _with_none(ids: Array) -> Array:
 
 
 ## The title screen's rows as data: [label, tap tag, highlighted, badge,
-## group]. Rows that share a non-empty group share one line (DAILY sits alone
-## until the CAREER sheet joins it; TUTORIAL / SETTINGS / QUIT share the
-## last). `badge` is drawn small and gold at the row's right edge: NEW while
-## the career has something on that row the player has not cycled onto yet,
-## and on the LOADOUT row a WON / WON D<n> for the selected loadout. Built
+## group]. Rows that share a non-empty group share one line (DAILY / CAREER;
+## TUTORIAL / SETTINGS / QUIT share the last). `badge` is drawn small and gold
+## at the row's right edge: NEW while the career has something on that row
+## the player has not cycled onto (or, for CAREER, looked at) yet, and on the
+## LOADOUT row a WON / WON D<n> for the selected loadout. Built
 ## here so a headless test reads exactly what the menu offers.
 func _menu_rows() -> Array:
 	var rows: Array = []
@@ -2150,6 +2183,7 @@ func _menu_rows() -> Array:
 	rows.append(["TAP AGAIN TO ABANDON" if _play_armed else "PLAY", "play", true, "", ""])
 	var di := _daily_now()
 	rows.append(["DAILY", "daily", not bool(di["streak"]["played_today"]), "", "a"])
+	rows.append(["CAREER", "career", false, _new_badge("feat"), "a"])
 	if int(profile.unlocked_tier) > 0:
 		var tn := "base run" if sel_tier == 0 else String(Content.TIERS[sel_tier - 1]["name"])
 		rows.append(["DIFFICULTY %d: %s" % [sel_tier, tn], "set:tier", false,
@@ -2507,6 +2541,8 @@ func _draw() -> void:
 			_draw_settings(vw, vh)
 		elif mode == "daily":
 			_draw_daily(vw, vh)
+		elif mode == "career":
+			_draw_career(vw, vh)
 		return
 	var snap: Dictionary = game.snapshot()
 
@@ -2618,8 +2654,9 @@ func _draw_menu(vw: float, vh: float) -> void:
 				String(m["badge"]), COL_GOLD, bsz)
 		_hot(r, String(m["tag"]))
 	if int(profile.runs) > 0:
-		_txt_c_fit(vw / 2.0, vh * 0.972, "runs %d  ·  wins %d  ·  best floor %d" % [
-			profile.runs, profile.wins, profile.best_floor], COL_DIM_TEXT, int(vh * 0.016), vw * 0.92)
+		_txt_c_fit(vw / 2.0, vh * 0.972, "runs %d  ·  wins %d  ·  best floor %d  ·  feats %d/%d" % [
+			profile.runs, profile.wins, profile.best_floor, profile.feats.size(), Content.FEATS.size()],
+			COL_DIM_TEXT, int(vh * 0.016), vw * 0.92)
 
 
 ## The settings sheet's toggles as data: [label, tap tag]. (The old "Run
@@ -2824,6 +2861,294 @@ func _draw_daily(vw: float, vh: float) -> void:
 	for c in L["cards"]:
 		var row: Array = c["row"]
 		_card(c["rect"], String(row[0]), String(row[1]), String(row[2]), String(row[3]), vh, String(row[4]))
+	for b in L["buttons"]:
+		var br: Rect2 = b["rect"]
+		_box(br, _sb_gold if bool(b["gold"]) else _sb)
+		var fs := int(b["size"])
+		_txt_c(br.get_center().x, br.get_center().y + fs * 0.35, String(b["label"]), COL_TEXT, fs)
+		_hot(br, String(b["tag"]))
+
+
+# --- the CAREER sheet (fun pass) ---------------------------------------------------
+
+## Switch the CAREER sheet to tab `t` (page 0). Opening FEATS is looking at
+## the feats, so every "feat:" NEW badge goes - remembered in _career_fresh so
+## the cards themselves still say NEW this visit - and the profile is saved
+## only when that changed something.
+func _career_select(t: String) -> void:
+	if not CAREER_TABS.has(t):
+		return
+	career_tab = t
+	career_page = 0
+	if t == "feats":
+		var fresh: Array = profile.unseen_of("feat")
+		if not fresh.is_empty():
+			for id in fresh:
+				if not _career_fresh.has(id):
+					_career_fresh.append(id)
+				profile.mark_seen(String(id))
+			profile.save(profile_path)
+	queue_redraw()
+
+
+## Page the CAREER sheet by `d`, clamped to its pages.
+func _career_turn(d: int) -> void:
+	var pages := int(_career_cards(career_tab, 0)["pages"])
+	career_page = clampi(career_page + d, 0, pages - 1)
+	queue_redraw()
+
+
+## The CAREER sheet's head line.
+func _career_head() -> String:
+	return "runs %d  ·  wins %d  ·  best floor %d  ·  feats %d/%d" % [profile.runs, profile.wins,
+		profile.best_floor, profile.feats.size(), Content.FEATS.size()]
+
+
+## The icon an unlock id wears: a loadout or package by its first ability, a
+## mutator, difficulty or feat by its own glyph.
+func _unlock_icon(id: String) -> String:
+	match Profile.unlock_kind(id):
+		"loadout":
+			return _ability_icon(String(Content.LOADOUTS[id]["kit"][0]))
+		"package":
+			return _ability_icon(String(Content.PACKAGES[id][0]))
+		"mutator":
+			return "ic_mutator"
+		"tier":
+			return "ic_tier"
+		"feat":
+			return "ic_feat"
+	return "ab_default"
+
+
+## A milestone row's desc ("" off the table).
+static func _milestone_desc(id: String) -> String:
+	for m in Content.MILESTONES:
+		if String(m["id"]) == id:
+			return String(m.get("desc", ""))
+	return ""
+
+
+## "1 win" / "3 wins".
+static func _plural(n: int, one: String, many: String) -> String:
+	return "%d %s" % [n, one if n == 1 else many]
+
+
+## The first package loadout `lid` still waits on, as an id ("" when none).
+func _gate_pkg(lid: String) -> String:
+	for pkg in Content.LOADOUTS.get(lid, {}).get("requires", {}).get("packages", []):
+		if not profile.unlocked_packages.has(pkg):
+			return String(pkg)
+	return ""
+
+
+## Where a record was set: "run 12  ·  Tender  ·  difficulty 2".
+static func _record_where(r: Dictionary) -> String:
+	var parts: Array = ["run %d" % int(r.get("run", 0))]
+	var lid := String(r.get("loadout", ""))
+	if Content.LOADOUTS.has(lid):
+		parts.append(String(Content.LOADOUTS[lid]["name"]))
+	var t := int(r.get("tier", 0))
+	parts.append("difficulty %d" % t if t > 0 else "base run")
+	return "  ·  ".join(parts)
+
+
+## The CAREER sheet as data, one tab and page at a time: {cards: [[icon, name,
+## desc, tag, badge, frac]], pages, page, tab}. `frac` (0..1) is the progress
+## bar drawn under the card; -1 draws none. Tabs:
+##   goals    the difficulty ladder, then every milestone - unowned ranked by
+##            Profile.goal_rows (the next_goals rank), owned last as DONE
+##   feats    every Content.FEATS row in table order: NEW / EARNED (with the
+##            run that earned it) or its progress
+##   records  Profile.RECORD_SHOW, one card per loadout, the daily streak
+## The page is clamped, so a stale career_page never reads past the end.
+func _career_cards(tab: String, page: int) -> Dictionary:
+	var cards: Array = []
+	match tab:
+		"feats":
+			for fid in Content.FEATS:
+				var row: Dictionary = Content.FEATS[fid]
+				if profile.feats.has(fid):
+					var fresh: bool = _career_fresh.has("feat:" + fid) or profile.unseen.has("feat:" + fid)
+					cards.append(["ic_feat", String(row["name"]),
+						"%s  ·  run %d" % [row["desc"], int(profile.feats[fid]["run"])], "",
+						"NEW" if fresh else "EARNED", 1.0])
+				else:
+					var fp: Dictionary = profile.feat_progress(fid)
+					cards.append(["ic_feat", String(row["name"]), String(row["desc"]), "",
+						String(fp["text"]) if int(fp["need"]) > 1 else "", float(fp["frac"])])
+		"records":
+			var best: Dictionary = profile.records["best"]
+			for rs in Profile.RECORD_SHOW:
+				var key := String(rs[0])
+				if best.has(key):
+					var r: Dictionary = best[key]
+					var where := _record_where(r)
+					cards.append(["ic_feat", String(rs[1]),
+						("turns  ·  " + where) if key == "fastest_win" else where, "",
+						"%d" % int(r["v"]), -1.0])
+				else:
+					cards.append(["ic_feat", String(rs[1]), "no record yet", "", "-", -1.0])
+			for lid in Content.LOADOUTS:
+				var ld: Dictionary = Content.LOADOUTS[lid]
+				var lr: Dictionary = profile.records["loadouts"].get(lid, {})
+				var unlocked: bool = lid == "tender" or profile.unlocked_loadouts.has(lid)
+				var badge := ""
+				var desc := ""
+				var n_runs := int(lr.get("runs", 0))
+				if not unlocked:
+					badge = "LOCKED"
+					desc = _milestone_desc(lid)
+				else:
+					var bt := int(lr.get("best_tier_won", -1))
+					if bt >= 1:
+						badge = "WON D%d" % bt
+					elif bt == 0:
+						badge = "WON"
+					elif n_runs > 0:
+						badge = "FLOOR %d" % int(lr.get("best_floor", 0))
+					if n_runs > 0:
+						desc = "best score %d  ·  best floor %d  ·  %s in %s" % [int(lr.get("best_score", 0)),
+							int(lr.get("best_floor", 0)), _plural(int(lr.get("wins", 0)), "win", "wins"),
+							_plural(n_runs, "run", "runs")]
+					else:
+						desc = "not played yet"
+					var gp := _gate_pkg(lid)
+					if gp != "":
+						desc += "  ·  needs %s: %s" % [Profile.unlock_name(gp), _milestone_desc(gp)]
+				cards.append([_unlock_icon(lid), String(ld["name"]), desc, "", badge, -1.0])
+			var st: Dictionary = _daily_now()["streak"]
+			cards.append(["ic_feat", "Daily streak", "longest %d  ·  %s finished" % [int(st["longest"]),
+				_plural(int(st["days"]), "daily", "dailies")], "", "%d" % int(st["current"]), -1.0])
+		_:
+			var u := int(profile.unlocked_tier)
+			var nt := Content.TIERS.size()
+			var ladder := ""
+			if u == 0:
+				ladder = "Shut down the Furnace to open difficulty 1"
+			elif u < nt:
+				ladder = "next: win at difficulty %d to open %s" % [u, Content.TIERS[u]["name"]]
+			else:
+				ladder = "every difficulty is open"
+				for lid in profile.records["loadouts"]:
+					if int(profile.records["loadouts"][lid]["best_tier_won"]) >= nt:
+						ladder += "  ·  won at %d" % nt
+						break
+			cards.append(["ic_tier", "Difficulty ladder", ladder, "", "%d/%d" % [u, nt], float(u) / float(nt)])
+			for e in profile.goal_rows():
+				var id := String(e["id"])
+				var pr: Dictionary = e["p"]
+				var kind := Profile.unlock_kind(id)
+				var nm := Profile.unlock_name(id)
+				var desc := "%s  ·  %s" % [e["row"].get("desc", ""), kind]
+				if bool(e["owned"]):
+					var gp := _gate_pkg(id) if kind == "loadout" else ""
+					if gp != "":
+						nm += " (needs %s)" % Profile.unlock_name(gp)
+						desc += "  ·  needs %s: %s" % [Profile.unlock_name(gp), _milestone_desc(gp)]
+					cards.append([_unlock_icon(id), nm, desc, "", "DONE", 1.0])
+				else:
+					var binary: bool = ["won_with", "wins_without"].has(String(pr["key"]))
+					if String(pr["hint"]) != "":
+						desc += "  ·  " + String(pr["hint"])
+					cards.append([_unlock_icon(id), nm, desc, "",
+						"" if binary else "%d/%d" % [int(pr["have"]), int(pr["need"])], float(pr["frac"])])
+	var pages := maxi(1, ceili(float(cards.size()) / CARDS_PER_PAGE))
+	var pg := clampi(page, 0, pages - 1)
+	return {"cards": cards.slice(pg * CARDS_PER_PAGE, (pg + 1) * CARDS_PER_PAGE), "pages": pages,
+		"page": pg, "tab": tab}
+
+
+## Where the CAREER sheet's pieces land, as data (_draw_career draws it;
+## tests/test_shell.gd holds the sizes and the geometry at every phone shape):
+## {head: {text, x, y, size}, tabs: [{rect, label, tag, active, size}],
+## cards: [{rect, row}], bars: [{track, fill}], buttons: [{rect, label, tag,
+## size, gold}]}. Five cards of 0.105vh from 0.27vh end at 0.855vh; each
+## progress bar sits in the GAP under its card (inside it, it would cut the
+## description's descenders) and the trailing row goes through
+## _sheet_button_y - which leaves no room for a page line above it, so the
+## page count rides in the BACK label ("BACK  ·  2/4").
+func _career_layout(vw: float, vh: float, info: Dictionary) -> Dictionary:
+	var y := vh * 0.16
+	var head := _career_head()
+	var out := {"head": {"text": head, "x": vw / 2.0, "y": y + vh * 0.025,
+		"size": _fit_size(head, int(vh * 0.022), vw * 0.88)}}
+	y += vh * 0.04
+	var tw := vw * 0.28
+	var tgap := vw * 0.03
+	var th := vh * 0.055
+	var tx := (vw - (tw * 3.0 + tgap * 2.0)) / 2.0
+	var tabs: Array = []
+	var new_feats: bool = not profile.unseen_of("feat").is_empty()
+	for i in CAREER_TABS.size():
+		var t := String(CAREER_TABS[i])
+		var label := t.to_upper()
+		if t == "feats" and new_feats:
+			label += " NEW"
+		var r := Rect2(tx + i * (tw + tgap), y, tw, th)
+		tabs.append({"rect": r, "label": label, "tag": "career_tab:" + t,
+			"active": t == String(info.get("tab", career_tab)), "size": _fit_size(label, int(th * 0.4), tw * 0.9)})
+	out["tabs"] = tabs
+	y += vh * 0.07
+	var ch := vh * 0.105
+	var cards: Array = []
+	var bars: Array = []
+	for c in info["cards"]:
+		var r := Rect2(vw * 0.05, y, vw * 0.9, ch)
+		cards.append({"rect": r, "row": c})
+		var frac := float(c[5])
+		if frac >= 0.0:
+			var track := Rect2(r.position.x + ch * 0.25, r.end.y + vh * 0.003, r.size.x - ch * 0.5, vh * 0.006)
+			var fill := track
+			fill.size.x = track.size.x * clampf(frac, 0.0, 1.0)
+			bars.append({"track": track, "fill": fill})
+		y += ch + vh * 0.015
+	out["cards"] = cards
+	out["bars"] = bars
+	# the button row sits where five cards end, whatever this page holds
+	y = vh * (0.27 + 5 * 0.105 + 5 * 0.015) + vh * 0.005
+	var bh := vh * 0.065
+	var by := _sheet_button_y(y, bh, vh)
+	var pages := int(info.get("pages", 1))
+	var pg := int(info.get("page", 0))
+	var back := "BACK" if pages <= 1 else "BACK  ·  %d/%d" % [pg + 1, pages]
+	var specs: Array = []
+	if pg > 0:
+		specs.append([Rect2(vw * 0.06, by, vw * 0.18, bh), "<", "career_page:-1", false])
+	specs.append([Rect2(vw * 0.27, by, vw * 0.46, bh), back, "close", true])
+	if pg < pages - 1:
+		specs.append([Rect2(vw * 0.76, by, vw * 0.18, bh), ">", "career_page:+1", false])
+	var buttons: Array = []
+	for b in specs:
+		var br: Rect2 = b[0]
+		buttons.append({"rect": br, "label": b[1], "tag": b[2], "gold": b[3],
+			"size": _fit_size(String(b[1]), int(bh * 0.34), br.size.x * 0.92)})
+	out["buttons"] = buttons
+	return out
+
+
+func _draw_career(vw: float, vh: float) -> void:
+	hotspots.clear()
+	_sheet(vw, vh, "CAREER")
+	var info := _career_cards(career_tab, career_page)
+	career_page = int(info["page"])
+	var L := _career_layout(vw, vh, info)
+	var hd: Dictionary = L["head"]
+	_txt_c(float(hd["x"]), float(hd["y"]), String(hd["text"]), COL_CREAM, int(hd["size"]))
+	for t in L["tabs"]:
+		var tr: Rect2 = t["rect"]
+		_box(tr, _sb_gold if bool(t["active"]) else _sb)
+		var fs := int(t["size"])
+		_txt_c(tr.get_center().x, tr.get_center().y + fs * 0.35, String(t["label"]),
+			COL_GOLD if bool(t["active"]) else COL_TEXT, fs)
+		_hot(tr, String(t["tag"]))
+	for c in L["cards"]:
+		var row: Array = c["row"]
+		_card(c["rect"], String(row[0]), String(row[1]), String(row[2]), String(row[3]), vh, String(row[4]))
+	for b in L["bars"]:
+		draw_rect(b["track"], Color(1, 1, 1, 0.12))
+		if b["fill"].size.x > 0.0:
+			draw_rect(b["fill"], COL_GOLD)
 	for b in L["buttons"]:
 		var br: Rect2 = b["rect"]
 		_box(br, _sb_gold if bool(b["gold"]) else _sb)

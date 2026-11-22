@@ -6,7 +6,8 @@ extends SceneTree
 ## would only ever show up on a phone. This hosts shell/main.gd inside a
 ## SubViewport that renders every frame, at several real phone and desktop
 ## sizes, and drives real frames through every screen the shell draws: the
-## menu and settings, the career menu (NEW / WON badges) and the DAILY sheet,
+## menu and settings, the career menu (NEW / WON badges), the DAILY sheet,
+## the CAREER sheet (every tab, a middle and a last page, NEW feats),
 ## tutorial steps, an optimizer game played through _act
 ## with tooltips raised on every enemy, vent and the tender, a lethal state
 ## (vignette, outline, guard flash, escape glow), a danger board (tether, gum
@@ -310,6 +311,12 @@ func _build_phases() -> Array:
 		["menu (career badges)", 3, "_menu_badges_setup", "_menu_badges_check", "", null],
 		["daily sheet", 2, "_daily_setup", "_daily_check", "", false],
 		["daily sheet (finished)", 2, "_daily_setup", "_daily_check", "", true],
+		["career sheet (goals)", 2, "_career_setup", "_career_check", "", ["goals", 0]],
+		["career sheet (goals, page 2)", 2, "_career_setup", "_career_check", "", ["goals", 1]],
+		["career sheet (feats, fresh)", 2, "_career_setup", "_career_check", "", ["feats", 0]],
+		["career sheet (feats, last page)", 2, "_career_setup", "_career_check", "", ["feats", 4]],
+		["career sheet (records)", 2, "_career_setup", "_career_check", "", ["records", 0]],
+		["career sheet (records, last page)", 2, "_career_setup", "_career_check", "", ["records", 2]],
 		["tutorial", 8, "_tutorial_setup", "_tutorial_check", "_tutorial_step", null],
 		["tutorial done", 2, "_tutorial_done_setup", "_tutorial_done_check", "", null],
 		["bot game", 100000, "_bot_setup", "_bot_check", "_bot_each", null],
@@ -379,10 +386,12 @@ func _tutorial_setup() -> void:
 	sh._start_tutorial()
 
 
-## The menu with everything a career puts on it: a NEW badge on every cycler,
-## a WON badge on the loadout, a named difficulty, the footer, the legacy
-## daily notice. The profile is a stand-in (never saved: nothing here cycles
-## a row, which is the only path that writes it).
+## The menu with everything a career puts on it: a NEW badge on every cycler
+## and on CAREER, a WON badge on the loadout, a named difficulty, the footer
+## with its feats count, the legacy daily notice - and, for the CAREER sheet
+## phases, earned feats (one unseen) and records. The
+## profile is a stand-in; the one path here that writes it (opening the FEATS
+## tab clears its NEW badges) writes the scratch profile_path.
 var saved_profile = null
 
 
@@ -397,6 +406,12 @@ func _career_profile():
 	p.unlocked_loadouts = ["tidewarden", "skyrunner"]
 	p.unseen = ["tier:2", "aeolian", "spinning_shrine", "skyrunner"]
 	p.records["loadouts"]["tender"] = p._loadout_rec(7, 1200, 1, 10, 2)
+	p.records["best"]["score"] = p._rec(1200, 9, "tender", 1)
+	p.records["best"]["fastest_win"] = p._rec(140, 7, "tender", 0)
+	p.feats = {"green_thumb": p._feat_rec("2026-01-02", 4), "resonant": p._feat_rec("2026-01-05", 9)}
+	p.unseen.append("feat:green_thumb")
+	p.totals = {"kills": 140}
+	p.bosses_beaten = ["furnace_core"]
 	return p
 
 
@@ -419,7 +434,7 @@ func _menu_badges_check() -> String:
 	for row in sh._menu_rows():
 		if String(row[3]) != "":
 			badges += 1
-	return "" if badges >= 4 else "the career menu drew only %d badges" % badges
+	return "" if badges >= 5 else "the career menu drew only %d badges (NEW on four cyclers and CAREER)" % badges
 
 
 ## The DAILY sheet, unplayed (arg false) and finished with a streak (true).
@@ -441,6 +456,27 @@ func _daily_check() -> String:
 		if String(h["tag"]) == "daily_play":
 			return ""
 	return "the daily sheet laid out no PLAY button"
+
+
+## The CAREER sheet on tab / page `phase_arg` ([tab, page]).
+func _career_setup() -> void:
+	sh.screen = "menu"
+	sh.mode = "normal"
+	sh._tap("career")
+	sh._tap("career_tab:" + String(phase_arg[0]))
+	for i in int(phase_arg[1]):
+		sh._tap("career_page:+1")
+
+
+func _career_check() -> String:
+	if sh.mode != "career":
+		return "career sheet not up (%s)" % sh.mode
+	if sh.career_tab != String(phase_arg[0]) or sh.career_page != int(phase_arg[1]):
+		return "career sheet on %s p%d, wanted %s p%d" % [sh.career_tab, sh.career_page, phase_arg[0], int(phase_arg[1])]
+	for h in sh.hotspots:
+		if String(h["tag"]) == "close":
+			return ""
+	return "the career sheet laid out no BACK button"
 
 
 func _tutorial_check() -> String:
