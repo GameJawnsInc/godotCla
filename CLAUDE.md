@@ -103,7 +103,9 @@ architecture below is designed to bend rather than block.
     their reach, plus a self-test that feeds the lint deliberately bad rows
     (including the mobility-tagged and need-1 resonances) both in the whole
     table AND alone, so no fixture's own rule can be shadowed by the
-    one-row-per-tag rule, and the planned rider rows)
+    one-row-per-tag rule, and the planned rider rows), and the fun-pass
+    `RUN_SCORE` / `RUN_SCORE_TIER_QUARTERS` / `RUN_SCORE_VERSION` /
+    `RUN_STAT_KEYS` shapes with a bad-table self-test
   - `godot --headless --path . --script tests/test_grammar.gd` — effect grammar
     behaviour: rider evaluation, returned outcomes, the data tables driven
     through `Game._apply_effect` on hand-built states, the D4 draft slots
@@ -137,12 +139,22 @@ architecture below is designed to bend rather than block.
     interval sits outside its band; `PLAYTEST_GATE=0` disables, `PLAYTEST_SEEDS`
     and `PLAYTEST_BOTS=a,b,c` narrow a run)
   - `godot --headless --path . --script tests/test_meta.gd` — career unlocks, profile io,
-    mutator invariants, package pools
+    mutator invariants, package pools, and the fun-pass run-stats fold: replay
+    determinism (summary AND every step's ctx) over optimizer/sprout/magpie
+    runs, the bloom cross-check, an independent event recount, hand-fed units
+    (turn close, streaks, spikes killer, ties, closest call on a winning step,
+    room clear, floors unhurt), the score, `near_miss` per rule, `highlights`
+    order, career records and score bests (report rule, fastest win, loadout
+    rows, the `score_v` reset, `bests_snapshot` before the record, load
+    filters); its career loop is the shell's exact merge and pins every
+    `Content.RUN_STAT_KEYS` key as an int in every summary
   - `godot --headless --path . --script tests/test_shell.gd` — shell smoke test
     (the shell reads the sim, so a sim change can break it), plus the two
     player-facing gates: `_check_card_text` holds every shipped description
     to a readable size on the tightest shrine card, and `_check_cleanse_hint`
-    holds CLEANSE's refusal to the truth
+    holds CLEANSE's refusal to the truth; `_check_resume_stats` holds a
+    resumed run's stats fold equal to an uninterrupted one, and every
+    `_bare_shell` keeps its career in a scratch `profile_path`
 - Bots live in one registry, `bots/roster.gd` (`Roster.names()/make(name, seed)`);
   every runner resolves persona names through it, and an unknown name fails
   loudly. `deeproot_rollout` is deeproot with rollout drafting (a separate
@@ -941,6 +953,53 @@ architecture below is designed to bend rather than block.
   re-seeded rng, 3067/3067 bot end turns equal to reality). Bots must not read
   them: a bot that did would change its play, which is a persona change with a
   band re-gate.
+- Run stats (fun pass): `meta/run_stats.gd` (`RunStats`, RefCounted, no Node,
+  no Time, no rng) is the ONE fold over a run's step events - kills (by kind,
+  elites, bosses), best multi-kill and kill streak, biggest hit, closest call,
+  combos (riders, hooks, surges, collision hits), rooms bloomed, room clears,
+  floors restored and unhurt, bloom earned, cleanses, damage dealt/taken,
+  shield absorbed, statuses landed, the first floor each resonance lit, and
+  the killer. The shell builds one per game (tutorial included, never
+  recorded): `begin(game)` in `_new_game` / `_start_tutorial`, `feed(game,
+  evs)` after every step in both `_act` branches and in `_load_run`'s replay,
+  so a resumed run keeps byte-identical stats (`_ensure_stats` gives a game
+  assigned from outside its own fold). `feed` returns the per-step ctx and
+  stores it in `stats.ctx` - `step_kills, turn_kills, turn_kills_prev,
+  turn_closed, kill_streak, room_cleared, cleanse_gain, bounty_gain,
+  bloom_gain, big_hit, res_new, closest_call, killed` - the only source the
+  feedback layer may read those from. A turn closes when `total_turns` moves,
+  the floor changes or the game ends (a lethal enemy phase returns before
+  `total_turns` moves); a room clear is a kill in the room (grown by 1) the
+  tender stood in before the step, with nothing left alive in it; closest call
+  updates whenever the tender is still standing, a winning step included.
+  Bloom earned is the per-step DELTA floored at 0, never a sum of event
+  fields: the `cleanse` event's `bloom` is the running total (`cleanse_gain`
+  is that minus the bloom before the step), and a delta cannot miss a source
+  the events do not name. `summary()` carries the nested dicts and the flat
+  ints `Content.RUN_STAT_KEYS` lists, and shares no key with
+  `Game.run_summary()`, which it is MERGED into at the game-over site
+  (`_record_finished_run`), stamped with `score` (int) and `score_v`. Statics:
+  `score(s)` (`Content.RUN_SCORE` rows `pts * value` in table order, each tier
+  `+RUN_SCORE_TIER_QUARTERS` quarters, integer math; cosmetic, the sim never
+  reads it, and ANY edit to the table bumps `RUN_SCORE_VERSION`, which drops
+  stored score bests and nothing else), `near_miss(snap, s, prev_best_floor)`
+  (boss HP, stairs within 10 BFS steps, 1-2 cleanses short, one floor short of
+  / on the career best, exact 0 HP but never smog; a win's closest call at <= 3
+  HP) and `highlights(s, max_n, new_records)`. Records live in
+  `meta/profile.gd` `records` only (`best[key]` per `RUN_STAT_KEYS` key but
+  `closest_hp` plus `score` as maxima and `fastest_win` as the fewest turns
+  over wins, values > 0 only; `loadouts[lid]` floor/score/tier-won/runs/wins;
+  `score_v`), folded by career runs and never by dailies. `last_report`
+  (unsaved) is `{run, unlocks: "tier:N" first then milestone ids, feats,
+  records: [{key, v, was}] for `RECORD_SHOW` keys beaten where an earlier
+  record existed, next}`; the shell reads its unlocks instead of building the
+  tier entry itself. `profile.bests_snapshot(lid)` is taken BEFORE
+  `record_run` into `_over_prev` and is the only source of any "was" value.
+  History entries gained `loadout, death_cause, bloom, mutators, packages,
+  score`, and `load_from` filters record keys and loadouts against Content and
+  `int()`s every number. The shell's `profile_path` (default `PROFILE_PATH`)
+  is where the career is read and saved; tests set it before `_ready`. No
+  visible UI reads any of this yet.
 - Run summary and effective casts (C4): `Game.effective_uses` (base id -> int)
   counts a cast only when something happened — an effect outcome fired or a
   rider ran — while `player.uses` stays the raw count. It is copied by

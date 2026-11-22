@@ -42,8 +42,9 @@ var unlocked_mutators: Array = []
 var unlocked_loadouts: Array = []
 ## Milestone bucket with no consumer yet (kind "graft").
 var unlocked_grafts: Array = []
-## Compact per-run records {won, floor, tier, turns, seed, kit, grafts},
-## newest last, at most HISTORY_MAX of them.
+## Compact per-run records {won, floor, tier, turns, seed, kit, grafts,
+## has_kit, loadout, death_cause, bloom, mutators, packages, score} (see
+## _compact), newest last, at most HISTORY_MAX of them.
 var history: Array = []
 ## Ability base id -> effective casts summed over every recorded run.
 var casts_by_base: Dictionary = {}
@@ -52,12 +53,38 @@ var daily_best: Dictionary = {}
 ## Test seam only: when non-empty, these rows stand in for Content.MILESTONES.
 var milestone_rows: Array = []
 
+## Category records (fun pass, cosmetic: a record buys nothing). RECORD_SHOW is
+## the curated subset a player is told about - the only keys whose beating
+## lands in last_report.records - as [key, label] in display order.
+const RECORD_SHOW := [["score", "Best score"], ["kills", "Most machines felled"],
+	["biggest_hit_amt", "Biggest hit"], ["best_multi_kill", "Most felled in one turn"],
+	["rooms_bloomed", "Most rooms bloomed"], ["bloom_earned", "Most bloom earned"],
+	["combos", "Most combos"], ["fastest_win", "Fastest win"]]
+## Career records over CAREER runs (dailies never touch them):
+##   best[key] = _rec(v, run, loadout, tier) for every Content.RUN_STAT_KEYS
+##     key but closest_hp (a max), "score" (a max) and "fastest_win" (the
+##     fewest turns over WINS); only a value > 0 is ever stored
+##   loadouts[lid] = _loadout_rec() per Content.LOADOUTS id played
+##   score_v = the Content.RUN_SCORE_VERSION the score bests were made under;
+##     a different version drops the score bests (and only those), because a
+##     changed table never compares across versions
+var records: Dictionary = {"best": {}, "loadouts": {}, "score_v": 0}
+## What the last record_run did, for the game-over sheet. NOT saved:
+## {run, unlocks ("tier:N" first when a tier opened, then milestone ids),
+##  feats (none yet), records ([{key, v, was}] for RECORD_SHOW keys beaten
+##  where an earlier record existed - run 1 never spams NEW RECORD), next}
+var last_report: Dictionary = {}
 
-## Record a finished run and return newly unlocked ids. `summary` is a
-## `Game.run_summary()` dict; the legacy {won, floor, tier} shape still works
-## (history then records an empty kit and no casts for that run).
+
+## Record a finished run and return newly unlocked milestone ids. `summary` is
+## a `Game.run_summary()` dict - in the shell merged with RunStats.summary()
+## and stamped with `score` / `score_v` - and the legacy {won, floor, tier}
+## shape still works (history then records an empty kit and no casts for that
+## run, and no record moves). Also folds the run into `records` and leaves
+## `last_report` for the game-over sheet.
 func record_run(summary: Dictionary) -> Array:
 	var entry := _compact(summary)
+	var prev_tier := unlocked_tier
 	runs += 1
 	best_floor = maxi(best_floor, int(entry["floor"]))
 	if entry["won"]:
@@ -75,7 +102,107 @@ func record_run(summary: Dictionary) -> Array:
 	history.append(entry)
 	if history.size() > HISTORY_MAX:
 		history = history.slice(history.size() - HISTORY_MAX)
-	return _claim()
+	var beaten := _fold_records(summary, entry)
+	var news := _claim()
+	var unlocks: Array = []
+	if unlocked_tier > prev_tier:
+		unlocks.append("tier:%d" % unlocked_tier)
+	unlocks.append_array(news)
+	last_report = {"run": runs, "unlocks": unlocks, "feats": [], "records": beaten, "next": []}
+	return news
+
+
+## The record keys: every flat run stat but closest_hp (a max), plus "score"
+## (a max). "fastest_win" (a min over wins) is handled on its own.
+static func _record_max_keys() -> Array:
+	var out: Array = []
+	for k in Content.RUN_STAT_KEYS:
+		if k != "closest_hp":
+			out.append(String(k))
+	out.append("score")
+	return out
+
+
+## One stored record. Keys in sorted order, and the SAME constructor builds a
+## record and reloads one, so a saved profile and its reload str() the same.
+static func _rec(v: int, run: int, loadout: String, tier: int) -> Dictionary:
+	return {"loadout": loadout, "run": run, "tier": tier, "v": v}
+
+
+## One loadout's row, sorted keys; best_tier_won -1 means never won.
+static func _loadout_rec(best_floor := 0, best_score := 0, best_tier_won := -1, n_runs := 0, n_wins := 0) -> Dictionary:
+	return {"best_floor": best_floor, "best_score": best_score, "best_tier_won": best_tier_won,
+		"runs": n_runs, "wins": n_wins}
+
+
+## Fold one career run into `records`; returns the RECORD_SHOW keys it beat
+## ([{key, v, was}], RECORD_SHOW order) where an earlier record existed.
+## Called by record_run after `runs` moved, so a record names its own run.
+func _fold_records(summary: Dictionary, entry: Dictionary) -> Array:
+	# a summary without score_v (the legacy shapes) carries no score either,
+	# so it never moves the version: only a scored summary can reset bests
+	if summary.has("score_v"):
+		var sv := int(summary["score_v"])
+		if sv != int(records["score_v"]):
+			_drop_score_bests()
+			records["score_v"] = sv
+	elif int(records["score_v"]) == 0:
+		records["score_v"] = Content.RUN_SCORE_VERSION
+	var lid := String(entry["loadout"])
+	var tier := int(entry["tier"])
+	var won := bool(entry["won"])
+	var score := int(entry["score"])
+	if Content.LOADOUTS.has(lid):
+		var lr: Dictionary = records["loadouts"].get(lid, _loadout_rec())
+		lr["runs"] = int(lr["runs"]) + 1
+		lr["best_floor"] = maxi(int(lr["best_floor"]), int(entry["floor"]))
+		lr["best_score"] = maxi(int(lr["best_score"]), score)
+		if won:
+			lr["wins"] = int(lr["wins"]) + 1
+			lr["best_tier_won"] = maxi(int(lr["best_tier_won"]), tier)
+		records["loadouts"][lid] = lr
+	var best: Dictionary = records["best"]
+	var beaten := {}
+	for key in _record_max_keys():
+		var v := int(summary.get(key, 0))
+		if v <= 0:
+			continue
+		if best.has(key) and v <= int(best[key]["v"]):
+			continue
+		if best.has(key):
+			beaten[key] = {"key": key, "v": v, "was": int(best[key]["v"])}
+		best[key] = _rec(v, runs, lid, tier)
+	var turns := int(entry["turns"])
+	if won and turns > 0 and (not best.has("fastest_win") or turns < int(best["fastest_win"]["v"])):
+		if best.has("fastest_win"):
+			beaten["fastest_win"] = {"key": "fastest_win", "v": turns, "was": int(best["fastest_win"]["v"])}
+		best["fastest_win"] = _rec(turns, runs, lid, tier)
+	var out: Array = []
+	for row in RECORD_SHOW:
+		if beaten.has(row[0]):
+			out.append(beaten[row[0]])
+	return out
+
+
+func _drop_score_bests() -> void:
+	records["best"].erase("score")
+	for lid in records["loadouts"]:
+		records["loadouts"][lid]["best_score"] = 0
+
+
+## The career's bests as they stand NOW - a view over `records`. The shell
+## takes it BEFORE record_run, so every "was" the game-over sheet prints (NEW
+## BEST, DEEPEST YET, the near-miss floor) is the value before this run.
+## -> {runs, wins, best_floor, best_score, best_score_loadout, loadout}
+func bests_snapshot(loadout: String) -> Dictionary:
+	var best: Dictionary = records["best"]
+	var lr: Dictionary = records["loadouts"].get(loadout, {})
+	return {
+		"runs": runs, "wins": wins, "best_floor": best_floor,
+		"best_score": int(best["score"]["v"]) if best.has("score") else 0,
+		"best_score_loadout": int(lr.get("best_score", 0)),
+		"loadout": loadout,
+	}
 
 
 ## Daily challenge result: best-per-seed only, never career progress.
@@ -113,7 +240,21 @@ func _compact(summary: Dictionary) -> Dictionary:
 		# a legacy {won, floor, tier} record carries no kit: it must never
 		# satisfy a wins_without predicate by looking like an empty kit
 		"has_kit": summary.has("kit"),
+		# fun pass (appended so the record path and load_from keep one key
+		# order): what the run was and what it scored
+		"loadout": _known_loadout(summary.get("loadout", "")),
+		"death_cause": String(summary.get("death_cause", "")),
+		"bloom": int(summary.get("bloom", 0)),
+		"mutators": _known_ids(summary.get("mutators", []), Content.MUTATORS),
+		"packages": _known_ids(summary.get("packages", []), Content.PACKAGES),
+		"score": int(summary.get("score", 0)),
 	}
+
+
+## A Content.LOADOUTS id, or "" for anything else.
+static func _known_loadout(lid) -> String:
+	var s := str(lid) if lid != null else ""
+	return s if Content.LOADOUTS.has(s) else ""
 
 
 ## Milestone rows to evaluate. `milestone_rows` is a test seam: Content.
@@ -329,6 +470,11 @@ func to_dict() -> Dictionary:
 		# back from it would differ only in key order.
 		"casts_by_base": _sorted(casts_by_base),
 		"daily_best": _sorted(daily_best.duplicate(true)),
+		"records": {
+			"best": _sorted(records["best"].duplicate(true)),
+			"loadouts": _sorted(records["loadouts"].duplicate(true)),
+			"score_v": int(records["score_v"]),
+		},
 	}
 
 
@@ -433,7 +579,43 @@ static func load_from(path: String):  # -> Profile (or fresh if missing)
 				daily[str(k)] = {"won": bool(v.get("won", false)),
 					"floor": int(v.get("floor", 0)), "turns": int(v.get("turns", 0))}
 	profile.daily_best = daily
+	profile.records = _load_records(data.get("records", {}))
 	return profile
+
+
+## `records` from a saved profile: every key, loadout and number checked
+## (JSON hands numbers back as floats), each entry rebuilt through its own
+## constructor. A profile from before the fun pass has none and loads empty.
+## When the stored score_v is not the live Content.RUN_SCORE_VERSION the
+## score bests are dropped - a changed score table never compares - and
+## every other record stands.
+static func _load_records(stored) -> Dictionary:
+	var out := {"best": {}, "loadouts": {}, "score_v": 0}
+	if not (stored is Dictionary):
+		return out
+	var keep: Array = _record_max_keys()
+	keep.append("fastest_win")
+	var sb = stored.get("best", {})
+	if sb is Dictionary:
+		for k in sb:
+			var e = sb[k]
+			if keep.has(String(k)) and e is Dictionary and int(e.get("v", 0)) > 0:
+				out["best"][String(k)] = _rec(int(e.get("v", 0)), int(e.get("run", 0)),
+					_known_loadout(e.get("loadout", "")), int(e.get("tier", 0)))
+	var sl = stored.get("loadouts", {})
+	if sl is Dictionary:
+		for lid in sl:
+			var r = sl[lid]
+			if Content.LOADOUTS.has(String(lid)) and r is Dictionary:
+				out["loadouts"][String(lid)] = _loadout_rec(int(r.get("best_floor", 0)),
+					int(r.get("best_score", 0)), int(r.get("best_tier_won", -1)),
+					int(r.get("runs", 0)), int(r.get("wins", 0)))
+	out["score_v"] = int(stored.get("score_v", 0))
+	if int(out["score_v"]) != Content.RUN_SCORE_VERSION:
+		out["best"].erase("score")
+		for lid in out["loadouts"]:
+			out["loadouts"][lid]["best_score"] = 0
+	return out
 
 
 ## `ids` kept in order, dropping anything `known` (a Dictionary of valid ids)

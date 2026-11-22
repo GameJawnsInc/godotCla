@@ -417,6 +417,19 @@ func _init() -> void:
 		Content.RESONANCES.size(), rshape["stat"], rshape["mod"], rshape["hooks"],
 		", ".join(rrows), Content.RESONANCES.size(), Content.TAGS.size()])
 
+	# 15) fun pass: the cosmetic run-score table and the run-stat key list
+	# (the sim reads neither; meta/run_stats.gd and meta/profile.gd do), then
+	# the lint's own self-test
+	failures.append_array(_lint_run_score(Content.RUN_SCORE, Content.RUN_SCORE_TIER_QUARTERS, Content.RUN_SCORE_VERSION))
+	failures.append_array(_lint_run_stat_keys(Content.RUN_STAT_KEYS))
+	failures.append_array(_lint_run_score_selftest())
+	var score_parts: Array = []
+	for row in Content.RUN_SCORE:
+		score_parts.append("%s %d" % [String(row["id"]), int(row["pts"])])
+	print("run score v%d: %s; +%d quarter(s) per tier; run-stat keys %d" % [
+		Content.RUN_SCORE_VERSION, ", ".join(score_parts), Content.RUN_SCORE_TIER_QUARTERS,
+		Content.RUN_STAT_KEYS.size()])
+
 	if failures.is_empty():
 		print("content: OK")
 		quit(0)
@@ -1903,4 +1916,88 @@ func _lint_d4_selftest() -> Array:
 	print("d4 lint self-test: %d bad slot lists -> %d rejected; %d good -> clean; %d bad name lists -> %d; %d bad ignored-tag lists -> %d; %d good -> clean" % [
 		BAD_DRAFT_SLOTS.size(), bad_slots, GOOD_DRAFT_SLOTS.size(), BAD_NAME_LISTS.size(), bad_lists,
 		bad_ignored.size(), bad_tags, GOOD_IGNORED_TAGS.size()])
+	return out
+
+
+# --- 15) fun pass: the run score and the run-stat keys ------------------------
+
+## RUN_SCORE rows are {id: unique non-empty String, key: non-empty String,
+## pts: int >= 0} and nothing else; RUN_SCORE_TIER_QUARTERS an int >= 0;
+## RUN_SCORE_VERSION an int >= 1 (0 is the "no version yet" a fresh profile
+## stores, so a live table must never claim it).
+func _lint_run_score(rows, tier_quarters, version) -> Array:
+	var out: Array = []
+	if not (rows is Array) or rows.is_empty():
+		out.append("RUN_SCORE: must be a non-empty Array of rows, got %s" % str(rows))
+		rows = []
+	var ids := {}
+	for i in rows.size():
+		var r = rows[i]
+		if not (r is Dictionary):
+			out.append("RUN_SCORE[%d]: not a Dictionary" % i)
+			continue
+		for k in r:
+			if not ["id", "key", "pts"].has(k):
+				out.append("RUN_SCORE[%d]: unknown key '%s'" % [i, str(k)])
+		var id = r.get("id", null)
+		if not (id is String) or String(id).is_empty():
+			out.append("RUN_SCORE[%d]: id must be a non-empty String" % i)
+		elif ids.has(id):
+			out.append("RUN_SCORE[%d]: id '%s' listed twice" % [i, id])
+		else:
+			ids[id] = true
+		var key = r.get("key", null)
+		if not (key is String) or String(key).is_empty():
+			out.append("RUN_SCORE[%d]: key must be a non-empty String" % i)
+		var pts = r.get("pts", null)
+		if not (pts is int) or int(pts) < 0:
+			out.append("RUN_SCORE[%d]: pts must be an int >= 0, got %s" % [i, str(pts)])
+	if not (tier_quarters is int) or int(tier_quarters) < 0:
+		out.append("RUN_SCORE_TIER_QUARTERS: must be an int >= 0, got %s" % str(tier_quarters))
+	if not (version is int) or int(version) < 1:
+		out.append("RUN_SCORE_VERSION: must be an int >= 1, got %s" % str(version))
+	return out
+
+
+## RUN_STAT_KEYS: a non-empty Array of distinct non-empty Strings.
+func _lint_run_stat_keys(keys) -> Array:
+	return _lint_name_list("RUN_STAT_KEYS", keys)
+
+
+const GOOD_SCORE_ROW := {"id": "floor", "key": "floor", "pts": 100}
+## One bad RUN_SCORE shape each: every one must be rejected on its own.
+const BAD_RUN_SCORES := {
+	"negative_pts": [{"id": "floor", "key": "floor", "pts": -1}],
+	"float_pts": [{"id": "floor", "key": "floor", "pts": 1.5}],
+	"duplicate_id": [{"id": "floor", "key": "floor", "pts": 1}, {"id": "floor", "key": "kills", "pts": 1}],
+	"missing_key": [{"id": "floor", "pts": 1}],
+	"empty_id": [{"id": "", "key": "floor", "pts": 1}],
+	"unknown_field": [{"id": "floor", "key": "floor", "pts": 1, "mult": 2}],
+	"empty_table": [],
+}
+
+
+func _lint_run_score_selftest() -> Array:
+	var out: Array = []
+	var rejected := 0
+	for k in BAD_RUN_SCORES:
+		if _lint_run_score(BAD_RUN_SCORES[k], 1, 1).is_empty():
+			out.append("run-score lint self-test: bad fixture '%s' was accepted" % k)
+		else:
+			rejected += 1
+	for bad in [[-1, 1], [1, 0], [1.0, 1], [1, "1"]]:
+		if _lint_run_score([GOOD_SCORE_ROW], bad[0], bad[1]).is_empty():
+			out.append("run-score lint self-test: tier quarters %s / version %s was accepted" % [str(bad[0]), str(bad[1])])
+		else:
+			rejected += 1
+	for f in _lint_run_score([GOOD_SCORE_ROW], 0, 1):
+		out.append("run-score lint self-test: a good table was rejected: %s" % f)
+	var bad_keys := 0
+	for keys in [[], ["kills", "kills"], ["kills", ""], ["kills", 3]]:
+		if _lint_run_stat_keys(keys).is_empty():
+			out.append("run-score lint self-test: bad RUN_STAT_KEYS %s was accepted" % str(keys))
+		else:
+			bad_keys += 1
+	print("run-score lint self-test: %d bad tables -> %d rejected; %d bad stat-key lists -> %d rejected; good -> clean" % [
+		BAD_RUN_SCORES.size() + 4, rejected, 4, bad_keys])
 	return out

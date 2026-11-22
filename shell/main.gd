@@ -15,6 +15,7 @@ const Art := preload("res://shell/svg_art.gd")
 const Tutorial := preload("res://shell/tutorial.gd")
 const AudioKit := preload("res://shell/audio.gd")
 const Profile := preload("res://meta/profile.gd")
+const RunStats := preload("res://meta/run_stats.gd")
 const PROFILE_PATH := "user://tender_profile.json"
 const RUN_SAVE_PATH := "user://tender_run.save"
 # Replay compatibility rides on the sim's own version: a stale log replayed
@@ -195,11 +196,27 @@ var _shake_mag := 0.0
 var _banner: Array = []
 var _banner_ms := -99999
 var _run_save: FileAccess = null  # open append handle for the live run's log
+## Where the career profile is read and written. PROFILE_PATH in the app; the
+## headless tests point it at a scratch file BEFORE _ready, so no test ever
+## writes a player's real career.
+var profile_path := PROFILE_PATH
+## The run's statistics fold (meta/run_stats.gd): one per game, tutorial
+## included, fed after every step. `_stats_for` is the game it folds, so a
+## game swapped in from outside (tests, tools) gets a fresh fold.
+var stats = null
+var _stats_for = null
+## The career's bests as they stood BEFORE the finished run was recorded
+## (Profile.bests_snapshot), or {"daily": that seed's previous best} on a
+## daily - the only source of any "was" the game-over sheet prints.
+var _over_prev: Dictionary = {}
+## The finished run's merged summary and the profile's last_report for it.
+var _run_summary: Dictionary = {}
+var _run_report: Dictionary = {}
 
 
 func _ready() -> void:
 	font = ThemeDB.fallback_font
-	profile = Profile.load_from(PROFILE_PATH)
+	profile = Profile.load_from(profile_path)
 	_mk_styles()
 	audio = AudioKit.new()
 	add_child(audio)
@@ -272,6 +289,7 @@ func _new_game() -> void:
 	var cfg: Dictionary = _run_config()
 	run_tier = int(cfg.get("tier", 0))
 	game = Game.new(seed_v, cfg)
+	_new_stats()
 	_draft_focus_spent = false  # a fresh run never inherits the last one's focus
 	_game_is_run = true
 	_run_recorded = false
@@ -296,6 +314,7 @@ func _new_game() -> void:
 func _start_tutorial() -> void:
 	screen = "tutorial"
 	game = Game.new(1, Tutorial.game_config())
+	_new_stats()
 	_draft_focus_spent = false
 	_game_is_run = false
 	tut_step = 0
@@ -323,18 +342,24 @@ func _load_run() -> void:
 		save_lost = true
 		return
 	var g = Game.new(int(head["seed"]), Dictionary(head["config"]))
+	# the stats fold rides the replay, so a resumed run keeps exactly the
+	# stats it had (same seed + same actions = same fold, ctx included)
+	var st = RunStats.new()
+	st.begin(g)
 	while not f.eof_reached() and not g.over:
 		var line := f.get_line()
 		if line.strip_edges() == "":
 			continue
 		var act = str_to_var(line)
 		if act is Dictionary:
-			g.step(act)
+			st.feed(g, g.step(act))
 	f.close()
 	if g.over:
 		DirAccess.remove_absolute(RUN_SAVE_PATH)
 		return
 	game = g
+	stats = st
+	_stats_for = g
 	seed_v = int(head["seed"])
 	run_tier = int(head.get("tier", 0))
 	sel_tier = run_tier
@@ -354,25 +379,54 @@ func _load_run() -> void:
 		_run_save.seek_end()
 
 
-## Game-over site: the run's own record (Game.run_summary(), stamped with the
-## tier and seed mode the shell chose) goes to the career profile - or to the
-## daily board when the seed came from the daily challenge, since a daily
-## scores its seed and unlocks nothing. Then the action log is closed and
-## archived. Called once per run, from _act.
+## A fresh stats fold for the game just created.
+func _new_stats() -> void:
+	stats = RunStats.new()
+	stats.begin(game)
+	_stats_for = game
+
+
+## The fold for the CURRENT game: a game assigned from outside (a test, a
+## tool) gets its own fresh fold instead of feeding another game's.
+func _ensure_stats() -> void:
+	if stats == null or _stats_for != game:
+		_new_stats()
+
+
+## Is the live run the daily challenge? (The one place that asks, so the run's
+## kind can move off the global seed mode without touching the callers.)
+func _run_is_daily() -> bool:
+	return seed_mode == "daily"
+
+
+## Game-over site: the run's own record (Game.run_summary() merged with the
+## stats fold, stamped with the tier and seed mode the shell chose and the
+## cosmetic score) goes to the career profile - or to the daily board when the
+## seed came from the daily challenge, since a daily scores its seed and
+## unlocks nothing. The bests the sheet compares against are snapshotted
+## FIRST: record_run moves them. Then the action log is closed and archived.
+## Called once per run, from _act.
 func _record_finished_run() -> void:
 	_run_recorded = true
+	_ensure_stats()
 	var summary: Dictionary = game.run_summary()
+	summary.merge(stats.summary())  # the two key sets are disjoint (tests/test_meta.gd)
 	summary["tier"] = run_tier
 	summary["seed_mode"] = seed_mode
+	summary["score"] = int(RunStats.score(summary)["total"])
+	summary["score_v"] = Content.RUN_SCORE_VERSION
+	_run_summary = summary
 	_run_unlocks = []
-	if seed_mode == "daily":
+	_run_report = {}
+	if _run_is_daily():
+		_over_prev = {"daily": profile.daily_best.get(str(seed_v), {}).duplicate()}
 		profile.record_daily(summary)
 	else:
-		var prev_ut: int = int(profile.unlocked_tier)
-		_run_unlocks = profile.record_run(summary)
-		if int(profile.unlocked_tier) > prev_ut:
-			_run_unlocks.push_front("tier:%d" % int(profile.unlocked_tier))
-	profile.save(PROFILE_PATH)
+		_over_prev = profile.bests_snapshot(String(summary.get("loadout", "tender")))
+		profile.record_run(summary)
+		_run_report = profile.last_report
+		_run_unlocks = _run_report["unlocks"]  # "tier:N" first, then milestone ids
+	profile.save(profile_path)
 	if _run_save != null:
 		_run_save.close()
 		_run_save = null
@@ -464,6 +518,8 @@ func _act(a: Dictionary) -> void:
 			_flash("follow the guide for now")
 			return
 		var tevs: Array = game.step(a)
+		_ensure_stats()
+		stats.feed(game, tevs)
 		_arm_anim(prev, prev_floor)
 		_spawn_fx(tevs, prev)
 		_play_events(tevs)
@@ -491,6 +547,8 @@ func _act(a: Dictionary) -> void:
 	if _game_is_run and _run_save != null:
 		_run_save.store_line(var_to_str(a).replace("\n", " "))
 		_run_save.flush()
+	_ensure_stats()
+	stats.feed(game, evs)
 	_arm_anim(prev, prev_floor)
 	_spawn_fx(evs, prev)
 	if game.over and _game_is_run and not _run_recorded:

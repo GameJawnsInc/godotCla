@@ -18,6 +18,13 @@ extends SceneTree
 ##    loadout/package/requires rules game_config enforces, daily_config as a
 ##    pure function of the seed over frozen lists, and every loadout actually
 ##    being winnable by the optimizer
+## 8) the fun pass's run-stats fold (meta/run_stats.gd): fold and replay
+##    determinism over real bot runs (summary AND every step's ctx), the bloom
+##    cross-check, an independent recount, hand-fed units, the score, the
+##    near-miss rules and the highlight order; then the career records and
+##    score bests in meta/profile.gd. The career loop in 1) is also the
+##    interface pin: every summary it records is the shell's exact merge, and
+##    each must carry every Content.RUN_STAT_KEYS key as an int.
 ## Run: godot --headless --path . --script tests/test_meta.gd
 
 const Content := preload("res://sim/content.gd")
@@ -25,6 +32,7 @@ const Game := preload("res://sim/game.gd")
 const Profile := preload("res://meta/profile.gd")
 const Sweep := preload("res://tests/sweep_lib.gd")
 const Roster := preload("res://bots/roster.gd")
+const RunStats := preload("res://meta/run_stats.gd")
 
 const CAREER_RUNS := 40
 const TIER0_CAREER_RUNS := 63
@@ -78,6 +86,9 @@ const FIXTURE_MILESTONES := [
 
 
 var failures := 0
+## interface-pin failures already reported (the career loop runs ~100 times)
+var _pin_seen := {}
+var _pin_runs := 0
 
 
 func _init() -> void:
@@ -226,6 +237,12 @@ func _init() -> void:
 	_check_tier_clamp()
 	_check_atomic_save()
 
+	# 8) fun pass: the run-stats fold, the score, records
+	print("run-stats interface pin: %d career summaries checked, %d key problem(s)" % [_pin_runs, _pin_seen.size()])
+	_check_run_stats()
+	_check_score_bests()
+	_check_records()
+
 	if failures == 0:
 		print("meta: OK")
 	quit(1 if failures > 0 else 0)
@@ -250,12 +267,55 @@ func _career_config(profile, tier: int) -> Dictionary:
 	return profile.game_config(tier, [], "tender", pkg)
 
 
-## One optimizer run, handing back the sim's own end-of-run record. Same loop
-## and bot as Sweep.run_one, which returns its own dict instead of the game.
+## One optimizer run, handing back the record the SHELL would send: the sim's
+## own run_summary() merged with the RunStats fold fed after every step, plus
+## the cosmetic score (shell/main.gd _record_finished_run's exact merge). The
+## loop mirrors Sweep.run_loop - set_sim, the MAX_ACTIONS / MAX_TURNS guard -
+## so the career plays exactly the games it always did. Each summary is also
+## the cross-cluster interface pin: every Content.RUN_STAT_KEYS key an int,
+## bosses_killed an Array, score an int, and run_summary() and the fold's
+## summary() share no key (a merge must never overwrite the sim's record).
 func _career_summary(seed_v: int, cfg: Dictionary) -> Dictionary:
 	var g = Game.new(seed_v, cfg)
-	Sweep.run_loop(g, Roster.make("optimizer", seed_v))
-	return g.run_summary()
+	var bot = Roster.make("optimizer", seed_v)
+	if bot.has_method("set_sim"):
+		bot.set_sim(g)
+	var st = RunStats.new()
+	st.begin(g)
+	var actions := 0
+	while not g.over and actions < Sweep.MAX_ACTIONS and g.total_turns < Sweep.MAX_TURNS:
+		var act: Dictionary = bot.choose_action(g.snapshot(), g.legal_actions())
+		st.feed(g, g.step(act))
+		actions += 1
+	var summary: Dictionary = g.run_summary()
+	var folded: Dictionary = st.summary()
+	for k in summary:
+		if folded.has(k):
+			_pin("run_summary and RunStats.summary both carry '%s'" % k)
+	summary.merge(folded)
+	summary["tier"] = int(cfg.get("tier", 0))
+	summary["score"] = int(RunStats.score(summary)["total"])
+	summary["score_v"] = Content.RUN_SCORE_VERSION
+	for k in Content.RUN_STAT_KEYS:
+		if not (summary.get(k, null) is int):
+			_pin("summary key '%s' is not an int (%s)" % [k, str(summary.get(k, null))])
+	if not (summary.get("bosses_killed", null) is Array):
+		_pin("summary bosses_killed is not an Array")
+	if not (summary.get("score", null) is int):
+		_pin("summary score is not an int")
+	for row in Content.RUN_SCORE:
+		if not summary.has(String(row["key"])):
+			_pin("RUN_SCORE key '%s' is missing from a merged summary (it would always score 0)" % String(row["key"]))
+	_pin_runs += 1
+	return summary
+
+
+## One interface-pin failure, reported once however many runs repeat it.
+func _pin(msg: String) -> void:
+	if _pin_seen.has(msg):
+		return
+	_pin_seen[msg] = true
+	_fail("interface pin: " + msg)
 
 
 # --- 2b) load_from filters ids Content no longer carries ----------------------
@@ -869,3 +929,499 @@ class _SaveProbe extends Profile:
 	func to_dict() -> Dictionary:
 		seen_mid_save = FileAccess.get_file_as_string(probe_path)
 		return super()
+
+
+# --- 8) fun pass: the run-stats fold ------------------------------------------
+
+## Fold determinism, the bloom cross-check and the independent recount over
+## real bot runs, then the hand-fed units, the score, near_miss and highlights.
+func _check_run_stats() -> void:
+	var runs_checked := 0
+	var steps_checked := 0
+	for spec in [["optimizer", [1, 2, 3]], ["sprout", [1, 2, 3]], ["magpie", [1, 2]]]:
+		for sd in spec[1]:
+			steps_checked += _check_fold_run(String(spec[0]), int(sd))
+			runs_checked += 1
+	print("run-stats fold: %d bot runs, %d steps - replay, bloom cross-check and recount: OK" % [runs_checked, steps_checked])
+	_check_fold_units()
+	_check_score_formula()
+	_check_near_miss()
+	_check_highlights()
+
+
+## Drive one bot game feeding stats A, then replay its actions into a fresh
+## game feeding stats B: the summaries and every step's ctx must be equal
+## (this is the resume guarantee). Per step, the event-derived bloom gain must
+## equal ctx.bloom_gain - a new bloom source, or the cleanse event's "bloom"
+## turning into a gain, fails here - and the counters must match a recount.
+func _check_fold_run(bot_name: String, seed_v: int) -> int:
+	var label := "%s s%d" % [bot_name, seed_v]
+	var g = Game.new(seed_v, {})
+	var bot = Roster.make(bot_name, seed_v)
+	if bot.has_method("set_sim"):
+		bot.set_sim(g)
+	var st = RunStats.new()
+	st.begin(g)
+	var actions: Array = []
+	var ctxs: Array = []
+	var n := {"death": 0, "room_bloom": 0, "cleanse": 0, "bounty": 0, "combo": 0, "taken": 0}
+	var bad_bloom := 0
+	var bad_cleanse := 0
+	while not g.over and actions.size() < Sweep.MAX_ACTIONS and g.total_turns < Sweep.MAX_TURNS:
+		var act: Dictionary = bot.choose_action(g.snapshot(), g.legal_actions())
+		actions.append(act)
+		var before: int = g.bloom
+		var evs: Array = g.step(act)
+		var ctx: Dictionary = st.feed(g, evs)
+		ctxs.append(str(ctx))
+		if ctx != st.ctx:
+			_fail("%s: feed() returned a ctx that is not stats.ctx" % label)
+		var ev_gain := 0
+		var cl := 0
+		for ev in evs:
+			var t := String(ev.get("t", ""))
+			match t:
+				"cleanse":
+					cl = int(ev["bloom"]) - before
+					ev_gain += cl
+					n["cleanse"] += 1
+				"room_bloom":
+					ev_gain += int(ev["bonus"])
+					n["room_bloom"] += 1
+				"floor_restored":
+					ev_gain += int(ev["bonus"])
+				"bounty":
+					ev_gain += Content.ELITE_BOUNTY
+					n["bounty"] += 1
+				"death":
+					n["death"] += 1
+				"rider", "hook", "surge":
+					n["combo"] += 1
+				"damage":
+					if String(ev["who"]) == "player":
+						n["taken"] += int(ev["amt"])
+					elif String(ev.get("src", "")).begins_with("collision:"):
+						n["combo"] += 1
+		if ev_gain != int(ctx["bloom_gain"]):
+			bad_bloom += 1
+			if bad_bloom == 1:
+				_fail("%s step %d: events pay %d bloom, ctx.bloom_gain %d (%s)" % [
+					label, actions.size(), ev_gain, int(ctx["bloom_gain"]), str(evs).substr(0, 300)])
+		if cl != int(ctx["cleanse_gain"]):
+			bad_cleanse += 1
+			if bad_cleanse == 1:
+				_fail("%s step %d: cleanse paid %d, ctx.cleanse_gain %d" % [label, actions.size(), cl, int(ctx["cleanse_gain"])])
+	var sa: Dictionary = st.summary()
+	_expect(int(sa["kills"]), n["death"], "%s: kills == death events" % label)
+	_expect(int(sa["rooms_bloomed"]), n["room_bloom"], "%s: rooms_bloomed == room_bloom events" % label)
+	_expect(int(sa["cleanses"]), n["cleanse"], "%s: cleanses == cleanse events" % label)
+	_expect(int(sa["elites_killed"]), n["bounty"], "%s: elites_killed == bounty events" % label)
+	_expect(int(sa["combos"]), n["combo"], "%s: combos == riders + hooks + surges + collision hits" % label)
+	_expect(int(sa["damage_taken"]), n["taken"], "%s: damage_taken == the player's damage events" % label)
+	var kinds := 0
+	for k in sa["kills_by_kind"]:
+		kinds += int(sa["kills_by_kind"][k])
+	_expect(kinds, int(sa["kills"]), "%s: kills_by_kind sums to kills" % label)
+	_expect(int(sa["resonances_lit"]), sa["resonance_first"].size(), "%s: resonances_lit is resonance_first's size" % label)
+	_expect(int(sa["biggest_hit_amt"]), int(sa["biggest_hit"]["amt"]), "%s: biggest_hit_amt is the nested amt" % label)
+	_expect(int(sa["closest_hp"]), int(sa["closest_call"]["hp"]), "%s: closest_hp is the nested hp" % label)
+	if g.over and not g.won:
+		_expect(String(sa["killer"]["cause"]), String(g.death_cause), "%s: killer.cause is the death cause" % label)
+	# the replay: a fresh game and a fresh fold over the same actions
+	var g2 = Game.new(seed_v, {})
+	var st2 = RunStats.new()
+	st2.begin(g2)
+	var ctx_diff := -1
+	for i in actions.size():
+		var c2: Dictionary = st2.feed(g2, g2.step(actions[i]))
+		if ctx_diff < 0 and str(c2) != ctxs[i]:
+			ctx_diff = i
+	if ctx_diff >= 0:
+		_fail("%s: replayed ctx differs at step %d" % [label, ctx_diff])
+	_expect(str(st2.summary()), str(sa), "%s: a replayed fold's summary" % label)
+	return actions.size()
+
+
+## Hand-fed events on a real game, with total_turns / floor_num / hp nudged
+## between feeds: the turn rule, streaks, the killer, ties, closest call, the
+## room-clear rule, floors unhurt and the cleanse gain.
+func _check_fold_units() -> void:
+	var g = Game.new(1, {})
+	var st = RunStats.new()
+	st.begin(g)
+	var c: Dictionary = st.feed(g, [{"t": "death", "who": "drill_bot", "id": 901}])
+	_expect([int(c["turn_kills_prev"]), int(c["turn_kills"]), bool(c["turn_closed"])], [0, 1, false], "unit: first kill of a turn")
+	_expect(int(c["kill_streak"]), 1, "unit: the open turn counts toward the streak once it has a kill")
+	c = st.feed(g, [{"t": "death", "who": "drill_bot", "id": 902}])
+	_expect([int(c["turn_kills_prev"]), int(c["turn_kills"])], [1, 2], "unit: second kill of the turn crosses 2")
+	g.total_turns += 1
+	c = st.feed(g, [])
+	_expect([bool(c["turn_closed"]), int(c["turn_kills"]), st.best_multi_kill], [true, 2, 2], "unit: closing the turn banks the multi-kill")
+	_expect([st.streak_closed, st.open_turn_kills], [1, 0], "unit: one closed turn with kills")
+	st.feed(g, [{"t": "death", "who": "drill_bot", "id": 903}])
+	g.total_turns += 1
+	c = st.feed(g, [])
+	_expect([st.streak_closed, int(c["kill_streak"]), st.best_kill_streak], [2, 2, 2], "unit: a second kill turn extends the streak")
+	g.total_turns += 1
+	c = st.feed(g, [])
+	_expect([st.streak_closed, int(c["kill_streak"]), st.best_kill_streak], [0, 0, 2], "unit: a turn with no kill resets the streak, not the best")
+	st.feed(g, [{"t": "death", "who": "drill_bot", "id": 904}])
+	g.floor_num += 1
+	c = st.feed(g, [])
+	_expect([bool(c["turn_closed"]), int(c["turn_kills"]), st.streak_closed], [true, 1, 1], "unit: a floor change closes the turn")
+	g.floor_num -= 1
+	st.feed(g, [])
+	# biggest hit: strict > keeps the first of a tie
+	c = st.feed(g, [{"t": "damage", "who": "drill_bot", "id": 905, "amt": 4, "src": "strike"}])
+	_expect(int(c["big_hit"]), 4, "unit: a new run-best hit is flagged")
+	c = st.feed(g, [{"t": "damage", "who": "oil_sludge", "id": 906, "amt": 4, "src": "solar_lance"}])
+	_expect(int(c["big_hit"]), 0, "unit: a tie is not a new best")
+	_expect(str(st.biggest_hit), str({"amt": 4, "src": "strike", "target": "drill_bot", "floor": 1}), "unit: the tie keeps the first hit")
+	# the cleanse gain is measured against the bloom before the step
+	var b0: int = g.bloom
+	g.bloom = b0 + 3
+	c = st.feed(g, [{"t": "cleanse", "tile": Vector2i(1, 1), "kind": "oil", "bloom": g.bloom}])
+	_expect([int(c["cleanse_gain"]), int(c["bloom_gain"])], [3, 3], "unit: a cleanse paying 3 reads +3, not the running total")
+	g.bloom = b0
+	c = st.feed(g, [])
+	_expect(int(c["bloom_gain"]), 0, "unit: a spend is not a negative gain")
+	# floors unhurt: a descend with no player damage on the floor counts
+	st.feed(g, [{"t": "descend", "to_floor": 2}])
+	st.feed(g, [{"t": "damage", "who": "player", "amt": 1, "src": "drill_bot"}])
+	st.feed(g, [{"t": "descend", "to_floor": 3}])
+	st.feed(g, [{"t": "shield_absorb", "amt": 2}])
+	st.feed(g, [{"t": "descend", "to_floor": 4}])
+	_expect(st.floors_unhurt, 2, "unit: floors unhurt (a hurt floor breaks it, a shielded hit does not)")
+	# closest call: unchanged on the death step, counted on a winning one (C8)
+	var hp0 := int(st.closest_call["hp"])
+	g.player["hp"] = 0
+	c = st.feed(g, [{"t": "damage", "who": "player", "amt": 9, "src": "drill_bot"}])
+	_expect(int(st.closest_call["hp"]), hp0, "unit: the death step never sets the closest call")
+	g.player["hp"] = 1
+	g.over = true
+	g.won = true
+	c = st.feed(g, [{"t": "win"}])
+	_expect([int(st.closest_call["hp"]), bool(c["closest_call"]), bool(c["turn_closed"])], [1, true, true],
+		"unit: a win taken at 1 HP is the closest call")
+	# killer: an enemy cause names its kind; spikes resolve through the strike
+	var gk = Game.new(1, {})
+	gk.enemies[0]["kind"] = "rust_hound"
+	var sk = RunStats.new()
+	sk.begin(gk)
+	var eid = gk.enemies[0]["id"]
+	sk.feed(gk, [{"t": "strike", "id": eid}, {"t": "damage", "who": "rust_hound", "id": eid, "amt": 2, "src": "strike"},
+		{"t": "damage", "who": "player", "amt": 1, "src": "spikes"}, {"t": "player_death", "cause": "spikes"}])
+	_expect(str(sk.killer), str({"cause": "spikes", "kind": "rust_hound"}), "unit: spikes resolve their killer from the step's strike")
+	sk.feed(gk, [{"t": "player_death", "cause": "drill_bot"}])
+	_expect(str(sk.killer), str({"cause": "drill_bot", "kind": "drill_bot"}), "unit: an enemy cause is its own kind")
+	sk.feed(gk, [{"t": "player_death", "cause": "smog"}])
+	_expect(str(sk.killer), str({"cause": "smog", "kind": ""}), "unit: smog has no kind")
+	# room clear: the room the tender stood in, emptied by this step's kill
+	_check_room_clear_units()
+	print("run-stats units: turn close, streaks, killer, ties, cleanse gain, floors unhurt, closest call, room clear: OK")
+
+
+func _check_room_clear_units() -> void:
+	var g = Game.new(3, {})
+	var rooms: Array = g.map["rooms"]
+	if rooms.size() < 2:
+		_fail("unit room clear: seed 3 floor 1 has %d rooms" % rooms.size())
+		return
+	var r0: Rect2i = rooms[0]
+	var inside: Vector2i = r0.position
+	var other: Vector2i = Rect2i(rooms[1]).position
+	g.player["pos"] = r0.get_center()
+	for e in g.enemies:
+		e["pos"] = Vector2i(-9, -9)
+	var victim: Dictionary = g.enemies[0]
+	var bystander: Dictionary = g.enemies[1]
+	victim["pos"] = inside
+	var st = RunStats.new()
+	st.begin(g)
+	g.enemies.erase(victim)
+	var c: Dictionary = st.feed(g, [{"t": "death", "who": victim["kind"], "id": victim["id"]}])
+	_expect(bool(c["room_cleared"]), true, "unit room clear: the last machine in the tender's room falls")
+	_expect(st.room_clears, 1, "unit room clear: counted")
+	_expect(str(c["killed"]), str([{"id": victim["id"], "kind": victim["kind"], "pos": inside}]), "unit room clear: killed carries the last-known tile")
+	# a live machine still in the room: no clear
+	g.enemies.append(victim)
+	bystander["pos"] = r0.position + Vector2i(1, 0)
+	st.feed(g, [])
+	g.enemies.erase(victim)
+	c = st.feed(g, [{"t": "death", "who": victim["kind"], "id": victim["id"]}])
+	_expect(bool(c["room_cleared"]), false, "unit room clear: not while another machine stands in the room")
+	# the kill was in another room: no clear of this one
+	bystander["pos"] = Vector2i(-9, -9)
+	victim["pos"] = other
+	g.enemies.append(victim)
+	st.feed(g, [])
+	g.enemies.erase(victim)
+	c = st.feed(g, [{"t": "death", "who": victim["kind"], "id": victim["id"]}])
+	_expect(bool(c["room_cleared"]), false, "unit room clear: a kill elsewhere does not clear the tender's room")
+
+
+func _check_score_formula() -> void:
+	var s := {"floor": 3, "won": false, "kills": 10, "bloom_earned": 20, "combos": 4,
+		"rooms_bloomed": 2, "floors_restored": 1, "tier": 0}
+	var hand := 3 * 100 + 0 + 10 * 5 + 20 * 2 + 4 * 3 + 2 * 10 + 1 * 50
+	var sc: Dictionary = RunStats.score(s)
+	_expect(int(sc["total"]), hand, "score: a fixture equals the hand sum")
+	_expect(int(sc["base"]), hand, "score: base is the sum at tier 0")
+	_expect(sc["parts"].size(), Content.RUN_SCORE.size(), "score: one part per RUN_SCORE row")
+	_expect(String(sc["parts"][0][0]), "floor", "score: parts in table order")
+	s["tier"] = 2
+	sc = RunStats.score(s)
+	_expect([int(sc["quarters"]), int(sc["total"])], [6, hand * 6 / 4], "score: tier 2 is base*6/4")
+	s["won"] = true
+	s["tier"] = 0
+	_expect(int(RunStats.score(s)["total"]), hand + 500, "score: a win counts its row once")
+	_expect(int(RunStats.score({})["total"]), 0, "score: an empty summary scores 0")
+	print("run score: fixture %d, tier-2 %d: OK" % [hand, hand * 6 / 4])
+
+
+## near_miss from a real snapshot edited per rule.
+func _check_near_miss() -> void:
+	var g = Game.new(2, {})
+	var base: Dictionary = g.snapshot()
+	var s := {"closest_call": {"hp": 9, "floor": 1}}
+	# the win arm
+	var w := base.duplicate(true)
+	w["won"] = true
+	_expect(String(RunStats.near_miss(w, s, 0)["kind"]), "", "near_miss: a comfortable win says nothing")
+	_expect(str(RunStats.near_miss(w, {"closest_call": {"hp": 2, "floor": 6}}, 0)),
+		str({"kind": "closest_call", "hp": 2, "floor": 6}), "near_miss: a win at 2 HP is a closest call")
+	# 1) a boss still standing on its floor
+	var b := base.duplicate(true)
+	b["floor"] = Content.FLOORS.size()
+	b["enemies"] = [{"id": 1, "kind": "furnace_core", "hp": 3, "pos": Vector2i(2, 2)}]
+	_expect(str(RunStats.near_miss(b, s, 0)), str({"kind": "boss_hp", "boss": "furnace_core", "hp": 3}),
+		"near_miss: the boss had 3 HP left")
+	# 2) the stairs awake and close (BFS route, not straight-line)
+	var dist := _bfs_from(base, base["map"]["stairs"])
+	var near := Vector2i(-1, -1)
+	var far := Vector2i(-1, -1)
+	for p in dist:
+		if int(dist[p]) == 5 and near.x < 0:
+			near = p
+		if int(dist[p]) > RunStats.NEAR_STAIRS_MAX and far.x < 0:
+			far = p
+	var st := base.duplicate(true)
+	st["green_need"] = 3
+	st["greened"] = 3
+	st["player"]["hp"] = 2
+	st["player"]["pos"] = near
+	_expect(str(RunStats.near_miss(st, s, 0)), str({"kind": "stairs", "steps": 5}), "near_miss: the stairs were 5 steps away")
+	st["player"]["pos"] = base["map"]["stairs"]
+	_expect(int(RunStats.near_miss(st, s, 0).get("steps", -1)), 0, "near_miss: dying on the stairs is 0 steps")
+	if far.x >= 0:
+		st["player"]["pos"] = far
+		_expect(String(RunStats.near_miss(st, s, 0)["kind"]), "", "near_miss: stairs past NEAR_STAIRS_MAX are no near-miss")
+	else:
+		_fail("near_miss: seed 2 floor 1 has no tile past %d steps from the stairs" % RunStats.NEAR_STAIRS_MAX)
+	# 3) the quota short by 1 or 2, not 3
+	var q := base.duplicate(true)
+	q["player"]["hp"] = 2
+	q["green_need"] = 4
+	for short in [1, 2]:
+		q["greened"] = 4 - short
+		_expect(str(RunStats.near_miss(q, s, 0)), str({"kind": "quota", "short": short}), "near_miss: %d cleanses short" % short)
+	q["greened"] = 1
+	_expect(String(RunStats.near_miss(q, s, 0)["kind"]), "", "near_miss: 3 short is no near-miss")
+	# 4/5) the career's deepest floor
+	q["floor"] = 3
+	_expect(str(RunStats.near_miss(q, s, 4)), str({"kind": "best_short", "best": 4}), "near_miss: one floor short of the best")
+	q["floor"] = 4
+	_expect(str(RunStats.near_miss(q, s, 4)), str({"kind": "best_level", "best": 4}), "near_miss: died on the best floor")
+	_expect(String(RunStats.near_miss(q, s, 1)["kind"]), "", "near_miss: a best of 1 is no yardstick")
+	# 6) exactly 0 HP, but never for smog
+	q["player"]["hp"] = 0
+	q["death_cause"] = "drill_bot"
+	_expect(String(RunStats.near_miss(q, s, 0)["kind"]), "exact", "near_miss: a Drill Bot took the last HP exactly")
+	q["death_cause"] = "smog"
+	_expect(String(RunStats.near_miss(q, s, 0)["kind"]), "", "near_miss: smog is always exact, so never said")
+	q["player"]["hp"] = -2
+	q["death_cause"] = "drill_bot"
+	_expect(String(RunStats.near_miss(q, s, 0)["kind"]), "", "near_miss: overkill is not exact")
+	print("near_miss: win/boss/stairs/quota/best/exact rules: OK")
+
+
+## Route lengths from `goal` over floor tiles (the test's own BFS).
+func _bfs_from(snap: Dictionary, goal: Vector2i) -> Dictionary:
+	var m: Dictionary = snap["map"]
+	var w := int(m["w"])
+	var h := int(m["h"])
+	var dist := {goal: 0}
+	var q: Array = [goal]
+	var i := 0
+	while i < q.size():
+		var p: Vector2i = q[i]
+		i += 1
+		for d in [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]:
+			var nb: Vector2i = p + d
+			if nb.x < 0 or nb.y < 0 or nb.x >= w or nb.y >= h or dist.has(nb):
+				continue
+			if int(m["tiles"][nb.y * w + nb.x]) != 1:
+				continue
+			var tr: Dictionary = snap["terrain"]
+			if tr.has(nb) and bool(Content.terrain(String(tr[nb]["kind"]), "blocks", false)):
+				continue
+			dist[nb] = int(dist[p]) + 1
+			q.append(nb)
+	return dist
+
+
+func _check_highlights() -> void:
+	var rid: String = String(Content.RESONANCES.keys()[0])
+	var s := {"floors_restored": 1, "resonance_first": {rid: {"floor": 3, "turn": 40}},
+		"best_multi_kill": 3, "biggest_hit": {"amt": 6, "src": "solar_lance", "target": "drill_bot", "floor": 2},
+		"best_kill_streak": 4, "rooms_bloomed": 6, "combos": 12, "elites_killed": 2, "kills": 30, "cleanses": 9}
+	var ids := func(hs: Array) -> Array:
+		var out: Array = []
+		for h in hs:
+			out.append(String(h["id"]))
+		return out
+	_expect(ids.call(RunStats.highlights(s)), ["restored", "resonance", "multi"], "highlights: top three in priority order")
+	var rec := [{"key": "score", "v": 900, "was": 700}]
+	var hr: Array = RunStats.highlights(s, 3, rec)
+	_expect(ids.call(hr), ["restored", "resonance", "record"], "highlights: a beaten record sits right after the resonance")
+	_expect(str(hr[2]), str({"id": "record", "key": "score", "v": 900, "was": 700}), "highlights: the record chip carries key, v and was")
+	var all_ids: Array = ids.call(RunStats.highlights(s, 20, rec))
+	_expect(all_ids, ["restored", "resonance", "record", "multi", "big_hit", "streak", "rooms", "combos", "elites", "kills", "cleanses"],
+		"highlights: every candidate once, in order")
+	_expect(RunStats.highlights(s, 1).size(), 1, "highlights: max_n caps the list")
+	var low := {"best_multi_kill": 2, "biggest_hit": {"amt": 3, "src": "strike", "target": "drill_bot", "floor": 1},
+		"rooms_bloomed": 1, "combos": 1, "kills": 4}
+	_expect(ids.call(RunStats.highlights(low)), ["multi", "big_hit", "rooms"], "highlights: the lower bars fill in when nothing big happened")
+	_expect(ids.call(RunStats.highlights({"cleanses": 2})), ["cleanses"], "highlights: a run with only cleanses still gets a chip")
+	_expect(RunStats.highlights({}).size(), 0, "highlights: an empty run gets none")
+	print("highlights: order, record slot, max_n, distinct ids: OK")
+
+
+# --- 8b) records and score bests in meta/profile.gd ---------------------------
+
+## A summary with just what the record fold reads.
+func _rec_summary(score: int, extra: Dictionary = {}) -> Dictionary:
+	var s := {"won": false, "floor": 3, "tier": 0, "turns": 80, "seed": 1, "loadout": "spiker",
+		"score": score, "score_v": Content.RUN_SCORE_VERSION, "kills": 10}
+	s.merge(extra, true)
+	return s
+
+
+func _check_score_bests() -> void:
+	var p = Profile.new()
+	p.record_run(_rec_summary(500, {"floor": 3}))
+	var before: Dictionary = p.bests_snapshot("spiker")
+	p.record_run(_rec_summary(900, {"floor": 5}))
+	_expect(str(before), str({"runs": 1, "wins": 0, "best_floor": 3, "best_score": 500, "best_score_loadout": 500, "loadout": "spiker"}),
+		"bests_snapshot taken before a record keeps the old values")
+	var after: Dictionary = p.bests_snapshot("spiker")
+	_expect([int(after["best_score"]), int(after["best_floor"]), int(after["runs"])], [900, 5, 2], "bests_snapshot after the record")
+	_expect(int(p.bests_snapshot("tender")["best_score_loadout"]), 0, "bests_snapshot: a loadout never played has no best")
+	_expect(int(p.history.back()["score"]), 900, "_compact keeps the score")
+	_expect(String(p.history.back()["loadout"]), "spiker", "_compact keeps the loadout")
+	# dailies never touch the career's records or runs
+	var rec_before := str(p.records)
+	p.record_daily(_rec_summary(5000, {"seed": 77}))
+	_expect(str(p.records), rec_before, "record_daily never touches records")
+	_expect(p.runs, 2, "record_daily never counts a run")
+	# the codec
+	var path := "user://test_profile_records.json"
+	p.save(path)
+	var back = Profile.load_from(path)
+	_expect(str(back.records), str(p.records), "records round-trip")
+	DirAccess.remove_absolute(path)
+	print("score bests: snapshot before record, compact, daily isolation, codec: OK")
+
+
+func _check_records() -> void:
+	var p = Profile.new()
+	p.record_run(_rec_summary(100))
+	_expect(p.last_report["records"], [], "records: run 1 reports nothing (no NEW RECORD spam)")
+	p.record_run(_rec_summary(90))
+	_expect(p.last_report["records"], [], "records: a lower score reports nothing")
+	p.record_run(_rec_summary(120))
+	_expect(str(p.last_report["records"]), str([{"key": "score", "v": 120, "was": 100}]), "records: 120 beats 100")
+	_expect(int(p.records["best"]["score"]["v"]), 120, "records: the best score is stored")
+	_expect(str(p.records["best"]["score"]), str({"loadout": "spiker", "run": 3, "tier": 0, "v": 120}), "records: the entry names its run")
+	_expect(int(p.last_report["run"]), 3, "last_report.run is the run count")
+	_expect(p.last_report.keys(), ["run", "unlocks", "feats", "records", "next"], "last_report shape")
+	# a stat record beaten together with the score: RECORD_SHOW order
+	p.record_run(_rec_summary(130, {"kills": 25, "combos": 4}))
+	_expect(str(p.last_report["records"]), str([{"key": "score", "v": 130, "was": 120}, {"key": "kills", "v": 25, "was": 10}]),
+		"records: several beaten in RECORD_SHOW order; a first-ever combos record is not reported")
+	_expect(p.records["best"].has("combos"), true, "records: ...but it is stored")
+	# fastest win: wins only, a minimum
+	p.record_run(_rec_summary(10, {"turns": 30}))
+	_expect(p.records["best"].has("fastest_win"), false, "records: a loss never sets the fastest win")
+	p.record_run(_rec_summary(10, {"won": true, "turns": 200, "tier": 1}))
+	_expect(int(p.records["best"]["fastest_win"]["v"]), 200, "records: the first win sets it")
+	p.record_run(_rec_summary(10, {"won": true, "turns": 150}))
+	_expect(int(p.records["best"]["fastest_win"]["v"]), 150, "records: a faster win lowers it")
+	_expect(str(p.last_report["records"]), str([{"key": "fastest_win", "v": 150, "was": 200}]), "records: a faster win is reported")
+	p.record_run(_rec_summary(10, {"won": true, "turns": 180}))
+	_expect(int(p.records["best"]["fastest_win"]["v"]), 150, "records: a slower win leaves it")
+	# per-loadout rows
+	var lr: Dictionary = p.records["loadouts"]["spiker"]
+	_expect(str(lr), str({"best_floor": 3, "best_score": 130, "best_tier_won": 1, "runs": 8, "wins": 3}), "records: the spiker row")
+	p.record_run(_rec_summary(40, {"loadout": "tidewarden", "floor": 6}))
+	_expect(str(p.records["loadouts"]["tidewarden"]), str({"best_floor": 6, "best_score": 40, "best_tier_won": -1, "runs": 1, "wins": 0}),
+		"records: a second loadout gets its own row (never won = -1)")
+	p.record_run(_rec_summary(40, {"loadout": "ghost_loadout"}))
+	_expect(p.records["loadouts"].has("ghost_loadout"), false, "records: an unknown loadout gets no row")
+	_expect(String(p.history.back()["loadout"]), "", "_compact: an unknown loadout is stored as \"\"")
+	# a score_v change drops the score bests and nothing else
+	var kills_best := int(p.records["best"]["kills"]["v"])
+	p.record_run(_rec_summary(60, {"score_v": Content.RUN_SCORE_VERSION + 1, "kills": 1}))
+	_expect(int(p.records["best"]["score"]["v"]), 60, "records: a new score version starts the score best over")
+	_expect(p.last_report["records"], [], "records: ...and never reports a fake NEW BEST across versions")
+	_expect(int(p.records["best"]["kills"]["v"]), kills_best, "records: other records survive a score version change")
+	_expect(int(p.records["loadouts"]["tidewarden"]["best_score"]), 0, "records: the loadout score bests reset too")
+	_expect(int(p.records["loadouts"]["spiker"]["best_score"]), 60, "records: ...and refill from the new version")
+	_expect(int(p.records["score_v"]), Content.RUN_SCORE_VERSION + 1, "records: the new version is stored")
+	# a legacy summary moves no record
+	var r0 := str(p.records["best"])
+	p.record_run({"won": false, "floor": 2, "tier": 0})
+	_expect(str(p.records["best"]), r0, "records: a legacy {won, floor, tier} summary moves no record")
+	# unlocks: "tier:N" first when the run opened a tier, then milestone ids
+	var u = Profile.new()
+	var news: Array = u.record_run({"won": true, "floor": 7, "tier": 0, "kit": ["seed_bomb"], "grafts": []})
+	_expect(u.last_report["unlocks"][0], "tier:1", "last_report.unlocks: the tier comes first")
+	_expect(u.last_report["unlocks"].slice(1), news, "last_report.unlocks: then the milestone ids record_run returns")
+	u.record_run({"won": false, "floor": 2, "tier": 0})
+	_expect(u.last_report["unlocks"], [], "last_report.unlocks: a run that opens nothing")
+	# load_from: an old profile has no records; unknown keys and loadouts go
+	var oldp := "user://test_profile_old.json"
+	var f := FileAccess.open(oldp, FileAccess.WRITE)
+	f.store_string(JSON.stringify({"runs": 4, "wins": 1, "best_floor": 7}))
+	f.close()
+	var old = Profile.load_from(oldp)
+	_expect(str(old.records), str({"best": {}, "loadouts": {}, "score_v": 0}), "an old profile loads with empty records")
+	_expect(old.runs, 4, "...and keeps everything else")
+	var dirty := {"runs": 2, "records": {"score_v": Content.RUN_SCORE_VERSION,
+		"best": {"score": {"v": 300.0, "run": 2.0, "tier": 0.0, "loadout": "spiker"},
+			"kills": {"v": 12, "run": 1, "tier": 0, "loadout": "ghost_loadout"},
+			"closest_hp": {"v": 1, "run": 1, "tier": 0, "loadout": "tender"},
+			"ghost_key": {"v": 5, "run": 1, "tier": 0, "loadout": "tender"},
+			"combos": "not a record"},
+		"loadouts": {"spiker": {"best_floor": 4.0, "best_score": 300, "best_tier_won": -1, "runs": 2, "wins": 0},
+			"ghost_loadout": {"best_floor": 9, "best_score": 1, "best_tier_won": 0, "runs": 1, "wins": 1}}}}
+	f = FileAccess.open(oldp, FileAccess.WRITE)
+	f.store_string(JSON.stringify(dirty))
+	f.close()
+	var dp = Profile.load_from(oldp)
+	_expect(dp.records["best"].keys(), ["kills", "score"], "load_from keeps only record keys (closest_hp, unknown and malformed go)")
+	_expect(str(dp.records["best"]["score"]), str({"loadout": "spiker", "run": 2, "tier": 0, "v": 300}), "load_from int()s a record")
+	_expect(String(dp.records["best"]["kills"]["loadout"]), "", "load_from blanks an unknown loadout inside a record")
+	_expect(dp.records["loadouts"].keys(), ["spiker"], "load_from drops an unknown loadout row")
+	_expect(dp.records["loadouts"]["spiker"]["best_floor"] is int, true, "load_from int()s a loadout row")
+	dirty["records"]["score_v"] = 0
+	f = FileAccess.open(oldp, FileAccess.WRITE)
+	f.store_string(JSON.stringify(dirty))
+	f.close()
+	var vp = Profile.load_from(oldp)
+	_expect(vp.records["best"].has("score"), false, "load_from: score bests from another score version are dropped")
+	_expect(vp.records["best"].has("kills"), true, "load_from: ...and nothing else is")
+	_expect(int(vp.records["loadouts"]["spiker"]["best_score"]), 0, "load_from: the loadout score best is dropped too")
+	_expect(int(vp.records["loadouts"]["spiker"]["best_floor"]), 4, "load_from: ...but not the loadout's floor")
+	DirAccess.remove_absolute(oldp)
+	print("records: report rule, fastest win, loadout rows, score version, unlock order, load filters: OK")

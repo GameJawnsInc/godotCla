@@ -1095,6 +1095,35 @@ const MILESTONES := [
 	{"id": "skyrunner", "kind": "loadout", "requires": {"wins": 1}, "desc": "Shut down the Furnace"},
 ]
 
+## Cosmetic run score (fun pass). The SIM NEVER READS THIS - meta/run_stats.gd
+## RunStats.score() scores a finished run's merged summary (Game.run_summary()
+## plus RunStats.summary()) with it, and the career keeps the best one in
+## meta/profile.gd `records` (docs/DESIGN.md: no permanent power - a score
+## buys nothing). Transparent by construction: each row is `pts * value` of
+## one summary key (a bool counts 1/0), and the game-over sheet prints every
+## non-zero part. Each difficulty tier adds RUN_SCORE_TIER_QUARTERS quarters
+## (tier 8 = x3). Changing ANY number here makes stored bests incomparable, so
+## bump RUN_SCORE_VERSION in the same change: Profile drops the score bests
+## (and only those) when the version moves.
+const RUN_SCORE := [
+	{"id": "floor", "key": "floor", "pts": 100},
+	{"id": "win", "key": "won", "pts": 500},
+	{"id": "kills", "key": "kills", "pts": 5},
+	{"id": "bloom", "key": "bloom_earned", "pts": 2},
+	{"id": "combos", "key": "combos", "pts": 3},
+	{"id": "rooms", "key": "rooms_bloomed", "pts": 10},
+	{"id": "restored", "key": "floors_restored", "pts": 50},
+]
+const RUN_SCORE_TIER_QUARTERS := 1
+const RUN_SCORE_VERSION := 1
+## The flat int keys RunStats.summary() carries for the career to read
+## (records now, feats later) - tests/test_meta.gd pins every one as an int
+## in every bot-run summary, so a renamed counter fails loudly instead of
+## silently never earning. The sim never reads this either.
+const RUN_STAT_KEYS := ["kills", "best_multi_kill", "best_kill_streak", "biggest_hit_amt",
+	"closest_hp", "combos", "rooms_bloomed", "floors_restored", "bloom_earned", "cleanses",
+	"elites_killed", "resonances_lit", "floors_unhurt"]
+
 ## Terrain vaults: hand-authored set-pieces stamped into a room. Terrain-only
 ## (never walls), so they can't sever connectivity. Legend: ~ oil, ; goo,
 ## & rich goo (cleanse for +3 bloom), " growth, . leave as-is.

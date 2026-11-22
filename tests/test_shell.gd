@@ -15,11 +15,16 @@ const ImportRun := preload("res://tests/import_run.gd")
 const Regress := preload("res://tests/regress_lib.gd")
 const AsciiView := preload("res://sim/ascii_view.gd")
 const Profile := preload("res://meta/profile.gd")
+const RunStatsT := preload("res://meta/run_stats.gd")
+const Roster := preload("res://bots/roster.gd")
 
 ## A kit that fills every slot with slot 0 held by a mobility ability - the one
 ## the forge may never scrap (sim/game.gd _is_mobility).
 const FULL_KIT := ["mycelium_dash", "solar_lance", "seed_bomb", "vine_whip", "thorn_shield"]
 const TMP_SAVE := "user://test_import_run.save"
+## Every _bare_shell reads and writes its career here, never the player's real
+## profile (Shell.PROFILE_PATH); _init deletes it at the end.
+const TEST_PROFILE := "user://test_shell_profile.json"
 const TMP_JSON := "user://test_import_record.json"
 
 var fails := 0
@@ -439,7 +444,8 @@ func _init() -> void:
 	arch.free()
 
 	# 10. the game-over site: a career run is recorded from the sim's own
-	# summary, a daily only scores its seed and unlocks nothing
+	# summary merged with the stats fold, a daily only scores its seed and
+	# unlocks nothing - and neither touches the player's real profile
 	var prof_path: String = Shell.PROFILE_PATH
 	var prof_before := FileAccess.get_file_as_string(prof_path) if FileAccess.file_exists(prof_path) else ""
 	var rec = _bare_shell()
@@ -456,6 +462,19 @@ func _init() -> void:
 	_check(int(rec.profile.history[0]["seed"]) == 4242 and rec.profile.history[0]["kit"] == Content.STARTING_KIT,
 		"the record is the sim's run_summary (seed and kit), not a stub")
 	_check(rec.profile.daily_best.is_empty(), "a random run files no daily result")
+	_check(rec.stats != null and rec._stats_for == rec.game,
+		"a game assigned from outside gets its own stats fold")
+	_check(rec._run_summary.has("kills") and rec._run_summary.has("seed")
+		and rec._run_summary["score"] is int and int(rec._run_summary["score_v"]) == Content.RUN_SCORE_VERSION,
+		"the recorded summary is run_summary + the fold + the score (%s)" % str(rec._run_summary.keys()))
+	_check(int(rec._run_summary["score"]) == int(RunStatsT.score(rec._run_summary)["total"])
+		and int(rec.profile.history[0]["score"]) == int(rec._run_summary["score"]),
+		"the stored score is the score of that summary")
+	_check(int(rec._over_prev.get("runs", -1)) == 0 and int(rec._over_prev.get("best_floor", -1)) == 0,
+		"the bests the sheet compares against were taken BEFORE the record (%s)" % str(rec._over_prev))
+	_check(rec._run_report == rec.profile.last_report and rec._run_unlocks == rec._run_report["unlocks"],
+		"the unlocks come from the profile's report")
+	_check(FileAccess.file_exists(TEST_PROFILE), "the career is saved to the shell's profile_path")
 	rec.seed_mode = "daily"
 	rec._run_recorded = false
 	rec.game = Game.new(77, {})
@@ -464,13 +483,11 @@ func _init() -> void:
 	_check(rec.profile.runs == 1 and rec.profile.history.size() == 1, "a daily run is not a career run")
 	_check(rec.profile.daily_best.has("77"), "a daily run files that seed's result")
 	_check(rec._run_unlocks.is_empty(), "a daily unlocks nothing")
+	_check(rec._over_prev.has("daily") and rec._over_prev["daily"].is_empty(),
+		"a first daily finish compares against no earlier best (%s)" % str(rec._over_prev))
 	rec.free()
-	if prof_before == "":
-		DirAccess.remove_absolute(prof_path)
-	else:
-		var rf := FileAccess.open(prof_path, FileAccess.WRITE)
-		rf.store_string(prof_before)
-		rf.close()
+	var prof_after := FileAccess.get_file_as_string(prof_path) if FileAccess.file_exists(prof_path) else ""
+	_check(prof_after == prof_before, "the game-over test never writes the player's real profile")
 
 	# 11. the title screen's run-setup rows (Block A): three cyclers gated by
 	# the career, the config PLAY builds out of them, the status line that
@@ -628,9 +645,12 @@ func _init() -> void:
 	_check_cleanse_hint()
 	_check_card_text()
 	_check_tier_clamp()
+	_check_resume_stats()
 
 	shell.free()
 	shell2.free()
+	DirAccess.remove_absolute(TEST_PROFILE)
+	DirAccess.remove_absolute(TEST_PROFILE + ".tmp")
 	print("FAILURES: %d" % fails if fails > 0 else "shell smoke: OK")
 	quit(1 if fails > 0 else 0)
 
@@ -639,6 +659,7 @@ func _init() -> void:
 ## nothing may be appended to (or restored from) the on-disk run log.
 func _bare_shell():
 	var sh = Shell.new()
+	sh.profile_path = TEST_PROFILE  # before _ready: it loads from here
 	sh._ready()
 	if sh._run_save != null:
 		sh._run_save.close()
@@ -1257,3 +1278,56 @@ func _nearest_corruption(g) -> Vector2i:
 			bd = d
 			best = t
 	return best
+
+
+## --- a resumed run keeps its stats --------------------------------------------
+## Android can take the app away mid-run; _load_run replays the action log, and
+## the stats fold rides that replay. Write a save of a sprout run's first
+## actions, resume it, and the shell's fold must equal a direct fold over the
+## same actions - otherwise a resumed run would end on a game-over sheet that
+## forgot everything before the interruption.
+func _check_resume_stats() -> void:
+	var seed_v := 11
+	var g = Game.new(seed_v, {})
+	var bot = Roster.make("sprout", seed_v)
+	if bot.has_method("set_sim"):
+		bot.set_sim(g)
+	var st = RunStatsT.new()
+	st.begin(g)
+	var acts: Array = []
+	while acts.size() < 150 and not g.over:
+		var a: Dictionary = bot.choose_action(g.snapshot(), g.legal_actions())
+		var evs: Array = g.step(a)
+		if g.over:
+			break  # a finished run is not resumed; keep the log one step short
+		acts.append(a)
+		st.feed(g, evs)
+	var save_path: String = Shell.RUN_SAVE_PATH
+	var had_save := FileAccess.file_exists(save_path)
+	var keep := FileAccess.get_file_as_string(save_path) if had_save else ""
+	var f := FileAccess.open(save_path, FileAccess.WRITE)
+	f.store_line(var_to_str({"v": Shell.RUN_SAVE_VERSION, "seed": seed_v, "tier": 0, "config": {}}).replace("\n", " "))
+	for a in acts:
+		f.store_line(var_to_str(a).replace("\n", " "))
+	f.close()
+	var sh = _bare_shell()
+	sh._load_run()
+	_check(sh.game != null and not sh.game.over and sh.game.total_turns == g.total_turns,
+		"the resumed run is the same game (%d actions)" % acts.size())
+	_check(sh.stats != null and sh._stats_for == sh.game, "the resumed run carries a stats fold")
+	if sh.stats != null:
+		_check(str(sh.stats.summary()) == str(st.summary()),
+			"a resumed run keeps its stats: %s vs %s" % [str(sh.stats.summary()).substr(0, 200), str(st.summary()).substr(0, 200)])
+		_check(str(sh.stats.ctx) == str(st.ctx), "...down to the last step's ctx")
+		_check(int(sh.stats.kills) > 0, "the resumed fold is not trivially empty (kills %d)" % int(sh.stats.kills))
+	if sh._run_save != null:
+		sh._run_save.close()
+		sh._run_save = null
+	sh.free()
+	DirAccess.remove_absolute(save_path)
+	if had_save:
+		var rf := FileAccess.open(save_path, FileAccess.WRITE)
+		rf.store_string(keep)
+		rf.close()
+	print("resume stats: %d actions replayed, fold identical (kills %d, bloom earned %d)" % [
+		acts.size(), int(st.kills), int(st.bloom_earned)])
