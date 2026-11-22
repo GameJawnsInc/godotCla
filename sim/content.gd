@@ -1496,7 +1496,9 @@ const ENEMIES := {
 ## [{id, name, w, enemies}] instead of a fixed "enemies" dict. Game.floor_def(n)
 ## draws ONE pack per floor from the side stream hash([seed, n, "roster"]) by
 ## weight w (never the main rng) and writes its roster into fdef.enemies, so
-## sim/mapgen.gd is untouched. Rules (tests/test_content.gd section 14):
+## sim/mapgen.gd is untouched. Rules (R2-R8 linted by tests/test_content.gd
+## section 14; R1 pinned by tests/test_grammar.gd section e against its frozen
+## CLASSIC_ROSTERS):
 ##  - pack 0 is the floor's pre-v15 roster byte for byte, key order included
 ##    (the classic crew; the fixed_shift mutator always fields it)
 ##  - every pack on a floor has the same headcount: mapgen's placement draws
