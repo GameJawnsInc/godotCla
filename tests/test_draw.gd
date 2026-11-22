@@ -12,8 +12,11 @@ extends SceneTree
 ## (vignette, outline, guard flash, escape glow), a danger board (tether, gum
 ## slots, SKIES chips), a kill (ghost, kill weight, streak flame), the boss
 ## floor (core shield ring up and down, a phase banner), the shrine, forge,
-## draft and drop sheets, the log, help pages and intro, and both game-over
-## screens. Each phase asserts it reached the state its draw code needs.
+## draft and drop sheets, the log, help pages and intro, and the end of a run:
+## both game-over sheets set from outside, the end beat (a smog death through
+## _act, and a first win), the sheet fading in locked, the live sheet with its
+## unlock rows, and a tutorial death. Each phase asserts it reached the state
+## its draw code needs.
 ##
 ## Gate: an OS Logger counts every engine error, push_error and SCRIPT ERROR
 ## raised while it runs; any one fails the test (exit 1).
@@ -331,6 +334,12 @@ func _build_phases() -> Array:
 		["intro", 2, "_sheet_setup", "_mode_check", "", "intro"],
 		["game over (died)", 3, "_over_setup", "_over_check", "", false],
 		["game over (won)", 3, "_over_setup", "_over_check", "", true],
+		["end beat (died)", 3, "_beat_setup", "_beat_check", "", false],
+		["over sheet (fading, locked)", 2, "_fade_setup", "_fade_check", "", null],
+		["over sheet (recorded, live)", 2, "_live_setup", "_live_check", "", null],
+		["end beat (won)", 3, "_beat_setup", "_beat_check", "", true],
+		["over sheet (first win)", 2, "_live_setup", "_live_check", "", null],
+		["tutorial death sheet", 2, "_tut_death_setup", "_tut_death_check", "", null],
 	]
 	var out: Array = []
 	for r in rows:
@@ -755,5 +764,83 @@ func _over_setup() -> void:
 	g.over = true
 	g.won = won
 	g.death_cause = "drill_bot"
-	_play(g)
-	sh._run_unlocks = ["tier:1", "mycology"]
+	_play(g)  # set over from outside _act: no beat, the sheet at once, unrecorded
+
+
+## The end of a run through the real path. Died: a smog death through _act on
+## a recorded career run (a fresh profile, so the sheet carries a score, a best
+## line and a NEXT goal) - the beat starts. Won: a first win filed through
+## _record_finished_run, then the beat started by hand (no headless recipe
+## wins through _act in one step), so the sheet after it carries unlock rows.
+## No run save exists, so nothing is archived; the profile is the scratch one.
+func _beat_setup() -> void:
+	var won := bool(phase_arg)
+	DirAccess.remove_absolute(SCRATCH_RUN_SAVE)
+	var g = _bare_game()
+	sh.profile = Profile.new()
+	sh.run_kind = "career"
+	if won:
+		g.floor_num = 7
+		g.over = true
+		g.won = true
+		_play(g)
+		sh._game_is_run = true
+		sh._run_recorded = false
+		sh._begin_over([], sh._pre_step())
+		sh._record_finished_run()
+		sh._over_info = sh._build_over_info()
+	else:
+		g.smog = int(g.floor_def(1)["smog_choke"]) - 1
+		g.player["hp"] = 1
+		_play(g)
+		sh._game_is_run = true
+		sh._run_recorded = false
+		sh._act({"type": "end_turn"})
+	sh._game_is_run = false
+
+
+func _beat_check() -> String:
+	if not sh.game.over or sh.game.won != bool(phase_arg):
+		return "the run did not end as wanted"
+	if sh._over_phase() != "beat":
+		return "not in the beat (%s)" % sh._over_phase()
+	if not sh.hotspots.is_empty():
+		return "the beat left %d hotspot(s) live" % sh.hotspots.size()
+	return "" if sh._run_recorded and String(sh._over_info.get("score", "")) != "" else "the run was not recorded"
+
+
+## Skip into the fade: the sheet draws translucent with dead buttons.
+func _fade_setup() -> void:
+	sh._over_ms = Time.get_ticks_msec() - Shell.OVER_BEAT_MS - 40
+
+
+func _fade_check() -> String:
+	if not sh._over_locked():
+		return "the fade is not locked"
+	return "" if sh.hotspots.is_empty() else "a locked sheet drew %d live button(s)" % sh.hotspots.size()
+
+
+## Past the lock: the full sheet with live buttons.
+func _live_setup() -> void:
+	sh._over_ms = Time.get_ticks_msec() - Shell.OVER_LOCK_MS - 10
+
+
+func _live_check() -> String:
+	if sh._over_phase() != "sheet" or sh._over_locked():
+		return "the sheet is not up and live (%s)" % sh._over_phase()
+	var tags: Array = sh.hotspots.map(func(h): return String(h["tag"]))
+	if not (tags.has("new_run") and tags.has("retry_seed") and tags.has("menu")):
+		return "the sheet's buttons are not live (%s)" % str(tags)
+	if sh.game.won and sh._over_info.get("unlocks", []).is_empty():
+		return "a first win drew no unlock rows"
+	return ""
+
+
+func _tut_death_setup() -> void:
+	sh._start_tutorial()
+	sh.game.over = true
+
+
+func _tut_death_check() -> String:
+	var tags: Array = sh.hotspots.map(func(h): return String(h["tag"]))
+	return "" if tags.has("tutorial") and tags.has("menu") else "no TUTORIAL AGAIN / MENU (%s)" % str(tags)

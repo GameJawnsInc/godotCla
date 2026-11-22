@@ -19,6 +19,7 @@ const RunStats := preload("res://meta/run_stats.gd")
 const Names := preload("res://shell/names.gd")
 const Feedback := preload("res://shell/feedback.gd")
 const Danger := preload("res://shell/danger.gd")
+const RunEnd := preload("res://shell/run_end.gd")
 const PROFILE_PATH := "user://tender_profile.json"
 const RUN_SAVE_PATH := "user://tender_run.save"
 # Replay compatibility rides on the sim's own version: a stale log replayed
@@ -292,6 +293,26 @@ var _over_prev: Dictionary = {}
 ## The finished run's merged summary and the profile's last_report for it.
 var _run_summary: Dictionary = {}
 var _run_report: Dictionary = {}
+## The game _record_finished_run filed: the four fields above (and
+## _run_unlocks / _daily_report) describe THAT game only, so a game swapped in
+## from outside (a test, a tool) never borrows another run's record.
+var _recorded_for = null
+## The end of a run (fun pass): when the live game ends in _act, the map stays
+## up for OVER_BEAT_MS with the end banner, then the sheet fades in over
+## OVER_FADE_MS; taps and keys are ignored until OVER_LOCK_MS (0.3 s after the
+## sheet is opaque), so a finger still hammering the D-pad cannot skip the
+## death or start the next run by accident. Back/ESC stay instant (the run is
+## already recorded).
+const OVER_BEAT_MS := 1200
+const OVER_FADE_MS := 400
+const OVER_LOCK_MS := 1900
+## Wall-clock ms the live game ended at this session; -1 = unknown (a game
+## set over from outside, a resumed save): no beat, no lock, sheet at once.
+var _over_ms := -1
+## The game the beat and the sheet facts belong to (stale when `game` moved).
+var _over_for = null
+## The game-over sheet's facts (_build_over_info), built once per ended game.
+var _over_info: Dictionary = {}
 ## What profile.record_daily said about the finished daily ({ranked, new_best,
 ## tries}); {} after a career run.
 var _daily_report: Dictionary = {}
@@ -429,6 +450,7 @@ func _new_game() -> void:
 	var cfg: Dictionary = _run_config()
 	run_tier = int(cfg.get("tier", 0))
 	game = Game.new(seed_v, cfg)
+	_reset_over()
 	_new_stats()
 	_draft_focus_spent = false  # a fresh run never inherits the last one's focus
 	_game_is_run = true
@@ -459,6 +481,7 @@ func _new_game() -> void:
 func _start_tutorial() -> void:
 	screen = "tutorial"
 	game = Game.new(1, Tutorial.game_config())
+	_reset_over()
 	_new_stats()
 	_draft_focus_spent = false
 	_game_is_run = false
@@ -566,6 +589,7 @@ func _load_run() -> void:
 		_save_head_dirty()
 		return
 	game = g
+	_reset_over()
 	stats = st
 	_stats_for = g
 	seed_v = int(head["seed"])
@@ -631,6 +655,7 @@ func _record_finished_run() -> void:
 	summary["score"] = int(RunStats.score(summary)["total"])
 	summary["score_v"] = Content.RUN_SCORE_VERSION
 	_run_summary = summary
+	_recorded_for = game
 	_run_unlocks = []
 	_run_report = {}
 	_daily_report = {}
@@ -649,6 +674,168 @@ func _record_finished_run() -> void:
 		_run_save.close()
 		_run_save = null
 	_archive_run()
+
+
+# --- the end of a run (fun pass) -------------------------------------------------
+
+## Forget the last game's ending: no beat, no lock, no sheet facts, and no
+## record or "was" values. Called whenever a new game takes the screen.
+func _reset_over() -> void:
+	_over_ms = -1
+	_over_for = null
+	_over_info = {}
+	_over_prev = {}
+	_run_summary = {}
+	_run_report = {}
+	_run_unlocks = []
+	_daily_report = {}
+	_recorded_for = null
+
+
+## Did the CURRENT game end in _act this session (so it has a beat and a lock)?
+func _over_live() -> bool:
+	return _over_ms >= 0 and _over_for == game
+
+
+## Where the end of the run is: "" (not over), "beat" (the map stays up with
+## the end banner), "fade" (the sheet fading in) or "sheet". A game that ended
+## outside _act (set over by a test, or a resumed save) goes straight to the sheet.
+func _over_phase(now: int = -1) -> String:
+	if game == null or not game.over:
+		return ""
+	if not _over_live():
+		return "sheet"
+	var age := (Time.get_ticks_msec() if now < 0 else now) - _over_ms
+	if age < OVER_BEAT_MS:
+		return "beat"
+	if age < OVER_BEAT_MS + OVER_FADE_MS:
+		return "fade"
+	return "sheet"
+
+
+## Are taps and keys (but Back/ESC and MENU) still ignored after the end?
+func _over_locked(now: int = -1) -> bool:
+	if screen == "menu" or game == null or not game.over or not _over_live():
+		return false
+	return (Time.get_ticks_msec() if now < 0 else now) - _over_ms < OVER_LOCK_MS
+
+
+## The live game just ended (from _act, after the step's own feedback): start
+## the beat clock, clear every banner (the end banner owns the screen) and land
+## three staggered bursts - gold on a win, red on a death - on the tender, or
+## on a win on the boss's last tile.
+func _begin_over(evs: Array, pre: Dictionary) -> void:
+	_over_ms = Time.get_ticks_msec()
+	_over_for = game
+	_over_info = {}
+	_banner = []
+	_banner_q = []
+	var won := bool(game.won)
+	var p := Vector2(game.player["pos"])
+	if won:
+		for ev in evs:
+			if String(ev.get("t", "")) == "death" \
+					and Content.ENEMIES.get(String(ev.get("who", "")), {}).get("traits", []).has("boss"):
+				p = Feedback.ev_pos(ev, pre, game)
+	var t0 := _fx_now()
+	for i in 3:
+		_fx.append({"kind": "burst", "pos": p, "col": COL_GOLD if won else COL_RED, "t0": t0 + i * 260})
+	if _fx.size() > 40:
+		_fx = _fx.slice(_fx.size() - 40)  # the same cap _feedback keeps
+	_shake(7.0 if won else 10.0)
+
+
+## Is the ended game a daily (it has no unlocks and no NEXT, and RETRY DAILY)?
+func _over_is_daily() -> bool:
+	if screen == "tutorial":
+		return false
+	if _recorded_for == game and not _run_summary.is_empty():
+		return String(_run_summary.get("run_kind", "career")) == "daily"
+	return _game_is_run and _run_is_daily()
+
+
+## The over sheet's buttons: explicit, never tap-anywhere. A daily keeps NEW
+## RUN (a career run: run_kind made that safe) beside RETRY DAILY.
+func _over_buttons() -> Array:
+	if screen == "tutorial":
+		return [["TUTORIAL AGAIN", "tutorial"], ["MENU", "menu"]]
+	if _over_is_daily():
+		return [["NEW RUN", "new_run"], ["RETRY DAILY", "retry_seed"], ["MENU", "menu"]]
+	return [["NEW RUN", "new_run"], ["RETRY SEED", "retry_seed"], ["MENU", "menu"]]
+
+
+## Every fact the beat and the sheet draw, in words (shell/run_end.gd), built
+## once per ended game. A recorded run reads the summary it was filed with and
+## the bests snapshotted BEFORE the record; a tutorial or a bare game builds
+## the same summary unrecorded and shows no score, best, unlock, goal or seed.
+func _build_over_info() -> Dictionary:
+	_ensure_stats()
+	var recorded: bool = _recorded_for == game and not _run_summary.is_empty()
+	var summary: Dictionary
+	if recorded:
+		summary = _run_summary
+	else:
+		summary = game.run_summary()
+		summary.merge(stats.summary())
+		summary["tier"] = run_tier
+		summary["score"] = int(RunStats.score(summary)["total"])
+	var snap: Dictionary = game.snapshot()
+	var tut := screen == "tutorial"
+	var daily := _over_is_daily()
+	var prev: Dictionary = _over_prev if recorded else {}
+	var prev_floor := int(prev.get("daily", {}).get("floor", 0)) if daily else int(prev.get("best_floor", 0))
+	var won := bool(snap["won"])
+	var kit: Array = []
+	var eff: Dictionary = summary.get("effective_uses_by_base", {})
+	for aid in summary.get("kit", []):
+		kit.append({"icon": _ability_icon(String(aid)), "count": int(eff.get(Content.base_id(String(aid)), 0)),
+			"up": Content.is_upgrade(String(aid))})
+	var chips: Array = []
+	# the score record is the sheet's own NEW BEST line, so a chip repeating it
+	# would take the top slot from a real highlight
+	var recs: Array = (_run_report.get("records", []) as Array).filter(
+		func(r): return not (r is Dictionary and String(r.get("key", "")) == "score")) if recorded else []
+	for h in RunStats.highlights(summary, 3, recs):
+		var ct := RunEnd.chip_text(h)
+		if ct != "":
+			chips.append(ct)
+	var info := {
+		"won": won, "tutorial": tut, "daily": daily,
+		"banner": RunEnd.end_banner(summary, snap),
+		"title": "THE FURNACE IS COLD" if won else "YOU DIED",
+		"cause": RunEnd.cause_line(summary, snap),
+		"near": RunEnd.near_miss_text(RunStats.near_miss(snap, summary, prev_floor)),
+		"stats": RunEnd.stats_line(summary),
+		"kit": kit, "grafts": RunEnd.grafts_line(summary), "chips": chips,
+		"score": "", "score_parts": "", "best": ["", false], "floor_best": "",
+		"unlocks": [], "next": "", "seed": "", "buttons": _over_buttons(),
+	}
+	if tut:
+		return info
+	var sc: Dictionary = RunStats.score(summary)
+	info["score"] = RunEnd.score_title(sc)
+	info["score_parts"] = RunEnd.score_parts_text(sc)
+	info["best"] = RunEnd.best_line(summary, prev, daily, _daily_report if recorded else {})
+	info["floor_best"] = RunEnd.floor_best_line(summary, prev, daily)
+	if recorded and not daily:
+		info["unlocks"] = RunEnd.unlock_lines(_run_unlocks, profile.unlocked_packages)
+		var nxt: Array = _run_report.get("next", [])
+		if not nxt.is_empty():
+			info["next"] = RunEnd.next_goal_text(nxt[0])
+	info["seed"] = RunEnd.seed_line(int(summary.get("seed", seed_v)), summary, daily, _config_line(snap))
+	return info
+
+
+## The sheet facts for the CURRENT game, built lazily (a game set over from
+## outside _act has none yet, and a game swapped in drops the old ones).
+func _over_info_now() -> Dictionary:
+	if _over_for != game:
+		_over_ms = -1
+		_over_for = game
+		_over_info = {}
+	if _over_info.is_empty():
+		_over_info = _build_over_info()
+	return _over_info
 
 
 ## A finished run's action log is a replayable record, not litter: move it to
@@ -746,6 +933,9 @@ func _act(a: Dictionary) -> void:
 		_danger_rev += 1  # the tutorial draws the forecast too, but never cues
 		_arm_anim(pre["pos"], int(pre["floor"]))
 		_feedback(tevs, pre, tctx)
+		if game.over and not _over_live():
+			_begin_over(tevs, pre)  # a tutorial death gets its beat too; nothing is recorded
+			_over_info = _build_over_info()
 		if advances:
 			if st.get("until_dead", false):
 				if _tut_cleared(st["until_dead"]):
@@ -785,8 +975,16 @@ func _act(a: Dictionary) -> void:
 	_feedback(evs, pre, ctx, cue.get("sounds", []))
 	if not Array(cue.get("banner", [])).is_empty():
 		_push_banner(cue["banner"], Danger.COL_AMBER, int(Feedback.BANNER_PRIO["danger"]))
+	# the end beat starts AFTER the step's own feedback (its bursts, its death
+	# sound) and clears the banners it queued; the record runs between the two
+	# so the sheet's facts read the bests from BEFORE it
+	var ended: bool = game.over and not _over_live()
+	if ended:
+		_begin_over(evs, pre)
 	if game.over and _game_is_run and not _run_recorded:
 		_record_finished_run()
+	if ended:
+		_over_info = _build_over_info()
 	mode = "normal"
 	if keep_shop and game.player["pos"] == game.map["shrine"] and not game.shop.is_empty():
 		mode = "shop"
@@ -1349,6 +1547,8 @@ func _key(k: int) -> void:
 		elif k == KEY_ENTER or k == KEY_SPACE:
 			_tap("play")
 		return
+	if _over_locked():
+		return  # the end beat: a key still held from the last move must not skip it
 	if screen == "tutorial" and tut_done:
 		_tap("menu")
 		return
@@ -1684,6 +1884,8 @@ func _click(pos: Vector2) -> void:
 			mode = "normal"
 			queue_redraw()
 		return
+	if _over_locked():
+		return  # the end beat and the first moments of the sheet take no taps
 	if screen == "tutorial" and tut_done:
 		_tap("menu")
 		return
@@ -1707,10 +1909,8 @@ func _click(pos: Vector2) -> void:
 		queue_redraw()
 		return
 	if game.over:
-		if screen == "tutorial":
-			_tap("menu")
-		else:
-			_start_run("career")  # NEW RUN is a career run (C25), never another daily try
+		# no tap-anywhere: a new run starts only from the sheet's own buttons
+		# (the hotspots above), so a stray tap can never throw a result away
 		return
 	if game.phase == "draft":
 		return
@@ -1735,6 +1935,8 @@ func _click(pos: Vector2) -> void:
 
 
 func _tap(tag: String) -> void:
+	if _over_locked() and tag != "menu":
+		return  # MENU (Back's own path) is the one tap the end beat lets through
 	if audio != null:
 		audio.play("tap")
 	var play_armed := _play_armed
@@ -1865,6 +2067,10 @@ func _tap(tag: String) -> void:
 			queue_redraw()
 	elif tag == "tutorial":
 		_start_tutorial()
+	elif tag == "new_run":
+		_start_run("career")  # NEW RUN is always a career run, even off a daily
+	elif tag == "retry_seed":
+		_start_run(run_kind, seed_v)  # the same seed again (a daily retry is another try)
 	elif tag == "settings":
 		mode = "settings"
 		queue_redraw()
@@ -2329,7 +2535,10 @@ func _draw() -> void:
 	if screen == "tutorial" and tut_done:
 		_draw_tut_done(vw, vh)
 	elif snap["over"]:
-		_draw_over(snap, vw, vh)
+		if _over_phase() == "beat":
+			_draw_over_beat(vw, vh)
+		else:
+			_draw_over(snap, vw, vh)
 
 
 func _draw_menu(vw: float, vh: float) -> void:
@@ -4087,62 +4296,310 @@ func _draw_draft(snap: Dictionary, vw: float, vh: float) -> void:
 			"BACK", "draft_back", int(bh * 0.26))
 
 
+## The game-over sheet's rows, in display order: [id, prio, size (fraction of
+## vh), max lines (1 = fit on one line, 0 = the kit's icon row), width
+## (fraction of vw), extra gap before (fraction of vh)]. When the rows do not
+## fit between OVER_TOP and OVER_BOTTOM, the present row with the LARGEST prio
+## is dropped until they do - so on the smallest phone the seed line and the
+## third chip go first, and the title, cause, score and best never go.
+## tests/test_shell.gd _check_over_text holds every row to CARD_MIN_VH at every
+## CARD_VIEWPORTS shape and nothing with prio <= 13 dropped in the worst case.
+const OVER_ROWS := [
+	["title", 1, 0.042, 1, 0.90, 0.0],
+	["cause", 2, 0.022, 2, 0.88, 0.0],
+	["near", 5, 0.024, 2, 0.88, 0.0],
+	["stats", 7, 0.021, 2, 0.90, 0.0],
+	["kit", 9, 0.017, 0, 0.0, 0.0],
+	["grafts", 13, 0.018, 2, 0.88, 0.0],
+	["chip0", 11, 0.018, 1, 0.72, 0.0],
+	["chip1", 12, 0.018, 1, 0.72, 0.0],
+	["chip2", 16, 0.018, 1, 0.72, 0.0],
+	["score", 3, 0.036, 1, 0.90, 0.012],
+	["best", 4, 0.021, 1, 0.90, 0.0],
+	["floor_best", 10, 0.021, 1, 0.90, 0.0],
+	["parts", 15, 0.016, 2, 0.88, 0.0],
+	["unlock0", 6, 0.021, 1, 0.92, 0.012],
+	["unlock1", 6, 0.021, 1, 0.92, 0.0],
+	["unlock2", 14, 0.021, 1, 0.92, 0.0],
+	["unlock3", 14, 0.021, 1, 0.92, 0.0],
+	["next", 8, 0.019, 2, 0.88, 0.0],
+	["seed", 17, 0.016, 1, 0.90, 0.0],
+]
+const OVER_TOP := 0.11     # the content block, under the sun / smog art
+const OVER_BOTTOM := 0.86  # ...and above the button row
+const OVER_GAP := 0.008    # after every row
+const OVER_CHIP_H := 0.028
+const OVER_BTN_H := 0.065
+
+
+## One row's text, out of the sheet facts.
+func _over_row_text(info: Dictionary, id: String) -> String:
+	if id.begins_with("chip"):
+		var chips: Array = info.get("chips", [])
+		var ci := int(id.substr(4))
+		return String(chips[ci]) if ci < chips.size() else ""
+	if id.begins_with("unlock"):
+		var ul: Array = info.get("unlocks", [])
+		var ui := int(id.substr(6))
+		return String(ul[ui]) if ui < ul.size() else ""
+	match id:
+		"best":
+			var b: Array = info.get("best", ["", false])
+			return String(b[0]) if not b.is_empty() else ""
+		"parts":
+			return String(info.get("score_parts", ""))
+	return String(info.get(id, ""))
+
+
+## One row's colour.
+func _over_row_col(info: Dictionary, id: String) -> Color:
+	var won := bool(info.get("won", false))
+	if id.begins_with("unlock") or id.begins_with("chip"):
+		return COL_GOLD
+	match id:
+		"title":
+			return COL_GOLD if won else COL_RED
+		"near":
+			return COL_CREAM if won else COL_GOLD
+		"score", "floor_best":
+			return COL_GOLD
+		"best":
+			var b: Array = info.get("best", ["", false])
+			return COL_GOLD if b.size() > 1 and bool(b[1]) else COL_DIM_TEXT
+		"grafts", "parts", "seed":
+			return COL_DIM_TEXT
+		"next":
+			return COL_CREAM
+	return COL_TEXT
+
+
+## The game-over sheet as data (the _card_layout pattern: layout first, the
+## drawing and the geometry gate both read it). -> {items, buttons, dropped,
+## bottom, button_top}. A text item is {id, kind "text", prio, lines, size,
+## line_h, y (first baseline), cx, col}; the kit {id, kind "kit", prio, icons:
+## [{icon, pos, size, count, count_pos, count_size, up}]}; a chip {id, kind
+## "chip", prio, rect, text, size}; a button {rect, label, tag, size, primary}.
+func _over_layout(info: Dictionary, vw: float, vh: float) -> Dictionary:
+	var gap := vh * OVER_GAP
+	var rows: Array = []
+	var seen_unlock := false
+	for r in OVER_ROWS:
+		var id := String(r[0])
+		var pre := vh * float(r[5])
+		if id.begins_with("unlock"):
+			pre = 0.0 if seen_unlock else vh * 0.012
+		var it := {"id": id, "prio": int(r[1])}
+		if id == "kit":
+			var kit: Array = info.get("kit", [])
+			if kit.is_empty():
+				continue
+			var isz := minf(vh * 0.042, vw * 0.15)
+			var csz := int(vh * float(r[2]))
+			it["kind"] = "kit"
+			it["isz"] = isz
+			it["csz"] = csz
+			it["h"] = pre + isz + csz * 1.3 + gap
+			it["pre"] = pre
+			it["kit"] = kit
+			rows.append(it)
+			continue
+		var text := _over_row_text(info, id)
+		if text == "":
+			continue
+		if id.begins_with("unlock"):
+			seen_unlock = true
+		var size := int(vh * float(r[2]))
+		if id.begins_with("chip"):
+			it["kind"] = "chip"
+			it["text"] = text
+			it["size"] = _fit_size(text, size, vw * float(r[4]))
+			it["h"] = pre + vh * (OVER_CHIP_H + 0.006)
+			it["pre"] = pre
+			rows.append(it)
+			continue
+		var lines: Array = [text]
+		if int(r[3]) > 1:
+			var wr := _wrap(text, size, vw * float(r[4]), int(r[3]))
+			lines = wr["lines"]
+			size = int(wr["size"])
+		else:
+			size = _fit_size(text, size, vw * float(r[4]))
+		it["kind"] = "text"
+		it["lines"] = lines
+		it["size"] = size
+		it["line_h"] = size * 1.2
+		it["col"] = _over_row_col(info, id)
+		it["h"] = pre + lines.size() * size * 1.2 + gap
+		it["pre"] = pre
+		rows.append(it)
+	# the priority drop: the least important present row goes first
+	var budget := vh * (OVER_BOTTOM - OVER_TOP)
+	var total := 0.0
+	for it in rows:
+		total += float(it["h"])
+	var dropped: Array = []
+	while total > budget and not rows.is_empty():
+		var wi := 0
+		for k in rows.size():
+			if int(rows[k]["prio"]) > int(rows[wi]["prio"]):
+				wi = k
+		total -= float(rows[wi]["h"])
+		dropped.append(String(rows[wi]["id"]))
+		rows.remove_at(wi)
+	var items: Array = []
+	var y := vh * OVER_TOP
+	for it in rows:
+		var top: float = y + float(it["pre"])
+		match String(it["kind"]):
+			"text":
+				it["y"] = top + float(it["size"])
+				it["cx"] = vw / 2.0
+			"chip":
+				it["rect"] = Rect2(vw * 0.11, top, vw * 0.78, vh * OVER_CHIP_H)
+			"kit":
+				var isz: float = it["isz"]
+				var kit: Array = it["kit"]
+				var step := isz + vw * 0.03
+				var x0 := vw / 2.0 - (step * kit.size() - vw * 0.03) / 2.0
+				var icons: Array = []
+				for k in kit.size():
+					var kd: Dictionary = kit[k]
+					var px := x0 + step * k
+					icons.append({"icon": String(kd["icon"]), "pos": Vector2(px, top), "size": isz,
+						"count": "x%d" % int(kd["count"]), "count_size": int(it["csz"]),
+						"count_pos": Vector2(px + isz / 2.0, top + isz + float(it["csz"]) * 1.05),
+						"up": bool(kd["up"])})
+				it["icons"] = icons
+		y += float(it["h"])
+		items.append(it)
+	var bh := vh * OVER_BTN_H
+	var by := _sheet_button_y(vh * 0.875, bh, vh)
+	var btns: Array = info.get("buttons", [])
+	var n := maxi(1, btns.size())
+	var bw := (vw * 0.9 - vw * 0.03 * (n - 1)) / n
+	var buttons: Array = []
+	for k in btns.size():
+		var br := Rect2(vw * 0.05 + (bw + vw * 0.03) * k, by, bw, bh)
+		var label := String(btns[k][0])
+		buttons.append({"rect": br, "label": label, "tag": String(btns[k][1]),
+			"size": _fit_size(label, int(bh * 0.36), bw * 0.92), "primary": k == 0 and String(btns[k][1]) != "menu"})
+	return {"items": items, "buttons": buttons, "dropped": dropped, "bottom": y, "button_top": by}
+
+
+## The end beat's two banner lines, centred in the map band [top, bottom]:
+## [{text, size, y, col}].
+func _over_beat_layout(info: Dictionary, vw: float, vh: float, top: float, bottom: float) -> Array:
+	var ban: Array = info.get("banner", ["", ""])
+	var won := bool(info.get("won", false))
+	var l0 := String(ban[0]) if ban.size() > 0 else ""
+	var l1 := String(ban[1]) if ban.size() > 1 else ""
+	var s0 := _fit_size(l0, int(vh * 0.034), vw * 0.92)
+	var s1 := _fit_size(l1, int(vh * 0.018), vw * 0.92)
+	var mid := (top + bottom) / 2.0
+	return [{"text": l0, "size": s0, "y": mid, "col": COL_GOLD if won else COL_RED},
+		{"text": l1, "size": s1, "y": mid + vh * 0.032, "col": COL_CREAM}]
+
+
+## The end beat: the map stays up, tinted (a gold wash on a win, smog-brown on
+## a death), the controls dim behind a veil and take no taps, and the banner
+## names the moment ("THE DRILL BOT TAKES YOU").
+func _draw_over_beat(vw: float, vh: float) -> void:
+	var info := _over_info_now()
+	var age := float(Time.get_ticks_msec() - _over_ms)
+	var t := clampf(age / OVER_BEAT_MS, 0.0, 1.0)
+	var won := bool(info.get("won", false))
+	var map_end := vh * Z_MAP_END
+	draw_rect(Rect2(0, _status_end, vw, maxf(0.0, map_end - _status_end)),
+		Color(0.95, 0.88, 0.55, 0.16 * t) if won else Color(0.10, 0.07, 0.06, 0.45 * t))
+	draw_rect(Rect2(0, map_end, vw, vh - map_end), Color(COL_SHEET.r, COL_SHEET.g, COL_SHEET.b, 0.6 * t))
+	hotspots.clear()
+	var a := clampf(age / 150.0, 0.0, 1.0)
+	for ln in _over_beat_layout(info, vw, vh, _status_end, map_end):
+		var s := String(ln["text"])
+		if s == "":
+			continue
+		var sz := int(ln["size"])
+		var col: Color = ln["col"]
+		col.a = a
+		_txt_c(vw / 2.0 + 2, float(ln["y"]) + 2, s, Color(0, 0, 0, 0.8 * a), sz)
+		_txt_c(vw / 2.0, float(ln["y"]), s, col, sz)
+
+
+## The game-over sheet: what happened, how close it was, what the run was,
+## its score against your best, what it unlocked and what is next - then the
+## explicit buttons. Fades in after the beat; the buttons stay dead (drawn dim,
+## no hotspot) until the lock lifts.
 func _draw_over(snap: Dictionary, vw: float, vh: float) -> void:
 	hotspots.clear()
-	draw_rect(Rect2(0, 0, vw, vh), COL_SHEET)
+	var info := _over_info_now()
+	var a := 1.0
+	if _over_phase() == "fade":
+		a = clampf(float(Time.get_ticks_msec() - _over_ms - OVER_BEAT_MS) / OVER_FADE_MS, 0.0, 1.0)
+	draw_rect(Rect2(0, 0, vw, vh), Color(COL_SHEET.r, COL_SHEET.g, COL_SHEET.b, a))
 	var won: bool = snap["won"]
 	var tsec := Time.get_ticks_msec() / 1000.0
 	if won:
-		var sun := Vector2(vw / 2.0, vh * 0.185)
-		draw_circle(sun, vw * 0.20, Color(0.95, 0.88, 0.55, 0.08))
-		draw_circle(sun, vw * 0.14, Color(0.95, 0.88, 0.55, 0.12))
-		draw_circle(sun, vw * 0.08, Color("f2e4a0"))
+		var sun := Vector2(vw / 2.0, vh * 0.07)
+		var r := vh * 0.028
+		draw_circle(sun, r * 2.6, Color(0.95, 0.88, 0.55, 0.08 * a))
+		draw_circle(sun, r * 1.7, Color(0.95, 0.88, 0.55, 0.12 * a))
+		draw_circle(sun, r, Color(0.95, 0.89, 0.63, a))
 		for i in 10:  # petals drift down through the clear air
 			var ph := float(i) * 1.7
 			var fall := fposmod(tsec * (0.05 + 0.02 * float(i % 3)) + ph, 1.0)
 			draw_circle(Vector2(vw * fposmod(ph * 0.37 + sin(tsec * 0.6 + ph) * 0.03, 1.0), vh * 0.55 * fall),
-				vw * 0.006, Color(0.91, 0.62, 0.80, 0.7 * (1.0 - fall)))
+				vw * 0.006, Color(0.91, 0.62, 0.80, 0.5 * a * (1.0 - fall)))
 	else:
 		for i in 5:  # the smog closes over the screen
 			var drift := fposmod(tsec * (0.02 + 0.01 * float(i % 2)) + float(i) * 0.23, 1.2) - 0.1
-			draw_circle(Vector2(vw * drift, vh * (0.08 + 0.06 * float(i))), vw * 0.16, Color(0.42, 0.36, 0.32, 0.08))
-		var skt := Art.tex("ic_choke", int(vh * 0.055))
+			draw_circle(Vector2(vw * drift, vh * (0.04 + 0.02 * float(i))), vw * 0.16, Color(0.42, 0.36, 0.32, 0.08 * a))
+		var isz := int(vh * 0.05)
+		var skt := Art.tex("ic_choke", isz)
 		if skt != null:
-			draw_texture(skt, Vector2(vw / 2.0 - vh * 0.0275, vh * 0.165))
-	var oy := vh * 0.30
-	_txt_c(vw / 2.0, oy, "THE FURNACE IS COLD" if won else "YOU DIED", COL_GOLD if won else COL_RED, int(vh * 0.042))
-	oy += vh * 0.055
-	_txt_c_fit(vw / 2.0, oy, "the valley breathes again" if won else "cause: %s" % snap["death_cause"], COL_TEXT, int(vh * 0.024), vw * 0.9)
-	oy += vh * 0.07
-	_txt_c(vw / 2.0, oy, "floor %d · turn %d · bloom %d" % [snap["floor"], snap["turn"], snap["bloom"]], COL_TEXT, int(vh * 0.024))
-	oy += vh * 0.04
-	var seedline := "seed %d" % seed_v
-	if run_tier > 0:
-		seedline += "  ·  difficulty %d" % run_tier
-	_txt_c(vw / 2.0, oy, seedline, COL_DIM_TEXT, int(vh * 0.02))
-	# Block D5: what the run's build ended up being, from the sim's own active
-	# set - the free permanents a player earns are worth naming at the end
-	var lit: Array = []
-	for r in _resonance_state(snap):
-		if bool(r["active"]):
-			lit.append(String(r["name"]))
-	if not lit.is_empty():
-		oy += vh * 0.032
-		_txt_c_fit(vw / 2.0, oy, "resonating: %s" % ", ".join(lit), COL_GOLD, int(vh * 0.021), vw * 0.92)
-	oy += vh * 0.05
-	for u in _run_unlocks.slice(0, 4):
-		var us := String(u)
-		var label := ""
-		if us.begins_with("tier:"):
-			var tn2 := String(Content.TIERS[int(us.substr(5)) - 1]["name"])
-			label = "NEW DIFFICULTY UNLOCKED: %s" % tn2.to_upper()
+			draw_texture(skt, Vector2(vw / 2.0 - isz / 2.0, vh * 0.07 - isz / 2.0), Color(1, 1, 1, a))
+	var lay := _over_layout(info, vw, vh)
+	for it in lay["items"]:
+		match String(it["kind"]):
+			"text":
+				var col: Color = it["col"]
+				col.a *= a
+				var ly: float = it["y"]
+				for ln in it["lines"]:
+					_txt_c(float(it["cx"]), ly, String(ln), col, int(it["size"]))
+					ly += float(it["line_h"])
+			"chip":
+				var cr: Rect2 = it["rect"]
+				draw_rect(cr, Color(0.15, 0.22, 0.17, 0.9 * a))
+				draw_rect(cr, Color(COL_GOLD.r, COL_GOLD.g, COL_GOLD.b, 0.6 * a), false, 1.5)
+				var csz := int(it["size"])
+				_txt_c(cr.get_center().x, cr.get_center().y + csz * 0.35, String(it["text"]),
+					Color(COL_GOLD.r, COL_GOLD.g, COL_GOLD.b, a), csz)
+			"kit":
+				for ic in it["icons"]:
+					var isz2 := int(ic["size"])
+					var tex := Art.tex(String(ic["icon"]), isz2)
+					if tex != null:
+						draw_texture(tex, ic["pos"], Color(1, 1, 1, a))
+					var cs := int(ic["count_size"])
+					var cp: Vector2 = ic["count_pos"]
+					_txt_c(cp.x, cp.y, String(ic["count"]), Color(COL_TEXT.r, COL_TEXT.g, COL_TEXT.b, a), cs)
+					if bool(ic["up"]):
+						var pp: Vector2 = ic["pos"]
+						_txt(Vector2(pp.x + isz2 - cs * 0.3, pp.y + cs * 0.8), "+",
+							Color(COL_GOLD.r, COL_GOLD.g, COL_GOLD.b, a), cs)
+	var locked := _over_locked()
+	for b in lay["buttons"]:
+		var br: Rect2 = b["rect"]
+		if locked:
+			# dead until the lock lifts: no hotspot, and drawn as if disabled
+			draw_rect(br, Color(COL_BTN.r, COL_BTN.g, COL_BTN.b, 0.85 * a))
+			draw_rect(br, Color(COL_DIM_TEXT.r, COL_DIM_TEXT.g, COL_DIM_TEXT.b, 0.5 * a), false, 2.0)
+			var ls := int(b["size"])
+			_txt_c(br.get_center().x, br.get_center().y + ls * 0.35, String(b["label"]),
+				Color(COL_DIM_TEXT.r, COL_DIM_TEXT.g, COL_DIM_TEXT.b, a), ls)
 		else:
-			label = "UNLOCKED: %s" % Profile.unlock_name(us).to_upper()
-		_txt_c_fit(vw / 2.0, oy, label, COL_GOLD, int(vh * 0.021), vw * 0.92)
-		oy += vh * 0.032
-	oy = maxf(oy + vh * 0.03, vh * 0.64)
-	_txt_c(vw / 2.0, oy, "- tap anywhere for a new run -", COL_GOLD, int(vh * 0.026))
-	_button(Rect2(vw * 0.3, oy + vh * 0.05, vw * 0.4, vh * 0.06), "MENU", "menu", int(vh * 0.024))
+			_button(br, String(b["label"]), String(b["tag"]), int(b["size"]),
+				COL_GOLD if bool(b["primary"]) else COL_DIM_TEXT)
 
 
 func _draw_intro(vw: float, vh: float) -> void:

@@ -186,7 +186,18 @@ architecture below is designed to bend rather than block.
     career menu (NEW / WON badges, every label >= 1.5% vh) and the DAILY sheet
     (lines, cards and its button row at every viewport), and
     `_check_card_text` holds the DAILY cards' names and descriptions to
-    `CARD_MIN_VH` at the 0.105vh geometry
+    `CARD_MIN_VH` at the 0.105vh geometry; `_check_run_end` the end beat and
+    lock through a real smog death (banner, bursts, cleared banners, every
+    tap / key / button ignored but ESC, no tap-anywhere, RETRY SEED and NEW
+    RUN, the Drill Bot cause in words) plus `shell/run_end.gd`'s pinned
+    strings, `_check_over_facts` the sheet against real records (total turns,
+    NEW BEST and DEEPEST YET from the bests before the record, a first win's
+    unlocks and NEXT, the daily's three buttons, a tutorial death) and
+    `_check_over_text` the over-sheet geometry gate (a worst and a typical
+    sheet at every `CARD_VIEWPORTS` shape: rows >= `CARD_MIN_VH` and <= 2
+    lines, buttons legible, apart and inside 0.955vh, nothing with prio <= 13
+    dropped in the worst case and nothing in the typical one, and the beat's
+    lines legible for every cause the banner can name)
   - `godot --headless --path . --script tests/test_draw.gd` — the draw smoke
     test, and the ONLY test that runs the shell's `_draw` code: it hosts
     `shell/main.gd` in a `SubViewport` (`UPDATE_ALWAYS`) at the four named
@@ -200,8 +211,12 @@ architecture below is designed to bend rather than block.
     glow), a danger board (tether, gum slot, SKIES chips, vent countdown), a
     kill (ghost, streak flame), the boss floor (core shield ring up and down,
     a phase banner), the shrine / forge / draft / drop sheets, the log, help
-    pages and intro, and both game-over screens, each phase asserting the
-    state its draw code needs. The gate is an `OS.add_logger` `Logger` that
+    pages and intro, both game-over screens set from outside, and the end
+    of a run through the real path (the end beat after a smog death through
+    `_act`, and a first win's beat started by hand, the sheet fading in locked with no live
+    hotspot, the live recorded sheet with its buttons and unlock rows, a
+    tutorial death's TUTORIAL AGAIN), each phase asserting the state its draw
+    code needs. The gate is an `OS.add_logger` `Logger` that
     counts every engine error, `push_error` and SCRIPT ERROR: any one exits 1.
     It writes nothing real (scratch `profile_path`, `run_save_path` and
     `runs_dir`, all set before `_ready`; `SHELL_SEED` cleared, run save
@@ -1055,8 +1070,43 @@ architecture below is designed to bend rather than block.
   profile with null / array / string / dict / bool in every slot. The daily
   board's key is `Profile.daily_key(seed)`, the one spelling `record_daily`
   writes and the game-over site reads (the game's own seed, never `seed_v`). The shell's `profile_path` (default `PROFILE_PATH`)
-  is where the career is read and saved; tests set it before `_ready`. No
-  visible UI reads any of this yet.
+  is where the career is read and saved; tests set it before `_ready`.
+- The end of a run (fun pass, stage 6): words live in `shell/run_end.gd`
+  (static, no Node, no font: `end_banner`, `cause_text`/`cause_line`,
+  `near_miss_text`, `stats_line` - the run's TOTAL turns, never the floor's
+  `turn` - `grafts_line`, `chip_text` (the `record` chip reads
+  `Profile.RECORD_SHOW`'s label), `score_title`/`score_parts_text`,
+  `best_line(s, prev, daily, daily_report)` (career: first score / NEW BEST /
+  NEW BEST FOR <LOADOUT> / best + %, daily: RANKED / NEW DAILY BEST / today's
+  best + tries off `record_daily`'s report), `floor_best_line`,
+  `unlock_label`/`unlock_lines` (kind + `Profile.unlock_name`, a gated loadout
+  `(needs <Pkg>)`, then `+n more`), `next_goal_text` (numbers only when need
+  > 1) and `seed_line`); names come from `shell/names.gd` only. A death or win
+  through `_act` calls `_begin_over` AFTER the step's `_feedback` (it clears
+  `_banner` and `_banner_q`, lands three bursts and a shake) and BEFORE
+  `_record_finished_run`, then `_build_over_info` builds the sheet facts once;
+  the tutorial branch does the same minus the record. `_over_ms` (wall clock)
+  drives `_over_phase` beat < `OVER_BEAT_MS` (1200) < fade < +`OVER_FADE_MS`
+  (400) < sheet, and `_over_locked` ignores every tap and key until
+  `OVER_LOCK_MS` (1900) except ESC/Back and the `menu` tag (`_tap`'s first
+  line). `_over_for` ties the beat and the facts to ONE game and
+  `_recorded_for` ties `_run_summary` / `_over_prev` / `_run_report` /
+  `_run_unlocks` / `_daily_report` to the game they filed, so a game swapped
+  in from outside (tests set `game.over` directly) gets no beat, no lock, an
+  unrecorded sheet built lazily (`_over_info_now`), and never another run's
+  record; `_reset_over` runs in `_new_game`, `_start_tutorial` and
+  `_load_run`. There is NO tap-anywhere: `_click` on an over sheet only hits
+  the buttons, `[NEW RUN new_run, RETRY SEED retry_seed, MENU]` (a daily:
+  RETRY DAILY; a tutorial: `[TUTORIAL AGAIN tutorial, MENU]`), `new_run` ->
+  `_start_run("career")`, `retry_seed` -> `_start_run(run_kind, seed_v)`.
+  `_over_layout(info, vw, vh)` is the sheet as data (`OVER_ROWS`: id, prio,
+  size, lines, width, gap; content between `OVER_TOP` 0.11 and `OVER_BOTTOM`
+  0.86 of vh; buttons through `_sheet_button_y(vh*0.875, ...)`); when the rows
+  overflow, the present row with the LARGEST prio is dropped until they fit.
+  Chips fit to 0.72vw in a 0.78vw box (the spec's 0.66vw shrank the longest
+  big-hit chip to 1.14% on a 1080x2640 phone). `_draw_over_beat` tints the map
+  and veils the controls with no hotspots; `_draw_over` fades in and draws the
+  buttons dim and dead while locked.
 - Run summary and effective casts (C4): `Game.effective_uses` (base id -> int)
   counts a cast only when something happened — an effect outcome fired or a
   rider ran — while `player.uses` stays the raw count. It is copied by

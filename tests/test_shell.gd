@@ -697,16 +697,23 @@ func _init() -> void:
 	day.mode = "normal"
 	day._key(KEY_N)
 	_check(day.run_kind == "career" and day.seed_v == dseed + 1, "N moves on to a career run on the next seed")
-	# a tap on a finished daily's over sheet is NEW RUN: a career run (C25),
-	# never another daily try on today's seed
+	# a finished daily's over sheet has no tap-anywhere (stage 6): a tap off
+	# its buttons starts nothing, and its NEW RUN is a career run (C25), never
+	# another daily try on today's seed
 	day._start_run("daily", dseed)
 	var tries_now := int(day.profile.daily_tries.get(Profile.daily_key(dseed), 0))
+	var over_day = day.game
 	day.game.over = true
 	day.mode = "normal"
 	day.hotspots.clear()
 	day._click(Vector2(-10, -10))
-	_check(day.run_kind == "career" and int(day.profile.daily_tries.get(Profile.daily_key(dseed), 0)) == tries_now,
-		"a tap on a daily's over sheet starts a career run and counts no try (%s, %s)" % [day.run_kind,
+	_check(day.game == over_day and day.run_kind == "daily"
+		and int(day.profile.daily_tries.get(Profile.daily_key(dseed), 0)) == tries_now,
+		"a tap off the buttons of a daily's over sheet starts nothing (%s)" % day.run_kind)
+	day._tap("new_run")
+	_check(day.run_kind == "career" and day.game != over_day
+		and int(day.profile.daily_tries.get(Profile.daily_key(dseed), 0)) == tries_now,
+		"NEW RUN on a daily's over sheet starts a career run and counts no try (%s, %s)" % [day.run_kind,
 			str(day.profile.daily_tries)])
 	day.screen = "menu"
 	day._tap("play")
@@ -891,6 +898,9 @@ func _init() -> void:
 	_check_tutorial_keys()
 	_check_menu_layout()
 	_check_daily_layout()
+	_check_run_end()
+	_check_over_facts()
+	_check_over_text()
 
 	shell.free()
 	shell2.free()
@@ -2945,3 +2955,402 @@ func _check_daily_layout() -> void:
 	print("daily sheet: %d states x %d viewports, worst line %.4f%% of vh (%s)" % [
 		states.size(), CARD_VIEWPORTS.size(), worst * 100.0, worst_at])
 	dl.free()
+
+
+
+# --- the end of a run (stage 6) ---------------------------------------------------
+
+const RUNEND_RUNS := "user://test_shell_runend_runs"
+
+
+## The tender at 1 HP one smog tick short of the choke, nothing else on the
+## floor: the next end turn kills it by smog.
+func _smog_doom(g) -> void:
+	g.terrain.clear()
+	g.enemies.clear()
+	g.smog = int(g.floor_def(int(g.floor_num))["smog_choke"]) - 1
+	g.player["hp"] = 1
+	g.player["shield"] = 0
+
+
+func _clear_runend_runs() -> void:
+	for n in _dir_files(RUNEND_RUNS):
+		DirAccess.remove_absolute(RUNEND_RUNS + "/" + n)
+	DirAccess.remove_absolute(RUNEND_RUNS)
+
+
+## The beat and the lock: a death through _act holds the map up with the end
+## banner and ignores every tap and key but Back/ESC/MENU until OVER_LOCK_MS;
+## then only the sheet's own buttons start a run (no tap-anywhere).
+func _check_run_end() -> void:
+	const RunEnd := preload("res://shell/run_end.gd")
+	var sh = _bare_shell()
+	sh.runs_dir = RUNEND_RUNS
+	sh.profile = Profile.new()
+	sh.seed_v = 4242
+	sh.run_kind = "career"
+	sh.game = Game.new(4242, {})
+	sh._game_is_run = true
+	sh._run_recorded = false
+	_smog_doom(sh.game)
+	sh._push_banner(["A BANNER"], Shell.COL_GOLD, 10)
+	sh._act({"type": "end_turn"})
+	_check(sh.game.over and not sh.game.won and sh.game.death_cause == "smog", "the smog recipe kills the tender")
+	_check(sh._over_ms >= 0 and sh._over_phase() == "beat" and sh._over_locked(),
+		"a death through _act starts the beat, locked (%s)" % sh._over_phase())
+	_check(String(sh._over_info.get("banner", [""])[0]) == "THE SMOG TAKES YOU",
+		"the beat's banner names the smog (%s)" % str(sh._over_info.get("banner", [])))
+	_check(sh._banner.is_empty() and sh._banner_q.is_empty(), "the end beat clears every other banner")
+	_check(sh.profile.runs == 1 and sh._run_recorded, "the run was recorded at the end, beat or no beat")
+	var bursts := 0
+	for f in sh._fx:
+		if String(f["kind"]) == "burst" and Color(f["col"]) == Shell.COL_RED:
+			bursts += 1
+	_check(bursts == 3, "three red bursts on a death (%d)" % bursts)
+	var at: int = sh._over_ms
+	_check(sh._over_phase(at + Shell.OVER_BEAT_MS) == "fade" and sh._over_phase(at + Shell.OVER_BEAT_MS
+		+ Shell.OVER_FADE_MS) == "sheet" and sh._over_locked(at + Shell.OVER_LOCK_MS - 1)
+		and not sh._over_locked(at + Shell.OVER_LOCK_MS), "beat -> fade -> sheet, unlocked at OVER_LOCK_MS")
+	var g0 = sh.game
+	var seed0: int = sh.seed_v
+	for pt in [Vector2(5, 5), Vector2(270, 600), Vector2(270, 1100), Vector2(500, 1150)]:
+		sh._click(pt)
+	sh._key(KEY_R)
+	sh._key(KEY_N)
+	sh._key(KEY_SPACE)
+	sh._tap("new_run")
+	sh._tap("retry_seed")
+	sh._tap("tutorial")
+	_check(sh.game == g0 and sh.seed_v == seed0 and sh.screen == "game",
+		"taps, keys and buttons during the beat start nothing")
+	sh._key(KEY_ESCAPE)
+	_check(sh.screen == "menu", "ESC during the beat goes straight to the menu (the run is recorded)")
+	sh.screen = "game"
+	sh._over_ms -= Shell.OVER_LOCK_MS + 10
+	_check(sh._over_phase() == "sheet" and not sh._over_locked(), "after the lock the sheet is up and live")
+	sh.hotspots.clear()
+	sh._click(Vector2(5, 5))
+	_check(sh.game == g0, "a tap off the buttons starts nothing: there is no tap-anywhere")
+	sh._tap("retry_seed")
+	_check(sh.game != g0 and sh.seed_v == seed0 and not sh.game.over and sh._over_ms == -1
+		and sh.stats.kills == 0 and sh._over_info.is_empty() and sh._run_summary.is_empty(),
+		"RETRY SEED: the same seed, a fresh game, no beat, a fresh fold and no stale record")
+	sh.mode = "normal"
+	_smog_doom(sh.game)
+	sh._act({"type": "end_turn"})
+	_check(sh.game.over and sh._over_locked(), "a second death starts a second beat")
+	sh._over_ms -= Shell.OVER_LOCK_MS + 10
+	var g1 = sh.game
+	sh._tap("new_run")
+	_check(sh.game != g1 and not sh.game.over and sh.run_kind == "career", "NEW RUN starts a fresh career run")
+	_check(sh.profile.runs == 2, "both deaths were recorded once each (%d)" % sh.profile.runs)
+	# a drill bot's strike: the cause and the banner name it in words
+	var g = Game.new(4242, {})
+	g.terrain.clear()
+	g.enemies.clear()
+	g.smog = 0
+	var dirs := _open_dirs(g)
+	var bot: Dictionary = g._spawn("drill_bot", g.player["pos"] + dirs[0])
+	bot["intent"] = {"type": "attack", "tile": g.player["pos"], "dmg": 99}
+	sh.game = g
+	sh._game_is_run = false
+	sh.mode = "normal"
+	sh._act({"type": "end_turn"})
+	var info: Dictionary = sh._over_info
+	_check(g.over and String(info.get("cause", "")).contains("Drill Bot") and not String(info.get("cause", "")).contains("drill_bot"),
+		"the cause names the Drill Bot in words (%s)" % info.get("cause", ""))
+	_check(String(info["banner"][0]) == "THE DRILL BOT TAKES YOU", "...and so does the banner (%s)" % str(info["banner"]))
+	_check(not String(info.get("cause", "")).contains("cause:"), "no raw 'cause:' line is left")
+	if sh._run_save != null:
+		sh._run_save.close()
+		sh._run_save = null
+	sh.free()
+	_clear_runend_runs()
+	DirAccess.remove_absolute(TEST_RUN_SAVE)
+	# the words, pinned
+	_check(RunEnd.unlock_label("skyrunner", []) == "UNLOCKED  ·  Skyrunner loadout (needs Aeolian)",
+		"a gated loadout says what it needs (%s)" % RunEnd.unlock_label("skyrunner", []))
+	_check(RunEnd.unlock_label("skyrunner", ["aeolian"]) == "UNLOCKED  ·  Skyrunner loadout"
+		and RunEnd.unlock_label("double_oil", []) == "UNLOCKED  ·  Slick Combine mutator"
+		and RunEnd.unlock_label("mycology", []) == "UNLOCKED  ·  Mycology package"
+		and RunEnd.unlock_label("tier:1", []) == "NEW DIFFICULTY  ·  " + String(Content.TIERS[0]["name"]),
+		"unlock lines name the kind and the content's own name")
+	var ul: Array = RunEnd.unlock_lines(["tier:1", "hydraulics", "kit_of_3", "double_oil", "skyrunner"], [])
+	_check(ul.size() == 4 and String(ul[3]) == "+2 more", "three unlock lines, then +2 more (%s)" % str(ul))
+	_check(RunEnd.cause_text("spikes", "welded_hulk") == "cut on a Welded Hulk's spikes"
+		and RunEnd.cause_text("smog") == "choked by the smog" and RunEnd.cause_text("fire") == "burned in the flames",
+		"cause words (%s)" % RunEnd.cause_text("spikes", "welded_hulk"))
+	_check(RunEnd.near_miss_text({"kind": "stairs", "steps": 1}) == "the stairs were 1 step away"
+		and RunEnd.near_miss_text({"kind": "quota", "short": 2}) == "2 cleanses short of waking the stairs"
+		and RunEnd.near_miss_text({"kind": "exact"}) == "1 more HP would have saved you"
+		and RunEnd.near_miss_text({"kind": ""}) == "", "near-miss words")
+	_check(RunEnd.score_parts_text({"parts": [["floor", 500], ["win", 0], ["kills", 40]], "tier": 2, "quarters": 6})
+		== "floor 500  ·  kills 40  ·  x1.5 difficulty 2", "score parts skip zeros and show the multiplier")
+	_check(RunEnd.chip_text({"id": "record", "key": "kills", "v": 41, "was": 30}) == "record  ·  most machines felled 41 (was 30)",
+		"the record chip (%s)" % RunEnd.chip_text({"id": "record", "key": "kills", "v": 41, "was": 30}))
+	var goal := {"desc": "Land 30 Grow Spikes", "ids": ["wide_draft"], "names": ["Wide Draft"], "have": 17, "need": 30, "delta": 9}
+	_check(RunEnd.next_goal_text(goal) == "NEXT  ·  Land 30 Grow Spikes  ·  17/30 (+9 this run)  ·  unlocks Wide Draft",
+		"the NEXT line (%s)" % RunEnd.next_goal_text(goal))
+	var goal1 := {"desc": "Shut down the Furnace", "ids": ["hydraulics", "kit_of_3", "double_oil"],
+		"names": ["Hydraulics", "Kit of Three", "Slick Combine"], "have": 0, "need": 1, "delta": 0}
+	_check(RunEnd.next_goal_text(goal1) == "NEXT  ·  Shut down the Furnace  ·  unlocks Hydraulics, Kit of Three and 1 more",
+		"a one-off goal shows no 0/1 (%s)" % RunEnd.next_goal_text(goal1))
+	_check(RunEnd.best_line({"score": 900}, {"daily": {"won": false, "floor": 3, "turns": 50}}, true,
+			{"ranked": false, "new_best": false, "tries": 3})[0] == "today's best: floor 3  ·  3 tries"
+		and RunEnd.best_line({"score": 900}, {"daily": {}}, true, {"ranked": true})[0] == "RANKED  ·  your first finish today"
+		and RunEnd.best_line({"score": 900}, {"best_score": 0, "runs": 0}, false)[0] == "your first score  ·  beat it next run"
+		and RunEnd.best_line({"score": 450}, {"best_score": 900, "runs": 4}, false)[0] == "best 900  ·  this run 50%",
+		"the best line's daily and career arms")
+
+
+## What the sheet says, against a real record: total turns, NEW BEST and
+## DEEPEST YET read from the bests BEFORE the record, the daily's buttons,
+## a first win's unlocks and NEXT, and a tutorial death.
+func _check_over_facts() -> void:
+	var sh = _bare_shell()
+	sh.runs_dir = RUNEND_RUNS
+	sh.profile = Profile.new()
+	var g = Game.new(4242, {})
+	g.total_turns = 63
+	g.turn = 20
+	g.over = true
+	sh.game = g
+	var info: Dictionary = sh._over_info_now()
+	_check(String(info["stats"]).contains("63 turns") and not String(info["stats"]).contains("turn 20"),
+		"the stats line counts the run's turns, not the floor's (%s)" % info["stats"])
+	_check(String(info["seed"]).begins_with("seed 4242") and info["unlocks"].is_empty() and String(info["next"]) == ""
+		and String(info["best"][0]) == "", "an unrecorded game shows no best, unlocks or goal")
+	_check(info["buttons"] == [["NEW RUN", "new_run"], ["RETRY SEED", "retry_seed"], ["MENU", "menu"]],
+		"a career sheet's buttons (%s)" % str(info["buttons"]))
+	# NEW BEST and DEEPEST YET, while the profile has already moved
+	var p = Profile.new()
+	p.runs = 5
+	p.best_floor = 3
+	p.records["score_v"] = Content.RUN_SCORE_VERSION
+	p.records["best"]["score"] = Profile._rec(450, 5, "tender", 0)
+	sh.profile = p
+	g = Game.new(4242, {})
+	g.floor_num = 5
+	g.over = true
+	sh.game = g
+	sh.run_kind = "career"
+	sh._game_is_run = true
+	sh._run_recorded = false
+	sh._record_finished_run()
+	info = sh._over_info_now()
+	_check(String(info["best"][0]).begins_with("NEW BEST") and bool(info["best"][1]),
+		"a score over the old best reads NEW BEST (%s)" % str(info["best"]))
+	var score_rec := false
+	for r in sh._run_report.get("records", []):
+		score_rec = score_rec or String(r.get("key", "")) == "score"
+	var score_chip := false
+	for c in info["chips"]:
+		score_chip = score_chip or String(c).contains("best score")
+	_check(score_rec and not score_chip,
+		"the score record is the NEW BEST line, never also a chip (%s)" % str(info["chips"]))
+	_check(String(info["floor_best"]) == "DEEPEST YET  ·  floor 5 (was 3)" and p.best_floor == 5,
+		"DEEPEST YET names the old best while the profile already holds the new one (%s)" % info["floor_best"])
+	# a first win: its unlocks, YOUR FIRST WIN and the next goal
+	sh.profile = Profile.new()
+	g = Game.new(4242, {})
+	g.floor_num = 7
+	g.won = true
+	g.over = true
+	sh.game = g
+	sh._run_recorded = false
+	sh._record_finished_run()
+	info = sh._over_info_now()
+	_check(String(info["title"]) == "THE FURNACE IS COLD" and String(info["floor_best"]) == "YOUR FIRST WIN",
+		"a first win (%s / %s)" % [info["title"], info["floor_best"]])
+	_check(not info["unlocks"].is_empty() and String(info["unlocks"][0]) == "NEW DIFFICULTY  ·  " + String(Content.TIERS[0]["name"]),
+		"its unlocks, the difficulty first (%s)" % str(info["unlocks"]))
+	_check(String(info["next"]).begins_with("NEXT  ·  "), "...and the next goal (%s)" % info["next"])
+	_check(String(info["banner"][0]) == "THE FURNACE FALLS", "the win's beat banner")
+	# a daily: the three-button row, no unlocks, no goal
+	sh.run_kind = "daily"
+	g = Game.new(77, {})
+	g.over = true
+	sh.game = g
+	sh.seed_v = 77
+	sh._run_recorded = false
+	sh._record_finished_run()
+	info = sh._over_info_now()
+	_check(info["buttons"] == [["NEW RUN", "new_run"], ["RETRY DAILY", "retry_seed"], ["MENU", "menu"]],
+		"a daily's buttons are NEW RUN / RETRY DAILY / MENU (%s)" % str(info["buttons"]))
+	_check(info["unlocks"].is_empty() and String(info["next"]) == "" and String(info["seed"]).ends_with("daily"),
+		"a daily shows no unlock rows and no goal (%s)" % str(info["unlocks"]))
+	_check(String(info["best"][0]) == "RANKED  ·  your first finish today", "a first daily finish is ranked (%s)" % str(info["best"]))
+	# a tutorial death: TUTORIAL AGAIN, and nothing scored
+	sh._start_tutorial()
+	sh.game.over = true
+	info = sh._over_info_now()
+	_check(info["buttons"] == [["TUTORIAL AGAIN", "tutorial"], ["MENU", "menu"]] and String(info["score"]) == ""
+		and String(info["seed"]) == "", "a tutorial death offers TUTORIAL AGAIN and scores nothing (%s)" % str(info["buttons"]))
+	sh._over_ms = -1
+	sh._tap("tutorial")
+	_check(sh.screen == "tutorial" and not sh.game.over and sh._over_info.is_empty(), "TUTORIAL AGAIN restarts it")
+	if sh._run_save != null:
+		sh._run_save.close()
+		sh._run_save = null
+	sh.free()
+	_clear_runend_runs()
+
+
+## The longest sheet the content can produce and a typical one, at every
+## CARD_VIEWPORTS shape: every row at >= CARD_MIN_VH and <= 2 lines, the
+## buttons legible, inside the gesture strip and apart, nothing with prio <= 13
+## dropped in the worst case and nothing dropped at all in the typical one;
+## and the beat's first line legible for every cause the banner can name.
+func _check_over_text() -> void:
+	const RunEnd := preload("res://shell/run_end.gd")
+	var sh = _bare_shell()
+	var worst_s := {"won": false, "floor": 6, "turns": 400, "kills": 160, "bloom_earned": 120, "tier": 8,
+		"killer": {"cause": "spikes", "kind": "welded_hulk"}, "death_cause": "spikes", "score": 99999}
+	var gn: Array = Content.GRAFTS.keys()
+	gn.sort_custom(func(a, b): return String(Content.GRAFTS[a]["name"]).length() > String(Content.GRAFTS[b]["name"]).length())
+	worst_s["grafts"] = gn.slice(0, 6)
+	var chips: Array = []
+	for rs in Profile.RECORD_SHOW:
+		chips.append(RunEnd.chip_text({"id": "record", "key": String(rs[0]), "v": 9999, "was": 9998}))
+	for rid in Content.RESONANCES:
+		chips.append(RunEnd.chip_text({"id": "resonance", "rid": rid, "floor": 7}))
+	for aid in Content.ABILITIES:
+		chips.append(RunEnd.chip_text({"id": "big_hit", "n": 99, "src": "collision:" + String(aid)}))
+		chips.append(RunEnd.chip_text({"id": "big_hit", "n": 99, "src": "fire:" + String(aid)}))
+	var fnt: Font = sh.font
+	chips.sort_custom(func(a, b):
+		return fnt.get_string_size(a, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x > fnt.get_string_size(b, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x)
+	var lname := ""
+	var longest_lid := "tender"
+	for lid in Content.LOADOUTS:
+		if String(Content.LOADOUTS[lid]["name"]).length() > lname.length():
+			lname = String(Content.LOADOUTS[lid]["name"])
+			longest_lid = String(lid)
+	var mname := ""
+	for mid in Content.MUTATORS:
+		if String(Content.MUTATORS[mid]["name"]).length() > mname.length():
+			mname = String(Content.MUTATORS[mid]["name"])
+	var tier_ids: Array = []
+	var longest_tier := 1
+	for ti in Content.TIERS.size():
+		if String(Content.TIERS[ti]["name"]).length() > String(Content.TIERS[longest_tier - 1]["name"]).length():
+			longest_tier = ti + 1
+	tier_ids.append("tier:%d" % longest_tier)
+	var long_desc := ""
+	for m in Content.MILESTONES:
+		if String(m.get("desc", "")).length() > long_desc.length():
+			long_desc = String(m["desc"])
+	var parts: Array = []
+	for row in Content.RUN_SCORE:
+		parts.append([String(row["id"]), 9999])
+	var worst := {
+		"won": false, "title": "YOU DIED", "cause": RunEnd.cause_line(worst_s, {}),
+		"near": RunEnd.near_miss_text({"kind": "best_short", "best": 7}),
+		"stats": RunEnd.stats_line(worst_s),
+		"kit": [{"icon": "ab_default", "count": 999, "up": true}, {"icon": "ab_default", "count": 999, "up": true},
+			{"icon": "ab_default", "count": 999, "up": true}, {"icon": "ab_default", "count": 999, "up": true},
+			{"icon": "ab_default", "count": 999, "up": true}],
+		"grafts": RunEnd.grafts_line(worst_s), "chips": chips.slice(0, 3),
+		"score": RunEnd.score_title({"total": 99999}),
+		"score_parts": RunEnd.score_parts_text({"parts": parts, "tier": 8, "quarters": 12}),
+		"best": RunEnd.best_line({"score": 99999}, {"best_score": 999999, "best_score_loadout": 9999,
+			"loadout": longest_lid, "runs": 9}, false),
+		"floor_best": "DEEPEST YET  ·  floor 6 (was 5)",
+		"unlocks": RunEnd.unlock_lines(tier_ids + ["skyrunner", "double_oil", "mycology", "overtime"], []),
+		"next": RunEnd.next_goal_text({"desc": long_desc, "ids": ["a", "b", "c"], "names": ["Slick Combine",
+			"Kit of Three", "Hydraulics"], "have": 999, "need": 1000, "delta": 99}),
+		"seed": RunEnd.seed_line(999999, worst_s, true, "%s · %s · %s" % [lname, "Hydraulics", mname]),
+		"buttons": [["NEW RUN", "new_run"], ["RETRY DAILY", "retry_seed"], ["MENU", "menu"]],
+	}
+	var typical := {
+		"won": false, "title": "YOU DIED", "cause": "struck down by a Drill Bot  ·  Pipeworks",
+		"near": "2 cleanses short of waking the stairs",
+		"stats": "floor 5 of 7  ·  63 turns  ·  24 kills  ·  41 bloom earned",
+		"kit": [{"icon": "ab_solar_lance", "count": 12, "up": true}, {"icon": "ab_seed_bomb", "count": 9, "up": false},
+			{"icon": "ab_mycelium_dash", "count": 4, "up": false}, {"icon": "ab_vine_whip", "count": 7, "up": false}],
+		"grafts": "grafts  Compost", "chips": ["biggest hit 5  ·  Noon Lance", "6 rooms bloomed", "4-turn kill streak"],
+		"score": "SCORE 1234", "score_parts": "floor 500  ·  kills 120  ·  bloom 82  ·  combos 45  ·  rooms 60",
+		"best": ["best 1449  ·  this run 85%", false], "floor_best": "",
+		"unlocks": ["UNLOCKED  ·  Mycology package"],
+		"next": "NEXT  ·  Shut down the Furnace  ·  unlocks Hydraulics, Kit of Three and 5 more",
+		"seed": "seed 123456  ·  Tender", "buttons": [["NEW RUN", "new_run"], ["RETRY SEED", "retry_seed"], ["MENU", "menu"]],
+	}
+	var prio := {}
+	for r in Shell.OVER_ROWS:
+		prio[String(r[0])] = int(r[1])
+	var small := 0
+	var worst_frac := 1.0
+	var worst_at := ""
+	var bad_btn := 0
+	var worst_drops: Array = []
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		for pair in [["worst", worst], ["typical", typical]]:
+			var lay: Dictionary = sh._over_layout(pair[1], vw, vh)
+			for it in lay["items"]:
+				var sz := 0
+				match String(it["kind"]):
+					"text":
+						sz = int(it["size"])
+						if it["lines"].size() > 2:
+							small += 1
+							print("over row %s wraps to %d lines at %dx%d" % [it["id"], it["lines"].size(), vw, vh])
+					"chip":
+						sz = int(it["size"])
+					"kit":
+						sz = int(it["icons"][0]["count_size"])
+				var f := float(sz) / vh
+				if f < worst_frac:
+					worst_frac = f
+					worst_at = "%s %s %dx%d" % [pair[0], it["id"], vw, vh]
+				if f < CARD_MIN_VH:
+					small += 1
+					print("over row %s at %.3f%% of vh at %dx%d: '%s'" % [it["id"], f * 100.0, vw, vh,
+						str(it.get("text", it.get("lines", "")))])
+			var rects: Array = []
+			for b in lay["buttons"]:
+				var br: Rect2 = b["rect"]
+				if float(b["size"]) / vh < CARD_MIN_VH or br.end.y > vh * 0.955 + 0.01 or br.position.x < 0 or br.end.x > vw:
+					bad_btn += 1
+				for o in rects:
+					if Rect2(o).intersects(br):
+						bad_btn += 1
+				rects.append(br)
+			if float(lay["bottom"]) > float(lay["button_top"]) + 0.01:
+				bad_btn += 1
+			if pair[0] == "worst":
+				for id in lay["dropped"]:
+					if int(prio[String(id)]) <= 13:
+						worst_drops.append("%s at %dx%d" % [id, vw, vh])
+			else:
+				_check(lay["dropped"].is_empty(), "a typical sheet drops nothing at %dx%d (%s)" % [vw, vh, str(lay["dropped"])])
+	_check(small == 0, "%d over-sheet row(s) below %.2f%% of vh or over 2 lines (worst %.3f%%: %s)" % [
+		small, CARD_MIN_VH * 100.0, worst_frac * 100.0, worst_at])
+	_check(bad_btn == 0, "%d over-sheet button fault(s): small, in the gesture strip, overlapping or under the content" % bad_btn)
+	_check(worst_drops.is_empty(), "the worst sheet keeps every row with prio <= 13 (%s)" % str(worst_drops))
+	# the beat's first line, for every cause the banner can name
+	var causes: Array = ["smog", "spikes", "fire", "goo", ""]
+	causes.append_array(Content.ENEMIES.keys())
+	causes.append_array(Content.GRAFTS.keys())
+	causes.append_array(Content.RESONANCES.keys())
+	var beat_small := 0
+	var beat_worst := 1.0
+	var beat_at := ""
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		for c in causes:
+			var ban: Array = RunEnd.end_banner({"won": false, "floor": 6, "killer": {"cause": c, "kind": ""}}, {})
+			var bl: Array = sh._over_beat_layout({"banner": ban, "won": false}, vw, vh, vh * 0.06, vh * Shell.Z_MAP_END)
+			for k in 2:
+				var f := float(bl[k]["size"]) / vh
+				if f < beat_worst:
+					beat_worst = f
+					beat_at = "'%s' %dx%d" % [bl[k]["text"], vw, vh]
+				if f < CARD_MIN_VH:
+					beat_small += 1
+	_check(beat_small == 0, "%d end-beat line(s) below %.2f%% of vh (worst %s)" % [beat_small, CARD_MIN_VH * 100.0, beat_at])
+	print("over sheet: %d viewports, worst row %.3f%% of vh (%s), beat %.3f%% (%s)" % [
+		CARD_VIEWPORTS.size(), worst_frac * 100.0, worst_at, beat_worst * 100.0, beat_at])
+	sh.free()

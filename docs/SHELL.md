@@ -64,6 +64,10 @@ scene.
 | R | restart the same seed (in the tutorial: restart the tutorial) |
 | N | a new career run on the next seed (ignored in the tutorial) |
 
+At the end of a run every key but ESC is ignored until the game-over sheet
+has been up for a moment (see *The end of a run*); then R retries the seed
+and N starts a career run on the next one, as in play.
+
 Red-tinted tiles are telegraphed damage for the coming enemy turn (attack,
 slam cross, quake ring), read straight from the sim's own `Game.telegraph()`
 — the intent-visibility pillar, drawn. Each red tile carries the damage it
@@ -156,7 +160,9 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
   cost a turn, and the aim line on screen says so
 - CLEANSE / DESCEND / HELP buttons bottom-right
 - tap shop cards at a shrine, draft options between floors
-- after a run: tap anywhere for a new career run (on a fresh seed, even after a daily)
+- after a run: the map holds for a beat, then the game-over sheet fades in
+  with its buttons - NEW RUN, RETRY SEED (RETRY DAILY on a daily), MENU.
+  Nothing else on the sheet starts a run: a stray tap does nothing
 
 ## Feedback: callouts, kills, log and sound
 
@@ -231,6 +237,55 @@ Fire is not corruption; ash is. `tests/test_shell.gd` `_check_cleanse_hint`
 drives all three and then checks that the ash the second one promises really
 does open the aim.
 
+## The end of a run
+
+A run never ends on a cut. When the tender dies (or the Furnace falls) the
+map stays on screen for 1.2 s (`OVER_BEAT_MS`): it tints smog-brown on a
+death or washes gold on a win, three bursts land on the tender (on a win, on
+the boss's last tile), the controls dim behind a veil, and a banner names
+the moment - `THE SMOG TAKES YOU`, `THE DRILL BOT TAKES YOU`, `THE SPIKES
+TAKE YOU`, `YOUR EMBER SAP TAKES YOU`, `THE FURNACE FALLS`. Then the sheet
+fades in over 0.4 s (`OVER_FADE_MS`). Taps and keys are ignored until 1.9 s
+after the end (`OVER_LOCK_MS`, 0.3 s after the sheet is opaque), so a finger
+still hammering the D-pad cannot skip the death or start a run by accident;
+while locked the buttons draw dim. Back and ESC are never locked - they go
+straight to the menu, and the run is already recorded. A game that ended
+some other way (a resumed save, a test that sets it over) goes straight to
+the sheet, unlocked.
+
+The sheet, top to bottom (`shell/main.gd` `_over_layout`, words from
+`shell/run_end.gd`):
+
+| row | example |
+|---|---|
+| title | `YOU DIED` / `THE FURNACE IS COLD` |
+| cause | `struck down by a Drill Bot · Pipeworks`, `The Furnace Core is scrap · the valley breathes again` |
+| near miss | `The Dredge had 3 HP left`, `the stairs were 4 steps away`, `2 cleanses short of waking the stairs`, `one floor short of your best (floor 6)`, `1 more HP would have saved you`; on a win `closest call: 1 HP on Furnace Approach` |
+| stats | `floor 5 of 7 · 63 turns · 24 kills · 41 bloom earned` - the run's total turns, not the floor's |
+| kit | each ability's icon with its effective casts (`x12`), a gold `+` on an upgrade |
+| grafts | `grafts  Compost · Ember Sap` |
+| chips | up to three highlights: a floor restored, a resonance lit, a record beaten (`record · most machines felled 41 (was 30)`), a multi-kill, the biggest hit (`biggest hit 6 · Solar Lance fire`), a streak, rooms bloomed... |
+| score | `SCORE 1234` |
+| best | `NEW BEST · was 1100`, `NEW BEST FOR TIDEWARDEN · was 900`, `best 1449 · this run 85%`, `your first score · beat it next run`; on a daily `RANKED · your first finish today`, `NEW DAILY BEST · was floor 3`, `today's best: floor 4 · 3 tries` |
+| floor best | `YOUR FIRST WIN`, `DEEPEST YET · floor 5 (was 3)` |
+| score parts | every non-zero part (`floor 500 · kills 120 · bloom 82`), then `x1.5 difficulty 2` |
+| unlocks | `NEW DIFFICULTY · Thicker Smog`, `UNLOCKED · Hydraulics package`, `UNLOCKED · Skyrunner loadout (needs Aeolian)`, `UNLOCKED · Slick Combine mutator`, then `+2 more` |
+| next | `NEXT · Land 30 Grow Spikes · 17/30 (+9 this run) · unlocks Wide Draft` (numbers only when the goal needs more than one) |
+| seed | `seed 123456 · Tender · Mycology`, plus `difficulty 2` and `daily` |
+
+Every "was" on the sheet is the career's best from BEFORE the run
+(`profile.bests_snapshot`, taken before the run is recorded). A daily shows
+no unlock rows and no NEXT; a tutorial death shows no score, best, unlocks,
+goal or seed and offers TUTORIAL AGAIN / MENU. When a phone is too short for
+every row, the least important present row is dropped first (the seed line,
+then the third chip, then the score parts...), and the title, cause, score
+and best never go; `tests/test_shell.gd` `_check_over_text` holds every row
+to the card text floor at every phone shape.
+
+The score is cosmetic and transparent: `Content.RUN_SCORE` (100 a floor,
+500 a win, 5 a kill, 2 a bloom earned, 3 a combo, 10 a room bloomed, 50 a
+floor restored), plus a quarter per difficulty tier. It buys nothing.
+
 ## The Back button
 
 Android's Back button and back gesture mean **up one level**, never "quit"
@@ -248,7 +303,7 @@ disagree about what back means:
 | the draft's drop sheet | back to the offer cards, nothing dropped |
 | aiming an ability | cancels the aim — free, no turn, no strike |
 | the room camera (zoom) | back out to the whole floor |
-| normal play, the descent draft, the game-over sheet, the tutorial | the menu |
+| normal play, the descent draft, the end-of-run beat and the game-over sheet, the tutorial | the menu |
 | the menu | quits (the root; `ESC` here does nothing) |
 
 Leaving a live run for the menu costs nothing: every action is already on
@@ -316,10 +371,10 @@ date's run; the seed is `Profile.daily_seed_for(date)`, the one formula
 and still score only to the daily board — no runs, records, unlocks or NEW
 badges. The run remembers what it is: its run save carries `"kind"`, so a
 resumed daily is filed as a daily, and R on the over sheet (or in a run)
-replays the same kind and seed while N starts a career run on the next seed;
-a tap anywhere on a finished daily's over sheet is a new career run too, never
-another daily try. BACK or the Back button closes the sheet; ENTER plays (or
-resumes).
+replays the same kind and seed while N starts a career run on the next seed.
+A finished daily's over sheet offers NEW RUN (a career run, never another
+daily try), RETRY DAILY (another try) and MENU. BACK or the Back button closes
+the sheet; ENTER plays (or resumes).
 
 The status strip names the live run's config under the skies bar,
 right-aligned after the countdown chips — loadout, then package, then
@@ -514,8 +569,8 @@ The same readout appears on the three sheets where the count can move:
   (`+fire 3/3 - lights Cinder Grip` on an Ember Sap or Oil Tithe offer, the
   two fire-tagged grafts)
 
-The game-over sheet names what the run ended up resonating
-(`resonating: Cinder Grip`), and the intro card says the rule in one line.
+The game-over sheet names the first resonance the run lit as a highlight chip
+(`Cinder Grip lit on floor 3`), and the intro card says the rule in one line.
 
 ## Choice cards
 

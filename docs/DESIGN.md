@@ -538,6 +538,19 @@ tests a different build muscle so no single draft strategy trivializes it.
   and not just a depth: win holding a named ability, win holding none of a
   named ability, land N of a cast, win with N grafts. Daily runs are scored
   into their own best-per-seed table and never touch the career.
+- **A run's score is cosmetic and transparent.** The game-over sheet prints a
+  SCORE and every non-zero part of it, from one data table
+  (`Content.RUN_SCORE`: depth dominates - 100 a floor and 500 a win against 5
+  a kill - with a quarter per difficulty tier on top), so the number is never
+  a mystery and never a lever: it buys nothing, unlocks nothing and the sim
+  never reads it. The career keeps a best score overall and per loadout, and a
+  change to the table drops those bests rather than compare across versions;
+  a daily keeps its own best per seed and never touches them. The sheet sells
+  the run without selling power: what killed you, how close it was (the
+  boss's last HP, the stairs a few steps away), what the run was, its best
+  moments, its score against your best from before the run, what it unlocked
+  and the next goal - and it waits a beat before it lets you leave, so a
+  death is a moment rather than a cut.
 
 ### Run-start choices
 
