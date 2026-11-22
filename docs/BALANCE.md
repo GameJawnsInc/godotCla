@@ -9751,16 +9751,25 @@ readings, kept because they explain the table above.
   melee-heavy human may feel floors 1-3 bite more.
 - **Out-of-sample checks the prototype ran**: deeproot 26/30 on seeds 31..60
   (control 24/30); sprout 4/100 depth 4.04 on seeds 101..200 (control 1/100,
-  3.90); sprout floor-1 deaths 11/100 -> 10/100; on sprout's floor 3, 5 -> 18
-  distinct compositions and 24% of reinforcements hounds.
+  3.90).
+- **In-sample readings** (not confirmations - read on the in-sample sprout
+  run, seeds 1..100): sprout floor-1 deaths 11/100 [6.3, 18.6] (control) ->
+  10/100 [5.5, 17.4]; on sprout's floor 3, 5 -> 18 distinct compositions and
+  24% of reinforcements hounds. The floor-1 count reproduces exactly on the
+  shipped table (sprout, default config against `fixed_shift`, seeds 1..100:
+  11 -> 10, wins 2 -> 1, depth 3.55 -> 3.59). Out of sample (seeds 101..200,
+  the same probe, 2026-11-22 review) it reads 4/100 [1.6, 9.8] -> 5/100
+  [2.2, 11.2] - one more floor-1 death, wins 1 -> 4 and depth 3.90 -> 4.04,
+  the out-of-sample line above. Neither direction is outside the noise.
 
 ### Taste call left to the owner
 
 **Floor 1 can field spiked kinds.** Hound and Handler and Golem Escort are 4
 of floor 1's 9 weight (44% of floor-1 draws), on the floor the tutorial
 teaches melee on drill bots. The tooltip already says SPIKED, and the
-measured sprout floor-1 deaths did not rise on the prototype (11/100 ->
-10/100), so they ship. Dropping them is a data edit to floor 1's
+measured sprout floor-1 deaths did not move outside the noise (in sample,
+seeds 1..100: 11/100 -> 10/100; out of sample, seeds 101..200: 4/100 ->
+5/100, one death), so they ship. Dropping them is a data edit to floor 1's
 `encounters` list that leaves every floor-1 layout identical (rule R2 keeps
 the headcount), and a first-sighting callout is the follow-up that matters
 most if they stay.

@@ -86,7 +86,9 @@ draws a dashed blue tether from the crane to you with a ring on the tile it
 will land you on (grey and ringless when blocked); a flood stripes the row it
 will oil, an ignite-all pulses every oil tile that will catch, a dredge tints
 the growth it will eat. Vents count down on the grate from 5 turns out, with a
-red pulsing ring at 1 (green on a vent your growth has sealed). A tar shot
+red pulsing ring at 1 (green on a vent your growth has sealed, grey and
+ringless on one that Roots, a machine or you cover - it releases nothing
+while covered, the same rule as the vent chip and the vent's hold-tooltip). A tar shot
 outlines the ability slot it will gum, in dashed brown. The legend (HELP) has
 a row for every badge. The strip below the map is the event log. Elites wear
 a gold ring, bosses show HP bars, your buffs ring the player sprite (brown =
@@ -111,14 +113,19 @@ screen says about what is about to hurt you. Nothing here changes a run.
   the vent chip turns amber at 1, green when every free vent is sealed by
   growth and grey when every vent is occupied. The bar itself gets a pulsing
   amber outline in the choke's last 5 turns, red once it chokes. Every number
-  is the soonest it can come — a cleanse, a kill or a stun can only push it
-  later.
+  is the soonest it can come if nothing is relieved — a kill or a stun can only
+  push it later, but a cleanse (or a clear-air pod) winds the smog back, and
+  the counter then passes a vent release or a dim step a second time, so relief
+  can bring one SOONER. Every number is recomputed after each action.
 - **The context line** (above the D-pad) leads with danger: `! INCOMING 3 -
   LETHAL  ·  Drill Bot, smog` in pulsing red when ending the turn where you
   stand would kill you, `! INCOMING 2  ·  Drill Bot` in amber when it would
   hurt, `! INCOMING 2 - shield holds` when your shield takes it all; then the
   choke countdown (`Smog chokes in 3 - cleansing thins it`, or `- descend to
-  escape it` once the stairs are awake; `NEXT TURN` in red); then `The vents
+  escape it` once the stairs are awake; `NEXT TURN` in red; on the boss floor,
+  whose cleanses stop thinning the smog after four, `- cleanse it all to thin
+  it` until the floor is restored and `- cleanses no longer thin it` after);
+  then `The vents
   release next turn`; then the floor's objective line (see *Career and
   difficulty*). The forecast is the real end turn played out on a copy, so
   the number is exact.
@@ -217,14 +224,17 @@ a kill); it dims while this turn's kill is still owed - end the turn without
 one and it breaks.
 
 **Boss.** A shielded core shows a pulsing cyan ring on the map and `SHIELDED`
-in cyan on the boss bar; a phase change shows a banner saying what changed.
+in cyan on the boss bar; a phase change shows a banner saying what changed
+(the Furnace Core's "a coal golem joins" only when a golem really came: with
+every vent covered none does, and the banner says "now ignites all oil" alone).
 The floor-7 title card reads "defeat the Overseer".
 
 **Crews.** Every generated floor fields one of several named crews (Block E
 encounter packs — the boss floor and the tutorial's scripted floor have
 none). The floor's title card says which under its number, `floor 3 of 7  ·
 Golem Picket` (shrunk to fit the width rather than clipped), and the floor
-line in the log reads `— Strip Mine I · Hound and Handler —`.
+line in the log reads `— Strip Mine I · Hound and Handler —` - the floor a
+run starts on included (its card waits for the intro tips to close).
 
 **Banners** share one queue (boss phase, then a resonance awakening, floor
 restored, stairs awaken); one shows at a time.
@@ -289,7 +299,7 @@ The sheet, top to bottom (`shell/main.gd` `_over_layout`, words from
 |---|---|
 | title | `YOU DIED` / `THE FURNACE IS COLD` |
 | cause | `struck down by a Drill Bot · Pipeworks`, `The Furnace Core is scrap · the valley breathes again` |
-| near miss | `The Dredge had 3 HP left`, `the stairs were 4 steps away`, `2 cleanses short of waking the stairs`, `one floor short of your best (floor 6)`, `1 more HP would have saved you`; on a win `closest call: 1 HP on Furnace Approach` |
+| near miss | `The Dredge had 3 HP left`, `the stairs were 4 steps away`, `2 cleanses short of waking the stairs`, `one floor short of your best (floor 6)`, `1 more HP would have saved you` (only when true: the shell replays the killing step on a copy with one more HP, since a blow at exactly 0 HP can hide a second one still due); on a win `closest call: 1 HP on Furnace Approach` (the lowest HP inside a turn, so a hit to 1 that growth heals back to 2 counts) |
 | stats | `floor 5 of 7 · 63 turns · 24 kills · 41 bloom earned` - the run's total turns, not the floor's |
 | kit | each ability's icon with its effective casts (`x12`), a gold `+` on an upgrade |
 | grafts | `grafts  Compost · Ember Sap` |

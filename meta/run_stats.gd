@@ -36,7 +36,9 @@ var best_kill_streak := 0
 var biggest_hit := {"amt": 0, "src": "", "target": "", "floor": 0}
 ## the run's lowest HP while alive: begin() seeds it with the start hp, and a
 ## step updates it whenever the tender is still standing after it - a WINNING
-## step included, so a win taken at 1 HP on the final blow registers
+## step included, so a win taken at 1 HP on the final blow registers - with
+## the lowest HP INSIDE the step (feed's walk), so a hit to 1 that growth heals
+## back to 2 in the same end turn is a fall to 1
 var closest_call := {"hp": 0, "floor": 0}
 var combos := 0
 var combos_by := {"rider": 0, "hook": 0, "surge": 0, "collision": 0}
@@ -68,6 +70,7 @@ var ctx: Dictionary = {}
 var _last_bloom := 0
 var _last_turns := 0
 var _last_floor := 0
+var _last_hp := 0               # the tender's hp before the step being fed
 var _ppos := Vector2i(-1, -1)   # the tender's tile before the step being fed
 var _floor_hurt := false
 var _pos := {}                  # enemy id -> Vector2i, as of the last feed
@@ -79,6 +82,7 @@ func begin(game) -> void:
 	_last_bloom = int(game.bloom)
 	_last_turns = int(game.total_turns)
 	_last_floor = int(game.floor_num)
+	_last_hp = int(game.player["hp"])
 	_ppos = game.player["pos"]
 	_floor_hurt = false
 	closest_call = {"hp": int(game.player["hp"]), "floor": int(game.floor_num)}
@@ -104,7 +108,8 @@ func begin(game) -> void:
 ##                    a loss)
 ##   big_hit          the new run-best hit set this step, else 0
 ##   res_new          resonance ids first lit this step
-##   closest_call     a new run-low HP this step (tender still standing)
+##   closest_call     a new run-low HP this step (tender still standing),
+##                    read at the lowest point INSIDE the step
 ##   killed           [{id, kind, pos}] with last-known positions
 func feed(game, events: Array) -> Dictionary:
 	var step_kills := 0
@@ -114,6 +119,11 @@ func feed(game, events: Array) -> Dictionary:
 	var big_hit := 0
 	var killed: Array = []
 	var strike_id = null
+	# the closest-call walk: the hp before the step, followed through the
+	# step's own player damage (net of the shield) and heal events
+	var walk := _last_hp
+	var walk_low := walk
+	var hp_cap := int(game.player["max_hp"])
 	for ev in events:
 		var t := String(ev.get("t", ""))
 		match t:
@@ -124,6 +134,8 @@ func feed(game, events: Array) -> Dictionary:
 				if who == "player":
 					damage_taken += amt
 					_floor_hurt = true
+					walk -= amt
+					walk_low = mini(walk_low, walk)
 				else:
 					damage_dealt += amt
 					if amt > int(biggest_hit["amt"]):
@@ -151,6 +163,9 @@ func feed(game, events: Array) -> Dictionary:
 				statuses_landed += 1
 			"shield_absorb":
 				shield_absorbed += int(ev.get("amt", 0))
+			"heal":
+				# the event carries the heal before the max_hp clamp
+				walk = mini(walk + int(ev.get("amt", 0)), hp_cap)
 			"room_bloom":
 				rooms_bloomed += 1
 			"floor_restored":
@@ -201,8 +216,15 @@ func feed(game, events: Array) -> Dictionary:
 		open_turn_kills = 0
 	var new_close := false
 	var hp := int(game.player["hp"])
-	if hp > 0 and hp < int(closest_call["hp"]):
-		closest_call = {"hp": hp, "floor": int(game.floor_num)}
+	# the lowest hp inside the step: the walk's low, trusted only when the walk
+	# lands on the hp the step left - a step whose hp moved without an event
+	# naming the amount (a descend's heal, an item, a shrine heal) falls back
+	# to the hp after it, so the walk can miss a dip but never invent one
+	var low := hp
+	if walk == hp and walk_low > 0:
+		low = mini(low, walk_low)
+	if hp > 0 and low < int(closest_call["hp"]):
+		closest_call = {"hp": low, "floor": int(game.floor_num)}
 		new_close = true
 	var lit := _check_resonance(game)
 	ctx = {
@@ -213,6 +235,7 @@ func feed(game, events: Array) -> Dictionary:
 	}
 	_last_turns = int(game.total_turns)
 	_last_floor = int(game.floor_num)
+	_last_hp = hp
 	_ppos = game.player["pos"]
 	_snap_enemies(game)
 	return ctx
@@ -325,12 +348,21 @@ static func score(s: Dictionary) -> Dictionary:
 ##   3 quota      {short}      1..NEAR_QUOTA_MAX cleanses short of waking them
 ##   4 best_short {best}       one floor short of the career's deepest
 ##   5 best_level {best}       died on the career's deepest floor
-##   6 exact                   killed at exactly 0 HP by anything but smog
-##                             (smog chips 1, so every smog death is exact)
+##   6 exact                   killed at exactly 0 HP by anything but smog,
+##                             and `one_hp_saves`: the caller re-stepped the
+##                             killing action on a clone of the state before it
+##                             with 1 more HP and the tender came through. The
+##                             final snapshot cannot say so by itself: the sim
+##                             stops the step at the first lethal blow, so a
+##                             second attacker or the smog tick still due on it
+##                             is invisible here (shell/main.gd _one_hp_saves).
+##                             Smog is excluded: the choke keeps chipping, so
+##                             one more HP only puts the death off a few ticks
 ##   7 ""                      nothing to say
 ## `snap` is the final Game.snapshot(); `prev_best_floor` the career's (or the
 ## daily's) best BEFORE this run.
-static func near_miss(snap: Dictionary, s: Dictionary, prev_best_floor: int) -> Dictionary:
+static func near_miss(snap: Dictionary, s: Dictionary, prev_best_floor: int,
+		one_hp_saves: bool = false) -> Dictionary:
 	if bool(snap.get("won", false)):
 		var cc: Dictionary = s.get("closest_call", {})
 		var chp := int(cc.get("hp", NEAR_CLOSE_HP + 1))
@@ -357,7 +389,7 @@ static func near_miss(snap: Dictionary, s: Dictionary, prev_best_floor: int) -> 
 	if prev_best_floor >= 2 and floor_n == prev_best_floor:
 		return {"kind": "best_level", "best": prev_best_floor}
 	var player: Dictionary = snap.get("player", {})
-	if String(snap.get("death_cause", "")) != "smog" and int(player.get("hp", -1)) == 0:
+	if one_hp_saves and String(snap.get("death_cause", "")) != "smog" and int(player.get("hp", -1)) == 0:
 		return {"kind": "exact"}
 	return {"kind": ""}
 

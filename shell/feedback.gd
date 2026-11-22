@@ -74,10 +74,19 @@ const HOOK_LANDING_OPS := ["damage_at", "status_at", "terrain_at"]
 const BOSS_PHASE_LINES := {
 	"furnace_core": {2: ["THE FURNACE STOKES", "a coal golem joins · now ignites all oil"],
 		3: ["THE CORE CLOGS ITS VENTS", "goo shield: cleanse or grow beside it"]},
-	"overseer": {2: ["THE OVERSEER QUICKENS", "advances 3 · quakes all around it up close"],
+	"overseer": {2: ["THE OVERSEER QUICKENS", "advances 3 · quakes the four tiles beside it"],
 		3: ["THE OVERSEER CLOGS ITS VENTS", "goo shield: cleanse or grow beside it"]},
 	"the_dredge": {2: ["THE DREDGE HUNGERS", "drags you twice · dredges growth within 3"],
 		3: ["THE DREDGE CLOGS ITS VENTS", "goo shield: cleanse or grow beside it"]},
+}
+## A phase line that names a machine the sim may not deliver: the Furnace
+## Core's phase-2 coal golem spawns only on the first _open vent
+## (sim/game.gd _damage_enemy), so with every vent covered no golem comes and
+## the words must not announce one. boss -> phase -> [the kind the line
+## names, the [title, line] said when the step carries no reinforcement of
+## that kind]. Mirrors _damage_enemy - change together.
+const BOSS_PHASE_JOINS := {
+	"furnace_core": {2: ["coal_golem", ["THE FURNACE STOKES", "now ignites all oil"]]},
 }
 ## the longest line the log may hold (tests/test_shell.gd 20 pins it)
 const LOG_LINE_MAX := 60
@@ -314,9 +323,28 @@ static func _then_claimed(evs: Array, i: int, cl: Dictionary) -> Array:
 
 
 ## The boss phase log line: "The Furnace Core - a coal golem joins · ...".
-static func boss_line(kind: String, phase: int) -> String:
-	var pl: Array = BOSS_PHASE_LINES.get(kind, {}).get(phase, [])
+## With `evs` (the step's events) the words come from phase_words, so a
+## reinforcement the step did not carry is not announced; without, the full
+## BOSS_PHASE_LINES row.
+static func boss_line(kind: String, phase: int, evs = null) -> String:
+	var pl: Array = BOSS_PHASE_LINES.get(kind, {}).get(phase, []) if evs == null else phase_words(kind, phase, evs)
 	return "%s - %s" % [Names.boss_name(kind), String(pl[1])] if pl.size() > 1 else "BOSS PHASE %d" % phase
+
+
+## A boss phase's [title, line] for THIS step: the BOSS_PHASE_LINES row, or
+## its BOSS_PHASE_JOINS alternative when the machine that row names did not
+## arrive in the step's events (`reinforcement` with that `kind`). [] for a
+## boss or phase with no words.
+static func phase_words(kind: String, phase: int, evs: Array) -> Array:
+	var join: Array = BOSS_PHASE_JOINS.get(kind, {}).get(phase, [])
+	if not join.is_empty():
+		var came := false
+		for ev in evs:
+			if String(ev.get("t", "")) == "reinforcement" and String(ev.get("kind", "")) == String(join[0]):
+				came = true
+		if not came:
+			return join[1]
+	return BOSS_PHASE_LINES.get(kind, {}).get(phase, [])
 
 
 ## The kind a `death` event in this step names for enemy `id`, else "".
@@ -621,7 +649,9 @@ static func banners(evs: Array, _pre: Dictionary, game, ctx: Dictionary) -> Arra
 				boss = String(e["kind"])
 				break
 		if boss != "":  # no live boss: it died, and the win says the rest
-			var lines: Array = BOSS_PHASE_LINES.get(boss, {}).get(phase, ["BOSS PHASE %d" % phase])
+			var lines: Array = phase_words(boss, phase, evs)
+			if lines.is_empty():
+				lines = ["BOSS PHASE %d" % phase]
 			out.append({"lines": lines.duplicate(), "col": BOSS, "prio": BANNER_PRIO["boss"]})
 	var counts: Dictionary = game.tag_counts() if not Array(ctx.get("res_new", [])).is_empty() else {}
 	for rid in ctx.get("res_new", []):
@@ -726,7 +756,7 @@ static func _line(ev: Dictionary, pre: Dictionary, game, ctx: Dictionary, evs: A
 				if _is_boss(String(e["kind"])):
 					bk = String(e["kind"])
 					break
-			s = boss_line(bk, ph)
+			s = boss_line(bk, ph, evs)
 			cat = "boss"
 		"vents_clogged":
 			s = "The boss clogs the vents with goo"

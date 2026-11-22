@@ -1303,9 +1303,30 @@ func _check_fold_units() -> void:
 	g.player["hp"] = 0
 	c = st.feed(g, [{"t": "damage", "who": "player", "amt": 9, "src": "drill_bot"}])
 	_expect(int(st.closest_call["hp"]), hp0, "unit: the death step never sets the closest call")
+	# the lowest hp INSIDE a step: a hit to 1 that growth heals back to 2 in
+	# the same end turn is a fall to 1 (mutation: read only the hp after the
+	# step and this stays at 2)
+	g.player["hp"] = 3
+	st.feed(g, [])
+	g.player["hp"] = 2
+	c = st.feed(g, [{"t": "damage", "who": "player", "amt": 2, "src": "drill_bot"}, {"t": "heal", "amt": 1}])
+	_expect([int(st.closest_call["hp"]), bool(c["closest_call"])], [1, true],
+		"unit: a hit to 1 healed back to 2 in the same step is a closest call of 1")
+	# a walk that does not land on the hp after the step (an hp change no
+	# event names the amount of) is not trusted: the hp after it stands
+	var stw = RunStats.new()
+	g.player["hp"] = 5
+	stw.begin(g)
+	g.player["hp"] = 4
+	c = stw.feed(g, [{"t": "damage", "who": "player", "amt": 4, "src": "drill_bot"}, {"t": "descend", "to_floor": 2}])
+	_expect(int(stw.closest_call["hp"]), 4, "unit: an unreconciled walk falls back to the hp after the step")
 	g.player["hp"] = 1
 	g.over = true
 	g.won = true
+	c = st.feed(g, [{"t": "win"}])
+	_expect([int(st.closest_call["hp"]), bool(c["closest_call"]), bool(c["turn_closed"])], [1, false, true],
+		"unit: a win taken at 1 HP keeps the closest call at 1")
+	st.closest_call = {"hp": 9, "floor": 1}
 	c = st.feed(g, [{"t": "win"}])
 	_expect([int(st.closest_call["hp"]), bool(c["closest_call"]), bool(c["turn_closed"])], [1, true, true],
 		"unit: a win taken at 1 HP is the closest call")
@@ -1472,15 +1493,20 @@ func _check_near_miss() -> void:
 	q["floor"] = 4
 	_expect(str(RunStats.near_miss(q, s, 4)), str({"kind": "best_level", "best": 4}), "near_miss: died on the best floor")
 	_expect(String(RunStats.near_miss(q, s, 1)["kind"]), "", "near_miss: a best of 1 is no yardstick")
-	# 6) exactly 0 HP, but never for smog
+	# 6) exactly 0 HP, but never for smog, and only when the caller proved that
+	# one more HP survives the killing step (shell/main.gd _one_hp_saves)
 	q["player"]["hp"] = 0
 	q["death_cause"] = "drill_bot"
-	_expect(String(RunStats.near_miss(q, s, 0)["kind"]), "exact", "near_miss: a Drill Bot took the last HP exactly")
+	_expect(String(RunStats.near_miss(q, s, 0, true)["kind"]), "exact", "near_miss: a Drill Bot took the last HP exactly")
+	_expect(String(RunStats.near_miss(q, s, 0)["kind"]), "",
+		"near_miss: exactly 0 HP with no proof that 1 more HP survives says nothing (the default)")
+	_expect(String(RunStats.near_miss(q, s, 0, false)["kind"]), "",
+		"near_miss: exactly 0 HP when 1 more HP still dies on that step says nothing")
 	q["death_cause"] = "smog"
-	_expect(String(RunStats.near_miss(q, s, 0)["kind"]), "", "near_miss: smog is always exact, so never said")
+	_expect(String(RunStats.near_miss(q, s, 0, true)["kind"]), "", "near_miss: smog is never said")
 	q["player"]["hp"] = -2
 	q["death_cause"] = "drill_bot"
-	_expect(String(RunStats.near_miss(q, s, 0)["kind"]), "", "near_miss: overkill is not exact")
+	_expect(String(RunStats.near_miss(q, s, 0, true)["kind"]), "", "near_miss: overkill is not exact")
 	print("near_miss: win/boss/stairs/quota/best/exact rules: OK")
 
 

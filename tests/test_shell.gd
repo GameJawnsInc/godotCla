@@ -19,6 +19,7 @@ const RunStatsT := preload("res://meta/run_stats.gd")
 const Roster := preload("res://bots/roster.gd")
 const Names := preload("res://shell/names.gd")
 const Feedback := preload("res://shell/feedback.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 ## A kit that fills every slot with slot 0 held by a mobility ability - the one
 ## the forge may never scrap (sim/game.gd _is_mobility).
@@ -921,6 +922,26 @@ func _run_body() -> void:
 	lg._run_save = null
 	lg._load_run()
 	_check(lg.run_kind == "career", "a header's own kind beats the legacy toggle")
+	# a resumed DAILY leaves the career's DIFFICULTY alone: a daily's tier is
+	# its seed's (0), and the next career run starts at the player's own choice
+	# (mutation: restore the unconditional `sel_tier = run_tier` in _load_run)
+	lg.profile.unlocked_tier = 2
+	lg.sel_tier = 2
+	lg._start_run("daily", 31337)
+	lg._run_save.close()
+	lg._run_save = null
+	lg._load_run()
+	_check(lg.run_kind == "daily" and lg.run_tier == 0 and lg.sel_tier == 2,
+		"a resumed daily keeps the menu's difficulty (kind %s, run tier %d, menu %d)" % [lg.run_kind, lg.run_tier, lg.sel_tier])
+	lg._start_run("career")
+	_check(lg.run_kind == "career" and lg.run_tier == 2,
+		"...so the next career run starts at difficulty 2 (%d)" % lg.run_tier)
+	lg._run_save.close()
+	lg._run_save = null
+	lg.sel_tier = 0
+	lg._load_run()
+	_check(lg.run_kind == "career" and lg.sel_tier == 2,
+		"a resumed career run still sets the menu to its own difficulty (%d)" % lg.sel_tier)
 	for sh in [menu, day, lg]:
 		if sh._run_save != null:
 			sh._run_save.close()
@@ -2249,6 +2270,15 @@ func _check_feedback() -> void:
 				"boss phase line fits %d chars with one separator: '%s' (%d)" % [Feedback.LOG_LINE_MAX, bl, bl.length()])
 			var shl: String = "%s is shielded: cleanse or grow beside it" % Names.subj(bk)
 			_check(shl.length() <= Feedback.LOG_LINE_MAX, "the core-shield line fits for %s: %s" % [bk, shl])
+	# ...and every BOSS_PHASE_JOINS alternative (the phase said without the
+	# machine that did not come) composes the same way
+	for bk in Feedback.BOSS_PHASE_JOINS:
+		for ph in Feedback.BOSS_PHASE_JOINS[bk]:
+			var jl: String = Feedback.boss_line(String(bk), int(ph), [])
+			_check(Feedback.BOSS_PHASE_LINES.has(bk) and Feedback.BOSS_PHASE_LINES[bk].has(ph)
+				and jl.length() <= Feedback.LOG_LINE_MAX and jl.begins_with(Names.boss_name(bk) + " - ")
+				and jl != Feedback.boss_line(String(bk), int(ph)),
+				"the no-reinforcement phase line fits and differs: '%s' (%d)" % [jl, jl.length()])
 
 	# 20. bot-driven: real games through _act
 	var any_callout := false
@@ -2270,12 +2300,17 @@ func _check_feedback() -> void:
 			fx_ok = fx_ok and sh20._fx.size() <= 40
 			for f in sh20._fx:
 				any_callout = any_callout or String(f["kind"]) == "callout"
-		for l in sh20.log_lines:
-			if String(l).contains("_") and raw == "":
-				raw = String(l)
-			if String(l).length() > Feedback.LOG_LINE_MAX and long_line == "":
-				long_line = String(l)
-		cats_ok = cats_ok and sh20.log_lines.size() == sh20.log_cats.size()
+			# after EVERY step, not once at the end: the log keeps only the
+			# newest LOG_KEEP lines, and every line a step writes (or bumps to
+			# "xN") is in it right after that step (mutation: append a raw pack
+			# id to the floor-2 line - read only at the end, that line is long
+			# trimmed away and the gate passes)
+			for l in sh20.log_lines:
+				if String(l).contains("_") and raw == "":
+					raw = String(l)
+				if String(l).length() > Feedback.LOG_LINE_MAX and long_line == "":
+					long_line = String(l)
+			cats_ok = cats_ok and sh20.log_lines.size() == sh20.log_cats.size()
 		sh20.free()
 	_check(any_callout, "real games produce callouts")
 	_check(fx_ok, "the fx list never grows past 40")
@@ -2315,6 +2350,23 @@ func _lethal_fixture(dmg: int, charge: int) -> Array:
 	a["intent"] = {"type": "attack", "tile": g.player["pos"], "dmg": dmg}
 	g.player["charge"] = charge
 	return [g, dmove, dhit]
+
+
+## Game 4242 at 2 HP with `n` drill bots beside the tender, each striking it
+## for 2, every other enemy and all terrain cleared, smog 0 and no quota (so
+## no earlier near-miss rule speaks before the exact one).
+func _exact_fixture(n: int):
+	var g = Game.new(4242)
+	g.terrain.clear()
+	g.enemies.clear()
+	g.smog = 0
+	g.green_need = 0
+	g.player["hp"] = 2
+	var dirs := _open_dirs(g)
+	for i in n:
+		var b: Dictionary = g._spawn("drill_bot", g.player["pos"] + dirs[i])
+		b["intent"] = {"type": "attack", "tile": g.player["pos"], "dmg": 2}
+	return g
 
 
 ## Floor 7 with only its boss (1 HP, idle) beside the tender and a drill bot
@@ -2422,6 +2474,49 @@ func _check_danger_readouts() -> void:
 	_check(not Danger.stairs_awake(g7.snapshot()), "boss floor: green 0/0, but no stairs tile, so no stairs awake")
 	_check(Danger.context_line(d, Danger.stairs_awake(g7.snapshot()))["text"] == "Smog chokes in 3 - cleansing thins it",
 		"boss floor: no descent offered (%s)" % Danger.context_line(d, Danger.stairs_awake(g7.snapshot()))["text"])
+	# ...and from its fifth cleanse on a boss-floor cleanse pays no relief
+	# (Game._act_cleanse: green_need 0 + 4), so the remedy stops pointing at
+	# one: "cleanse it all" while the floor restore (smog -8) is still to come,
+	# "no longer" once it has happened - read off the live compute (mutation:
+	# return true from cleanse_thins, or word every remedy "cleansing thins
+	# it", and the dry arena still promises a cleanse that does nothing)
+	var rem_want := {3: ["Smog chokes in 3 - cleansing thins it", "Smog chokes in 3 - cleansing thins it"],
+		4: ["Smog chokes in 3 - cleanse it all to thin it", "Smog chokes in 3 - cleanses no longer thin it"]}
+	for have in rem_want:
+		for ri in 2:
+			var gr := Game.new(3)
+			gr._enter_floor(7)
+			gr.enemies.clear()
+			gr.terrain.clear()
+			gr.greened = have
+			gr.map["restored"] = ri == 1
+			gr.smog = int(gr.floor_def(7)["smog_choke"]) - 3
+			var rl := String(Danger.context_line(Danger.compute(gr), Danger.stairs_awake(gr.snapshot())).get("text", ""))
+			_check(rl == String(rem_want[have][ri]),
+				"boss floor, %d cleanses, restored %s: '%s' (got '%s')" % [have, str(ri == 1), rem_want[have][ri], rl])
+	# the relief mirror against the sim's own cleanse: on floor 1 with other
+	# corruption left (no restore), a cleanse lowers the smog exactly when
+	# Danger.cleanse_thins says so (mutation: move the tier edge in either)
+	var gm := Game.new(4242)
+	gm.enemies.clear()
+	var oil_t: Vector2i = gm.player["pos"] + _open_dirs(gm)[0]
+	gm.terrain[oil_t] = {"kind": "oil"}
+	gm.player["charge"] = 9
+	_check(gm._count_corruption() >= 2, "fixture: corruption besides the cleansed tile, so no restore (%d)" % gm._count_corruption())
+	var mirror_bad: Array = []
+	var mirror_n := 0
+	for need in [0, 3]:
+		for have in range(0, 9):
+			var gc = gm.clone()
+			gc.green_need = need
+			gc.greened = have
+			gc.smog = 20
+			gc.step({"type": "cleanse", "target": oil_t})
+			mirror_n += 1
+			if int(gc.greened) != have + 1 or (int(gc.smog) < 20) != Danger.cleanse_thins(have, need):
+				mirror_bad.append("%d/%d: smog %d, greened %d" % [have, need, int(gc.smog), int(gc.greened)])
+	_check(mirror_bad.is_empty() and mirror_n == 18,
+		"Danger.cleanse_thins mirrors _act_cleanse's relief on %d real cleanses (%s)" % [mirror_n, str(mirror_bad)])
 	# an ordinary floor whose quota was RECLAMPED to 0 (the corruption went
 	# without a cleanse): green_need 0, the stairs awake - the descent is offered
 	var gq := Game.new(3)
@@ -2577,7 +2672,8 @@ func _check_danger_readouts() -> void:
 		names.append(String(Content.ENEMIES[k]["name"]))
 	names.sort_custom(func(a, b): return a.length() > b.length())
 	var worst_ctx := "! INCOMING 99 - LETHAL  ·  %s, %s +9" % [names[0], names[1]]
-	var fit_lines: Array = [worst_ctx, "Smog chokes NEXT TURN - descend to escape it"]
+	var fit_lines: Array = [worst_ctx, "Smog chokes NEXT TURN - descend to escape it",
+		"Smog chokes NEXT TURN - cleanse it all to thin it", "Smog chokes NEXT TURN - cleanses no longer thin it"]
 	var esc_rows: Array = [{"move": true}, {"strike": true}, {"item": [0]}, {"descend": true}, {},
 			{"win": "strike"}, {"win": "strike", "strike_dirs": 2}, {"win": "item"}]
 	# the named-target flash, once per boss row (the longest name is the worst)
@@ -2961,6 +3057,34 @@ func _check_intent_badges() -> void:
 	vm = Danger.vent_marks(g.snapshot(), sky)
 	_check(vm[0]["sealed"] and not vm[0]["urgent"] and (vm.size() == 1 or vm[1]["urgent"]),
 		"vent marks at 1: open vents urgent, the sealed one flagged (%s)" % str(vm))
+	# a COVERED vent (Roots, a machine, the tender on it) releases nothing while
+	# covered: no urgent ring, flagged covered - the grate agrees with the SKIES
+	# chip, whose spawn_open counts exactly the urgent marks (mutation: read
+	# only the growth seal in vent_marks, as before, and these go red)
+	var v0: Vector2i = g.map["vents"][0]
+	var cover_cases := {"roots": func(): g.terrain[v0] = {"kind": "roots", "ttl": 9},
+		"machine": func(): g._spawn("drill_bot", v0),
+		"tender": func(): g.player["pos"] = v0}
+	var ppos0: Vector2i = g.player["pos"]
+	for cname in cover_cases:
+		g.terrain.clear()
+		g.enemies.clear()
+		g.player["pos"] = ppos0
+		cover_cases[cname].call()
+		sky = g.smog_forecast()
+		vm = Danger.vent_marks(g.snapshot(), sky)
+		var n_urgent := 0
+		for mk in vm:
+			if bool(mk["urgent"]):
+				n_urgent += 1
+		_check(int(sky["spawn_in"]) == 1 and Danger.vent_state(g.snapshot(), v0) == "covered"
+			and bool(vm[0].get("covered", false)) and not vm[0]["urgent"] and not vm[0]["sealed"]
+			and n_urgent == int(sky["spawn_open"]),
+			"vent marks at 1: a vent covered by %s is flagged covered, never urgent, and the urgent marks are the chip's %d open vents (%s)" % [
+				cname, int(sky["spawn_open"]), str(vm)])
+	g.terrain.clear()
+	g.enemies.clear()
+	g.player["pos"] = ppos0
 	g.smog = 0
 	_check(Danger.vent_marks(g.snapshot(), g.smog_forecast()).is_empty(), "no vent marks beyond 5 turns")
 
@@ -3415,6 +3539,23 @@ func _check_run_end() -> void:
 		"the cause names the Drill Bot in words (%s)" % info.get("cause", ""))
 	_check(String(info["banner"][0]) == "THE DRILL BOT TAKES YOU", "...and so does the banner (%s)" % str(info["banner"]))
 	_check(not String(info.get("cause", "")).contains("cause:"), "no raw 'cause:' line is left")
+	# "1 more HP would have saved you" only when it would have: the sim stops a
+	# step at the first lethal blow, so a death at exactly 0 HP can hide a
+	# second attacker still due on it. One drill bot hitting 2 at 2 HP: 3 HP
+	# lives. Two: 3 HP still dies to the second (mutation: make _one_hp_saves
+	# return true, or drop near_miss's one_hp_saves conjunct, and the two-bot
+	# sheet lies; make it return false and the one-bot sheet goes quiet)
+	for nb in [1, 2]:
+		var ge = _exact_fixture(nb)
+		sh.game = ge
+		sh._game_is_run = false
+		sh.mode = "normal"
+		sh._act({"type": "end_turn"})
+		var near := String(sh._over_info.get("near", ""))
+		var want := "1 more HP would have saved you" if nb == 1 else ""
+		_check(ge.over and not ge.won and int(ge.player["hp"]) == 0 and ge.death_cause == "drill_bot" and near == want,
+			"%d drill bot(s) at exactly 0 HP: the near-miss line is '%s' (got '%s', hp %d)" % [
+				nb, want, near, int(ge.player["hp"])])
 	if sh._run_save != null:
 		sh._run_save.close()
 		sh._run_save = null
@@ -4509,6 +4650,36 @@ func _check_encounters() -> void:
 	_check(String(bcard[1]) == "floor 7 of 7" and " | ".join(bcard).contains("defeat the"),
 		"the boss floor's title card names no crew and still says who to defeat: %s" % " | ".join(bcard))
 	fs.free()
+	# floor 1's crew through the REAL start path: Game.new emits floor 1's
+	# `floor` event before any _act ever runs, so _new_game logs it and raises
+	# the title card itself - and with the intro tips up the card waits for
+	# them to close (mutation: drop the log loop, the card arming or the
+	# _process release, and floor 1's crew is named nowhere)
+	for intro in ["never", "always"]:
+		var f1 = _bare_shell()
+		f1.profile = Profile.new()
+		f1.intro_mode = intro
+		f1.seen_intro = false
+		f1._start_run("career", 88)
+		var crew1 := String(f1.game.encounter(1).get("name", ""))
+		var card_up := func() -> bool:
+			var age: int = Time.get_ticks_msec() - int(f1._floor_fade_ms)
+			return age >= 0 and age < Shell.FLOOR_CARD_MS
+		_check(crew1 == "Hound and Handler" and _any_has(f1.log_lines, "— Strip Mine I · " + crew1 + " —"),
+			"intro %s: a fresh run's log names floor 1's crew (%s): %s" % [intro, crew1, str(f1.log_lines)])
+		if intro == "never":
+			_check(card_up.call() and String(f1._floor_card_lines(f1.game.snapshot())[1]).ends_with(crew1),
+				"a fresh run raises floor 1's title card, naming its crew")
+		else:
+			_check(f1.mode == "intro" and not card_up.call(), "under the intro tips floor 1's card waits (mode %s)" % f1.mode)
+			f1._back(false)
+			f1._process(0.016)
+			_check(f1.mode == "normal" and card_up.call(), "...and rises the moment they close")
+		if f1._run_save != null:
+			f1._run_save.close()
+			f1._run_save = null
+		f1.free()
+	DirAccess.remove_absolute(TEST_RUN_SAVE)
 
 	# the boss phase-2 golem: the sim's reinforcement event now carries its
 	# kind, and the log names the golem from it
@@ -4529,6 +4700,37 @@ func _check_encounters() -> void:
 			"the furnace's phase-2 reinforcement event carries its kind (%s)" % str(rev))
 		var gl: Array = Feedback.log_entries(rev, {}, gb, {}).map(func(l): return l["text"])
 		_check(gl == ["A vent releases a Coal Golem"], "...and the log names the golem from it: %s" % str(gl))
+		# the phase words announce the golem only when it came: the sim spawns
+		# it on the first _open vent, so with every vent covered there is none
+		# (mutation: drop the BOSS_PHASE_JOINS read and the covered arena still
+		# says "a coal golem joins")
+		var stp: Array = gb._step_events.duplicate()
+		var pb: Array = Feedback.banners(stp, {}, gb, {})
+		var plog: Array = Feedback.log_entries(stp, {}, gb, {}).map(func(l): return String(l["text"]))
+		_check(not pb.is_empty() and String(pb[0]["lines"][1]).contains("a coal golem joins")
+			and _any_has(plog, "a coal golem joins"),
+			"a golem on the board: the phase words announce it (%s / %s)" % [str(pb), str(plog)])
+		var gnc := Game.new(seed_b, cfg)
+		gnc._enter_floor(7)
+		var core_nc: Dictionary = {}
+		for e in gnc.enemies:
+			if String(e["kind"]) == "furnace_core":
+				core_nc = e
+		for vv in gnc.map["vents"]:
+			if gnc._open(vv):
+				gnc._spawn("drill_bot", vv)
+		gnc._step_events = []
+		gnc._damage_enemy(core_nc, int(core_nc["hp"]) - 12, "strike")
+		var stn: Array = gnc._step_events.duplicate()
+		var golems := gnc.enemies.filter(func(e): return String(e["kind"]) == "coal_golem").size()
+		var nb: Array = Feedback.banners(stn, {}, gnc, {})
+		var nlog: Array = Feedback.log_entries(stn, {}, gnc, {}).map(func(l): return String(l["text"]))
+		_check(stn.any(func(ev): return String(ev.get("t", "")) == "boss_phase" and int(ev.get("phase", 0)) == 2)
+			and golems == 0 and not nb.is_empty() and not String(nb[0]["lines"][1]).contains("golem")
+			and String(nb[0]["lines"][0]) == "THE FURNACE STOKES" and not _any_has(nlog, "golem")
+			and _any_has(nlog, "now ignites all oil"),
+			"every vent covered: phase 2 brings no golem, and the words announce none (%d golems; %s / %s)" % [
+				golems, str(nb), str(nlog)])
 		golem_seen = true
 		break
 	_check(golem_seen, "fixture: a seed whose boss floor is the Furnace Core")
@@ -4588,9 +4790,10 @@ func _check_encounters() -> void:
 	vsh.free()
 	# Danger.vent_state against the sim's own _open and growth test, over
 	# generated floors with each vent covered by every terrain kind, a machine
-	# on it, the tender on it, and bare (mutation: drop any conjunct of the
-	# mirror - the tile, the tender, a machine, the "blocks" read - and it
-	# disagrees here)
+	# on it, the tender on it, its tile turned to wall, and bare (mutation:
+	# drop any conjunct of the mirror - the tile, the tender, a machine, the
+	# "blocks" read - and it disagrees here; a generated vent is always floor,
+	# so the "wall" setup is the only one the tile conjunct decides)
 	var vs_n := 0
 	var vs_bad: Array = []
 	var vs_seen := {}
@@ -4600,7 +4803,7 @@ func _check_encounters() -> void:
 			gv._enter_floor(fv)
 			for vvi in gv.map["vents"].size():
 				var vv: Vector2i = gv.map["vents"][vvi]
-				var setups: Array = ["bare", "enemy", "player"]
+				var setups: Array = ["bare", "enemy", "player", "wall"]
 				for tk in Content.TERRAIN:
 					setups.append("t:" + String(tk))
 				for su in setups:
@@ -4613,6 +4816,8 @@ func _check_encounters() -> void:
 						gc._spawn("drill_bot", vv)
 					elif su == "player":
 						gc.player["pos"] = vv
+					elif su == "wall":
+						gc.map["tiles"][vv.y * int(gc.map["w"]) + vv.x] = MapGen.T_WALL
 					elif String(su).begins_with("t:"):
 						gc.terrain[vv] = {"kind": String(su).substr(2), "ttl": 3}
 					var want := "open"

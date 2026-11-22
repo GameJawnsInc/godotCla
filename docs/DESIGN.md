@@ -348,7 +348,7 @@ tests a different build muscle so no single draft strategy trivializes it.
   under a hard clock.
 - All phase transitions and cycles are telegraphed like any other intent.
 - Each phase change surfaces as a banner saying what changed ("THE OVERSEER
-  QUICKENS · advances 3 · quakes all around it up close"), and a shielded
+  QUICKENS · advances 3 · quakes the four tiles beside it"), and a shielded
   core shows a cyan ring and SHIELDED on its bar before a hit is wasted.
 
 ### Shops and Grafts

@@ -970,7 +970,12 @@ const SHOP_REROLL_CAP := 3
 ## get dearer, or the first spin is always the right one and the cap is the
 ## only thing standing between the purse and "reroll until it fits".
 const SHOP_REROLL_STEP := 1
-const CLEANSE_SMOG_RELIEF := 1  # a cleanse pauses the smog clock, never rewinds it
+## How far a cleanse winds the smog counter BACK (Game._act_cleanse: this + 1
+## while the quota is unmet, this for the next four cleanses, 0 after). With the next
+## tick's +1 a relief of 1 nets a pause, but it is a real rewind: the counter
+## re-crosses values it already passed, so a dim step, a vent wave or a choke
+## chip keyed on one of them can fire again (see Game.smog_forecast).
+const CLEANSE_SMOG_RELIEF := 1
 
 ## Optional run mutators: free-form spice chosen at run start (unlock-gated).
 ## Mutators are data (Block C4): the sim reads every row's "config" through

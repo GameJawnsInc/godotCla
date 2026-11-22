@@ -87,7 +87,7 @@ const LEGEND := [
 	["ic_dim", "Dimming countdown", "turns until the sky dims - less charge"],
 	["in_attack", "Strike", "hits the red tile next turn for the number"],
 	["in_slam", "Slam", "hits the red cross next turn for the number"],
-	["in_quake", "Quake", "hits every tile around it for the number"],
+	["in_quake", "Quake", "hits the four tiles beside it for the number"],
 	["in_drain", "Drain", "takes banked charge from range"],
 	["in_gum", "Tar", "gums the ability slot outlined in brown"],
 	["in_drag", "Grapple", "drags you along the line toward it"],
@@ -230,6 +230,9 @@ const FX_MS := 700
 var _fx: Array = []  # transient map effects {kind, pos: Vector2 tile, text, col, t0}
 var _floor_fade_ms := -99999  # descend wipe: new floor fades in from dark
 const FLOOR_CARD_MS := 1400  # how long the floor title card hangs over the map
+## A new run's floor-1 card waits for the intro sheet to close (_process), or
+## it would hang and fade behind it
+var _floor_card_pending := false
 ## the title card's line 2 on a floor that drew a crew (Block E1); the fit
 ## gate in tests/test_shell.gd measures this exact template
 const FLOOR_CARD_CREW := "floor %d of 7  ·  %s"
@@ -321,6 +324,10 @@ var _over_ms := -1
 var _beat_draws := 0  # _draw_over_beat calls, for tests/test_draw.gd only
 ## The game the beat and the sheet facts belong to (stale when `game` moved).
 var _over_for = null
+## The ended game for which one more HP was PROVED to carry the tender through
+## the killing step (_note_exact); anything else (null, a stale game) means
+## the sheet does not say "1 more HP would have saved you".
+var _exact_saved_for = null
 ## The game-over sheet's facts (_build_over_info), built once per ended game.
 var _over_info: Dictionary = {}
 ## What profile.record_daily said about the finished daily ({ranked, new_best,
@@ -515,6 +522,14 @@ func _new_game() -> void:
 	tooltip = []
 	_reset_feedback()
 	_reset_danger()
+	# the floor a run starts on gets what every later floor gets: its log line
+	# and its title card, both naming the crew it drew (Block E1) - Game.new's
+	# own events are the floor-1 `floor` event, which no _act ever feeds
+	for ln in Feedback.log_entries(game.snapshot()["events"], {}, game, {}):
+		_log(String(ln["text"]), String(ln["cat"]))
+	_floor_card_pending = mode == "intro"
+	if not _floor_card_pending:
+		_floor_fade_ms = Time.get_ticks_msec()
 	queue_redraw()
 
 
@@ -530,6 +545,7 @@ func _start_tutorial() -> void:
 	unlock_page = 0
 	tut_step = 0
 	tut_done = false
+	_floor_card_pending = false  # the guide introduces the tutorial's floor
 	mode = "normal"
 	flash = ""
 	tooltip = []
@@ -641,7 +657,11 @@ func _load_run() -> void:
 	var kind = head.get("kind", "daily" if _legacy_seed_mode == "daily" else "career")
 	run_kind = "daily" if str(kind) == "daily" else "career"
 	run_tier = int(head.get("tier", 0))
-	sel_tier = run_tier
+	# the menu's DIFFICULTY follows a resumed CAREER run; a daily's tier is its
+	# seed's (always 0, Profile.daily_game_config) and must not overwrite the
+	# career selection, or the next PLAY / NEW RUN starts at tier 0 unasked
+	if run_kind == "career":
+		sel_tier = run_tier
 	_game_is_run = true
 	_run_recorded = false
 	_run_unlocks = []
@@ -652,6 +672,7 @@ func _load_run() -> void:
 	_career_ref = profile.run_ref() if run_kind == "career" else {}
 	_pings_fired = Profile.pings_fired_now(_career_ref, int(game.floor_num), game.effective_uses)
 	mode = "normal"
+	_floor_card_pending = false  # a resumed run is mid-floor: no title card
 	_reset_feedback()
 	_reset_danger()  # replayed through g.step, not _act: no cue fires for the replay
 	# the snapshot's event tail, read context-free: no pre-step facts survive
@@ -732,6 +753,7 @@ func _record_finished_run() -> void:
 func _reset_over() -> void:
 	_over_ms = -1
 	_over_for = null
+	_exact_saved_for = null
 	_over_info = {}
 	_over_prev = {}
 	_run_summary = {}
@@ -794,6 +816,32 @@ func _begin_over(evs: Array, pre: Dictionary) -> void:
 	_shake(7.0 if won else 10.0)
 
 
+## The step that just ended the game: when the tender died at exactly 0 HP to
+## anything but smog, find out whether one more HP would REALLY have carried it
+## through that step before the sheet says so. Only a clone is touched.
+func _note_exact(before, a: Dictionary) -> void:
+	_exact_saved_for = null
+	if game.won or int(game.player["hp"]) != 0 or String(game.death_cause) == "smog":
+		return
+	if _one_hp_saves(before, a):
+		_exact_saved_for = game
+
+
+## Would one more HP have carried the tender through the step that killed it?
+## Re-steps the same action on `before` - a clone of the state before the
+## step - with hp + 1. The sim stops a step at the first lethal blow, so a
+## death at exactly 0 HP can hide a second attacker, or the smog tick, still
+## due on that step: the final HP alone cannot answer. A survived step and a
+## win both count as saved. The clone is consumed; the live game, its rng and
+## the run's replay log never see it.
+static func _one_hp_saves(before, a: Dictionary) -> bool:
+	if before == null:
+		return false
+	before.player["hp"] = int(before.player["hp"]) + 1
+	before.step(a)
+	return not before.over or before.won
+
+
 ## Is the ended game a daily (it has no unlocks and no NEXT, and RETRY DAILY)?
 func _over_is_daily() -> bool:
 	if screen == "tutorial":
@@ -853,7 +901,7 @@ func _build_over_info() -> Dictionary:
 		"banner": RunEnd.end_banner(summary, snap),
 		"title": "THE FURNACE IS COLD" if won else "YOU DIED",
 		"cause": RunEnd.cause_line(summary, snap),
-		"near": RunEnd.near_miss_text(RunStats.near_miss(snap, summary, prev_floor)),
+		"near": RunEnd.near_miss_text(RunStats.near_miss(snap, summary, prev_floor, _exact_saved_for == game)),
 		"stats": RunEnd.stats_line(summary),
 		"kit": kit, "grafts": RunEnd.grafts_line(summary), "chips": chips,
 		"score": "", "score_parts": "", "best": ["", false], "floor_best": "",
@@ -983,6 +1031,7 @@ func _act(a: Dictionary) -> void:
 		if not advances and not nav_ok:
 			_flash("follow the guide for now")
 			return
+		var tbefore = game.clone()  # for _note_exact, should this step kill
 		var tevs: Array = game.step(a)
 		_ensure_stats()
 		var tctx: Dictionary = stats.feed(game, tevs)
@@ -991,6 +1040,7 @@ func _act(a: Dictionary) -> void:
 		_feedback(tevs, pre, tctx)
 		if game.over and not _over_live():
 			_begin_over(tevs, pre)  # a tutorial death gets its beat too; nothing is recorded
+			_note_exact(tbefore, a)
 			_over_info = _build_over_info()
 		if advances:
 			if st.get("until_dead", false):
@@ -1013,6 +1063,7 @@ func _act(a: Dictionary) -> void:
 	# a purchase or a reroll made from the sheet reopens it
 	var keep_shop := mode == "shop" and ["buy", "reroll"].has(String(a.get("type", "")))
 	var pre_d: Dictionary = _danger_state()
+	var before = game.clone()  # for _note_exact, should this step kill
 	var evs: Array = game.step(a)
 	if _game_is_run and _run_save != null:
 		_run_save.store_line(var_to_str(a).replace("\n", " "))
@@ -1045,6 +1096,7 @@ func _act(a: Dictionary) -> void:
 	var ended: bool = game.over and not _over_live()
 	if ended:
 		_begin_over(evs, pre)
+		_note_exact(before, a)
 	if game.over and _game_is_run and not _run_recorded:
 		_record_finished_run()
 	if ended:
@@ -1442,6 +1494,9 @@ func _process(_dt: float) -> void:
 	if screen == "menu":
 		queue_redraw()  # spores drift across the title vista
 		return
+	if _floor_card_pending and mode != "intro":
+		_floor_card_pending = false
+		_floor_fade_ms = Time.get_ticks_msec()
 	if _held and tooltip.is_empty() and Time.get_ticks_msec() - _press_ms >= hold_ms:
 		_show_tooltip(_press_pos)
 	_tick_banner()
@@ -3772,7 +3827,8 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		if _vis(v):
 			_sprite("vent", v)
 			if vmarks.has(v):
-				# the release countdown, on the grate itself (red ring at 1)
+				# the release countdown, on the grate itself (red ring at 1; a
+				# covered vent releases nothing while covered: dim, no ring)
 				var vm: Dictionary = vmarks[v]
 				var vcol := Danger.COL_AMBER
 				if bool(vm["urgent"]):
@@ -3781,6 +3837,8 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 						Color(Danger.COL_RED, 0.5 + 0.4 * sin(Time.get_ticks_msec() / 140.0)), 2.5)
 				elif bool(vm["sealed"]):
 					vcol = Danger.COL_SEALED
+				elif bool(vm.get("covered", false)):
+					vcol = Danger.COL_DIM
 				var vsz := maxi(1, int(_ts * 0.42))
 				var vr := _tile_rect(v)
 				_txt_c(vr.get_center().x + 1, vr.get_center().y + vsz * 0.35 + 1, String(vm["text"]), Color(0, 0, 0, 0.8), vsz)

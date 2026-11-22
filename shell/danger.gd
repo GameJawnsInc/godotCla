@@ -81,8 +81,35 @@ static func compute(game) -> Dictionary:
 		"tele": game.telegraph(), "fc": fc, "lethal": bool(fc["dies"]),
 		"hp": hp_state(int(game.player["hp"]), int(game.player["max_hp"]), bool(fc["dies"])),
 		"escapes": escapes(game) if bool(fc["dies"]) and HINT_ESCAPES else {},
+		# what a cleanse does to the smog now, for the choke line's remedy
+		"thins": cleanse_thins(int(game.greened), int(game.green_need)),
+		"restored": bool(game.map.get("restored", false)),
 	}
 	return d
+
+
+## Does a cleanse thin the smog right now? Mirrors the relief tiers of
+## Game._act_cleanse - Content.CLEANSE_SMOG_RELIEF + 1 while the quota is
+## unmet, CLEANSE_SMOG_RELIEF for the next four cleanses, 0 after - change
+## together (tests/test_shell.gd drives real cleanses against it). The floor
+## restore's own -8 is not a relief tier: choke_remedy words it separately.
+static func cleanse_thins(greened: int, green_need: int) -> bool:
+	if greened < green_need:
+		return Content.CLEANSE_SMOG_RELIEF + 1 > 0
+	return greened < green_need + 4 and Content.CLEANSE_SMOG_RELIEF > 0
+
+
+## What thins the smog when the stairs cannot take the tender away (the boss
+## arena; on an ordinary floor the dry tier comes only after the quota, so the
+## stairs are awake and the line offers the descent): a cleanse while
+## Game._act_cleanse still pays relief, else only the floor restore (smog -8,
+## once a floor) - "cleanse it all" while that is still to come, and no cleanse
+## at all once it has happened. A `d` without the keys (a hand-built one) reads
+## as the relief tier.
+static func choke_remedy(d: Dictionary) -> String:
+	if bool(d.get("thins", true)):
+		return "cleansing thins it"
+	return "cleanses no longer thin it" if bool(d.get("restored", false)) else "cleanse it all to thin it"
 
 
 static func low_hp(hp: int, max_hp: int) -> bool:
@@ -155,8 +182,9 @@ static func context_line(d: Dictionary, awake: bool) -> Dictionary:
 	var sky: Dictionary = d["sky"]
 	var c := int(sky.get("choke_in", -1))
 	if not bool(sky.get("choking", false)) and c >= 1 and c <= SKY_AMBER:
-		# the boss floor has no stairs: stairs_awake says so, never green_need
-		var how := "descend to escape it" if awake else "cleansing thins it"
+		# the boss floor has no stairs: stairs_awake says so, never green_need;
+		# and its cleanses stop thinning the smog after four (choke_remedy)
+		var how := "descend to escape it" if awake else choke_remedy(d)
 		if c == 1:
 			return {"text": "Smog chokes NEXT TURN - %s" % how, "col": COL_RED, "pulse": true}
 		return {"text": "Smog chokes in %d - %s" % [c, how], "col": COL_AMBER, "pulse": false}
@@ -386,14 +414,21 @@ static func vent_state(snap: Dictionary, v: Vector2i) -> String:
 	return "sealed" if k == "growth" else "open"
 
 
+## The release countdown drawn on each vent, read through vent_state so the
+## grate agrees with the SKIES chip (smog_forecast's spawn_open counts exactly
+## the "open" vents) and the vent tooltip: only an OPEN vent goes urgent (the
+## red ring at 1); a "sealed" one is flagged; a "covered" one (Roots, a
+## machine or the tender on it) releases nothing while covered, so it is
+## flagged and drawn dim, never red.
 static func vent_marks(snap: Dictionary, sky: Dictionary) -> Array:
 	var out: Array = []
 	var n := int(sky.get("spawn_in", -1))
 	if n < 1 or n > VENT_MARK:
 		return out
 	for v in snap.get("map", {}).get("vents", []):
-		var sealed: bool = snap["terrain"].has(v) and String(snap["terrain"][v]["kind"]) == "growth"
-		out.append({"pos": v, "text": str(n), "urgent": n == 1 and not sealed, "sealed": sealed})
+		var st := vent_state(snap, v)
+		out.append({"pos": v, "text": str(n), "urgent": n == 1 and st == "open",
+			"sealed": st == "sealed", "covered": st == "covered"})
 	return out
 
 

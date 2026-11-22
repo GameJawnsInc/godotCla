@@ -119,8 +119,9 @@ architecture below is designed to bend rather than block.
     row, `max_turns` / `max_grafts` / `stat_max` only beside `won: true`; 16
     bad fixtures, each rejected; prints "feats: N rows (R run-scope, C career)"),
     and section 14 (Block E) `_lint_floors`: the `Content.FLOORS`
-    `encounters` / `reinforce` shape and rules R1-R8 of the Encounter packs
-    note, the threat budget included (every mobile kind's traits priced in
+    `encounters` / `reinforce` shape and rules R2-R8 of the Encounter packs
+    note (R1, pack 0 = the classic roster, is pinned by `tests/test_grammar.gd`
+    section e's frozen `CLASSIC_ROSTERS`, not here), the threat budget included (every mobile kind's traits priced in
     `PACK_TRAIT_DPT`), with a self-test that lints every bad row alone AND in a
     table and keeps the good rows clean ("floors lint self-test: 26 bad rows ->
     25 rejected alone, 26 rejected in the table; 3 good rows -> 3 clean" - the
@@ -236,12 +237,15 @@ architecture below is designed to bend rather than block.
     articles, the floor title card) and `_check_feedback` the feedback layer:
     callouts, the cleanse gain, kill weight, the boss shield, log names / xN,
     sound picks and the chime, the vocabulary tripwire, and two bot-driven runs
-    through `_act` (no raw id and no line over 60 chars in the log);
+    through `_act` (no raw id and no line over 60 chars in the log, scanned
+    after EVERY step - the log keeps only `LOG_KEEP` lines, so a check at the
+    end never saw most of what the runs wrote);
     `_check_danger_readouts` the danger layer's verdicts and words (the HP
     rule table, the SKIES chips and bar alert, every context line and guard
     flash, the cues) plus its two gates - the FIT gate (the worst INCOMING line,
     built from the two longest `Content.ENEMIES` names, the seven guard
-    flashes and the NEXT TURN choke line draw at >= `CARD_MIN_VH` in the
+    flashes and the NEXT TURN choke line with each of its three non-descend
+    remedies draw at >= `CARD_MIN_VH` in the
     context line's box at every `CARD_VIEWPORTS` shape) and the LAYOUT gate (`_sky_row_layout` with chips
     60/12/9: numbers >= `CARD_MIN_VH`, chips end by 0.55vw, the config line
     keeps >= 0.2vw, icon tops clear the bar) - and the cue reaching the banner
@@ -257,7 +261,9 @@ architecture below is designed to bend rather than block.
     `CARD_MIN_VH` at the 0.105vh geometry; `_check_run_end` the end beat and
     lock through a real smog death (banner, bursts, cleared banners, every
     tap / key / button ignored but ESC, no tap-anywhere, RETRY SEED and NEW
-    RUN, the Drill Bot cause in words) plus `shell/run_end.gd`'s pinned
+    RUN, the Drill Bot cause in words, "1 more HP would have saved you" on
+    one drill bot's exact kill and not on two, where 3 HP still dies) plus
+    `shell/run_end.gd`'s pinned
     strings, `_check_over_facts` the sheet against real records (total turns,
     NEW BEST and DEEPEST YET from the bests before the record, a first win's
     unlocks and NEXT, the daily's three buttons, a tutorial death) and
@@ -290,7 +296,12 @@ architecture below is designed to bend rather than block.
     on a fresh game, and each vent its own release on a two-kind wave), a
     Roots-walled vent saying "vent beneath - releases nothing while covered"
     with the real smog tick agreeing, `Danger.vent_state` against the sim's
-    `_open` and growth seal on 468 vent states, and fit gates for every crew's
+    `_open` and growth seal on 507 vent states (one setup turns the vent's
+    tile to wall, the only one the tile conjunct decides), the floor-1 crew
+    named through the real start path (`_start_run`: the log line and the
+    title card, and under an intro sheet the card held until it closes), the
+    Furnace's phase-2 words announcing its golem only when the step's
+    `reinforcement` brought one, and fit gates for every crew's
     log line, title-card line and vent line (the reinforcement line's kind,
     its tile fallback and "a machine" are in the body's section 8c)
   - `godot --headless --path . --script tests/test_draw.gd` — the draw smoke
@@ -1120,10 +1131,12 @@ architecture below is designed to bend rather than block.
   data. Every non-boss `Content.FLOORS` row carries `encounters: [{id, name,
   w, enemies}]` (4-5 named crews per floor, 29 in all) instead of a fixed
   `enemies` dict, plus `reinforce: [kinds]`; the boss row is `encounters:
-  [], reinforce: ["drill_bot"]`. Eight rules, all linted by
-  `tests/test_content.gd` section 14 (`_lint_floors`): R1 pack 0 is the
-  floor's pre-v15 roster byte for byte, key order included (the classic
-  crew); R2 every pack on a floor has the same headcount - mapgen's
+  [], reinforce: ["drill_bot"]`. Eight rules: R2-R8 are linted by
+  `tests/test_content.gd` section 14 (`_lint_floors`), and R1 is pinned by
+  `tests/test_grammar.gd` section e (`_check_e_classic` against the frozen
+  `CLASSIC_ROSTERS`; the lint has no frozen roster to compare with). R1 pack
+  0 is the floor's pre-v15 roster byte for byte, key order included (the
+  classic crew); R2 every pack on a floor has the same headcount - mapgen's
   placement draws never read the kind, so equal headcounts keep every
   main-rng draw, every position and the elite index where they were and
   only the kind on each tile changes; R3 every pack fields the floor's
@@ -1178,7 +1191,9 @@ architecture below is designed to bend rather than block.
   names the crew on the floor's log line (`— Strip Mine I · Hound and
   Handler —`) and on the title card's line 2 (`floor 3 of 7  ·  Golem
   Picket`, `_txt_c_fit` at 0.9vw), never on the boss floor or the
-  tutorial's; the reinforcement line names the event's kind (falling back to
+  tutorial's - floor 1 included: `_new_game` logs `Game.new`'s own `floor`
+  event (no `_act` ever feeds it) and raises the card, held behind an intro
+  sheet until it closes (`_floor_card_pending`, released in `_process`); the reinforcement line names the event's kind (falling back to
   the machine on the tile, then "a machine"); and the vent hold-tooltip
   names its release from `smog_forecast().spawn_wave` and `reinforce_kind`
   ("releases a Drill Bot in 4 turns" / "releases a Rust Hound next turn"),
@@ -1211,8 +1226,13 @@ architecture below is designed to bend rather than block.
   same four conjuncts, same order, `core_shielded` still emitted before the
   early return), and the three danger forecasts in their own section after
   `_tick_smog`: `smog_forecast(horizon, count_stokers)` (dim / choke / vent
-  arrivals in end turns, every `*_in` the SOONEST it can come - relief only
-  pushes it later - `count_stokers=false` the calm walk; since Block E it
+  arrivals in end turns, every `*_in` the SOONEST it can come IF NOTHING IS
+  RELIEVED - a stoker's kill or stun only pushes it later, but relief (a
+  cleanse, a clear-air item, the restore) rewinds the counter, which then
+  re-crosses exact trigger values, so a vent wave or a dim step already passed
+  fires again and the choke's every-3rd-tick phase moves: relief can bring an
+  event SOONER, and the numbers are no lower bound under player action -
+  `count_stokers=false` the calm walk; since Block E it
   also returns `spawn_wave`, the wave index of that vent arrival, -1 when
   none, its spawn test being `reinforce_wave(fdef, s) >= 0`), `telegraph()` (per
   enemy: tiles, marks, drag path, the first blocking status / `screened` /
@@ -1247,7 +1267,12 @@ architecture below is designed to bend rather than block.
   the floor changes or the game ends (a lethal enemy phase returns before
   `total_turns` moves); a room clear is a kill in the room (grown by 1) the
   tender stood in before the step, with nothing left alive in it; closest call
-  updates whenever the tender is still standing, a winning step included.
+  updates whenever the tender is still standing, a winning step included, at
+  the lowest hp INSIDE the step - a walk from the hp before it through the
+  step's player `damage` (net of the shield) and `heal` events, trusted only
+  when it lands on the hp after it (a descend, an item or a shrine heal moves
+  hp without naming the amount, and such a step falls back to the hp after
+  it), so a hit to 1 that growth heals back to 2 in the same end turn counts.
   Bloom earned is the per-step DELTA floored at 0, never a sum of event
   fields: the `cleanse` event's `bloom` is the running total (`cleanse_gain`
   is that minus the bloom before the step), and a delta cannot miss a source
@@ -1258,10 +1283,13 @@ architecture below is designed to bend rather than block.
   `score(s)` (`Content.RUN_SCORE` rows `pts * value` in table order, each tier
   `+RUN_SCORE_TIER_QUARTERS` quarters, integer math; cosmetic, the sim never
   reads it, and ANY edit to the table bumps `RUN_SCORE_VERSION`, which drops
-  stored score bests and nothing else), `near_miss(snap, s, prev_best_floor)`
-  (boss HP, stairs within 10 BFS steps, 1-2 cleanses short, one floor short of
-  / on the career best, exact 0 HP but never smog; a win's closest call at <= 3
-  HP) and `highlights(s, max_n, new_records)`. Records live in
+  stored score bests and nothing else), `near_miss(snap, s, prev_best_floor,
+  one_hp_saves = false)` (boss HP, stairs within 10 BFS steps, 1-2 cleanses
+  short, one floor short of / on the career best, exact 0 HP but never smog
+  and only with `one_hp_saves` - the shell's `_one_hp_saves` re-steps the
+  killing action on a pre-step `clone()` with hp + 1, because the sim stops a
+  step at the first lethal blow and a second attacker or the smog tick still
+  due is invisible in the final snapshot; a win's closest call at <= 3 HP) and `highlights(s, max_n, new_records)`. Records live in
   `meta/profile.gd` `records` only (`best[key]` per `RUN_STAT_KEYS` key but
   `closest_hp` plus `score` as maxima and `fastest_win` as the fewest turns
   over wins, values > 0 only; `loadouts[lid]` floor/score/tier-won/runs/wins;
@@ -2075,7 +2103,11 @@ architecture below is designed to bend rather than block.
   `BOSS_PHASE_LINES` words each phase (it MIRRORS `_damage_enemy` and
   `_compute_boss_intent`, whose comments say so - change both together; the
   log composes `Feedback.boss_line` "<Boss> - <line>", held to
-  `LOG_LINE_MAX` (60) for every row by a static check in `tests/test_shell.gd`),
+  `LOG_LINE_MAX` (60) for every row by a static check in `tests/test_shell.gd`;
+  a row naming a machine the sim may not deliver - the Furnace's phase-2 coal
+  golem spawns only on the first `_open` vent - has a `BOSS_PHASE_JOINS`
+  alternative that `phase_words` says when the step carries no
+  `reinforcement` of that `kind`),
   a summon names a child destroyed in the same step from that step's own
   `death` event, and
   the read-only `Game.core_shield_up(id)` draws a cyan ring on the map and
@@ -2087,12 +2119,15 @@ architecture below is designed to bend rather than block.
   `clone()`) - from the three read-only sim forecasts (`smog_forecast`,
   `telegraph`, `end_turn_forecast`; exact against reality, see the read-only
   queries bullet) to what the shell draws: `compute(game)` ->
-  `{ok, floor, sky, sky_calm, tele, fc, lethal, hp, escapes}` (ok false and
+  `{ok, floor, sky, sky_calm, tele, fc, lethal, hp, escapes, thins, restored}` (ok false and
   only `hp` kept when over or drafting), the SKIES chips (`sky_chips`: choke,
   vents, dim within 9; colours by `SKY_AMBER` 5), `context_line`, the intent
   `badges` (`BADGE` / `NO_BADGE` / `BLOCK_ICON`: every `INTENT_TYPES` entry
   has a decision, and a blocked intent wears its block glyph and paints no
-  red tile), `tile_numbers`, `tethers`, `marks`, `vent_marks`, `gum_slots`,
+  red tile), `tile_numbers`, `tethers`, `marks`, `vent_marks` (read through
+  `vent_state`: only an "open" vent goes urgent - the red ring at 1 - a
+  "sealed" one is flagged and a "covered" one is flagged and drawn dim, so the
+  grate agrees with the chip's `spawn_open` and the tooltip), `gum_slots`,
   `vent_state` (Block E: what `_tick_smog` does at a vent if a wave fired now
   - "covered" when `_open` is false, i.e. not floor, a machine or the tender
   on it, or a terrain kind that `blocks` such as Roots, so it releases
@@ -2126,8 +2161,13 @@ architecture below is designed to bend rather than block.
   `_objective_line` (career part 3). The choke countdown says "descend to escape it" only when
   `Danger.stairs_awake(snap)` - a real stairs tile (the boss arena's is
   (-1, -1)) and `greened >= green_need`, so a quota RECLAMPED to 0 on an
-  ordinary floor still offers the descent - and "cleansing thins it"
-  otherwise. A stoker's tooltip line keys on the row's `stokes` trait (an idle
+  ordinary floor still offers the descent - and otherwise
+  `Danger.choke_remedy(d)`: "cleansing thins it" while `Danger.cleanse_thins`
+  (a mirror of `_act_cleanse`'s relief tiers, `compute`'s `thins`) says a
+  cleanse still pays relief, else "cleanse it all to thin it" before the
+  floor's restore (its smog -8) and "cleanses no longer thin it" after
+  (`compute`'s `restored`) - only the boss arena reaches the dry tier, since
+  an ordinary floor's quota met means its stairs are awake. A stoker's tooltip line keys on the row's `stokes` trait (an idle
   turn keeps it) and, with more than one stoker alive, words the `sky` vs
   `sky_calm` gap as shared ("stokers bring the choke N turns sooner"); when
   the calm walk finds no choke inside `SKY_HORIZON` at all it says so

@@ -1567,8 +1567,15 @@ func core_shield_up(id: int) -> bool:
 ## that blocks the stoke swallows that turn and ticks down; a slow stoker
 ## idles on odd turns; turn 1 executes the intent actually standing).
 ## Assumes no relief and that every stoker keeps standing, so every number is
-## the SOONEST the event can arrive: a cleanse, an item, a kill or a stun can
-## only push it later. A turn number N means "during the N-th end turn from
+## the SOONEST the event can arrive IF NOTHING IS RELIEVED: a kill or a stun
+## of a stoker can only push it later. Relief can bring an event SOONER: a
+## cleanse, a clear-air item and the floor restore wind the counter BACK, and
+## every trigger keys on an exact smog value, so the rewound counter re-crosses
+## values it already passed - a vent wave already released fires again
+## (spawn_in 8 -> 1), a dim threshold already crossed raises dim again, and the
+## choke's every-3rd-tick phase moves, so the next chip can land sooner. The
+## numbers are not a lower bound under player action; the shell recomputes
+## them after every step. A turn number N means "during the N-th end turn from
 ## now" (1 = the coming enemy phase). -1: not within the horizon.
 ## With nothing relieved the walk is exact: measured against a clone that only
 ## ends turns, dim, choke and vent timing matched 9058/9058 decisions each
