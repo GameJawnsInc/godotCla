@@ -13,6 +13,9 @@ extends SceneTree
 ##   FANATIC_TIER      difficulty tier (default 0)
 ##   FANATIC_MUTATORS  comma list of mutators
 ##   FANATIC_VERBOSE=1 print the full Tally block per build
+## Besides the human line, every build prints one machine-readable line:
+##   FAN_BUILD build=<id> cfg=<mutators or default> wins=<W>/<N> timeouts=<T> stall_floors=<S>
+## (stall_floors is tests/tally.gd's stall_floors over that build's runs).
 
 const Game := preload("res://sim/game.gd")
 const Content := preload("res://sim/content.gd")
@@ -152,6 +155,9 @@ func _init() -> void:
 		if st["fallbacks"] > 0:
 			line += "  (fell back to a legacy build in %d runs: requirements unmet)" % st["fallbacks"]
 		print(line)
+		print("FAN_BUILD build=%s cfg=%s wins=%d/%d timeouts=%d stall_floors=%d" % [
+			b, ",".join(mutators) if not mutators.is_empty() else "default", st["wins"], n,
+			st["timeouts"].size(), t.stall_floors])
 		if verbose:
 			t.print_block(n, st["kits"])
 	print("total %d/%d, timeouts: %s" % [total_w, total_runs, str(timeouts)])

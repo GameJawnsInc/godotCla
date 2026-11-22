@@ -162,7 +162,24 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## or mod row, no replay can observe either passive loop, and that rule is
 ## held by the injected _ResProbe rows in tests/test_grammar.gd and
 ## tests/test_economy.gd alone.
-const SIM_VERSION := 14
+## SIM_VERSION 15 (Block E, encounter packs and biome reinforcements): every
+## non-boss Content.FLOORS row carries 4-5 named encounter packs instead of
+## one fixed roster, and floor_def(n) draws ONE by weight from the side stream
+## _side_rng_at(n, "roster") (never the main rng) before the tier and
+## overtime modifiers, which therefore apply to the drawn crew. Every pack on
+## a floor has the same headcount, so mapgen's main-rng draws, every position
+## and the elite index are byte-identical to bump 14 and only the kind on
+## each placed tile changes; floor 1 fields no gums kind, so rng.state after
+## Game.new is bump 14's for every seed. Later floors shift only through play
+## (a different crew plays a different floor, and gum intents draw from the
+## main rng). Vents release reinforce[(wave + vent) % size] of the floor's
+## Content row (reinforce_wave / reinforce_kind, no rng, no stored state).
+## Hash-visible event keys: the floor event gains "encounter" (the pack id,
+## only when one was drawn) and both reinforcement sites gain "kind". No
+## snapshot() key changed. The fixed_shift mutator (encounter_packs and
+## biome_reinforce false) replays bump 14 action for action - the proof the
+## change is reversible by one _mut default.
+const SIM_VERSION := 15
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -323,8 +340,17 @@ func _mut(key: String, default):
 
 
 ## Floor definition with this run's difficulty-tier modifiers applied.
+## Block E1: the floor's encounter pack is resolved FIRST (encounter(n), a
+## side-stream draw keyed on n), its roster written into fdef.enemies, so the
+## tier extra_enemy and the overtime extra_common_enemy below operate on the
+## drawn crew - and sim/mapgen.gd keeps reading fdef.enemies, untouched.
 func floor_def(n: int) -> Dictionary:
 	var fdef: Dictionary = Content.FLOORS[n - 1].duplicate(true)
+	fdef.erase("encounters")
+	var pack := encounter(n)
+	fdef["enemies"] = pack.get("enemies", {}).duplicate()
+	if not pack.is_empty():
+		fdef["encounter"] = String(pack["id"])
 	for i in range(mini(tier, Content.TIERS.size())):
 		var mod: Dictionary = Content.TIERS[i]
 		if mod.has("choke_delta") and fdef.get("smog_choke", 0) > 0:
@@ -358,6 +384,67 @@ func floor_def(n: int) -> Dictionary:
 	if n == 1 and not _fixed_floor.is_empty():
 		fdef.merge(_fixed_floor.get("fdef", {}), true)
 	return fdef
+
+
+## Block E1: index of the encounter pack floor n fields this run - a weighted
+## draw from the floor's own side stream, so a pure function of (seed, n,
+## config). 0 (the classic crew) under encounter_packs false or a 1-pack row.
+## Read-only: no state change, no main-rng draw, no event.
+func encounter_index(n: int) -> int:
+	var packs: Array = Content.FLOORS[n - 1].get("encounters", [])
+	if packs.size() <= 1 or not bool(_mut("encounter_packs", true)):
+		return 0
+	var total := 0
+	for p in packs:
+		total += int(p["w"])
+	var roll := _side_rng_at(n, "roster").randi_range(0, total - 1)
+	for i in packs.size():
+		roll -= int(packs[i]["w"])
+		if roll < 0:
+			return i
+	return 0
+
+
+## Block E1: the pack row floor n fields ({id, name, w, enemies}, a copy), or
+## {} where none applies: the boss floor, or a scripted fixed floor 1.
+## Read-only: no state change, no main-rng draw, no event.
+func encounter(n: int) -> Dictionary:
+	if n == 1 and not _fixed_floor.is_empty():
+		return {}
+	var packs: Array = Content.FLOORS[n - 1].get("encounters", [])
+	if packs.is_empty():
+		return {}
+	return packs[encounter_index(n)].duplicate(true)
+
+
+## Block E2: index of the reinforcement wave smog value s triggers on floor
+## def `fdef`, or -1: the position in smog_spawn when s is listed, else the
+## smog_spawn_every continuation past the last entry. This IS the vent spawn
+## test (_tick_smog and smog_forecast both ask "reinforce_wave >= 0").
+static func reinforce_wave(fdef: Dictionary, s: int) -> int:
+	var sched: Array = fdef.get("smog_spawn", [])
+	var at := sched.find(s)
+	if at >= 0:
+		return at
+	var last: int = int(sched.back()) if not sched.is_empty() else 0
+	var every: int = int(fdef.get("smog_spawn_every", 0))
+	if every > 0 and s > last and (s - last) % every == 0:
+		return sched.size() + (s - last) / every - 1
+	return -1
+
+
+## Block E2: the kind vent `vi` (index in map.vents) releases on wave `wave`
+## of floor def `fdef`: reinforce[(wave + vi) % size], or reinforce[0] under
+## biome_reinforce false. "" (with push_error) on a row with no reinforce
+## list - a lint-caught data error. Read-only, no rng.
+func reinforce_kind(fdef: Dictionary, wave: int, vi: int) -> String:
+	var kinds: Array = fdef.get("reinforce", [])
+	if kinds.is_empty():
+		push_error("floor '%s' has no reinforce list" % str(fdef.get("name", "?")))
+		return ""
+	if not bool(_mut("biome_reinforce", true)):
+		return String(kinds[0])
+	return String(kinds[posmod(wave + vi, kinds.size())])
 
 
 func _tier_mod(key: String) -> int:
@@ -695,7 +782,10 @@ func _enter_floor(n: int) -> void:
 	var floor_shield := int(_passive_mod("floor_start_shield", 0))
 	if floor_shield > 0:
 		player["shield"] = mini(maxi(player["shield"], floor_shield), _shield_cap())
-	_emit({"t": "floor", "floor": n, "name": fdef["name"]})
+	var fev := {"t": "floor", "floor": n, "name": fdef["name"]}
+	if fdef.has("encounter"):
+		fev["encounter"] = fdef["encounter"]
+	_emit(fev)
 	_compute_intents()
 
 
@@ -703,8 +793,15 @@ func _enter_floor(n: int) -> void:
 ## economy (shop flavor, supply drops) come from a forked generator so they
 ## never shift the main rng stream - keeps cross-version seed comparability.
 func _side_rng(tag: String) -> RandomNumberGenerator:
+	return _side_rng_at(floor_num, tag)
+
+
+## The side stream of floor `n` (not necessarily the current one): floor_def(n)
+## is called for other floors by tests and the shell, so the roster draw keys
+## on n, never on floor_num. _side_rng(tag) is this at floor_num, byte for byte.
+func _side_rng_at(n: int, tag: String) -> RandomNumberGenerator:
 	var r := RandomNumberGenerator.new()
-	r.seed = hash([seed_value, floor_num, tag])
+	r.seed = hash([seed_value, n, tag])
 	return r
 
 
@@ -1415,22 +1512,23 @@ func _tick_smog() -> void:
 			_damage_player(1 + (smog - choke) / 60, "smog")
 			if over:
 				return
-		var spawn: bool = fdef["smog_spawn"].has(smog)
-		if not spawn:
-			var last: int = fdef["smog_spawn"].back()
-			var every: int = fdef.get("smog_spawn_every", 0)
-			spawn = every > 0 and smog > last and (smog - last) % every == 0
-		if spawn:
-			for v in map["vents"]:
+		# Block E2: the wave index picks the kind per vent (reinforce_kind)
+		var wave := reinforce_wave(fdef, smog)
+		if wave >= 0:
+			for vi in map["vents"].size():
+				var v: Vector2i = map["vents"][vi]
 				if _open(v):
 					if _terrain_kind(v) == "growth":
 						# nature chokes the machine: the seal absorbs this spawn
 						terrain.erase(v)
 						_emit({"t": "seal_burst", "tile": v})
 						continue
-					var e := _spawn("drill_bot", v)
+					var rkind := reinforce_kind(fdef, wave, vi)
+					if rkind == "":
+						continue
+					var e := _spawn(rkind, v)
 					e["intent"] = {"type": "idle"}
-					_emit({"t": "reinforcement", "tile": v})
+					_emit({"t": "reinforcement", "tile": v, "kind": rkind})
 
 
 # --- read-only forecasts (fun pass, phase 1) ----------------------------------
@@ -1475,20 +1573,21 @@ func core_shield_up(id: int) -> bool:
 ## With nothing relieved the walk is exact: measured against a clone that only
 ## ends turns, dim, choke and vent timing matched 9058/9058 decisions each
 ## (a firing into all-occupied vents emits nothing and counts as matched).
+## The vent test is _tick_smog's own, reinforce_wave(fdef, s) >= 0 (Block E2),
+## and "spawn_wave" is that wave index (-1 when none within the horizon), so
+## reinforce_kind(floor_def(floor_num), spawn_wave, vi) names what vent vi
+## releases then.
 ## Mirrors _tick_smog and the stoke arm of _execute_intent - change together.
 ## No state changes, no rng, no events; the sim never calls it.
 func smog_forecast(horizon: int = 60, count_stokers: bool = true) -> Dictionary:
 	var fdef := floor_def(floor_num)
 	var choke: int = int(fdef.get("smog_choke", 0))
 	var dims: Array = fdef.get("smog_dim", [])
-	var spawns: Array = fdef.get("smog_spawn", [])
-	var last: int = int(spawns.back()) if not spawns.is_empty() else 0
-	var every: int = int(fdef.get("smog_spawn_every", 0))
 	var out := {
 		"dim_in": -1, "dim_at": -1, "dim_to": dim,
 		"choke_in": -1, "choke_at": -1, "choke_dmg": 0,
 		"choking": choke > 0 and smog >= choke,
-		"spawn_in": -1, "spawn_at": -1, "spawn_open": 0, "spawn_sealed": 0,
+		"spawn_in": -1, "spawn_at": -1, "spawn_wave": -1, "spawn_open": 0, "spawn_sealed": 0,
 		"stoker": false,
 	}
 	for v in map["vents"]:
@@ -1550,12 +1649,11 @@ func smog_forecast(horizon: int = 60, count_stokers: bool = true) -> Dictionary:
 				out["choke_in"] = k
 				out["choke_at"] = s
 				out["choke_dmg"] = 1 + (s - choke) / 60
-			var spawn: bool = spawns.has(s)
-			if not spawn:
-				spawn = every > 0 and s > last and (s - last) % every == 0
-			if spawn and int(out["spawn_in"]) < 0:
+			var wave := reinforce_wave(fdef, s)
+			if wave >= 0 and int(out["spawn_in"]) < 0:
 				out["spawn_in"] = k
 				out["spawn_at"] = s
+				out["spawn_wave"] = wave
 		if int(out["dim_in"]) >= 0 or d >= 2:
 			if int(out["choke_in"]) >= 0 and int(out["spawn_in"]) >= 0:
 				break
@@ -3330,7 +3428,7 @@ func _damage_enemy(e: Dictionary, amt: int, src: String) -> bool:
 				if _open(v):
 					var g := _spawn("coal_golem", v)
 					g["intent"] = {"type": "idle"}
-					_emit({"t": "reinforcement", "tile": v})
+					_emit({"t": "reinforcement", "tile": v, "kind": String(g["kind"])})
 					break
 		if e["hp"] <= 6 and not e.get("phase3_done", false):
 			e["phase3_done"] = true

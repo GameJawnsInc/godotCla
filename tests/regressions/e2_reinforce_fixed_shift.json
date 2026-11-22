@@ -1,0 +1,9 @@
+{
+"seed": 1,
+"config": {"fixed_floor":{"fdef":{"green_need":0,"reinforce":["drill_bot","rust_hound"],"smog_choke":999,"smog_dim":[900,950],"smog_spawn":[1,2],"smog_spawn_every":0},"room":["#########","#@......#","#.......#","#^.....^#","#########"]},"kit":["solar_lance","seed_bomb","mycelium_dash"],"mutators":["fixed_shift"],"pool":["solar_lance","seed_bomb","mycelium_dash"]},
+"actions": [{"type":"end_turn"},{"type":"end_turn"}],
+"expect": {"events":[{"kind":"drill_bot","t":"reinforcement","tile":"(1, 3)"},{"kind":"drill_bot","t":"reinforcement","tile":"(7, 3)"},{"kind":"drill_bot","t":"reinforcement","tile":"(1, 3)"},{"kind":"drill_bot","t":"reinforcement","tile":"(7, 3)"}],"floor":1,"timeout":true,"won":false},
+"note": "E2 control arm: the fixed_shift mutator (biome_reinforce false) releases reinforce[0] - the classic drill bot - from every vent on every wave.",
+"sim_version": 15,
+"hash": "8c782ee1b9e73c551d42cfd0e33df5611d3424b34ca7bc160c5e7ec9d4469bd6"
+}

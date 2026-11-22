@@ -11,7 +11,8 @@ extends SceneTree
 ## tutorial steps, an optimizer game played through _act
 ## with tooltips raised on every enemy, vent and the tender, a lethal state
 ## (vignette, outline, guard flash, escape glow), a danger board (tether, gum
-## slots, SKIES chips), a kill (ghost, kill weight, streak flame), the boss
+## slots, SKIES chips), a floor title card naming its crew and a vent tooltip
+## naming its release and a walled vent's naming none (Block E), a kill (ghost, kill weight, streak flame), the boss
 ## floor (core shield ring up and down, a phase banner), the shrine, forge,
 ## draft and drop sheets, the log, help pages and intro, and the end of a run:
 ## both game-over sheets set from outside, the end beat (a smog death through
@@ -60,6 +61,10 @@ const SCRATCH_CFG := "user://test_draw_settings.cfg"
 const BOT_ACTIONS_FIRST := 300
 const BOT_ACTIONS_REST := 90
 const FULL_KIT := ["solar_lance", "seed_bomb", "mycelium_dash", "vine_whip", "thorn_shield"]
+## The crew-card and vent-tip phases build their games on
+## ShellTest.PACK_CONFIG (tests/test_shell.gd), the ONE config under which a
+## game draws encounter packs and biome reinforcements (Block E, stage 9), so
+## this test draws on exactly the config test_shell's gates check.
 
 
 ## Counts every error the engine reports while the test runs.
@@ -330,6 +335,9 @@ func _build_phases() -> Array:
 		["bot game", 100000, "_bot_setup", "_bot_check", "_bot_each", null],
 		["lethal", 4, "_lethal_setup", "_lethal_check", "_lethal_each", null],
 		["danger board", 3, "_danger_board_setup", "_danger_board_check", "", null],
+		["floor card (crew)", 3, "_crew_card_setup", "_crew_card_check", "_crew_card_each", null],
+		["vent tooltip (release)", 3, "_vent_tip_setup", "_vent_tip_check", "_vent_tip_each", null],
+		["vent tooltip (covered)", 3, "_vent_cover_setup", "_vent_cover_check", "_vent_tip_each", null],
 		["kill", 3, "_kill_setup", "_kill_check", "", null],
 		["boss shield up", 3, "_boss_setup", "_boss_check_up", "", null],
 		["boss shield down", 3, "_boss_drop_shield", "_boss_check_down", "", null],
@@ -719,6 +727,108 @@ func _danger_board_check() -> String:
 		return "no vent countdown on the map (%s)" % str(dz["sky"])
 	if sh.tooltip.is_empty():
 		return "the crane's tooltip did not rise"
+	return ""
+
+
+var _crew_name := ""
+
+
+## A generated floor that drew a crew, its title card held up: line 2 must
+## carry the pack's name (read from game.encounter, never a literal) before it
+## is drawn, through _txt_c_fit at 0.9vw.
+func _crew_card_setup() -> void:
+	var g = Game.new(5, ShellTest.PACK_CONFIG.duplicate(true))
+	g._enter_floor(3)
+	_play(g)
+	_crew_name = String(g.encounter(3).get("name", ""))
+	var card: Array = sh._floor_card_lines(g.snapshot())
+	if _crew_name == "" or not String(card[1]).ends_with("·  " + _crew_name):
+		_fail("the title card's line 2 does not name the crew '%s' (%s)" % [_crew_name, " | ".join(card)])
+	_crew_card_each()
+
+
+## Keep the card mid-hang (fully opaque) on every frame of the phase.
+func _crew_card_each() -> void:
+	sh._floor_fade_ms = Time.get_ticks_msec() - int(sh.FLOOR_CARD_MS * 0.5)
+
+
+func _crew_card_check() -> String:
+	var age: int = Time.get_ticks_msec() - int(sh._floor_fade_ms)
+	if age < 0 or age >= sh.FLOOR_CARD_MS:
+		return "the title card was not up (%d ms)" % age
+	var card: Array = sh._floor_card_lines(sh.game.snapshot())
+	if not String(card[1]).contains(_crew_name):
+		return "the drawn card's line 2 lost the crew name (%s)" % String(card[1])
+	return ""
+
+
+var _vent_tip_at := Vector2i(-1, -1)
+var _vent_tip_want := ""
+
+
+## A floor with a several-kind reinforce list, the tooltip raised on its
+## SECOND vent: the line names reinforce_kind's answer for that vent and the
+## smog forecast's spawn_wave.
+func _vent_tip_setup() -> void:
+	var g = Game.new(5, ShellTest.PACK_CONFIG.duplicate(true))
+	g._enter_floor(4)
+	var vents: Array = g.map["vents"]
+	var vix: int = mini(1, vents.size() - 1)
+	_vent_tip_at = vents[vix]
+	g.terrain.erase(_vent_tip_at)
+	for e in g.enemies:
+		if e["pos"] == _vent_tip_at:
+			e["pos"] = Vector2i(-9, -9)
+	_play(g)
+	var sky: Dictionary = sh._danger_state()["sky"]
+	var kind: String = g.reinforce_kind(g.floor_def(4), int(sky.get("spawn_wave", -1)), vix)
+	_vent_tip_want = "releases " + Names.a_name(kind) if int(sky.get("spawn_wave", -1)) >= 0 and kind != "" else ""
+	if _vent_tip_want == "" or Content.FLOORS[3]["reinforce"].size() < 2:
+		_fail("fixture: no wave forecast on floor 4's vent %d (%s)" % [vix, str(sky)])
+	_vent_tip_each()
+
+
+## Raise it on every frame: the tile's screen point is valid once a frame of
+## THIS game has been laid out.
+func _vent_tip_each() -> void:
+	_raise_tip(_vent_tip_at)
+
+
+func _vent_tip_check() -> String:
+	if sh.tooltip_tile != _vent_tip_at:
+		return "the vent tooltip did not rise on %s" % str(_vent_tip_at)
+	for l in sh.tooltip:
+		if String(l).begins_with(_vent_tip_want):
+			return ""
+	return "the vent tooltip does not name its release '%s' (%s)" % [_vent_tip_want, str(sh.tooltip)]
+
+
+## The same vent with Roots over it: Game._tick_smog skips a vent that is not
+## _open, so the tooltip draws the covered line and names no release.
+func _vent_cover_setup() -> void:
+	var g = Game.new(5, ShellTest.PACK_CONFIG.duplicate(true))
+	g._enter_floor(4)
+	var vents: Array = g.map["vents"]
+	_vent_tip_at = vents[mini(1, vents.size() - 1)]
+	for e in g.enemies:
+		if e["pos"] == _vent_tip_at:
+			e["pos"] = Vector2i(-9, -9)
+	g.terrain[_vent_tip_at] = {"kind": "roots", "ttl": 3}
+	_play(g)
+	if Danger.vent_state(g.snapshot(), _vent_tip_at) != "covered":
+		_fail("fixture: roots do not cover floor 4's vent %s" % str(_vent_tip_at))
+	_vent_tip_want = Shell.VENT_COVERED_LINE
+	_vent_tip_each()
+
+
+func _vent_cover_check() -> String:
+	if sh.tooltip_tile != _vent_tip_at:
+		return "the covered vent's tooltip did not rise on %s" % str(_vent_tip_at)
+	for l in sh.tooltip:
+		if String(l).begins_with("releases"):
+			return "the covered vent's tooltip names a release (%s)" % str(sh.tooltip)
+	if not sh.tooltip.has(_vent_tip_want):
+		return "the covered vent's tooltip lost '%s' (%s)" % [_vent_tip_want, str(sh.tooltip)]
 	return ""
 
 

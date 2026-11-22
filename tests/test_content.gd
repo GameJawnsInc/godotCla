@@ -57,6 +57,20 @@ extends SceneTree
 ##     lotteries - and so would a loadout kit made only of ignored-tag
 ##     abilities, which is checked against LOADOUTS here. Same self-test
 ##     discipline: one bad fixture per shape.
+## 14) Block E - encounter packs and reinforce lists (Content.FLOORS): a
+##     non-boss row carries a non-empty "encounters" list of {id, name, w,
+##     enemies} packs and no "enemies" key, the boss row "encounters": [];
+##     pack ids are ^[a-z_]+$ and unique across the table, w an int >= 1, a
+##     roster a non-empty {ENEMIES kind: int >= 1} with no boss kind and no
+##     PACK_FORBIDDEN_KINDS; every pack on a floor matches pack 0's headcount
+##     (the layout-invariance rule) and objective multiset; floor 1 fields no
+##     gums kind (a gum intent draws from the main rng); every mobile trait
+##     is priced and each pack's heuristic mobile threat sits in
+##     PACK_THREAT_BAND x pack 0, the weighted mean in PACK_MEAN_BAND;
+##     "reinforce" is a non-empty list of mobile, non-boss, non-forbidden
+##     kinds whose entry 0 is CLASSIC_REINFORCEMENT. Self-test: every bad
+##     fixture rejected ALONE and when substituted into the live table (where
+##     every failure must name it), the good fixtures clean both ways.
 ## 15-17) fun pass (tables the sim never reads): RUN_SCORE / RUN_STAT_KEYS,
 ##     PACKAGE_INFO mirroring PACKAGES, and FEATS keeping to the closed
 ##     FEAT_REQ_KEYS vocabulary (stat keys in RUN_STAT_KEYS, total keys in
@@ -421,6 +435,12 @@ func _init() -> void:
 	print("resonances: %d rows (%d stat, %d mod, %d hooks): %s; %d of %d tags carry one" % [
 		Content.RESONANCES.size(), rshape["stat"], rshape["mod"], rshape["hooks"],
 		", ".join(rrows), Content.RESONANCES.size(), Content.TAGS.size()])
+
+	# 14e) Block E: FLOORS encounter packs and reinforce lists, the threat
+	# budget, then the lint's own self-test
+	failures.append_array(_lint_floors(Content.FLOORS, Content.ENEMIES))
+	failures.append_array(_lint_floors_selftest())
+	print(_floors_summary(Content.FLOORS, Content.ENEMIES))
 
 	# 15) fun pass: the cosmetic run-score table and the run-stat key list
 	# (the sim reads neither; meta/run_stats.gd and meta/profile.gd do), then
@@ -1468,7 +1488,7 @@ func _lint_resonance_selftest() -> Array:
 
 # --- 10) mutator lint -----------------------------------------------------------
 
-const MUTATOR_BOOL_KEYS := ["shop", "kit_ban", "draft_upgrades_only", "open_pool", "shop_reroll"]
+const MUTATOR_BOOL_KEYS := ["shop", "kit_ban", "draft_upgrades_only", "open_pool", "shop_reroll", "encounter_packs", "biome_reinforce"]
 const MUTATOR_ARRAY_KEYS := ["pool_ban"]
 
 
@@ -1946,6 +1966,384 @@ func _lint_d4_selftest() -> Array:
 	print("d4 lint self-test: %d bad slot lists -> %d rejected; %d good -> clean; %d bad name lists -> %d; %d bad ignored-tag lists -> %d; %d good -> clean" % [
 		BAD_DRAFT_SLOTS.size(), bad_slots, GOOD_DRAFT_SLOTS.size(), BAD_NAME_LISTS.size(), bad_lists,
 		bad_ignored.size(), bad_tags, GOOD_IGNORED_TAGS.size()])
+	return out
+
+
+# --- 14) Block E: encounter packs and reinforce lists (Content.FLOORS) -------
+
+const PACK_KEYS := ["id", "name", "w", "enemies"]
+## Products of split / weld / summon: they enter a floor through a rule, never
+## through a roster.
+const PACK_FORBIDDEN_KINDS := ["sludgeling", "welded_hulk"]
+## The objective traits: a kind carrying one is the floor's objective and is
+## conserved across its packs (rule R3), excluded from the threat budget and
+## never released by a vent.
+const PACK_OBJECTIVE_TRAITS := ["summons", "oozes", "stokes"]
+## The vent kind the classic game releases; reinforce[0] must be it, because
+## the fixed_shift control (biome_reinforce false) releases reinforce[0].
+const CLASSIC_REINFORCEMENT := "drill_bot"
+## The heuristic threat model (docs: spec variety 3.2): T = EHP x DPT, EHP = hp
+## plus PACK_TRAIT_EHP, DPT = dmg (x 0.5 when slow) plus PACK_TRAIT_DPT. A
+## mobile kind carrying a trait in neither table fails the lint, so a new
+## behaviour must be priced before a pack may field it.
+const PACK_TRAIT_DPT := {
+	"fuses": 0.25, "oil_trail": 0.25, "smoke_burst": 0.25, "spiked": 0.5, "fast": 0.5,
+	"drains": 1.0, "gums": 1.0, "drags": 0.75, "igniter": 1.0,
+}
+const PACK_TRAIT_EHP := {"splits": 1.0}
+const PACK_THREAT_BAND := Vector2(0.75, 1.25)
+const PACK_MEAN_BAND := Vector2(0.90, 1.10)
+
+
+func _kind_has_trait(enemies: Dictionary, kind: String, traits: Array) -> bool:
+	for t in enemies.get(kind, {}).get("traits", []):
+		if traits.has(t):
+			return true
+	return false
+
+
+## Heuristic mobile threat of one kind (0 for an objective kind).
+func _kind_threat(enemies: Dictionary, kind: String) -> float:
+	var row: Dictionary = enemies.get(kind, {})
+	if row.is_empty() or _kind_has_trait(enemies, kind, PACK_OBJECTIVE_TRAITS):
+		return 0.0
+	var ehp := float(row.get("hp", 0))
+	var dpt := float(row.get("dmg", 0))
+	if bool(row.get("slow", false)):
+		dpt *= 0.5
+	for t in row.get("traits", []):
+		ehp += float(PACK_TRAIT_EHP.get(t, 0.0))
+		dpt += float(PACK_TRAIT_DPT.get(t, 0.0))
+	return ehp * dpt
+
+
+func _roster_threat(enemies: Dictionary, roster: Dictionary) -> float:
+	var t := 0.0
+	for kind in roster:
+		t += _kind_threat(enemies, String(kind)) * float(roster[kind])
+	return t
+
+
+## Lints a FLOORS-shaped Array against an ENEMIES-shaped table (a parameter so
+## the self-test can price a fake kind). Every failure string starts with
+## "floor <n> <name>:" so a fixture can be found by its name.
+func _lint_floors(rows: Array, enemies: Dictionary) -> Array:
+	var out: Array = []
+	var seen := {}
+	for i in rows.size():
+		out.append_array(_lint_floor_row(rows[i], i + 1, enemies, seen))
+	return out
+
+
+## One FLOORS row at floor n. `seen` (pack id -> "floor n") carries the ids
+## already linted, so uniqueness is checked across the whole table.
+func _lint_floor_row(row, n: int, enemies: Dictionary, seen: Dictionary) -> Array:
+	var out: Array = []
+	if not (row is Dictionary):
+		return ["floor %d ?: row is not a Dictionary" % n]
+	var where := "floor %d %s" % [n, str(row.get("name", "?"))]
+	var boss := bool(row.get("boss", false))
+	var id_re := RegEx.create_from_string("^[a-z_]+$")
+	if row.has("enemies"):
+		out.append("%s: carries the pre-v15 \"enemies\" key (a roster lives in \"encounters\")" % where)
+	var packs = row.get("encounters", null)
+	if not (packs is Array):
+		out.append("%s: missing \"encounters\" Array" % where)
+		packs = []
+	if boss and not packs.is_empty():
+		out.append("%s: the boss row must carry \"encounters\": [] (the arena spawns its boss)" % where)
+	if not boss and packs.is_empty():
+		out.append("%s: a non-boss row needs at least one encounter pack" % where)
+	var head0 := -1
+	var obj0 := {}
+	var t0 := -1.0
+	var wsum := 0
+	var wratio := 0.0
+	var ratios_ok := true
+	for pi in packs.size():
+		var p = packs[pi]
+		var pw := "%s pack %d" % [where, pi]
+		if not (p is Dictionary):
+			out.append("%s: not a Dictionary" % pw)
+			ratios_ok = false
+			continue
+		for k in p:
+			if not PACK_KEYS.has(k):
+				out.append("%s: unknown pack key '%s'" % [pw, str(k)])
+		for k in PACK_KEYS:
+			if not p.has(k):
+				out.append("%s: missing pack key '%s'" % [pw, k])
+		var pid = p.get("id", null)
+		if not (pid is String) or id_re.search(String(pid)) == null:
+			out.append("%s: id %s is not a ^[a-z_]+$ String" % [pw, str(pid)])
+		else:
+			pw = "%s %s" % [where, pid]
+			if seen.has(pid):
+				out.append("%s: id '%s' duplicates %s (pack ids are unique across FLOORS)" % [pw, pid, seen[pid]])
+			else:
+				seen[pid] = "floor %d" % n
+		if not (p.get("name", null) is String) or String(p["name"]).is_empty():
+			out.append("%s: missing or empty name" % pw)
+		var w = p.get("w", null)
+		if not (w is int) or int(w) < 1:
+			out.append("%s: w %s must be an int >= 1" % [pw, str(w)])
+			ratios_ok = false
+		var roster = p.get("enemies", null)
+		if not (roster is Dictionary) or roster.is_empty():
+			out.append("%s: enemies must be a non-empty Dictionary" % pw)
+			ratios_ok = false
+			continue
+		var head := 0
+		var obj := {}
+		var roster_ok := true
+		for kind in roster:
+			var cnt = roster[kind]
+			if not (kind is String) or not enemies.has(kind):
+				out.append("%s: unknown kind %s" % [pw, str(kind)])
+				roster_ok = false
+				continue
+			if _kind_has_trait(enemies, kind, ["boss"]):
+				out.append("%s: boss kind '%s' in a pack" % [pw, kind])
+				roster_ok = false
+			if PACK_FORBIDDEN_KINDS.has(kind):
+				out.append("%s: '%s' is a product of a rule, never a roster entry" % [pw, kind])
+			if not (cnt is int) or int(cnt) < 1:
+				out.append("%s: count %s for '%s' must be an int >= 1" % [pw, str(cnt), kind])
+				roster_ok = false
+				continue
+			head += int(cnt)
+			if _kind_has_trait(enemies, kind, PACK_OBJECTIVE_TRAITS):
+				obj[kind] = int(cnt)
+			elif not _kind_has_trait(enemies, kind, ["boss"]):
+				for t in enemies[kind].get("traits", []):
+					if not PACK_TRAIT_DPT.has(t) and not PACK_TRAIT_EHP.has(t):
+						out.append("%s: mobile kind '%s' carries trait '%s' the threat model does not price" % [pw, kind, str(t)])
+						roster_ok = false
+			if n == 1 and _kind_has_trait(enemies, kind, ["gums"]):
+				out.append("%s: floor 1 fields gums kind '%s' (a gum intent draws from the main rng at Game.new)" % [pw, kind])
+		if not roster_ok:
+			ratios_ok = false
+			continue
+		if head0 < 0:
+			head0 = head
+			obj0 = obj
+		else:
+			if head != head0:
+				out.append("%s: headcount %d != pack 0's %d (equal headcounts keep every layout identical)" % [pw, head, head0])
+			if str(_sorted_dict(obj)) != str(_sorted_dict(obj0)):
+				out.append("%s: objective kinds %s != pack 0's %s (packs vary the crew, never the objective)" % [pw, str(_sorted_dict(obj)), str(_sorted_dict(obj0))])
+		var t := _roster_threat(enemies, roster)
+		if pi == 0:
+			t0 = t
+			if t0 <= 0.0:
+				out.append("%s: pack 0 has no mobile threat to budget against" % pw)
+				ratios_ok = false
+				continue
+		if ratios_ok and t0 > 0.0 and w is int:
+			var r := t / t0
+			if r < PACK_THREAT_BAND.x or r > PACK_THREAT_BAND.y:
+				out.append("%s: mobile threat x%.2f of pack 0, outside %.2f-%.2f" % [pw, r, PACK_THREAT_BAND.x, PACK_THREAT_BAND.y])
+			wsum += int(w)
+			wratio += r * float(w)
+	if ratios_ok and wsum > 0:
+		var mean := wratio / float(wsum)
+		if mean < PACK_MEAN_BAND.x or mean > PACK_MEAN_BAND.y:
+			out.append("%s: weighted mean threat x%.3f of pack 0, outside %.2f-%.2f" % [where, mean, PACK_MEAN_BAND.x, PACK_MEAN_BAND.y])
+	var rein = row.get("reinforce", null)
+	if not (rein is Array) or rein.is_empty():
+		out.append("%s: \"reinforce\" must be a non-empty Array of kinds" % where)
+	else:
+		for kind in rein:
+			if not (kind is String) or not enemies.has(kind):
+				out.append("%s: reinforce kind %s is not an ENEMIES row" % [where, str(kind)])
+			elif _kind_has_trait(enemies, kind, ["boss"]) or _kind_has_trait(enemies, kind, PACK_OBJECTIVE_TRAITS) \
+					or PACK_FORBIDDEN_KINDS.has(kind):
+				out.append("%s: reinforce kind '%s' must be a mobile, non-boss, non-forbidden kind" % [where, kind])
+		if str(rein[0]) != CLASSIC_REINFORCEMENT:
+			out.append("%s: reinforce[0] is '%s', must be the classic '%s' (fixed_shift releases entry 0)" % [where, str(rein[0]), CLASSIC_REINFORCEMENT])
+	return out
+
+
+func _sorted_dict(d: Dictionary) -> Dictionary:
+	var keys: Array = d.keys()
+	keys.sort()
+	var out := {}
+	for k in keys:
+		out[k] = d[k]
+	return out
+
+
+## The printed table summary (packs per floor, threat ratio range, means, vents).
+func _floors_summary(rows: Array, enemies: Dictionary) -> String:
+	var counts: Array = []
+	var total := 0
+	var rmin := 99.0
+	var rmax := 0.0
+	var mmin := 99.0
+	var mmax := 0.0
+	var vents: Array = []
+	for row in rows:
+		var packs: Array = row.get("encounters", [])
+		counts.append(str(packs.size()))
+		total += packs.size()
+		if packs.is_empty():
+			pass
+		else:
+			var t0 := _roster_threat(enemies, packs[0]["enemies"])
+			var ws := 0
+			var wr := 0.0
+			for pi in range(1, packs.size()):
+				var r := _roster_threat(enemies, packs[pi]["enemies"]) / t0
+				rmin = minf(rmin, r)
+				rmax = maxf(rmax, r)
+			for p in packs:
+				ws += int(p["w"])
+				wr += _roster_threat(enemies, p["enemies"]) / t0 * float(p["w"])
+			var m := wr / float(ws)
+			mmin = minf(mmin, m)
+			mmax = maxf(mmax, m)
+		for k in row.get("reinforce", []):
+			if not vents.has(k):
+				vents.append(k)
+	return "encounters: %d floors, %d packs (%s), mobile threat x%.2f-%.2f, means x%.3f-%.3f; vents %s" % [
+		rows.size(), total, "/".join(counts), rmin, rmax, mmin, mmax, " ".join(vents)]
+
+
+## Bad fixtures: id -> {floor, row, enemies?}. The row carries only the keys
+## the lint reads; the self-test names it after the fixture and, for the table
+## pass, merges it over a copy of the live row at `floor`. "enemies" adds fake
+## kinds to the ENEMIES table the fixture is linted against.
+const BAD_FLOORS := {
+	"zf_no_encounters": {"floor": 2, "row": {"reinforce": ["drill_bot"]}},
+	"zf_old_enemies_key": {"floor": 2, "row": {"enemies": {"drill_bot": 2},
+		"encounters": [{"id": "zf_a_one", "name": "x", "w": 1, "enemies": {"drill_bot": 2}}], "reinforce": ["drill_bot"]}},
+	"zf_empty_packs": {"floor": 2, "row": {"encounters": [], "reinforce": ["drill_bot"]}},
+	"zf_boss_with_packs": {"floor": 7, "row": {"boss": true,
+		"encounters": [{"id": "zf_b_one", "name": "x", "w": 1, "enemies": {"drill_bot": 2}}], "reinforce": ["drill_bot"]}},
+	"zf_float_w": {"floor": 2, "row": {"encounters": [{"id": "zf_c_one", "name": "x", "w": 2.0, "enemies": {"drill_bot": 2}}], "reinforce": ["drill_bot"]}},
+	"zf_zero_w": {"floor": 2, "row": {"encounters": [{"id": "zf_d_one", "name": "x", "w": 0, "enemies": {"drill_bot": 2}}], "reinforce": ["drill_bot"]}},
+	"zf_bad_id": {"floor": 2, "row": {"encounters": [{"id": "Drill-Pair", "name": "x", "w": 1, "enemies": {"drill_bot": 2}}], "reinforce": ["drill_bot"]}},
+	"zf_no_name": {"floor": 2, "row": {"encounters": [{"id": "zf_e_one", "name": "", "w": 1, "enemies": {"drill_bot": 2}}], "reinforce": ["drill_bot"]}},
+	"zf_pack_key": {"floor": 2, "row": {"encounters": [{"id": "zf_f_one", "name": "x", "w": 1, "enemies": {"drill_bot": 2}, "elite": true}], "reinforce": ["drill_bot"]}},
+	"zf_empty_roster": {"floor": 2, "row": {"encounters": [{"id": "zf_g_one", "name": "x", "w": 1, "enemies": {}}], "reinforce": ["drill_bot"]}},
+	"zf_zero_count": {"floor": 2, "row": {"encounters": [{"id": "zf_h_one", "name": "x", "w": 1, "enemies": {"drill_bot": 2, "rust_hound": 0}}], "reinforce": ["drill_bot"]}},
+	"zf_unknown_kind": {"floor": 2, "row": {"encounters": [{"id": "zf_i_one", "name": "x", "w": 1, "enemies": {"drill_bot": 1, "laser_bot": 1}}], "reinforce": ["drill_bot"]}},
+	"zf_boss_kind": {"floor": 2, "row": {"encounters": [{"id": "zf_j_one", "name": "x", "w": 1, "enemies": {"drill_bot": 1, "overseer": 1}}], "reinforce": ["drill_bot"]}},
+	"zf_sludgeling": {"floor": 2, "row": {"encounters": [
+		{"id": "zf_k_one", "name": "x", "w": 3, "enemies": {"drill_bot": 1, "leech_drone": 1}},
+		{"id": "zf_k_two", "name": "x", "w": 1, "enemies": {"drill_bot": 1, "sludgeling": 1}}], "reinforce": ["drill_bot"]}},
+	"zf_headcount": {"floor": 2, "row": {"encounters": [
+		{"id": "zf_l_one", "name": "x", "w": 3, "enemies": {"drill_bot": 2}},
+		{"id": "zf_l_two", "name": "x", "w": 1, "enemies": {"drill_bot": 1, "coal_golem": 1, "leech_drone": 1}}], "reinforce": ["drill_bot"]}},
+	"zf_objective": {"floor": 4, "row": {"encounters": [
+		{"id": "zf_m_one", "name": "x", "w": 3, "enemies": {"drill_bot": 2, "extractor_engine": 1}},
+		{"id": "zf_m_two", "name": "x", "w": 1, "enemies": {"drill_bot": 2, "leech_drone": 1}}], "reinforce": ["drill_bot"]}},
+	"zf_dup_in_row": {"floor": 2, "row": {"encounters": [
+		{"id": "zf_n_one", "name": "x", "w": 3, "enemies": {"drill_bot": 2}},
+		{"id": "zf_n_one", "name": "y", "w": 1, "enemies": {"drill_bot": 1, "coal_golem": 1}}], "reinforce": ["drill_bot"]}},
+	# legal alone, a duplicate of a live floor-1 pack id in the table
+	"zf_dup_across": {"floor": 3, "row": {"encounters": [
+		{"id": "drill_pair", "name": "x", "w": 1, "enemies": {"drill_bot": 2}}], "reinforce": ["drill_bot"]}},
+	"zf_floor1_gums": {"floor": 1, "row": {"encounters": [
+		{"id": "zf_o_one", "name": "x", "w": 3, "enemies": {"drill_bot": 1, "leech_drone": 1}},
+		{"id": "zf_o_two", "name": "x", "w": 1, "enemies": {"drill_bot": 1, "tar_spitter": 1}}], "reinforce": ["drill_bot"]}},
+	"zf_unpriced_trait": {"floor": 2, "enemies": {"zz_borer": {"name": "Borer", "hp": 2, "dmg": 1, "slow": false, "traits": ["burrows"]}},
+		"row": {"encounters": [
+		{"id": "zf_p_one", "name": "x", "w": 3, "enemies": {"drill_bot": 2}},
+		{"id": "zf_p_two", "name": "x", "w": 1, "enemies": {"drill_bot": 1, "zz_borer": 1}}], "reinforce": ["drill_bot"]}},
+	"zf_threat_outlier": {"floor": 2, "row": {"encounters": [
+		{"id": "zf_q_one", "name": "x", "w": 9, "enemies": {"leech_drone": 1, "drill_bot": 1}},
+		{"id": "zf_q_two", "name": "x", "w": 1, "enemies": {"coal_golem": 2}}], "reinforce": ["drill_bot"]}},
+	"zf_mean_low": {"floor": 2, "row": {"encounters": [
+		{"id": "zf_r_one", "name": "x", "w": 1, "enemies": {"drill_bot": 2}},
+		{"id": "zf_r_two", "name": "x", "w": 9, "enemies": {"drill_bot": 1, "rust_hound": 1}}], "reinforce": ["drill_bot"]}},
+	"zf_empty_reinforce": {"floor": 2, "row": {"encounters": [{"id": "zf_s_one", "name": "x", "w": 1, "enemies": {"drill_bot": 2}}], "reinforce": []}},
+	"zf_reinforce_objective": {"floor": 2, "row": {"encounters": [{"id": "zf_t_one", "name": "x", "w": 1, "enemies": {"drill_bot": 2}}],
+		"reinforce": ["drill_bot", "extractor_engine"]}},
+	"zf_reinforce_boss": {"floor": 2, "row": {"encounters": [{"id": "zf_u_one", "name": "x", "w": 1, "enemies": {"drill_bot": 2}}],
+		"reinforce": ["drill_bot", "furnace_core"]}},
+	"zf_reinforce_first": {"floor": 2, "row": {"encounters": [{"id": "zf_v_one", "name": "x", "w": 1, "enemies": {"drill_bot": 2}}],
+		"reinforce": ["rust_hound", "drill_bot"]}},
+}
+## Bad fixtures whose violation is a relationship with the live table: legal
+## alone, rejected only in company.
+const BAD_FLOORS_PAIR_ONLY := ["zf_dup_across"]
+const GOOD_FLOORS := {
+	"zg_floor1_row": {"floor": 1, "row": {"encounters": [
+		{"id": "zg_a_one", "name": "Alpha", "w": 3, "enemies": {"drill_bot": 2}},
+		{"id": "zg_a_two", "name": "Beta", "w": 2, "enemies": {"drill_bot": 1, "coal_golem": 1}}],
+		"reinforce": ["drill_bot", "rust_hound"]}},
+	"zg_objective_row": {"floor": 4, "row": {"encounters": [
+		{"id": "zg_b_one", "name": "Gamma", "w": 3, "enemies": {"drill_bot": 1, "tar_spitter": 1, "extractor_engine": 1}},
+		{"id": "zg_b_two", "name": "Delta", "w": 2, "enemies": {"drill_bot": 1, "leech_drone": 1, "extractor_engine": 1}}],
+		"reinforce": ["drill_bot", "coal_golem", "cinder_mite"]}},
+	"zg_boss_row": {"floor": 7, "row": {"boss": true, "encounters": [], "reinforce": ["drill_bot"]}},
+}
+
+
+## The fixture's row named after the fixture, merged over a copy of the live
+## row at its floor (for the table pass) or standing alone.
+func _fixture_row(fid: String, fx: Dictionary, over_live: bool) -> Dictionary:
+	var n := int(fx["floor"])
+	var row: Dictionary = {}
+	if over_live:
+		row = Content.FLOORS[n - 1].duplicate(true)
+		for k in ["encounters", "reinforce", "enemies", "boss"]:
+			row.erase(k)
+	row.merge(fx["row"].duplicate(true), true)
+	row["name"] = fid
+	return row
+
+
+func _fixture_enemies(fx: Dictionary) -> Dictionary:
+	var en: Dictionary = Content.ENEMIES.duplicate(true)
+	en.merge(fx.get("enemies", {}), true)
+	return en
+
+
+func _lint_floors_selftest() -> Array:
+	var out: Array = []
+	var alone := 0
+	var tabled := 0
+	for fid in BAD_FLOORS:
+		var fx: Dictionary = BAD_FLOORS[fid]
+		var n := int(fx["floor"])
+		var en := _fixture_enemies(fx)
+		# alone: the row by itself at its floor
+		var lone: Array = _lint_floor_row(_fixture_row(fid, fx, false), n, en, {})
+		if BAD_FLOORS_PAIR_ONLY.has(fid):
+			if not lone.is_empty():
+				out.append("floors lint self-test: '%s' is meant to be legal alone: %s" % [fid, str(lone)])
+		elif lone.is_empty():
+			out.append("floors lint self-test: '%s' is rejected only in company - its rule is unexercised" % fid)
+		else:
+			alone += 1
+		# in a table: substituted into the live FLOORS at its floor; every
+		# failure must name the fixture (no collateral from the live rows)
+		var table: Array = Content.FLOORS.duplicate(true)
+		table[n - 1] = _fixture_row(fid, fx, true)
+		var fails: Array = _lint_floors(table, en)
+		if fails.is_empty():
+			out.append("floors lint self-test: '%s' accepted inside the live table" % fid)
+		else:
+			tabled += 1
+		for f in fails:
+			if String(f).find(fid) < 0:
+				out.append("floors lint self-test: '%s' in the table raised a failure that does not name it: %s" % [fid, f])
+	var good := 0
+	for fid in GOOD_FLOORS:
+		var fx: Dictionary = GOOD_FLOORS[fid]
+		var n := int(fx["floor"])
+		var lone: Array = _lint_floor_row(_fixture_row(fid, fx, false), n, Content.ENEMIES, {})
+		var table: Array = Content.FLOORS.duplicate(true)
+		table[n - 1] = _fixture_row(fid, fx, true)
+		var fails: Array = lone + _lint_floors(table, Content.ENEMIES)
+		for f in fails:
+			out.append("floors lint self-test: good fixture rejected: %s" % f)
+		if fails.is_empty():
+			good += 1
+	print("floors lint self-test: %d bad rows -> %d rejected alone, %d rejected in the table; %d good rows -> %d clean" % [
+		BAD_FLOORS.size(), alone, tabled, GOOD_FLOORS.size(), good])
 	return out
 
 

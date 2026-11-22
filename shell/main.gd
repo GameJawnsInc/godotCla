@@ -230,6 +230,14 @@ const FX_MS := 700
 var _fx: Array = []  # transient map effects {kind, pos: Vector2 tile, text, col, t0}
 var _floor_fade_ms := -99999  # descend wipe: new floor fades in from dark
 const FLOOR_CARD_MS := 1400  # how long the floor title card hangs over the map
+## the title card's line 2 on a floor that drew a crew (Block E1); the fit
+## gate in tests/test_shell.gd measures this exact template
+const FLOOR_CARD_CREW := "floor %d of 7  ·  %s"
+## the vent tooltip's line for a vent Danger.vent_state calls "covered" (a
+## blocking terrain kind over it): _tick_smog skips a vent that is not _open,
+## so it releases nothing there - the tooltip's headline is the terrain's own
+## name, so this line says a vent is under it
+const VENT_COVERED_LINE := "vent beneath - releases nothing while covered"
 var profile  # meta career: unlocks tiers/packages across runs (meta/profile.gd)
 ## The four run choices the title screen makes, all persisted in tender.cfg
 ## and all clamped to what the career unlocked (_clamp_selection). PLAY turns
@@ -336,8 +344,12 @@ var _daily_armed := false
 ## button, a tap that hits nothing, and ESC / Back at the menu root.
 var _play_armed := false
 ## The armed PLAY row names what the second tap throws away (the menu has no
-## note line, unlike the DAILY sheet); _check_menu_layout holds it to size.
+## note line, unlike the DAILY sheet); _check_menu_layout holds both to size.
+## TODAY'S only when the resumable try IS today's daily (_play_armed_label):
+## yesterday's unfinished try, or a legacy header-less save routed as a daily,
+## reads the date-free form.
 const PLAY_ARMED_LABEL := "TAP AGAIN: ABANDON TODAY'S TRY"
+const PLAY_ARMED_OLD_LABEL := "TAP AGAIN: ABANDON YOUR DAILY TRY"
 ## The CAREER sheet (mode "career" on the menu): GOALS / FEATS / RECORDS, paged
 ## CARDS_PER_PAGE cards at a time (layout, so a shell const, not a Profile one).
 const CARDS_PER_PAGE := 5
@@ -1537,20 +1549,48 @@ func _show_tooltip(pos: Vector2) -> void:
 		if not row.is_empty():
 			lines = [row[1], row[2]]
 		if snap["map"]["vents"].has(t):
-			# a vent under growth is sealed whatever the terrain row says
-			if snap["terrain"].has(t) and String(snap["terrain"][t]["kind"]) == "growth":
+			# what _tick_smog does at this vent on a wave, by its own tests
+			# (Danger.vent_state): a vent under growth is sealed whatever the
+			# terrain row says, and a covered one (_open false: a blocking
+			# terrain kind such as Roots over it) releases nothing at all, so
+			# it must not name a machine that will not come
+			var vstate := Danger.vent_state(snap, t)
+			if vstate == "sealed":
 				lines.append("sealed - absorbs the next release")
+			elif vstate == "covered":
+				lines.append(VENT_COVERED_LINE)
 			else:
-				var vin := int(dz.get("sky", {}).get("spawn_in", -1))
-				if vin > 1:
-					lines.append("releases in %d turns" % vin)
-				elif vin == 1:
-					lines.append("releases next turn")
+				var sky: Dictionary = dz.get("sky", {})
+				var vl := _vent_line(_vent_kind(sky, snap["map"]["vents"].find(t)), int(sky.get("spawn_in", -1)))
+				if vl != "":
+					lines.append(vl)
 	if lines.is_empty():
 		return
 	tooltip = lines
 	tooltip_tile = t
 	queue_redraw()
+
+
+## What vent `vi` (its index in map.vents) releases on the next wave the smog
+## forecast sees (Block E2): the sim's own reinforce_kind of the forecast's
+## spawn_wave, "" when no wave is inside the horizon. Read-only.
+func _vent_kind(sky: Dictionary, vi: int) -> String:
+	var wave := int(sky.get("spawn_wave", -1))
+	if wave < 0 or vi < 0 or game == null:
+		return ""
+	return game.reinforce_kind(game.floor_def(int(game.floor_num)), wave, vi)
+
+
+## The vent tooltip's countdown line: "releases a Rust Hound in 4 turns" /
+## "releases a Rust Hound next turn", the old kind-free words when the kind is
+## unknown, "" when nothing is due inside the horizon.
+func _vent_line(kind: String, vin: int) -> String:
+	var what := (Names.a_name(kind) + " ") if kind != "" else ""
+	if vin > 1:
+		return "releases %sin %d turns" % [what, vin]
+	if vin == 1:
+		return "releases %snext turn" % what
+	return ""
 
 
 ## What the danger layer adds to an enemy's tooltip: why its intent will not
@@ -2279,7 +2319,7 @@ func _menu_rows() -> Array:
 		or FileAccess.file_exists(run_save_path)
 	if has_resume:
 		rows.append(["RESUME RUN", "resume", true, "", ""])
-	rows.append([PLAY_ARMED_LABEL if _play_armed else "PLAY", "play", true, "", ""])
+	rows.append([_play_armed_label() if _play_armed else "PLAY", "play", true, "", ""])
 	var di := _daily_now()
 	rows.append(["DAILY", "daily", not bool(di["streak"]["played_today"]), "", "a"])
 	rows.append(["CAREER", "career", false, _new_badge("feat"), "a"])
@@ -2918,6 +2958,14 @@ func _resumable_run() -> Dictionary:
 		return {}
 	var kind = head.get("kind", "daily" if _legacy_seed_mode == "daily" else "career")
 	return {"kind": str(kind), "seed": int(head.get("seed", -1))}
+
+
+## The armed PLAY row's words: TODAY'S only when the resumable daily's seed
+## is today's daily seed, else the date-free form (an older try is not today's).
+func _play_armed_label() -> String:
+	if int(_resumable_run().get("seed", -1)) == int(_daily_now()["seed"]):
+		return PLAY_ARMED_LABEL
+	return PLAY_ARMED_OLD_LABEL
 
 
 ## The run save's header, read once per write (see _save_head_cache).
@@ -4075,7 +4123,8 @@ func _draw_map(snap: Dictionary, vw: float, vh: float) -> void:
 		var nsz := int(vh * 0.032)
 		_txt_c(vw / 2.0 + 2, scy + 2, card[0], Color(0, 0, 0, 0.6 * sa), nsz)
 		_txt_c(vw / 2.0, scy, card[0], Color(COL_GOLD, sa), nsz)
-		_txt_c(vw / 2.0, scy + vh * 0.028, card[1], Color(COL_CREAM, sa * 0.85), int(vh * 0.018))
+		# line 2 may carry the crew's name (Block E1): fitted, never clipped
+		_txt_c_fit(vw / 2.0, scy + vh * 0.028, card[1], Color(COL_CREAM, sa * 0.85), int(vh * 0.018), vw * 0.9)
 		if card.size() > 2:
 			_txt_c(vw / 2.0, scy + vh * 0.052, card[2], Color(0.6, 0.85, 0.55, sa * 0.9), int(vh * 0.016))
 
@@ -4116,12 +4165,18 @@ func _draw_badge(r: Rect2, bd: Dictionary) -> void:
 		_txt(np, text, col, nsz)
 
 
-## The floor's title card: name, "floor N of 7", and what wakes the stairs -
-## on the boss floor "defeat the Overseer" (it has no quota, so the old line
-## read "cleanse 0 to wake the stairs"), and no third line on a floor that
-## needs nothing.
+## The floor's title card: name, "floor N of 7" (Block E1: plus the crew the
+## floor drew, "floor 3 of 7  ·  Golem Picket", read off game.encounter - the
+## boss floor and the tutorial's scripted floor have none and keep the bare
+## line), and what wakes the stairs - on the boss floor "defeat the Overseer"
+## (it has no quota, so the old line read "cleanse 0 to wake the stairs"), and
+## no third line on a floor that needs nothing.
 func _floor_card_lines(snap: Dictionary) -> Array:
-	var out: Array = [String(snap["floor_name"]).to_upper(), "floor %d of 7" % int(snap["floor"])]
+	var line2 := "floor %d of 7" % int(snap["floor"])
+	var crew: Dictionary = game.encounter(int(snap["floor"])) if game != null else {}
+	if String(crew.get("name", "")) != "":
+		line2 = FLOOR_CARD_CREW % [int(snap["floor"]), String(crew["name"])]
+	var out: Array = [String(snap["floor_name"]).to_upper(), line2]
 	if int(snap["green_need"]) > 0:
 		out.append("cleanse %d to wake the stairs" % int(snap["green_need"]))
 	else:

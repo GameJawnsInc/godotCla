@@ -139,8 +139,17 @@ screen says about what is about to hurt you. Nothing here changes a run.
   alive, "stokers bring the choke N turns sooner", since that is their total;
   when without them the choke would not come inside the 60-turn look-ahead
   at all, "brings the choke in N turns - none for 60+ without it"); holding yourself reads `ending here: 3
-  incoming - LETHAL`; holding a vent reads `releases in 4 turns` or `sealed -
-  absorbs the next release`.
+  incoming - LETHAL`; holding a vent names what it will release next and
+  when — `releases a Rust Hound in 4 turns`, `releases a Drill Bot next turn`
+  (each floor has its own reinforcement list and each vent takes its own turn
+  through it, so two vents on one floor can release different machines; the
+  shell asks the sim, through the smog forecast's wave and
+  `Game.reinforce_kind`; with no wave inside the 60-turn look-ahead the
+  vent shows no release line at all) — or `sealed - absorbs the next
+  release` under growth, or `vent beneath - releases nothing while covered`
+  under Roots (the sim releases nothing from a vent that a blocking tile, a
+  machine or you are standing on, so the line names no machine; it follows
+  the sim's own rule through `Danger.vent_state`).
 
 ## Touch controls (Android / any touchscreen)
 
@@ -155,8 +164,10 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
   or tap again to end turn` (or `strike first` when only hitting the
   attacker saves you, or names the glowing satchel item, or the stairs; a
   blow that wins the run outright comes first of all: `strike to win` when
-  only one strike survives, `the glowing item wins` with only the winning
-  item glowing) and a second press within 1.5 s goes through. END TURN, the
+  that blow is the only strike you could make, `strike the Overseer to win`
+  when another machine stands beside you too (the line names no direction,
+  so it names the target), `the glowing item wins` with only
+  the winning item glowing) and a second press within 1.5 s goes through. END TURN, the
   D-pad's END, SPACE and ENTER never ask — pressing END is a decision
 - **hold your finger on any tile**: tooltip naming what's there, its HP,
   and exactly what it will do next turn
@@ -209,11 +220,20 @@ one and it breaks.
 in cyan on the boss bar; a phase change shows a banner saying what changed.
 The floor-7 title card reads "defeat the Overseer".
 
+**Crews.** Every generated floor fields one of several named crews (Block E
+encounter packs — the boss floor and the tutorial's scripted floor have
+none). The floor's title card says which under its number, `floor 3 of 7  ·
+Golem Picket` (shrunk to fit the width rather than clipped), and the floor
+line in the log reads `— Strip Mine I · Hound and Handler —`.
+
 **Banners** share one queue (boss phase, then a resonance awakening, floor
 restored, stairs awaken); one shows at a time.
 
 **Log.** Names, never ids ("Cinder Grip roots the Coal Golem", "A vent
-releases a Coal Golem"); repeats count up ("Oil ignites x3"); each line is
+releases a Coal Golem"; a reinforcement names the machine the sim says came
+out — its event's kind, the boss's phase-2 golem included — and a wave that
+releases different machines at different vents reads one line per kind,
+"Vents release 2 Rust Hounds" beside "A vent releases a Drill Bot"); repeats count up ("Oil ignites x3"); each line is
 coloured by kind (hurt red, rewards gold, heals green, combos violet, boss
 orange) and long lines shrink to fit. A cleanse says what it paid: "Cleansed
 +1 bloom · green 3/5", or "Cleansed - enemy-made oil pays no bloom".
@@ -381,7 +401,9 @@ after. While a try of today's daily is still in progress (you left it for
 the menu, or the tutorial displaced it) the button reads RESUME TODAY'S TRY
 and takes you back into that try instead of starting over; the menu's PLAY
 then reads TAP AGAIN: ABANDON TODAY'S TRY on the first tap, because a career
-start overwrites the one run save and the try is already counted; any other
+start overwrites the one run save and the try is already counted (an older
+unfinished daily — yesterday's, or a save from before the daily had its own
+button — reads TAP AGAIN: ABANDON YOUR DAILY TRY: it is not today's); any other
 tap, on a button or not, and Back / ESC disarm it. Every start
 counts as a try, a retry included. A streak line counts
 the days in a row you finished a daily (it stays alive until a whole day is

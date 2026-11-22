@@ -67,6 +67,17 @@ extends SceneTree
 ## takes and is identical under a re-seeded clone rng, the enemy damage equals
 ## the telegraph sum, smog_forecast matches an end-turn-only clone, and no
 ## query moves state_hash or rng.state.
+## e (Block E, bump 15): the encounter-pack draw recomputed independently
+## (hash([seed, n, "roster"]), weighted walk) over seeds 1..50 x floors 1..6
+## from a game standing on floor 1, no main-rng or hash movement from any of
+## the new queries, the frozen classic rosters (pack 0, key order included,
+## and what fixed_shift fields), the weight distribution over 2000 seeds, the
+## tier / overtime modifiers applied to the drawn pack, no pack on a scripted
+## fixed floor 1 or the boss floor, the floor event's "encounter" key and a
+## generated floor's spawned kinds, the reinforce_wave table, the
+## reinforce_kind cycle (and fixed_shift pinning entry 0), smog_forecast's
+## spawn_wave (hard-pinned waves) and the real vent events on a hand-built
+## two-vent board, and the boss phase-2 golem's "kind".
 ## Run: godot --headless --path . --script tests/test_grammar.gd
 
 const Content := preload("res://sim/content.gd")
@@ -167,6 +178,18 @@ func _init() -> void:
 	_check_fq_sweeps()
 	_check_fq_core_shield()
 	_check_fq_aliases()
+	_check_e_pack_draw()
+	_check_e_purity()
+	_check_e_classic()
+	_check_e_distribution()
+	_check_e_modifiers()
+	_check_e_fixed_floor()
+	_check_e_floor_entry()
+	_check_e_reinforce_wave()
+	_check_e_reinforce_kind()
+	_check_e_spawn_wave()
+	_check_e_vent_board()
+	_check_e_boss_golem()
 	if failures.is_empty():
 		print("grammar: OK (%d checks)" % checks)
 		quit(0)
@@ -2164,7 +2187,8 @@ func _check_c4_mutator_config() -> void:
 	_ok(int(d.floor_def(1)["oil"]) == int(Content.FLOORS[0]["oil"]) * 2 and int(Game.new(1).floor_def(1)["oil"]) == int(Content.FLOORS[0]["oil"]),
 		"double_oil -> oil x2")
 	var o = Game.new(1, {"mutators": ["overtime"]})
-	var base_enemies: Dictionary = Content.FLOORS[0]["enemies"]
+	# Block E1: a floor's roster is the drawn pack (floor_def), never a FLOORS key
+	var base_enemies: Dictionary = Game.new(1).floor_def(1)["enemies"]
 	var common := ""
 	var common_n := 0
 	for kind in base_enemies:
@@ -2172,7 +2196,7 @@ func _check_c4_mutator_config() -> void:
 			common_n = int(base_enemies[kind])
 			common = kind
 	_ok(int(o.floor_def(1)["enemies"][common]) == common_n + 1, "overtime -> +1 %s" % common)
-	_ok(o.floor_def(Content.FLOORS.size())["enemies"] == Content.FLOORS[Content.FLOORS.size() - 1]["enemies"], "overtime leaves the boss floor alone")
+	_ok(o.floor_def(Content.FLOORS.size())["enemies"] == Game.new(1).floor_def(Content.FLOORS.size())["enemies"], "overtime leaves the boss floor alone")
 	_ok(Game.new(1, {"mutators": ["boarded"]}).shop.is_empty() and not Game.new(1).shop.is_empty(), "boarded -> shop {}")
 	# no_lance: kit of 2 without solar_lance, pool without it, shop stock follows
 	var nl = Game.new(1, {"mutators": ["no_lance"]})
@@ -4643,3 +4667,404 @@ func _check_fq_aliases() -> void:
 	var gf = _game_g(["solar_lance", "sun_flare+corona", "moss_filter", "seed_bomb"], ["oil_tithe"])
 	_ok(gf.resonances() == ["cinder_grip"] and int(gf.tag_counts().get("fire", 0)) == 3,
 		"fq aliases: the variant kit plus oil_tithe reads fire 3, cinder_grip lit")
+
+
+# --- e) Block E: encounter packs and biome reinforcements (bump 15) -----------
+
+## The independent pack draw: the side stream hash([seed, n, "roster"]), one
+## randi_range over the summed weights, the cumulative walk. Recomputed here
+## so a draw that keys on floor_num, the main rng or uniform weights fails.
+static func _e_expected_index(s: int, n: int) -> int:
+	var packs: Array = Content.FLOORS[n - 1].get("encounters", [])
+	if packs.size() <= 1:
+		return 0
+	var total := 0
+	for p in packs:
+		total += int(p["w"])
+	var r := RandomNumberGenerator.new()
+	r.seed = hash([s, n, "roster"])
+	var roll := r.randi_range(0, total - 1)
+	for i in packs.size():
+		roll -= int(packs[i]["w"])
+		if roll < 0:
+			return i
+	return -1
+
+
+## A Game with no floor generated (the clone hook): seed, mutators and the
+## fixed floor are all encounter_index / floor_def read.
+static func _e_blank(s: int, muts: Array = []) -> RefCounted:
+	var g = Game.new(s, {"_blank": true})
+	g.mutators = muts.duplicate()
+	return g
+
+
+func _check_e_pack_draw() -> void:
+	var n_ok := 0
+	var n_all := 0
+	for s in range(1, 51):
+		var g = Game.new(s)
+		for n in range(1, 7):
+			n_all += 1
+			var want := _e_expected_index(s, n)
+			var pack: Dictionary = g.encounter(n)
+			var fd: Dictionary = g.floor_def(n)
+			var want_id := String(Content.FLOORS[n - 1]["encounters"][want]["id"])
+			if g.encounter_index(n) == want and String(pack.get("id", "")) == want_id \
+					and String(fd.get("encounter", "")) == want_id and not fd.has("encounters") \
+					and str(fd["enemies"]) == str(Content.FLOORS[n - 1]["encounters"][want]["enemies"]):
+				n_ok += 1
+			elif failures.size() < 40:
+				failures.append("e draw: seed %d floor %d: index %d (want %d), pack %s, floor_def %s" % [
+					s, n, g.encounter_index(n), want, str(pack.get("id")), str(fd.get("encounter"))])
+		_ok(g.encounter_index(7) == 0 and g.encounter(7).is_empty() and not g.floor_def(7).has("encounter")
+			and g.floor_def(7)["enemies"].is_empty(), "e draw: the boss floor fields no pack (seed %d)" % s)
+	_ok(n_ok == n_all, "e draw: encounter_index / encounter / floor_def agree with the independent draw: %d / %d" % [n_ok, n_all])
+	# encounter() hands back a copy: writing it never reaches Content
+	var g1 = Game.new(1)
+	var p1: Dictionary = g1.encounter(2)
+	p1["enemies"]["drill_bot"] = 99
+	_ok(not str(Content.FLOORS[1]["encounters"]).contains("99") and int(g1.encounter(2)["enemies"].get("drill_bot", 0)) != 99,
+		"e draw: encounter() returns a copy")
+	_ok(Content.encounter_name("hound_yard") == "Hound Yard" and Content.encounter_name("drill_pair") == "Drill Pair"
+		and Content.encounter_name("no_such_pack") == "", "e draw: Content.encounter_name")
+	_ok(Content.encounter_roster(Content.FLOORS[0], 0) == {"drill_bot": 2} and Content.encounter_roster(Content.FLOORS[0], 99)
+		== Content.FLOORS[0]["encounters"][-1]["enemies"] and Content.encounter_roster(Content.FLOORS[6], 0).is_empty(),
+		"e draw: Content.encounter_roster clamps and returns {} for the boss row")
+	print("e draw: %d / %d (seed x floor) draws match the independent hash([seed, n, \"roster\"]) walk" % [n_ok, n_all])
+
+
+func _check_e_purity() -> void:
+	var moved := 0
+	var probes := 0
+	for s in [1, 7, 42]:
+		var g = Game.new(s)
+		var h0: String = g.state_hash()
+		var r0: int = g.rng.state
+		for n in range(1, Content.FLOORS.size() + 1):
+			var fd: Dictionary = g.floor_def(n)
+			g.encounter(n)
+			g.encounter_index(n)
+			for w in range(0, 5):
+				for vi in range(0, 3):
+					g.reinforce_kind(fd, w, vi)
+			Game.reinforce_wave(fd, 10)
+			probes += 1
+		g.smog_forecast()
+		if g.state_hash() != h0 or g.rng.state != r0:
+			moved += 1
+	_ok(moved == 0 and probes > 0, "e purity: floor_def / encounter / encounter_index / reinforce_kind / reinforce_wave / smog_forecast move neither rng.state nor state_hash (%d of 3 games moved)" % moved)
+	# _side_rng(tag) is _side_rng_at(floor_num, tag), byte for byte, and the
+	# seed is still hash([seed, floor_num, tag]) - every existing tag unmoved.
+	# Run on EVERY floor_num 1..6, not only the floor a fresh game sits on: on
+	# floor 1 alone a wrapper that pins the floor (_side_rng_at(1, tag)) agrees
+	# with all three. And _side_rng_at(m, tag) is checked for every m against
+	# every floor_num, so a _side_rng_at that reads floor_num instead of its own
+	# argument fails too. Setting floor_num directly is safe: both are pure
+	# reads (a fresh generator per call, nothing stored).
+	var g2 = Game.new(9)
+	var same := true
+	var bad := []
+	var grid := 0
+	for f in range(1, 7):
+		g2.floor_num = f
+		for tag in ["shop_ability", "shop_graft", "reroll0_item", "roster"]:
+			var a = g2._side_rng(tag)
+			var b = g2._side_rng_at(g2.floor_num, tag)
+			var c := RandomNumberGenerator.new()
+			c.seed = hash([9, f, tag])
+			for i in 4:
+				var va: int = a.randi()
+				if va != b.randi() or va != c.randi():
+					same = false
+					if not bad.has("f%d %s" % [f, tag]):
+						bad.append("f%d %s" % [f, tag])
+			for m in range(1, 7):
+				var am = g2._side_rng_at(m, tag)
+				var cm := RandomNumberGenerator.new()
+				cm.seed = hash([9, m, tag])
+				grid += 1
+				if am.randi() != cm.randi() or am.randi() != cm.randi():
+					same = false
+					if not bad.has("f%d at%d %s" % [f, m, tag]):
+						bad.append("f%d at%d %s" % [f, m, tag])
+	g2.floor_num = 1
+	_ok(same, "e purity: _side_rng(tag) == _side_rng_at(floor_num, tag) == hash([seed, floor, tag]) on floor_num 1..6, and _side_rng_at(m, tag) == hash([seed, m, tag]) for every m (%d grid probes) %s" % [grid, str(bad)])
+
+
+## The pre-v15 rosters, frozen verbatim (key order is mapgen placement order).
+const CLASSIC_ROSTERS := [
+	{"drill_bot": 2},
+	{"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1},
+	{"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1, "coal_golem": 1},
+	{"drill_bot": 1, "oil_sludge": 1, "tar_spitter": 1, "extractor_engine": 1, "rust_hound": 1, "magnet_crane": 1},
+	{"drill_bot": 1, "oil_sludge": 1, "coal_golem": 1, "extractor_engine": 1, "pump_jack": 1, "rust_hound": 1, "smokestack": 1},
+	{"drill_bot": 1, "coal_golem": 2, "tar_spitter": 1, "extractor_engine": 1, "cinder_mite": 2, "smokestack": 1},
+	{},
+]
+
+
+func _check_e_classic() -> void:
+	for n in range(1, Content.FLOORS.size() + 1):
+		var row: Dictionary = Content.FLOORS[n - 1]
+		_ok(str(Content.encounter_roster(row, 0)) == str(CLASSIC_ROSTERS[n - 1]),
+			"e classic: floor %d pack 0 is the pre-v15 roster byte for byte: %s" % [n, str(Content.encounter_roster(row, 0))])
+	var fixed_ok := true
+	var differs := false
+	for s in range(1, 21):
+		var fs = Game.new(s, {"mutators": ["fixed_shift"]})
+		var dg = Game.new(s)
+		for n in range(1, Content.FLOORS.size() + 1):
+			var fd: Dictionary = fs.floor_def(n)
+			if str(fd["enemies"]) != str(CLASSIC_ROSTERS[n - 1]) or fs.encounter_index(n) != 0:
+				fixed_ok = false
+			if str(dg.floor_def(n)["enemies"]) != str(CLASSIC_ROSTERS[n - 1]):
+				differs = true
+	_ok(fixed_ok, "e classic: fixed_shift fields the classic roster on every floor, seeds 1..20")
+	_ok(differs, "e classic: the default config fields a non-classic crew somewhere in seeds 1..20")
+	# fixed_shift still names its pack: the floor event says which crew it is
+	_ok(String(Game.new(3, {"mutators": ["fixed_shift"]}).floor_def(2).get("encounter", "")) == "survey_shift",
+		"e classic: fixed_shift's floor 2 is survey_shift")
+
+
+func _check_e_distribution() -> void:
+	var seeds := 2000
+	var worst := 0.0
+	for n in range(1, 7):
+		var packs: Array = Content.FLOORS[n - 1]["encounters"]
+		var total := 0
+		for p in packs:
+			total += int(p["w"])
+		var counts: Array = []
+		counts.resize(packs.size())
+		counts.fill(0)
+		for s in range(1, seeds + 1):
+			counts[_e_blank(s).encounter_index(n)] += 1
+		for i in packs.size():
+			var pr := float(packs[i]["w"]) / float(total)
+			var mu := seeds * pr
+			var sigma := sqrt(seeds * pr * (1.0 - pr))
+			var z := absf(float(counts[i]) - mu) / sigma
+			worst = maxf(worst, z)
+			_ok(z <= 4.0, "e distribution: floor %d %s drawn %d / %d, expected %.1f +- 4 x %.1f" % [
+				n, String(packs[i]["id"]), counts[i], seeds, mu, sigma])
+	print("e distribution: %d seeds x 6 floors, worst pack |z| %.2f" % [seeds, worst])
+
+
+func _check_e_modifiers() -> void:
+	var tier := 3
+	var append_seen := false
+	var tier_ok := true
+	var ot_ok := true
+	for s in range(1, 121):
+		var base = _e_blank(s)
+		var tg = _e_blank(s)
+		tg.tier = tier
+		var og = _e_blank(s, ["overtime"])
+		for n in range(1, 7):
+			var drawn: Dictionary = base.floor_def(n)["enemies"]
+			# tier: every TIERS row below `tier` with extra_enemy adds one, in place
+			# or appended last
+			var want: Dictionary = drawn.duplicate()
+			for i in range(mini(tier, Content.TIERS.size())):
+				if Content.TIERS[i].has("extra_enemy"):
+					var k := String(Content.TIERS[i]["extra_enemy"])
+					if not drawn.has(k):
+						append_seen = true
+					want[k] = int(want.get(k, 0)) + 1
+			if str(tg.floor_def(n)["enemies"]) != str(want):
+				tier_ok = false
+				if failures.size() < 40:
+					failures.append("e modifiers: tier %d seed %d floor %d: %s, want %s" % [tier, s, n, str(tg.floor_def(n)["enemies"]), str(want)])
+			# overtime: +1 of the drawn pack's FIRST most common kind
+			var want_o: Dictionary = drawn.duplicate()
+			var common := ""
+			var common_n := 0
+			for k in drawn:
+				if int(drawn[k]) > common_n:
+					common_n = int(drawn[k])
+					common = k
+			want_o[common] = common_n + 1
+			if str(og.floor_def(n)["enemies"]) != str(want_o):
+				ot_ok = false
+				if failures.size() < 40:
+					failures.append("e modifiers: overtime seed %d floor %d: %s, want %s" % [s, n, str(og.floor_def(n)["enemies"]), str(want_o)])
+		_ok(tg.floor_def(7)["enemies"].is_empty() and og.floor_def(7)["enemies"].is_empty(),
+			"e modifiers: tier and overtime leave the boss floor empty (seed %d)" % s)
+	_ok(tier_ok, "e modifiers: tier %d's extra drill lands on the drawn pack" % tier)
+	_ok(append_seen, "e modifiers: a drill-free pack (Tar Pit / Golem Foundry) was drawn and got the drill appended last")
+	_ok(ot_ok, "e modifiers: overtime adds one of the drawn pack's first most-common kind")
+	# Tar Pit's first most-common kind is oil_sludge (2 sludges, 2 spitters)
+	var tp_seed := -1
+	for s in range(1, 400):
+		if String(_e_blank(s).encounter(2).get("id", "")) == "tar_pit":
+			tp_seed = s
+			break
+	_ok(tp_seed > 0 and int(_e_blank(tp_seed, ["overtime"]).floor_def(2)["enemies"]["oil_sludge"]) == 3,
+		"e modifiers: overtime on Tar Pit adds an oil_sludge (seed %d)" % tp_seed)
+
+
+func _check_e_fixed_floor() -> void:
+	var tut = Game.new(1, Tutorial.game_config())
+	_ok(tut.encounter(1).is_empty() and not tut.floor_def(1).has("encounter"),
+		"e fixed floor: a scripted floor 1 fields no pack")
+	var floor_evs: Array = _evs(tut.recent_events, "floor")
+	_ok(floor_evs.size() == 1 and not floor_evs[0].has("encounter"), "e fixed floor: its floor event carries no encounter: %s" % str(floor_evs))
+	# ...but the floors after it draw normally
+	_ok(not tut.encounter(2).is_empty() and tut.floor_def(2).has("encounter"), "e fixed floor: floor 2 still draws a pack")
+	var g = _game()
+	_ok(g.encounter(1).is_empty() and not g.floor_def(1).has("encounter"), "e fixed floor: a test board fields no pack")
+
+
+func _check_e_floor_entry() -> void:
+	var ok := 0
+	var all := 0
+	for s in range(1, 11):
+		var g = Game.new(s)
+		var ev: Array = _evs(g.recent_events, "floor")
+		_ok(ev.size() == 1 and String(ev[0].get("encounter", "")) == String(g.floor_def(1)["encounter"]),
+			"e floor entry: the floor-1 event names the pack: %s" % str(ev))
+		for n in range(2, 7):
+			all += 1
+			var want: Dictionary = g.floor_def(n)["enemies"]
+			g._step_events = []
+			g._enter_floor(n)
+			var got := {}
+			for e in g.enemies:
+				got[e["kind"]] = int(got.get(e["kind"], 0)) + 1
+			var fev: Array = _evs(g._step_events, "floor")
+			var same := got.size() == want.size()
+			for k in want:
+				if int(got.get(k, 0)) != int(want[k]):
+					same = false
+			if same and fev.size() == 1 and String(fev[0].get("encounter", "")) == String(g.encounter(n)["id"]):
+				ok += 1
+			elif failures.size() < 40:
+				failures.append("e floor entry: seed %d floor %d spawned %s, pack %s, event %s" % [s, n, str(got), str(want), str(fev)])
+	_ok(ok == all, "e floor entry: a generated floor spawns exactly its pack and names it: %d / %d" % [ok, all])
+
+
+func _check_e_reinforce_wave() -> void:
+	var fd: Dictionary = Content.FLOORS[0]   # spawns [10, 20], then every 12
+	var table := {10: 0, 20: 1, 32: 2, 44: 3, 56: 4, 11: -1, 31: -1, 9: -1, 0: -1, 21: -1}
+	for sv in table:
+		_ok(Game.reinforce_wave(fd, sv) == int(table[sv]), "e wave: floor 1 smog %d -> wave %d (got %d)" % [sv, int(table[sv]), Game.reinforce_wave(fd, sv)])
+	var none := {"smog_spawn": [3, 5], "smog_spawn_every": 0}
+	_ok(Game.reinforce_wave(none, 3) == 0 and Game.reinforce_wave(none, 5) == 1 and Game.reinforce_wave(none, 7) == -1
+		and Game.reinforce_wave(none, 500) == -1, "e wave: every 0 ends the schedule at its last entry")
+	# the wave test IS the old spawn boolean, over every floor and smog 0..200
+	var agree := true
+	for n in range(1, Content.FLOORS.size() + 1):
+		var f: Dictionary = Content.FLOORS[n - 1]
+		for sv in range(0, 201):
+			var old: bool = f["smog_spawn"].has(sv)
+			if not old:
+				var last: int = f["smog_spawn"].back()
+				var every: int = f.get("smog_spawn_every", 0)
+				old = every > 0 and sv > last and (sv - last) % every == 0
+			if old != (Game.reinforce_wave(f, sv) >= 0):
+				agree = false
+	_ok(agree, "e wave: reinforce_wave >= 0 is exactly the pre-v15 spawn test on every floor, smog 0..200")
+
+
+func _check_e_reinforce_kind() -> void:
+	var fd := {"name": "probe", "reinforce": ["a", "b", "c"]}
+	var g = _e_blank(1)
+	var fs = _e_blank(1, ["fixed_shift"])
+	var cyc := true
+	var pinned := true
+	for w in range(0, 7):
+		for vi in range(0, 4):
+			if g.reinforce_kind(fd, w, vi) != ["a", "b", "c"][(w + vi) % 3]:
+				cyc = false
+			if fs.reinforce_kind(fd, w, vi) != "a":
+				pinned = false
+	_ok(cyc, "e kind: reinforce[(wave + vent) % size] over a 7 x 4 grid")
+	_ok(pinned, "e kind: biome_reinforce false (fixed_shift) always releases entry 0")
+	# every live list starts with the classic drill and the boss row keeps it
+	for n in range(1, Content.FLOORS.size() + 1):
+		var row: Dictionary = Content.FLOORS[n - 1]
+		_ok(g.reinforce_kind(row, 0, 0) == "drill_bot" and fs.reinforce_kind(row, 3, 2) == "drill_bot",
+			"e kind: floor %d wave 0 vent 0 releases drill_bot, and so does fixed_shift everywhere" % n)
+
+
+func _check_e_spawn_wave() -> void:
+	var g = Game.new(4242)
+	_fq_clear(g)
+	g.smog = 0
+	g.dim = 0
+	g.stoked = 0
+	var f: Dictionary = g.smog_forecast()
+	var fd: Dictionary = g.floor_def(g.floor_num)
+	_ok(f["spawn_wave"] == 0,
+		"e spawn_wave: a fresh floor 1's first vent firing is wave 0 at smog %d: %s" % [int(f["spawn_at"]), str(f)])
+	_ok(g.reinforce_kind(fd, int(f["spawn_wave"]), 0) == String(Content.FLOORS[0]["reinforce"][0]),
+		"e spawn_wave: and it releases FLOORS[0].reinforce[0]")
+	g.smog = 33
+	f = g.smog_forecast()
+	_ok(f["spawn_at"] == 44 and f["spawn_wave"] == 3, "e spawn_wave: smog 33 -> the wave-3 firing at 44: %s" % str(f))
+	var tut = Game.new(1, Tutorial.game_config())
+	_ok(tut.smog_forecast()["spawn_wave"] == -1, "e spawn_wave: -1 when no firing falls inside the horizon")
+
+
+## Two vents on a closed room, a clock that fires on smog 1 and 2, a
+## two-kind rotation.
+const E2_ROOM := [
+	"#########",
+	"#@......#",
+	"#.......#",
+	"#.......#",
+	"#########",
+]
+const E2_FDEF := {"green_need": 0, "smog_choke": 999, "smog_dim": [900, 950],
+	"smog_spawn": [1, 2], "smog_spawn_every": 0, "reinforce": ["drill_bot", "rust_hound"]}
+
+
+static func _e2_game(muts: Array = []) -> RefCounted:
+	var gen := _gen(E2_ROOM)
+	gen["vents"] = [Vector2i(1, 3), Vector2i(7, 3)]
+	return Game.new(1, {"fixed_floor": {"gen": gen, "fdef": E2_FDEF}, "kit": ["solar_lance", "seed_bomb", "mycelium_dash"],
+		"mutators": muts})
+
+
+func _check_e_vent_board() -> void:
+	for muts in [[], ["fixed_shift"]]:
+		var g = _e2_game(muts)
+		var fd: Dictionary = g.floor_def(1)
+		var got: Array = []
+		var want: Array = []
+		var wave_fc: Array = []
+		for k in 2:
+			g.enemies.clear()
+			var f: Dictionary = g.smog_forecast()
+			wave_fc.append(int(f["spawn_wave"]))
+			var evs: Array = g.step({"type": "end_turn"})
+			for ev in _evs(evs, "reinforcement"):
+				got.append([str(ev["tile"]), String(ev.get("kind", ""))])
+				var vi: int = g.map["vents"].find(ev["tile"])
+				want.append([str(ev["tile"]), g.reinforce_kind(fd, int(f["spawn_wave"]), vi)])
+		var label := "default" if muts.is_empty() else "fixed_shift"
+		_ok(wave_fc == [0, 1], "e vents %s: smog_forecast names waves 0 then 1: %s" % [label, str(wave_fc)])
+		_ok(got == want, "e vents %s: every reinforcement's kind is reinforce_kind(fdef, spawn_wave, vent): %s vs %s" % [label, str(got), str(want)])
+		var expect: Array
+		if muts.is_empty():
+			expect = [["(1, 3)", "drill_bot"], ["(7, 3)", "rust_hound"], ["(1, 3)", "rust_hound"], ["(7, 3)", "drill_bot"]]
+		else:
+			expect = [["(1, 3)", "drill_bot"], ["(7, 3)", "drill_bot"], ["(1, 3)", "drill_bot"], ["(7, 3)", "drill_bot"]]
+		_ok(got == expect, "e vents %s: the rotation on two vents over two waves: %s" % [label, str(got)])
+		var kinds: Array = []
+		for e in g.enemies:
+			kinds.append(String(e["kind"]))
+		_ok(kinds.size() == 2 and kinds.has(String(expect[2][1])) and kinds.has(String(expect[3][1])),
+			"e vents %s: the released machines stand on the vents: %s" % [label, str(kinds)])
+
+
+func _check_e_boss_golem() -> void:
+	var g = _e2_game()
+	var core: Dictionary = g._spawn("furnace_core", Vector2i(5, 1))
+	core["hp"] = 13
+	g._step_events = []
+	g._damage_enemy(core, 1, "probe")
+	var rein: Array = _evs(g._step_events, "reinforcement")
+	_ok(not _evs(g._step_events, "boss_phase").is_empty() and rein.size() == 1 and String(rein[0].get("kind", "")) == "coal_golem",
+		"e boss: the phase-2 golem's reinforcement event names its kind: %s" % str(g._step_events))

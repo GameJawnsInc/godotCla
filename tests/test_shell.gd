@@ -25,7 +25,7 @@ const Feedback := preload("res://shell/feedback.gd")
 const FULL_KIT := ["mycelium_dash", "solar_lance", "seed_bomb", "vine_whip", "thorn_shield"]
 const TMP_SAVE := "user://test_import_run.save"
 ## Every _bare_shell reads and writes its career here, never the player's real
-## profile (Shell.PROFILE_PATH); _init deletes it at the end.
+## profile (Shell.PROFILE_PATH); the body (_run_body) deletes it at the end.
 const TEST_PROFILE := "user://test_shell_profile.json"
 ## every _bare_shell restores (and writes) its run save here, never the real one
 const TEST_RUN_SAVE := "user://test_shell_run.save"
@@ -521,6 +521,28 @@ func _run_body() -> void:
 	evsh.game._spawn("coal_golem", rp)
 	_check(evsh._ev_text({"t": "reinforcement", "tile": rp}) == "A vent releases a Coal Golem",
 		"a reinforcement names what came out of the vent: %s" % evsh._ev_text({"t": "reinforcement", "tile": rp}))
+	# Block E2 (stage 9): the event's own kind wins; without one, a NEW enemy
+	# on the tile (above); with neither, "a machine"
+	_check(evsh._ev_text({"t": "reinforcement", "tile": rp, "kind": "rust_hound"}) == "A vent releases a Rust Hound",
+		"a reinforcement's kind names it, whatever stands on the tile: %s"
+		% evsh._ev_text({"t": "reinforcement", "tile": rp, "kind": "rust_hound"}))
+	_check(evsh._ev_text({"t": "reinforcement", "tile": Vector2i(-40, -40)}) == "A vent releases a machine",
+		"no kind and nothing on the tile: a machine (%s)" % evsh._ev_text({"t": "reinforcement", "tile": Vector2i(-40, -40)}))
+	# one step can release different kinds at different vents: one line per
+	# kind, counted (mutation: aggregate by the step instead of by the kind)
+	var rmix: Array = Feedback.log_entries([{"t": "reinforcement", "tile": Vector2i(-40, -40), "kind": "rust_hound"},
+		{"t": "reinforcement", "tile": Vector2i(-41, -40), "kind": "drill_bot"},
+		{"t": "reinforcement", "tile": Vector2i(-42, -40), "kind": "rust_hound"}], {}, evsh.game, {}).map(func(l): return l["text"])
+	_check(rmix == ["Vents release 2 Rust Hounds", "A vent releases a Drill Bot"],
+		"a mixed wave reads one line per kind: %s" % str(rmix))
+	# Block E1 (stage 9): the floor line names the crew the floor drew
+	_check(evsh._ev_text({"t": "floor", "floor": 1, "name": "Strip Mine I", "encounter": "hound_and_handler"})
+		== "— Strip Mine I · Hound and Handler —", "the floor line names its crew: %s"
+		% evsh._ev_text({"t": "floor", "floor": 1, "name": "Strip Mine I", "encounter": "hound_and_handler"}))
+	_check(evsh._ev_text({"t": "floor", "floor": 1, "name": "Strip Mine I"}) == "— Strip Mine I —",
+		"a floor event with no crew keeps the bare line")
+	_check(evsh._ev_text({"t": "floor", "floor": 7, "name": "The Furnace", "encounter": ""}) == "— The Furnace —",
+		"an empty crew id keeps the bare line")
 	_check(evsh._ev_text({"t": "buy", "item": "graft", "id": "bloom_surge", "discarded": "carapace"})
 		== "Bought Bloom Surge (discarded Carapace)", "a graft buy names the discarded offer")
 	_check(evsh._ev_text({"t": "buy", "item": "ability", "id": "sun_flare"})
@@ -806,6 +828,14 @@ func _run_body() -> void:
 		and String(day._menu_rows().filter(func(r): return String(r[1]) == "play")[0][0]) == Shell.PLAY_ARMED_LABEL,
 		"PLAY over a live daily try starts nothing and asks for a second tap")
 	_check(Shell.PLAY_ARMED_LABEL.contains("TODAY'S TRY"), "the armed PLAY names the loss (%s)" % Shell.PLAY_ARMED_LABEL)
+	# ...but only a try on TODAY'S seed is today's: yesterday's unfinished try
+	# (or a legacy save routed as a daily) reads the date-free form
+	# (mutation: return PLAY_ARMED_LABEL unconditionally)
+	day.seed_v = dseed + 1
+	_check(String(day._menu_rows().filter(func(r): return String(r[1]) == "play")[0][0]) == Shell.PLAY_ARMED_OLD_LABEL
+		and not Shell.PLAY_ARMED_OLD_LABEL.contains("TODAY"),
+		"an armed PLAY over an older daily try does not call it today's (%s)" % day._play_armed_label())
+	day.seed_v = dseed
 	day._tap("settings")
 	day.mode = "normal"
 	_check(String(day._menu_rows().filter(func(r): return String(r[1]) == "play")[0][0]) == "PLAY",
@@ -825,8 +855,8 @@ func _run_body() -> void:
 	day._back(false)
 	_check(not day._play_armed, "Back at the menu root disarms PLAY")
 	day._tap("play")
-	_check(day.game == live_try and day.run_kind == "daily", "...so the next PLAY tap only re-arms it")
-	day._tap("play")
+	_check(day.game == live_try and day.run_kind == "daily" and day._play_armed,
+		"...so the next PLAY tap only re-arms it")
 	day._tap("play")
 	_check(day.run_kind == "career" and day.game != live_try and day.screen == "game",
 		"...and the second tap starts a career run (%s)" % day.run_kind)
@@ -978,6 +1008,7 @@ func _run_body() -> void:
 	_check_unlock_pager()
 	_check_career_pings()
 	_check_objective_line()
+	_check_encounters()
 
 	shell.free()
 	shell2.free()
@@ -2286,6 +2317,49 @@ func _lethal_fixture(dmg: int, charge: int) -> Array:
 	return [g, dmove, dhit]
 
 
+## Floor 7 with only its boss (1 HP, idle) beside the tender and a drill bot
+## on another side about to hit for 99, no terrain, no smog: striking the boss
+## wins, striking the drill bot still dies. [game, boss, minion, dirs]
+func _boss_minion_fixture() -> Array:
+	var gw := Game.new(3)
+	gw._enter_floor(7)
+	gw.terrain.clear()
+	var boss_w: Dictionary = {}
+	for e in gw.enemies.duplicate():
+		if Content.ENEMIES[e["kind"]]["traits"].has("boss"):
+			boss_w = e
+		else:
+			gw.enemies.erase(e)
+	var wd: Array = _open_dirs(gw)
+	_check(not boss_w.is_empty() and wd.size() >= 2, "fixture: floor 7 has its boss and two open sides")
+	boss_w["pos"] = gw.player["pos"] + wd[0]
+	boss_w["hp"] = 1
+	boss_w["intent"] = {"type": "idle"}
+	var killer: Dictionary = gw._spawn("drill_bot", gw.player["pos"] + wd[1])
+	killer["intent"] = {"type": "attack", "tile": gw.player["pos"], "dmg": 99}
+	gw.smog = 0
+	return [gw, boss_w, killer, wd]
+
+
+## The ONE config under which a game draws encounter packs and biome
+## reinforcements (Block E, stage 9). That is the default config: the
+## pre-registered measurement passed on every line and the block ships
+## default-on (docs/BALANCE.md, 2026-11-22). Were it ever moved behind a
+## mutator, only this line changes (every stage-9 check below builds its
+## games through _pack_config(), and tests/test_draw.gd reads this same
+## constant as ShellTest.PACK_CONFIG).
+const PACK_CONFIG := {}
+
+
+func _pack_config() -> Dictionary:
+	return PACK_CONFIG.duplicate(true)
+
+
+## The screen point at the centre of map tile `t` on shell `sh`.
+func _tile_px(sh, t: Vector2i) -> Vector2:
+	return Vector2(sh._mox + (t.x + 0.5) * sh._ts, sh._moy + (t.y + 0.5) * sh._ts)
+
+
 ## A bare shell playing `g`, with the danger cache invalidated.
 func _danger_shell(g):
 	var sh = _bare_shell()
@@ -2387,14 +2461,22 @@ func _check_danger_readouts() -> void:
 	gd["escapes"] = {"move": true, "strike": false, "item": [1], "descend": false, "win": "item"}
 	_check(Danger.guard_flash(gd) == "LETHAL (3) - the glowing item wins, or tap again",
 		"guard: a winning item is advised first (%s)" % Danger.guard_flash(gd))
-	# the words claim a win only where the player cannot pick the wrong blow:
-	# two surviving strikes (boss and minion adjacent) read "strike first"
-	# (mutation: drop the `strikes` arm and this reads "strike to win"), and
-	# with a winning item only that slot glows (mutation: glow_items returns
-	# every surviving item and this lights slot 0 too)
-	gd["escapes"] = {"move": true, "strike": true, "item": [], "descend": false, "win": "strike", "strikes": 2}
+	# the words claim an UNNAMED win only where the player cannot pick the
+	# wrong blow: with two legal strikes (boss and minion adjacent) the flash
+	# names the target (mutation: drop the `strike_dirs` arm and this reads
+	# "strike to win"), with no target to name it falls back to step off >
+	# strike first, and with a winning item only that slot glows (mutation:
+	# glow_items returns every surviving item and this lights slot 0 too)
+	gd["escapes"] = {"move": true, "strike": true, "item": [], "descend": false, "win": "strike",
+		"strike_dirs": 2, "win_kind": "overseer"}
+	_check(Danger.guard_flash(gd) == "LETHAL (3) - strike the Overseer to win, or tap again",
+		"guard: two legal strikes name the winning target (%s)" % Danger.guard_flash(gd))
+	gd["escapes"] = {"move": true, "strike": true, "item": [], "descend": false, "win": "strike", "strike_dirs": 2}
+	_check(Danger.guard_flash(gd) == "LETHAL (3) - step off, or tap again to end turn",
+		"guard: two legal strikes and no target to name fall back to step off (%s)" % Danger.guard_flash(gd))
+	gd["escapes"] = {"move": false, "strike": true, "item": [], "descend": false, "win": "strike", "strike_dirs": 2}
 	_check(Danger.guard_flash(gd) == "LETHAL (3) - strike first, or tap again to end turn",
-		"guard: two surviving strikes claim no win (%s)" % Danger.guard_flash(gd))
+		"guard: ...then to strike first (%s)" % Danger.guard_flash(gd))
 	var es_w := {"move": false, "strike": false, "item": [0, 1], "descend": false, "win": "item", "win_item": 1}
 	_check(Danger.glow_items(es_w) == [1], "only the winning item glows (%s)" % str(Danger.glow_items(es_w)))
 	es_w["win"] = ""
@@ -2441,23 +2523,11 @@ func _check_danger_readouts() -> void:
 	_check(rs["sounds"].is_empty() and int(rs["announced"]) == 2,
 		"hysteresis: a countdown already standing before the step (a reset, a resume) counts as announced")
 	# escapes: a WINNING action is an escape of its kind (the boss-killing strike)
-	var gw := Game.new(3)
-	gw._enter_floor(7)
-	gw.terrain.clear()
-	var boss_w: Dictionary = {}
-	for e in gw.enemies.duplicate():
-		if Content.ENEMIES[e["kind"]]["traits"].has("boss"):
-			boss_w = e
-		else:
-			gw.enemies.erase(e)
-	var wd: Array = _open_dirs(gw)
-	_check(not boss_w.is_empty() and wd.size() >= 2, "fixture: floor 7 has its boss and two open sides")
-	boss_w["pos"] = gw.player["pos"] + wd[0]
-	boss_w["hp"] = 1
-	boss_w["intent"] = {"type": "idle"}
-	var killer: Dictionary = gw._spawn("drill_bot", gw.player["pos"] + wd[1])
-	killer["intent"] = {"type": "attack", "tile": gw.player["pos"], "dmg": 99}
-	gw.smog = 0
+	var bmw := _boss_minion_fixture()
+	var gw = bmw[0]
+	var boss_w: Dictionary = bmw[1]
+	var killer: Dictionary = bmw[2]
+	var wd: Array = bmw[3]
 	var dzw: Dictionary = Danger.compute(gw)
 	var ew: Dictionary = Danger.escapes(gw)
 	var cw = gw.clone()
@@ -2466,11 +2536,37 @@ func _check_danger_readouts() -> void:
 	_check(bool(ew["strike"]), "a boss-killing strike counts as a strike escape (%s)" % str(ew))
 	# ...and is the one the guard names (mutation: drop the `win` assignment in
 	# Danger.escapes; the unit rows above hold it ahead of a surviving step)
-	_check(String(ew.get("win", "")) == "strike" and int(ew.get("strikes", 0)) == 1,
-		"the winning strike is marked as the win, the only strike that survives (%s)" % str(ew))
+	_check(String(ew.get("win", "")) == "strike" and String(ew.get("win_kind", "")) == String(boss_w["kind"]),
+		"the winning strike is marked as the win, on the boss's tile (%s)" % str(ew))
 	dzw["escapes"] = ew
-	_check(Danger.guard_flash(dzw).contains("strike to win"),
-		"the live guard flash points at the winning blow (%s)" % Danger.guard_flash(dzw))
+	# the drill bot beside the tender is a SECOND legal strike - and striking
+	# it leaves the tender to die - so the flash must name the boss, never
+	# say a bare "strike to win" (the residual: `strikes` counted only the
+	# surviving directions, read 1 here and gave the bare words; mutation:
+	# count strike_dirs after the forecast filter)
+	var cl_minion = gw.clone()
+	cl_minion.step({"type": "strike", "dir": wd[1]})
+	_check(not (cl_minion.over and cl_minion.won)
+		and (cl_minion.over or bool(cl_minion.end_turn_forecast()["dies"])),
+		"fixture: the strike on the minion does not save the tender")
+	_check(int(ew.get("strike_dirs", 0)) == 2,
+		"every legal strike direction is counted, the losing one too (%s)" % str(ew))
+	var want_named := "strike %s to win" % Names.the_name(String(boss_w["kind"]))
+	_check(Danger.guard_flash(dzw).contains(want_named) and not Danger.guard_flash(dzw).contains("strike to win,"),
+		"boss and a minion adjacent: the live flash names the boss (%s)" % Danger.guard_flash(dzw))
+	# ...and with the minion gone the winning strike is the only one: bare
+	# words (lethal now from the smog: 1 HP, the choke one tick away)
+	gw.enemies.erase(killer)
+	gw.player["hp"] = 1
+	gw.smog = int(gw.floor_def(int(gw.floor_num))["smog_choke"]) - 1
+	var dzw1: Dictionary = Danger.compute(gw)
+	var ew1: Dictionary = Danger.escapes(gw)
+	_check(bool(dzw1["lethal"]) and int(ew1.get("strike_dirs", 0)) == 1
+		and String(ew1.get("win", "")) == "strike",
+		"fixture: lethal from the smog, the boss the only legal strike (%s)" % str(ew1))
+	dzw1["escapes"] = ew1
+	_check(Danger.guard_flash(dzw1).contains("strike to win"),
+		"one legal strike and it wins: the live guard flash says strike to win (%s)" % Danger.guard_flash(dzw1))
 
 	var sh = _bare_shell()
 	# fit gate: the worst context line (the two longest enemy names, +9) and the
@@ -2482,8 +2578,13 @@ func _check_danger_readouts() -> void:
 	names.sort_custom(func(a, b): return a.length() > b.length())
 	var worst_ctx := "! INCOMING 99 - LETHAL  ·  %s, %s +9" % [names[0], names[1]]
 	var fit_lines: Array = [worst_ctx, "Smog chokes NEXT TURN - descend to escape it"]
-	for esc in [{"move": true}, {"strike": true}, {"item": [0]}, {"descend": true}, {},
-			{"win": "strike"}, {"win": "strike", "strikes": 2}, {"win": "item"}]:
+	var esc_rows: Array = [{"move": true}, {"strike": true}, {"item": [0]}, {"descend": true}, {},
+			{"win": "strike"}, {"win": "strike", "strike_dirs": 2}, {"win": "item"}]
+	# the named-target flash, once per boss row (the longest name is the worst)
+	for bk in Content.ENEMIES:
+		if Content.ENEMIES[bk]["traits"].has("boss"):
+			esc_rows.append({"win": "strike", "strike_dirs": 2, "win_kind": bk})
+	for esc in esc_rows:
 		fit_lines.append(Danger.guard_flash({"fc": {"dmg": 99}, "escapes": esc}))
 	var worst_fit := 1.0
 	var worst_what := ""
@@ -2655,6 +2756,24 @@ func _check_lethal_guard() -> void:
 	_check(not g.over and sh.flash.contains("step off"), "tap on yourself with charge: refused, step off offered (%s)" % sh.flash)
 	sh._click(Vector2(sh._mox + (pp.x + 0.5) * sh._ts, sh._moy + (pp.y + 0.5) * sh._ts))
 	_check(g.over, "...and the second tap ends the turn")
+	sh.free()
+	# the boss at 1 HP and a minion both adjacent, the minion's strike leaving
+	# the tender to die: a tap on your own tile is refused and the flash names
+	# the boss - never the bare "strike to win" that lets the player pick the
+	# minion (the residual; mutation: count strike_dirs after the forecast
+	# filter and this flash reads "strike to win")
+	var bm := _boss_minion_fixture()
+	g = bm[0]
+	g.player["charge"] = 3
+	sh = _danger_shell(g)
+	pp = g.player["pos"]
+	t0 = g.total_turns
+	sh.hotspots = []
+	sh._click(Vector2(sh._mox + (pp.x + 0.5) * sh._ts, sh._moy + (pp.y + 0.5) * sh._ts))
+	_check(not g.over and g.total_turns == t0
+		and sh.flash.contains("strike %s to win" % Names.the_name(String(bm[1]["kind"])))
+		and not sh.flash.contains("strike to win"),
+		"boss + minion adjacent: the guard names the boss to strike (%s)" % sh.flash)
 	sh.free()
 	# a dry cleanse that would auto-end the turn
 	fx = _lethal_fixture(99, 0)
@@ -3078,24 +3197,34 @@ func _check_menu_layout() -> void:
 	_check(outside == 0, "%d menu row(s) leave the viewport or run into their badge" % outside)
 	_check(badges >= 5 * CARD_VIEWPORTS.size(), "the maxed menu carries its badges (%d)" % badges)
 	_check(small_badge == 0, "%d menu badge(s) below %.2f%% of vh" % [small_badge, CARD_MIN_VH * 100.0])
-	# the armed PLAY label names the loss and still draws at >= 1.5% vh inside
-	# the viewport at every shape
+	# BOTH armed PLAY labels name the loss and still draw at >= 1.5% vh inside
+	# the viewport at every shape: TODAY'S over a live try on today's daily
+	# seed, the date-free form over any other daily try (yesterday's, or a
+	# legacy save routed as a daily)
 	ml._play_armed = true
 	var armed_bad := 0
 	var armed_seen := 0
-	for vp in CARD_VIEWPORTS:
-		var view := Rect2(0, 0, vp.x, vp.y)
-		for m in ml._menu_layout(vp.x, vp.y):
-			if String(m["tag"]) != "play":
-				continue
-			armed_seen += 1
-			if String(m["label"]) != Shell.PLAY_ARMED_LABEL or float(m["size"]) / vp.y < 0.015 \
-					or not view.encloses(m["rect"]) \
-					or ml.font.get_string_size(String(m["label"]), HORIZONTAL_ALIGNMENT_LEFT, -1, int(m["size"])).x > m["rect"].size.x:
-				armed_bad += 1
+	var kind_was: String = ml.run_kind
+	var seed_was: int = ml.seed_v
+	var today_seed: int = int(ml._daily_now()["seed"])
+	for want in [[today_seed, Shell.PLAY_ARMED_LABEL], [today_seed + 1, Shell.PLAY_ARMED_OLD_LABEL]]:
+		ml.run_kind = "daily"
+		ml.seed_v = int(want[0])
+		for vp in CARD_VIEWPORTS:
+			var view := Rect2(0, 0, vp.x, vp.y)
+			for m in ml._menu_layout(vp.x, vp.y):
+				if String(m["tag"]) != "play":
+					continue
+				armed_seen += 1
+				if String(m["label"]) != String(want[1]) or float(m["size"]) / vp.y < 0.015 \
+						or not view.encloses(m["rect"]) \
+						or ml.font.get_string_size(String(m["label"]), HORIZONTAL_ALIGNMENT_LEFT, -1, int(m["size"])).x > m["rect"].size.x:
+					armed_bad += 1
+	ml.run_kind = kind_was
+	ml.seed_v = seed_was
 	ml._play_armed = false
-	_check(armed_seen == CARD_VIEWPORTS.size() and armed_bad == 0,
-		"the armed PLAY label fits its row at every viewport (%d bad of %d)" % [armed_bad, armed_seen])
+	_check(armed_seen == 2 * CARD_VIEWPORTS.size() and armed_bad == 0,
+		"both armed PLAY labels fit their row at every viewport (%d bad of %d)" % [armed_bad, armed_seen])
 	print("menu layout: %d viewports, worst label %.4f%% of vh (%s)" % [CARD_VIEWPORTS.size(), worst * 100.0, worst_at])
 	ml.game = null
 	ml.free()
@@ -4333,3 +4462,287 @@ func _check_objective_line() -> void:
 		bad, Shell.OBJECTIVE_MIN_VH * 100.0, worst_at])
 	sh.free()
 	print("objective line: hint kept at %d viewports, worst %.3f%% of vh (%s)" % [CARD_VIEWPORTS.size(), worst * 100.0, worst_at])
+
+
+## --- Block E (stage 9): encounter packs and biome reinforcements -----------
+## The crew a floor drew is named on its title card (line 2) and its floor log
+## line; a vent's tooltip names what it releases, read from the sim's own
+## reinforce_kind of the smog forecast's spawn_wave, for THAT vent. Every
+## expected name is read from the sim (game.encounter / reinforce_kind), never
+## a literal, so a later data lever cannot break these checks. Plus the fit
+## gates: the floor log line, the title card's line 2 and the vent line.
+func _check_encounters() -> void:
+	const Danger := preload("res://shell/danger.gd")
+	var cfg := _pack_config()
+	# the title card names the pack on a generated floor (mutation: drop the
+	# crew from _floor_card_lines and both of these read "floor N of 7")
+	var fs = _bare_shell()
+	var named := 0
+	for seed_i in [5, 11]:
+		for fl in [1, 3]:
+			fs.game = Game.new(seed_i, cfg)
+			if fl != 1:
+				fs.game._enter_floor(fl)
+			var enc: Dictionary = fs.game.encounter(fl)
+			_check(String(enc.get("name", "")) != "", "fixture: seed %d floor %d draws a pack under the pack config" % [seed_i, fl])
+			var card: Array = fs._floor_card_lines(fs.game.snapshot())
+			_check(String(card[1]) == "floor %d of 7  ·  %s" % [fl, String(enc.get("name", ""))],
+				"the title card names the crew on floor %d: %s" % [fl, " | ".join(card)])
+			named += 1
+			# ...and the floor's own event carries the id the log names
+			if fl != 1:
+				var fev: Dictionary = {}
+				for ev in fs.game._step_events:
+					if String(ev.get("t", "")) == "floor":
+						fev = ev
+				_check(String(fev.get("encounter", "")) == String(enc["id"])
+					and Feedback.ev_text(fev, fs.game) == "— %s · %s —" % [String(fev.get("name", "")), String(enc["name"])],
+					"the floor %d event's log line names the crew (%s)" % [fl, Feedback.ev_text(fev, fs.game)])
+	# ...and not on the tutorial's scripted floor or the boss floor
+	fs.game = Game.new(1, Tutorial.game_config())
+	_check(fs.game.encounter(1).is_empty(), "fixture: the tutorial floor draws no pack")
+	var tcard: Array = fs._floor_card_lines(fs.game.snapshot())
+	_check(String(tcard[1]) == "floor 1 of 7", "the tutorial's title card names no crew: %s" % " | ".join(tcard))
+	fs.game = Game.new(5, cfg)
+	fs.game._enter_floor(7)
+	var bcard: Array = fs._floor_card_lines(fs.game.snapshot())
+	_check(String(bcard[1]) == "floor 7 of 7" and " | ".join(bcard).contains("defeat the"),
+		"the boss floor's title card names no crew and still says who to defeat: %s" % " | ".join(bcard))
+	fs.free()
+
+	# the boss phase-2 golem: the sim's reinforcement event now carries its
+	# kind, and the log names the golem from it
+	var golem_seen := false
+	for seed_b in range(1, 40):
+		var gb := Game.new(seed_b, cfg)
+		gb._enter_floor(7)
+		var core: Dictionary = {}
+		for e in gb.enemies:
+			if String(e["kind"]) == "furnace_core":
+				core = e
+		if core.is_empty():
+			continue
+		gb._step_events = []
+		gb._damage_enemy(core, int(core["hp"]) - 12, "strike")
+		var rev: Array = gb._step_events.filter(func(ev): return String(ev.get("t", "")) == "reinforcement")
+		_check(rev.size() == 1 and String(rev[0].get("kind", "")) == "coal_golem",
+			"the furnace's phase-2 reinforcement event carries its kind (%s)" % str(rev))
+		var gl: Array = Feedback.log_entries(rev, {}, gb, {}).map(func(l): return l["text"])
+		_check(gl == ["A vent releases a Coal Golem"], "...and the log names the golem from it: %s" % str(gl))
+		golem_seen = true
+		break
+	_check(golem_seen, "fixture: a seed whose boss floor is the Furnace Core")
+
+	# the vent tooltip on a fresh default game: floor 1's reinforce list is
+	# [drill_bot] (mutation: drop the kind from _vent_line and this reads
+	# "releases in N turns")
+	var g1 := Game.new(4242, cfg)
+	var vsh = _danger_shell(g1)
+	vsh.hotspots = []
+	var v1: Vector2i = g1.map["vents"][0]
+	g1.terrain.erase(v1)
+	for e in g1.enemies:
+		if e["pos"] == v1:
+			e["pos"] = Vector2i(-9, -9)
+	vsh._danger_rev += 1
+	vsh._show_tooltip(_tile_px(vsh, v1))
+	_check(vsh.tooltip_tile == v1 and _any_has(vsh.tooltip, "releases a Drill Bot"),
+		"a fresh game's vent tooltip names its release: %s" % str(vsh.tooltip))
+	_check(String(Content.FLOORS[0]["reinforce"][0]) == "drill_bot", "fixture: floor 1 releases drill bots")
+	# a wall over the vent: _tick_smog skips a vent that is not _open (Roots
+	# "blocks"), so the tooltip names NO release there - it says the vent is
+	# covered (mutation: drop the covered arm and this reads "releases a Drill
+	# Bot" for a machine that will not come)
+	g1.terrain[v1] = {"kind": "roots", "ttl": 3}
+	_check(not g1._open(v1) and bool(Content.terrain("roots", "blocks", false)), "fixture: roots block the vent")
+	vsh._danger_rev += 1
+	vsh._show_tooltip(_tile_px(vsh, v1))
+	_check(vsh.tooltip_tile == v1 and vsh.tooltip.has(Shell.VENT_COVERED_LINE)
+		and not _any_has(vsh.tooltip, "releases a") and not _any_has(vsh.tooltip, "releases in")
+		and not _any_has(vsh.tooltip, "releases next"),
+		"a walled vent's tooltip says it releases nothing while covered: %s" % str(vsh.tooltip))
+	# ...and the real smog tick agrees: walk the smog to the wave and the
+	# walled vent spawns nothing while the open ones do (floor 4: several
+	# vents, so the open half of the claim is tested too)
+	var gw := Game.new(5, cfg)
+	gw._enter_floor(4)
+	gw.enemies.clear()
+	gw.terrain.clear()
+	_check(gw.map["vents"].size() >= 2, "fixture: seed 5 floor 4 has several vents (%d)" % gw.map["vents"].size())
+	var vw: Vector2i = gw.map["vents"][0]
+	gw.terrain[vw] = {"kind": "roots", "ttl": 99}
+	var fcw: Dictionary = gw.smog_forecast()
+	gw.smog = int(fcw["spawn_at"]) - 1
+	gw._step_events = []
+	gw._tick_smog()
+	var at_wall := 0
+	var reinf := 0
+	for ev in gw._step_events:
+		if String(ev.get("t", "")) == "reinforcement":
+			reinf += 1
+			if ev["tile"] == vw:
+				at_wall += 1
+	_check(at_wall == 0 and Danger.vent_state(gw.snapshot(), vw) == "covered" and reinf > 0,
+		"the sim agrees: the walled vent releases nothing on the wave (%d there, %d elsewhere)" % [at_wall, reinf])
+	g1.terrain.erase(v1)
+	vsh.free()
+	# Danger.vent_state against the sim's own _open and growth test, over
+	# generated floors with each vent covered by every terrain kind, a machine
+	# on it, the tender on it, and bare (mutation: drop any conjunct of the
+	# mirror - the tile, the tender, a machine, the "blocks" read - and it
+	# disagrees here)
+	var vs_n := 0
+	var vs_bad: Array = []
+	var vs_seen := {}
+	for seed_v in [1, 2, 3]:
+		for fv in range(1, 7):
+			var gv := Game.new(seed_v, cfg)
+			gv._enter_floor(fv)
+			for vvi in gv.map["vents"].size():
+				var vv: Vector2i = gv.map["vents"][vvi]
+				var setups: Array = ["bare", "enemy", "player"]
+				for tk in Content.TERRAIN:
+					setups.append("t:" + String(tk))
+				for su in setups:
+					var gc = gv.clone()
+					gc.terrain.erase(vv)
+					for e in gc.enemies:
+						if e["pos"] == vv:
+							e["pos"] = Vector2i(-9, -9)
+					if su == "enemy":
+						gc._spawn("drill_bot", vv)
+					elif su == "player":
+						gc.player["pos"] = vv
+					elif String(su).begins_with("t:"):
+						gc.terrain[vv] = {"kind": String(su).substr(2), "ttl": 3}
+					var want := "open"
+					if not gc._open(vv):
+						want = "covered"
+					elif gc._terrain_kind(vv) == "growth":
+						want = "sealed"
+					var got := Danger.vent_state(gc.snapshot(), vv)
+					vs_n += 1
+					vs_seen[got] = true
+					if got != want and vs_bad.size() < 4:
+						vs_bad.append("seed %d f%d vent %d %s: %s, sim %s" % [seed_v, fv, vvi, su, got, want])
+	_check(vs_bad.is_empty() and vs_seen.size() == 3,
+		"Danger.vent_state mirrors _open and the growth seal on %d vent states (%s seen; %s)" % [vs_n, str(vs_seen.keys()), str(vs_bad)])
+	# no wave inside the horizon, or no kind: the old words (and none at all
+	# with nothing due)
+	var ksh = _bare_shell()
+	ksh.game = Game.new(4242, cfg)
+	_check(ksh._vent_kind({"spawn_wave": -1}, 0) == "", "no wave in the forecast: no kind")
+	_check(ksh._vent_line("", 4) == "releases in 4 turns" and ksh._vent_line("", 1) == "releases next turn"
+		and ksh._vent_line("", -1) == "", "without a kind the vent line keeps its old words")
+	_check(ksh._vent_line("rust_hound", 4) == "releases a Rust Hound in 4 turns"
+		and ksh._vent_line("oil_sludge", 1) == "releases an Oil Sludge next turn",
+		"the vent line's two forms: %s / %s" % [ksh._vent_line("rust_hound", 4), ksh._vent_line("oil_sludge", 1)])
+	ksh.free()
+
+	# a floor whose reinforce list has several kinds, on a wave where two
+	# vents release DIFFERENT kinds: each vent's tooltip names reinforce_kind's
+	# answer for THAT vent (mutation: pass vi 0 for every vent)
+	var found := false
+	for seed_m in range(1, 30):
+		if found:
+			break
+		for fm in range(3, 7):
+			if found:
+				break
+			if Content.FLOORS[fm - 1].get("reinforce", []).size() < 2:
+				continue
+			var gm := Game.new(seed_m, cfg)
+			gm._enter_floor(fm)
+			var vents: Array = gm.map["vents"]
+			var ok_v: Array = []
+			for vi in vents.size():
+				var vt: Vector2i = vents[vi]
+				if gm._open(vt) and not (gm.terrain.has(vt) and String(gm.terrain[vt]["kind"]) == "growth"):
+					ok_v.append(vi)
+			if ok_v.size() < 2:
+				continue
+			for sm in range(0, 60):
+				gm.smog = sm
+				var fc: Dictionary = gm.smog_forecast()
+				var w := int(fc["spawn_wave"])
+				if w < 0 or int(fc["spawn_in"]) < 1:
+					continue
+				var fdef: Dictionary = gm.floor_def(fm)
+				var ka := gm.reinforce_kind(fdef, w, ok_v[0])
+				var kb := gm.reinforce_kind(fdef, w, ok_v[1])
+				if ka == kb:
+					continue
+				found = true
+				var msh = _danger_shell(gm)
+				msh.hotspots = []
+				for pair in [[ok_v[0], ka], [ok_v[1], kb]]:
+					var vt2: Vector2i = vents[int(pair[0])]
+					msh._show_tooltip(_tile_px(msh, vt2))
+					var sky: Dictionary = msh._danger_state()["sky"]
+					var want := msh._vent_line(String(pair[1]), int(sky["spawn_in"]))
+					_check(msh.tooltip_tile == vt2 and int(sky["spawn_wave"]) == w and msh.tooltip.has(want)
+						and want.contains(Names.a_name(String(pair[1]))),
+						"seed %d floor %d smog %d: vent %d's tooltip names its own release %s (%s)"
+						% [seed_m, fm, sm, int(pair[0]), String(pair[1]), str(msh.tooltip)])
+				msh.free()
+				break
+	_check(found, "fixture: a floor, wave and two vents releasing different kinds")
+
+	# fit gates, in the style of the others
+	# (1) every (floor name, pack name) floor log line fits LOG_LINE_MAX
+	var log_bad := 0
+	var log_worst := ""
+	var tsh = _bare_shell()
+	tsh.game = Game.new(1, cfg)
+	for row in Content.FLOORS:
+		for pk in row.get("encounters", []):
+			var ln := Feedback.ev_text({"t": "floor", "floor": 1, "name": row["name"], "encounter": pk["id"]}, tsh.game)
+			if ln.length() > log_worst.length():
+				log_worst = ln
+			if ln.length() > Feedback.LOG_LINE_MAX or not ln.contains(String(pk["name"])):
+				log_bad += 1
+	_check(log_bad == 0, "every crew's floor log line fits %d chars (%d bad, longest '%s')" % [Feedback.LOG_LINE_MAX, log_bad, log_worst])
+	# (2) every title-card line 2, with the longest pack name on its floor (by
+	# drawn width), draws at >= CARD_MIN_VH inside 0.9vw at every viewport
+	var card_worst := 1.0
+	var card_what := ""
+	for n in Content.FLOORS.size():
+		var widest := ""
+		var wpx := -1.0
+		for pk2 in Content.FLOORS[n].get("encounters", []):
+			var cand := Shell.FLOOR_CARD_CREW % [n + 1, String(pk2["name"])]
+			var px: float = tsh.font.get_string_size(cand, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x
+			if px > wpx:
+				wpx = px
+				widest = cand
+		if widest == "":
+			continue
+		for vp in CARD_VIEWPORTS:
+			var fr: float = float(tsh._fit_size(widest, int(vp.y * 0.018), vp.x * 0.9)) / vp.y
+			if fr < card_worst:
+				card_worst = fr
+				card_what = "%s at %dx%d" % [widest, vp.x, vp.y]
+	_check(card_worst >= CARD_MIN_VH, "the title card's crew line draws at %.3f%% of vh, under %.2f%% (%s)"
+		% [card_worst * 100.0, CARD_MIN_VH * 100.0, card_what])
+	# (3) every vent tooltip line, for every kind any floor releases and the
+	# widest countdown, keeps the tooltip's own wrap: <= 2 lines, nothing
+	# shrunk under CARD_MIN_VH
+	var kinds := {}
+	for row2 in Content.FLOORS:
+		for k in row2.get("reinforce", []):
+			kinds[String(k)] = true
+	var vent_bad := 0
+	for vp2 in CARD_VIEWPORTS:
+		for k2 in kinds:
+			for vin in [Danger.SKY_HORIZON, 1]:
+				var vl: String = tsh._vent_line(String(k2), vin)
+				var wr: Dictionary = tsh._wrap(vl, int(vp2.y * 0.021), vp2.x * 0.86, 2)
+				if wr["lines"].size() > 2 or float(wr["size"]) / vp2.y < CARD_MIN_VH:
+					vent_bad += 1
+		var cwr: Dictionary = tsh._wrap(Shell.VENT_COVERED_LINE, int(vp2.y * 0.021), vp2.x * 0.86, 2)
+		if cwr["lines"].size() > 2 or float(cwr["size"]) / vp2.y < CARD_MIN_VH:
+			vent_bad += 1
+	_check(vent_bad == 0, "the vent lines (and the covered line) fit the tooltip at every viewport (%d bad)" % vent_bad)
+	tsh.free()
+	print("encounters: %d crew cards, crew line worst %.3f%% of vh (%s), longest log line %d chars, %d vent kinds, %d vent states mirrored"
+		% [named, card_worst * 100.0, card_what, log_worst.length(), kinds.size(), vs_n])

@@ -36,6 +36,12 @@ const Content := preload("res://sim/content.gd")
 ## because "how often did it fire" is only half the question a free permanent
 ## asks: the other half is how many runs reached it at all, from which floor,
 ## and how often a draft drop or a forge scrap turned it back off.
+## Block E (bump 15) adds the variety columns - the encounter pack met on every
+## floor visited (game.encounter(n), read once per floor change), the kinds the
+## vents released (the reinforcement event's "kind", the boss phase-2 golem
+## included) and the distinct non-boss kinds a run met - printed as one
+## `variety:` line (variety_line). Beside it, error_events (the sim-error
+## share of `illegal`) feeds tests/playtest.gd's PT_PERSONA line.
 
 # --- actions ------------------------------------------------------------------
 var casts_by_base := {}
@@ -227,6 +233,7 @@ var collision_by_aid := {}
 
 # --- errors and clock ---------------------------------------------------------
 var illegal := 0  # {"t": "illegal"} plus {"t": "error"} events
+var error_events := 0  # the {"t": "error"} share of `illegal` (sim errors, not bot mistakes)
 var smog_at_descend: Array = []
 var turns_per_floor: Array = []
 var stall_floors := 0  # floors with turn > 60 or smog > choke + 30 at any point
@@ -234,6 +241,16 @@ var quota_unmet_at_death := false  # this run (or any merged run) died with gree
 var quota_unmet_deaths := 0
 var quota_reclamps := 0  # green gates that shrank because corruption vanished uncleansed
 var runs := 0  # runs finished into this tally (finish() increments, merge() sums)
+
+# --- encounter variety (Block E, bump 15) -------------------------------------
+## Instrument only (existing KPIs unchanged). encounters_by_floor: floor ->
+## {pack id: floor visits} (game.encounter(n), "classic" where no pack was
+## drawn - a scripted floor 1 or the boss floor); reinforce_by_kind: vent
+## releases by kind (the reinforcement event's "kind"); kinds_met_total: the
+## distinct non-boss kinds standing on any floor of a run, summed over runs.
+var encounters_by_floor := {}
+var reinforce_by_kind := {}
+var kinds_met_total := 0
 
 # step-scoped state from begin_step
 var _bloom0 := 0
@@ -263,6 +280,10 @@ var _slot_by_offer := {}
 ## active on. Committed to the four columns by finish(); never merged.
 var _res_prev: Array = []
 var _res_seen := {}
+## Block E per-run scratch: the floor whose pack was last counted (0 = none
+## yet, so the first step counts floor 1) and the kinds seen this run.
+var _enc_floor := 0
+var _kinds_seen := {}
 
 
 ## Ability/source id folded onto its base. Content.base_id, NEVER
@@ -318,6 +339,17 @@ func begin_step(game) -> void:
 	_pos0 = game.player["pos"]
 	_charge0 = game.player["charge"]
 	_floor0 = game.floor_num
+	# Block E: sample BEFORE the step too, so a kind killed by the very step
+	# that first faces it (floor 1's crew on action 1) is still counted
+	_sample_kinds(game)
+
+
+## Block E: every non-boss kind standing on the board, once per run.
+func _sample_kinds(game) -> void:
+	for e in game.enemies:
+		var ek := String(e["kind"])
+		if not _kinds_seen.has(ek) and not Content.ENEMIES.get(ek, {}).get("traits", []).has("boss"):
+			_kinds_seen[ek] = true
 
 
 ## Called on every event returned by game.step(action).
@@ -465,6 +497,10 @@ func add(ev: Dictionary, action: Dictionary, game) -> void:
 			quota_reclamps += 1
 		"illegal", "error":
 			illegal += 1
+			if t == "error":
+				error_events += 1
+		"reinforcement":
+			_inc(reinforce_by_kind, String(ev.get("kind", "?")))
 		"descend":
 			smog_at_descend.append(game.smog)
 			turns_per_floor.append(game.turn)
@@ -529,6 +565,15 @@ func end_step(game, action: Dictionary) -> void:
 	if String(action.get("type", "")) == "end_turn":
 		for rid in res_now:
 			_inc(resonance_turns, String(rid))
+	# Block E: the pack of every floor visited (the first step counts floor 1)
+	# and every non-boss kind standing on it
+	if game.floor_num != _enc_floor:
+		_enc_floor = game.floor_num
+		var fk := str(game.floor_num)
+		if not encounters_by_floor.has(fk):
+			encounters_by_floor[fk] = {}
+		_inc(encounters_by_floor[fk], String(game.encounter(game.floor_num).get("id", "classic")))
+	_sample_kinds(game)
 	if game.floor_num != _floor0:
 		_stall_flagged = false
 	if not _stall_flagged and not game.over:
@@ -551,6 +596,9 @@ func finish(game) -> void:
 		_inc(resonance_first_floor, String(rid), int(_res_seen[rid]))
 	_res_seen = {}
 	_res_prev = []
+	kinds_met_total += _kinds_seen.size()
+	_kinds_seen = {}
+	_enc_floor = 0
 	bloom_unspent += game.bloom
 	_choke_floor = -1
 	_stall_flagged = false
@@ -637,6 +685,7 @@ func merge(other) -> void:
 	_merge_dict(fire_dmg_by_by, other.fire_dmg_by_by)
 	_merge_dict(collision_by_aid, other.collision_by_aid)
 	illegal += other.illegal
+	error_events += other.error_events
 	smog_at_descend.append_array(other.smog_at_descend)
 	turns_per_floor.append_array(other.turns_per_floor)
 	stall_floors += other.stall_floors
@@ -644,6 +693,12 @@ func merge(other) -> void:
 	quota_unmet_deaths += other.quota_unmet_deaths
 	quota_reclamps += other.quota_reclamps
 	runs += other.runs
+	for fk in other.encounters_by_floor:
+		if not encounters_by_floor.has(fk):
+			encounters_by_floor[fk] = {}
+		_merge_dict(encounters_by_floor[fk], other.encounters_by_floor[fk])
+	_merge_dict(reinforce_by_kind, other.reinforce_by_kind)
+	kinds_met_total += other.kinds_met_total
 
 
 static func _merge_dict(into: Dictionary, from: Dictionary) -> void:
@@ -863,6 +918,26 @@ func resonance_line(n_runs: int) -> String:
 	return "resonance: %s" % ", ".join(parts)
 
 
+## Block E variety line: per floor 1..6 the distinct pack ids met over floor
+## visits, floor 1's non-classic share (visits not on pack 0), the vent
+## releases by kind as shares, and distinct non-boss kinds met per run.
+func variety_line(n_runs: int) -> String:
+	var fparts: Array = []
+	for f in range(1, Content.FLOORS.size()):
+		var d: Dictionary = encounters_by_floor.get(str(f), {})
+		fparts.append("f%d %d/%d" % [f, d.size(), _sum(d)])
+	var f1: Dictionary = encounters_by_floor.get("1", {})
+	var classic0 := String(Content.FLOORS[0]["encounters"][0]["id"]) if not Content.FLOORS[0].get("encounters", []).is_empty() else "classic"
+	var f1_visits := _sum(f1)
+	var f1_nonclassic := _safe_div(float(f1_visits - int(f1.get(classic0, 0)) - int(f1.get("classic", 0))), float(f1_visits))
+	var vtotal := _sum(reinforce_by_kind)
+	var vparts: Array = []
+	for k in sorted_desc(reinforce_by_kind):
+		vparts.append("%s %.0f%%" % [k, 100.0 * _safe_div(float(reinforce_by_kind[k]), float(vtotal))])
+	return "variety: packs met/floor %s (distinct ids/visits)  f1 non-classic %.2f  vents %d {%s}  kinds met/run %.2f" % [
+		" ".join(fparts), f1_nonclassic, vtotal, ", ".join(vparts), _safe_div(float(kinds_met_total), maxf(1.0, float(n_runs)))]
+
+
 ## Compact report block; every line is indented so it nests under a runner's
 ## own summary lines.
 func print_block(n_runs: int, kits: Array) -> void:
@@ -941,3 +1016,4 @@ func print_block(n_runs: int, kits: Array) -> void:
 	tpf = _safe_div(tpf, float(turns_per_floor.size()))
 	print("           clock: smog at descend avg %.1f  turns/floor avg %.1f  stall floors %d  quota-unmet deaths %d  illegal %d" % [
 		smog_avg, tpf, stall_floors, quota_unmet_deaths, illegal])
+	print("           %s" % variety_line(n_runs))

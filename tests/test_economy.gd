@@ -84,6 +84,13 @@ extends SceneTree
 ##     _passive_mod scans the grafts first so a graft mod SHADOWS a resonance
 ##     mod. Only the `hooks` shape ships, so the stat and mod orders are both
 ##     pinned through hand-built rows
+##  q) Block E (bump 15, encounter packs and biome reinforcements): the pack
+##     draw is a side-stream draw keyed on the floor, and floor 1 fields no
+##     gums kind, so rng.state after Game.new is RNG_STATE_BUMP8 for every
+##     seed with AND without the fixed_shift control. Section (m) replays the
+##     bump-14 floor-entry table under fixed_shift (byte-identical: the classic
+##     path gained no draw) and pins the default config in its own bump-15
+##     table (RNG_FLOOR_ENTRY_BUMP15)
 ## Run: godot --headless --path . --script tests/test_economy.gd
 
 const Content := preload("res://sim/content.gd")
@@ -150,6 +157,11 @@ const RNG_STATE_BUMP8 := [
 ## row: the fire row and the persona's new drop guard together change nothing
 ## these ten runs can see, which is the strongest form of "adds no draw".
 ## From here on, anything that moves one of these is a stray main-rng draw.
+## Block E (bump 15) did NOT re-stamp this table: section (m) now replays it
+## under the fixed_shift mutator (every floor's classic crew, drill-only
+## vents), where it holds byte for byte - the classic path gained no draw.
+## The default config, which fields encounter packs, is pinned separately in
+## RNG_FLOOR_ENTRY_BUMP15 below.
 const RNG_FLOOR_ENTRY_BUMP14 := [
 	[5089575408282122190, -184513544007953650, 8759944363161018601, 2868822161275640310, -8152873371107847509],
 	[-1543445859615755461, -8411093148249300473, 1787517375204971321, 8582635207152789512],
@@ -161,6 +173,28 @@ const RNG_FLOOR_ENTRY_BUMP14 := [
 	[-1230729324925988375, 1420908871602353461, 6357929784085942264, -926346255672728079, -6150833711807613437, -7107847693446950901, -8495234952923389292],
 	[2921800532955938594, 1587407093833056826, 3824933404910214398, 3934717501292175332, 3378600504722340502, -5312019873132383350, 1260004648369663161],
 	[2473378904339026979, 8392605424486942015, 2657003823126323915, 5422367580079282869, 8572526701641051724],
+]
+
+
+## The same optimizer runs as RNG_FLOOR_ENTRY_BUMP14 on the same RefGame, but
+## on the DEFAULT config of the bump-15 tree (Block E: encounter packs drawn
+## from the side stream, biome vent rotation). Floor 1's column equals
+## RNG_STATE_BUMP8 (no gums kind on floor 1, the pack draw is side-stream);
+## from floor 2 on a different crew plays a different floor (gum intents draw
+## from the main rng, and the persona plays differently), so most entries
+## differ from the bump-14 table by design. Re-stamp with _floor_entry_states.
+## From here on, anything that moves one of these is a stray main-rng draw.
+const RNG_FLOOR_ENTRY_BUMP15 := [
+	[5089575408282122190, -184513544007953650, 8759944363161018601, 2868822161275640310, 3937219494565775732],
+	[-1543445859615755461, -8411093148249300473, -5880195202691535665, 5359721235503091099, -1796875765925557603, -7216726704369277839, 676360471912886089],
+	[5249088221260300708, -8668300741929293400, -4401277841123554436, -5287603347965820930, 8856035233686701109, 4418786177135995197],
+	[-7365291246896200391, 9118581067688907677, 4174390183580078064, 4074606386311278477, 7354162084516242321, -1942974218758671363, -7065019342646581521],
+	[-4307724339993763098, -3504797669898524666, 629704092931937326, -786957130363125194, 278783950483940221, -5759867275603309639],
+	[-5880482361733646265, -808239912685928521, -4338090631578911018, -8046437620736313008, 4196872015560688783, -422735934883274349, -5788992495637518788],
+	[-2810552436854674636, 5839575857474482460, -5851591017676203272, 7921899231902060538, 4167500181947425809, 5989040945971106265],
+	[-1230729324925988375, 1420908871602353461, -1834454723199585987, 1763709364953602799, -5646590991915113294, 6083752292188647006, 6567089838293234355],
+	[2921800532955938594, 1587407093833056826, 3824933404910214398, -8432045276868733401, 2928439803460290418],
+	[2473378904339026979, 8392605424486942015, 2657003823126323915, 8932841132497543845, 7579016932021033004, 5889333641216685060, 5479066342797699855],
 ]
 
 
@@ -222,6 +256,7 @@ func _init() -> void:
 	_check_d3_rng_untouched()
 	_check_d6_forge_actions()
 	_check_d5_resonances()
+	_check_e_rng()
 	if failures.is_empty():
 		print("economy: OK (%d checks)" % checks)
 		quit(0)
@@ -1550,41 +1585,63 @@ func _check_d3_rng_untouched() -> void:
 	g2._execute_intent(spitter)
 	_ok(g2.rng.state == st and _events_of(g2._step_events, "screened").size() == 1 and _events_of(g2._step_events, "gummed").is_empty(),
 		"a screened gum executes without an rng draw: %s" % str(g2._step_events))
-	# 3) the D3-swapped sim (RefGame) under the optimizer reproduces the recorded floor-entry states
+	# 3) the D3-swapped sim (RefGame) under the optimizer reproduces the
+	# recorded floor-entry states. Block E (bump 15): the bump-14 table is
+	# replayed under the fixed_shift control (classic crews, drill-only vents),
+	# so it stays byte-identical - the proof the bump added no stray draw on
+	# the classic path - and the default config has its own bump-15 table
+	var r14 := _floor_entry_pins(RNG_FLOOR_ENTRY_BUMP14, {"mutators": ["fixed_shift"]}, "bump-14 / fixed_shift")
+	_ok(r14[2] == 0, "RefGame optimizer run under fixed_shift: rng.state at every floor entry matches the bump-14 pins (%d seeds, %d floor entries, %d moved)" % r14)
+	var r15 := _floor_entry_pins(RNG_FLOOR_ENTRY_BUMP15, {}, "bump-15 / default")
+	_ok(r15[2] == 0, "RefGame optimizer run, default config: rng.state at every floor entry matches the bump-15 pins (%d seeds, %d floor entries, %d moved)" % r15)
+	_ok(RefGame.new(1).rng.state == int(RNG_STATE_BUMP8[0]) and Game.new(1).rng.state == int(RNG_STATE_BUMP8[0]), "RefGame and Game share the Game.new pins")
+	print("d3 rng: floor-entry pins bump-14 under fixed_shift %d seeds / %d entries, %d moved; bump-15 default %d seeds / %d entries, %d moved" % [
+		r14[0], r14[1], r14[2], r15[0], r15[1], r15[2]])
+
+
+## The optimizer on RefGame(seed, cfg) for seeds 1..pins.size(): rng.state at
+## Game.new and after every step that entered a new floor, against `pins`.
+## Returns [seeds, floor entries, moved].
+func _floor_entry_pins(pins: Array, cfg: Dictionary, label: String) -> Array:
 	var seeds_checked := 0
 	var floors_checked := 0
 	var moved := 0
-	for i in range(RNG_FLOOR_ENTRY_BUMP14.size()):
+	for i in range(pins.size()):
 		var s := i + 1
-		var rg = RefGame.new(s)
-		var bot = Roster.make("optimizer", s)
-		if bot.has_method("set_sim"):
-			bot.set_sim(rg)
-		var states: Array = [rg.rng.state]
-		var last_floor: int = rg.floor_num
-		var actions := 0
-		while not rg.over and actions < Sweep.MAX_ACTIONS and rg.total_turns < Sweep.MAX_TURNS:
-			var act: Dictionary = bot.choose_action(rg.snapshot(), rg.legal_actions())
-			rg.step(act)
-			actions += 1
-			if rg.floor_num != last_floor:
-				last_floor = rg.floor_num
-				states.append(rg.rng.state)
+		var states: Array = _floor_entry_states(s, cfg)
 		seeds_checked += 1
-		var want: Array = RNG_FLOOR_ENTRY_BUMP14[i]
+		var want: Array = pins[i]
 		if states.size() != want.size():
 			moved += 1
-			failures.append("floor-entry pins: seed %d reached %d floors, the pinned run reached %d" % [s, states.size(), want.size()])
+			failures.append("floor-entry pins %s: seed %d reached %d floors, the pinned run reached %d" % [label, s, states.size(), want.size()])
 			continue
 		for f in range(states.size()):
 			floors_checked += 1
 			if int(states[f]) != int(want[f]):
 				moved += 1
 				if moved <= 3:
-					failures.append("floor-entry pins: seed %d floor %d state %d, pinned %d" % [s, f + 1, int(states[f]), int(want[f])])
-	_ok(moved == 0, "RefGame optimizer run: rng.state at every floor entry matches the bump-13 pins (%d seeds, %d floor entries, %d moved)" % [seeds_checked, floors_checked, moved])
-	_ok(RefGame.new(1).rng.state == int(RNG_STATE_BUMP8[0]) and Game.new(1).rng.state == int(RNG_STATE_BUMP8[0]), "RefGame and Game share the Game.new pins")
-	print("d3 rng: floor-entry pins %d seeds / %d entries, %d moved" % [seeds_checked, floors_checked, moved])
+					failures.append("floor-entry pins %s: seed %d floor %d state %d, pinned %d" % [label, s, f + 1, int(states[f]), int(want[f])])
+	return [seeds_checked, floors_checked, moved]
+
+
+## rng.state at Game.new and after every floor entry of one optimizer run on
+## RefGame(s, cfg) - also how the pin tables are (re-)stamped.
+static func _floor_entry_states(s: int, cfg: Dictionary) -> Array:
+	var rg = RefGame.new(s, cfg)
+	var bot = Roster.make("optimizer", s)
+	if bot.has_method("set_sim"):
+		bot.set_sim(rg)
+	var states: Array = [rg.rng.state]
+	var last_floor: int = rg.floor_num
+	var actions := 0
+	while not rg.over and actions < Sweep.MAX_ACTIONS and rg.total_turns < Sweep.MAX_TURNS:
+		var act: Dictionary = bot.choose_action(rg.snapshot(), rg.legal_actions())
+		rg.step(act)
+		actions += 1
+		if rg.floor_num != last_floor:
+			last_floor = rg.floor_num
+			states.append(rg.rng.state)
+	return states
 
 
 # --- Block D6: the forge branch of legal_actions -------------------------------
@@ -1746,3 +1803,26 @@ func _check_d5_resonances() -> void:
 	m3.probe_rows = [["probe_a", {"stat": {"regen_on_growth": 2}}], ["probe_b", {"stat": {"regen_on_growth": 1}}]]
 	_ok(m3._passive_stat("regen_on_growth") == 3, "d5 passive: resonance stats sum %d" % m3._passive_stat("regen_on_growth"))
 	print("d5 resonances: no main-rng draw over set / hooks / stat; graft + resonance sum, graft mod shadows")
+
+
+# --- q) Block E: the pack draw moves no main-rng draw at Game.new ---------------
+
+func _check_e_rng() -> void:
+	var moved := 0
+	for i in range(RNG_STATE_BUMP8.size()):
+		var s := i + 1
+		var a: int = Game.new(s).rng.state
+		var b: int = Game.new(s, {"mutators": ["fixed_shift"]}).rng.state
+		if a != int(RNG_STATE_BUMP8[i]) or b != int(RNG_STATE_BUMP8[i]):
+			moved += 1
+			if moved <= 3:
+				failures.append("e rng: seed %d Game.new state %d, fixed_shift %d, bump-8 pin %d" % [s, a, b, int(RNG_STATE_BUMP8[i])])
+	_ok(moved == 0, "e rng: rng.state after Game.new == RNG_STATE_BUMP8 with and without fixed_shift (%d of %d seeds moved)" % [moved, RNG_STATE_BUMP8.size()])
+	# the queries the shell and the bots' forward models call are pure
+	var g = Game.new(5)
+	var st: int = g.rng.state
+	for n in range(1, Content.FLOORS.size() + 1):
+		g.floor_def(n)
+		g.encounter(n)
+	_ok(g.rng.state == st, "e rng: floor_def / encounter over every floor leave rng.state alone")
+	print("e rng: %d seeds, Game.new state equal to the bump-8 pins with and without fixed_shift, %d moved" % [RNG_STATE_BUMP8.size(), moved])

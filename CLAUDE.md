@@ -94,8 +94,15 @@ architecture below is designed to bend rather than block.
   visual inspection to verify behavior — assert on sim state instead.
 - Verification suite (run all of it before committing sim or bot changes):
   - `godot --headless --path . --script tests/test_invariants.gd` — procgen sweep
-    (raw `Content.FLOORS` plus `Game.floor_def` for every tier and mutator)
+    (raw `Content.FLOORS` - every encounter pack of every row, plus the boss
+    row - plus `Game.floor_def` for every tier and mutator, `fixed_shift`
+    included), and the Block E "pack layout invariance" pass: every pack on a
+    floor, generated from the same rng seed, gives identical tiles, start,
+    stairs, vents, shrine, enemy positions, elite flags, terrain and
+    rng.state after generate (200 seeds x 29 packs = 5800 generations, 0 diffs)
   - `godot --headless --path . --script tests/test_determinism.gd` — rerun + replay hashes
+    (its `RNG_VARIANTS` include `{mutators: [fixed_shift]}`: the Block E pack
+    draw is side-stream, so no config moves `Game.new`'s rng.state)
   - `godot --headless --path . --script tests/test_content.gd` — ability tags/roles,
     `Content.ARCHETYPES` cores, `base_id`, `archetypes_for`, and the effect-grammar
     lint (closed op/rider vocabulary, TERRAIN/REACTIONS/STATUSES rows, the D4
@@ -110,7 +117,18 @@ architecture below is designed to bend rather than block.
     and `Content.FEATS` (`_lint_feats`: req keys in `FEAT_REQ_KEYS`, stat keys
     in `RUN_STAT_KEYS`, total keys in `FEAT_TOTAL_KEYS`, `boss` a boss-trait
     row, `max_turns` / `max_grafts` / `stat_max` only beside `won: true`; 16
-    bad fixtures, each rejected; prints "feats: N rows (R run-scope, C career)")
+    bad fixtures, each rejected; prints "feats: N rows (R run-scope, C career)"),
+    and section 14 (Block E) `_lint_floors`: the `Content.FLOORS`
+    `encounters` / `reinforce` shape and rules R1-R8 of the Encounter packs
+    note, the threat budget included (every mobile kind's traits priced in
+    `PACK_TRAIT_DPT`), with a self-test that lints every bad row alone AND in a
+    table and keeps the good rows clean ("floors lint self-test: 26 bad rows ->
+    25 rejected alone, 26 rejected in the table; 3 good rows -> 3 clean" - the
+    duplicate id is a relationship, caught only in a table), printing
+    "encounters: 7 floors, 29 packs (4/5/5/5/5/5/0), mobile threat
+    x0.78-1.17, means x0.909-1.036; vents drill_bot rust_hound coal_golem
+    cinder_mite"; `MUTATOR_BOOL_KEYS` carries `encounter_packs` and
+    `biome_reinforce`
   - `godot --headless --path . --script tests/test_grammar.gd` — effect grammar
     behaviour: rider evaluation, returned outcomes, the data tables driven
     through `Game._apply_effect` on hand-built states, the D4 draft slots
@@ -125,12 +143,31 @@ architecture below is designed to bend rather than block.
     (seeds 1..2) holding the forecast equal to the real end turn, identical
     under a re-seeded clone rng, the enemy damage equal to the telegraph sum,
     `smog_forecast` equal to an end-turn-only clone, and every query pure
+    — and section e (Block E): the pack draw against an independent
+    `hash([seed, n, "roster"])` weighted walk (seeds 1..50 x floors 1..6, a
+    game on floor 1 asked about every floor, so keying on `floor_num` fails),
+    every new query pure (rng.state and `state_hash`), `_side_rng(tag)` ==
+    `_side_rng_at(floor_num, tag)` == `hash([seed, floor, tag])` on floor_num
+    1..6 and `_side_rng_at(m, tag)` for every m (a wrapper that pins the floor
+    fails), pack 0 against the frozen pre-v15 `CLASSIC_ROSTERS` (key order
+    included) and `fixed_shift` fielding it, the weights over 2000 seeds
+    (every pack within 4 sigma), tier `extra_enemy` and overtime applied to
+    the DRAWN crew, the fixed floor (no pack, no `encounter` key), a generated
+    floor spawning exactly its pack and naming it, `reinforce_wave` (the old
+    spawn test exactly, smog 0..200 on every floor), `reinforce_kind` (the
+    rotation, the switch), `smog_forecast().spawn_wave`, the rotation through
+    real end turns on a two-vent board, and the boss phase-2 golem's `kind`
   - `godot --headless --path . --script tests/test_economy.gd` — shrine economy
     and quota: config-independent main rng, shop stock filters, graft/ability/
     press/forge purchase rules, the shrine reroll (legality, price escalation,
     the cap, offer exclusion, closed slots, rng-state independence), quota
     re-clamp, damage attribution, and the D5 resonances (no main-rng draw, the
-    graft + resonance stat sum, a graft mod shadowing a resonance mod)
+    graft + resonance stat sum, a graft mod shadowing a resonance mod); since
+    Block E the RefGame floor-entry pins `RNG_FLOOR_ENTRY_BUMP14` run under
+    `fixed_shift` and hold byte for byte (the classic path gained no draw),
+    `RNG_FLOOR_ENTRY_BUMP15` pins the default config, and section q holds
+    `Game.new`'s rng.state equal to `RNG_STATE_BUMP8` with AND without
+    `fixed_shift` (seeds 1..50)
   - `godot --headless --path . --script tests/test_regressions.gd` — replays every
     `tests/regressions/*.json` (seed, config, actions) pair: illegal/error events,
     outcome, expected event patterns; `REGRESS_STRICT=1` also checks the state
@@ -142,9 +179,15 @@ architecture below is designed to bend rather than block.
   - `godot --headless --path . --script tests/playtest.gd` — bot personas, balance
     metrics, and the BALANCE.md band gates (exit 1 when a persona's whole Wilson
     interval sits outside its band; `PLAYTEST_GATE=0` disables, `PLAYTEST_SEEDS`
-    and `PLAYTEST_BOTS=a,b,c` narrow a run)
+    and `PLAYTEST_BOTS=a,b,c` narrow a run, `PLAYTEST_MUTATORS=a,b` runs every
+    persona under those mutators - `fixed_shift` puts the whole gate on the
+    classic-crew game, the Block E control arm; each persona also prints one
+    machine-readable `PT_PERSONA` line)
   - `godot --headless --path . --script tests/test_meta.gd` — career unlocks, profile io,
-    mutator invariants, package pools, and the fun-pass run-stats fold: replay
+    mutator invariants (a `fixed_shift` arm: pack 0 on every floor and drill
+    bots from every vent, seeds 1..10, against a base game that differs; the
+    overtime arm reads `Game.floor_def(n)["enemies"]`, never a FLOORS key),
+    package pools, and the fun-pass run-stats fold: replay
     determinism (summary AND every step's ctx) over optimizer/sprout/magpie
     runs, the bloom cross-check, an independent event recount, hand-fed units
     (turn close, streaks, spikes killer, ties, closest call on a winning step,
@@ -238,7 +281,18 @@ architecture below is designed to bend rather than block.
     `_context_msg` ending in it) and its fit gate (every shipped hint kept at
     >= `OBJECTIVE_MIN_VH` beside the table's longest quota at every viewport;
     a hint too long to fit is dropped); `_check_card_text` also sweeps every
-    `_unlock_cards` string (every milestone, tier and feat, three careers)
+    `_unlock_cards` string (every milestone, tier and feat, three careers);
+    `_check_encounters` the Block E shell: the title card's crew line on
+    generated floors and none on the tutorial or the boss floor, the floor
+    event's log line naming the crew, the boss phase-2 golem's reinforcement
+    line read off the event's `kind`, the vent tooltip naming
+    `reinforce_kind` of the forecast's `spawn_wave` ("releases a Drill Bot"
+    on a fresh game, and each vent its own release on a two-kind wave), a
+    Roots-walled vent saying "vent beneath - releases nothing while covered"
+    with the real smog tick agreeing, `Danger.vent_state` against the sim's
+    `_open` and growth seal on 468 vent states, and fit gates for every crew's
+    log line, title-card line and vent line (the reinforcement line's kind,
+    its tile fallback and "a machine" are in the body's section 8c)
   - `godot --headless --path . --script tests/test_draw.gd` — the draw smoke
     test, and the ONLY test that runs the shell's `_draw` code: it hosts
     `shell/main.gd` in a `SubViewport` (`UPDATE_ALWAYS`) at the four named
@@ -250,6 +304,8 @@ architecture below is designed to bend rather than block.
     and the tender (each tip raised before the next action and required to
     name the enemy or the tender it was aimed at), a lethal state (vignette, outline, guard flash, escape
     glow), a danger board (tether, gum slot, SKIES chips, vent countdown), a
+    floor title card naming its crew, a vent tooltip naming its release and a
+    Roots-covered vent's naming none (Block E), a
     kill (ghost, streak flame), the boss floor (core shield ring up and down,
     a phase banner), the shrine / forge / draft / drop sheets, the log, help
     pages and intro, both game-over screens set from outside, and the end
@@ -305,8 +361,8 @@ architecture below is designed to bend rather than block.
   the tier axis itself, so it drops `tier` from the base config and keeps the
   other two), `measure_bosses` and `sweep_resonance` (whose FREE mode takes
   the three; its locked mode names its own kit); `verify_kit`,
-  `measure_fanatic`, `draft_oracle` and `sweep_packages` still build their
-  configs inline and ignore the three:
+  `measure_fanatic`, `draft_oracle`, `sweep_packages` and `sweep_encounters`
+  still build their configs inline and ignore the three:
   - `tests/sweep_combos.gd` — locked-kit lift: every config is `{kit: K, pool: K}`,
     `lift = pair - max(single_x, single_y)` with Wilson CIs and a paired sign
     test; `SWEEP_PAIRS=a+b,c+d` selects pairs, `SWEEP_SHARD=i/n` slices the
@@ -327,7 +383,21 @@ architecture below is designed to bend rather than block.
     `VERIFY_TIER`, `VERIFY_EXTRAS`), prints wins, CI and the Tally KPI block
   - `tests/measure_fanatic.gd` — every `Content.ARCHETYPES` build on every seed
     (`FANATIC_SEEDS`, `FANATIC_SEED_FROM`, `FANATIC_BUILDS`, `FANATIC_PACKAGES`,
-    `FANATIC_TIER`, `FANATIC_MUTATORS`, `FANATIC_VERBOSE=1`)
+    `FANATIC_TIER`, `FANATIC_MUTATORS`, `FANATIC_VERBOSE=1`); one
+    machine-readable `FAN_BUILD` line per build (wins, timeouts, stall floors)
+  - `tests/sweep_encounters.gd` (Block E) — the paired acceptance runner: per
+    loadout, the default config against the `fixed_shift` control on the SAME
+    seeds, wins with Wilson CIs and the delta, the pooled totals, and the
+    tally `variety:` line per arm. `ENC_BOT` (default optimizer), `ENC_SEEDS`
+    (300), `ENC_SEED_FROM`, `ENC_LOADOUTS` (default every `Content.LOADOUTS`
+    row; a cell is `{loadout: id}`, no package), `ENC_ARMS=both|default|control`,
+    `ENC_GATE=0`. It gates (exit 1) on the stage's pre-registered lines:
+    optimizer pooled |delta| <= 60 per 1800 runs (scaled to the run) and every
+    default cell's CI overlapping 35-65%; magpie pooled delta <= +33 per 1800
+    and no default cell whose Wilson lower bound clears 10% unless its control
+    cell's does too (judged PAIRED: spiker sits at the trip line on the
+    classic game itself). Machine-readable `ENC_CELL` / `ENC_POOLED` /
+    `ENC_DELTA` / `ENC_VARIETY` / `ENC_GATE` lines beside the human ones
   - `tests/measure_bosses.gd` — arrivals/conversions per boss and per kit
     signature; `BOSS_KIT=a,b,c` locks an archetype kit against each boss
   - `tests/draft_oracle.gd` — forks every draft the policy faces (each offer +
@@ -632,7 +702,7 @@ architecture below is designed to bend rather than block.
   config keys are the closed set `Content.MUTATOR_CONFIG_KEYS`: `kit_max`,
   `max_hp_delta`, `bank_cap`, `oil_mult`, `extra_common_enemy`, `shop`,
   `pool_ban`, `kit_ban`, `draft_offers`, `draft_upgrades_only`, `open_pool`,
-  `shop_reroll`. Eleven rows — the six originals (`kit_of_3`, `brittle`, `parched`,
+  `shop_reroll`, `encounter_packs`, `biome_reinforce`. Twelve rows — the six originals (`kit_of_3`, `brittle`, `parched`,
   `double_oil`, `overtime`, `boarded`) reproduce their old numbers exactly,
   plus the three C4 rows: `no_lance` (`pool_ban: ["solar_lance"]` + `kit_ban`
   — the lance leaves the starting kit and the draft pool, and the shrine stock
@@ -644,7 +714,13 @@ architecture below is designed to bend rather than block.
   deliberate choice now that a package is a one-per-run commitment; the
   profile unlocks it at one win), plus the one Block D row: `spinning_shrine`
   (`shop_reroll: true` — the D2 shrine reroll, held behind this switch after
-  its measurement; unlocked at one win). Adding a mutator means adding a row; one
+  its measurement; unlocked at one win), plus the one Block E row:
+  `fixed_shift` (`encounter_packs: false, biome_reinforce: false` — every
+  floor's classic crew and drill bots from every vent, i.e. bump 14 action for
+  action). It is the FIRST row with no `Content.MILESTONES` entry, so the
+  career never unlocks it and the menu never offers it: it is the Block E
+  measurement control and the one-default reversal switch, and giving it a
+  MILESTONES row (making it player-facing) is an owner decision. Adding a mutator means adding a row; one
   that needs a new number needs a new config key, a `_mut` read at the site
   and the key in `MUTATOR_CONFIG_KEYS` (which `tests/test_content.gd` lints).
   `tests/regressions/c4_no_lance.json`, `c4_wide_draft.json` and
@@ -1040,6 +1116,93 @@ architecture below is designed to bend rather than block.
   from before bump 14 is comparable to one after it — and neither is a two-row
   bump-14 column comparable to a one-row one, because the optimizer drop guard
   has one fewer row to protect and its drafting moved; BALANCE.md says so.
+- Encounter packs (Block E, bump 15; fun pass stage 9): spawn tables are
+  data. Every non-boss `Content.FLOORS` row carries `encounters: [{id, name,
+  w, enemies}]` (4-5 named crews per floor, 29 in all) instead of a fixed
+  `enemies` dict, plus `reinforce: [kinds]`; the boss row is `encounters:
+  [], reinforce: ["drill_bot"]`. Eight rules, all linted by
+  `tests/test_content.gd` section 14 (`_lint_floors`): R1 pack 0 is the
+  floor's pre-v15 roster byte for byte, key order included (the classic
+  crew); R2 every pack on a floor has the same headcount - mapgen's
+  placement draws never read the kind, so equal headcounts keep every
+  main-rng draw, every position and the elite index where they were and
+  only the kind on each tile changes; R3 every pack fields the floor's
+  objective kinds (rows with `summons` / `oozes` / `stokes`) exactly - packs
+  vary the mobile crew, never the objective (a prototype draft without this
+  rule measured +90 / 1800 optimizer wins: the summoner is the floor's real
+  threat); R4 floor 1 fields no `gums` kind (a gum intent draws from the main
+  rng, so `Game.new`'s rng.state stays bump 14's); R5 each pack's mobile
+  threat (EHP x DPT, every trait priced in the lint's `PACK_TRAIT_DPT`) is
+  within 0.75-1.25x of pack 0 and the weighted mean within 0.90-1.10x - a
+  guard against gross mistakes, not balance truth, which the gates decide;
+  R6 ids match `^[a-z_]+$`, are unique across the table and carry a display
+  `name`; R7 no `sludgeling`, `welded_hulk` or boss kind in a pack (products
+  of split, weld and summon); R8 `reinforce` is non-empty, its kinds are
+  non-boss, non-objective and non-forbidden, and `reinforce[0]` is
+  `drill_bot`. **The draw** is `Game.encounter_index(n)`: ONE weighted
+  `randi_range(0, W - 1)` from a fresh generator seeded `hash([seed, n,
+  "roster"])` (`_side_rng_at(n, "roster")`; `_side_rng(tag)` is now
+  `_side_rng_at(floor_num, tag)`, byte for byte, so every existing side tag
+  hashes as before), never the main rng, and keyed on `n`, not `floor_num`,
+  so a game on floor 1 can ask about floor 5. `encounter(n)` is that pack
+  row (a copy), or `{}` on the boss floor and on a scripted fixed floor 1
+  (the tutorial, a test board). `floor_def(n)` resolves the pack FIRST and
+  writes its roster into `fdef.enemies` (and its id into `fdef.encounter`),
+  so the tier `extra_enemy` (+1 drill, appended last to a drill-free pack)
+  and overtime's `extra_common_enemy` (the drawn crew's first most-common
+  kind) land on the drawn crew, and `sim/mapgen.gd` is untouched. **The
+  vents** (E2): static `Game.reinforce_wave(fdef, s)` is the index of smog
+  value `s` in the floor's spawn schedule (the `smog_spawn` position, else
+  the `smog_spawn_every` continuation), or -1 - exactly the old spawn test -
+  and `reinforce_kind(fdef, wave, vi)` is `reinforce[(wave + vi) % size]` at
+  vent `vi` (its index in `map.vents`): no rng and no stored state, so
+  `clone()`, `snapshot()` and deeproot's forward model are unchanged.
+  `smog_forecast()` returns `spawn_wave` beside `spawn_in`, so what vent
+  `vi` releases next is `reinforce_kind(floor_def(floor_num), spawn_wave,
+  vi)` - there is no separate next-reinforcement query. Rotations: every
+  list starts with the drill bot; the Refinery floors add rust hounds (3-5)
+  and coal golems (4-5), Furnace Approach coal golems and cinder mites, and
+  the Strip Mine and the boss arena release drill bots only. **Switches**:
+  two bool `MUTATOR_CONFIG_KEYS` read `_mut(key, true)`, `encounter_packs`
+  (false: every floor fields pack 0) and `biome_reinforce` (false: every
+  vent releases `reinforce[0]`). Two keys so a later block can
+  attribute packs and vents separately. The `fixed_shift` row sets both
+  false and is the first mutator with no `Content.MILESTONES` entry - never
+  offered, the measurement control and the one-default reversal - and it
+  replays bump 14 action for action (see the SIM_VERSION note).
+  **Events** (hash-visible, part of the bump): the `floor` event gains
+  `encounter` (the pack id) only when a pack was drawn, and both
+  `reinforcement` sites (vents and the boss phase-2 golem) gain `kind`. No
+  `snapshot()` key was added - the pack is derived from (seed, n, config) -
+  so nothing needed erasing from the `state_hash()` view. **The shell**
+  names the crew on the floor's log line (`— Strip Mine I · Hound and
+  Handler —`) and on the title card's line 2 (`floor 3 of 7  ·  Golem
+  Picket`, `_txt_c_fit` at 0.9vw), never on the boss floor or the
+  tutorial's; the reinforcement line names the event's kind (falling back to
+  the machine on the tile, then "a machine"); and the vent hold-tooltip
+  names its release from `smog_forecast().spawn_wave` and `reinforce_kind`
+  ("releases a Drill Bot in 4 turns" / "releases a Rust Hound next turn"),
+  says "sealed - absorbs the next release" under growth, and says "vent
+  beneath - releases nothing while covered" where `Danger.vent_state` finds
+  `_open` false (`_tick_smog` skips that vent, so it names no machine).
+  **Tools**: `tests/sweep_encounters.gd` (the paired acceptance runner, in
+  the sweeps list) and `tests/rerecord_bots.gd` (the per-bump bot-log
+  re-record as a tool, see the SIM_VERSION note); `tests/tally.gd` prints a
+  `variety:` line (distinct packs met / floor visits per floor, floor 1's
+  non-classic share, vent releases by kind, distinct non-boss kinds met per
+  run) and `tests/playtest.gd` takes `PLAYTEST_MUTATORS`. The pack frequency
+  follows the weights: floor 1 fields a non-classic crew on 199 of seeds
+  1..300 (0.663) at spawn time. **Shipped default-on** after every one of
+  the ten pre-registered lines passed on the first run with no lever applied
+  (`docs/BALANCE.md` 2026-11-22); cross-bump comparisons go through the
+  `fixed_shift` arm, which reproduces the bump-14 tables cell for cell. Two
+  consequences outside the sim: daily scores are not comparable across the
+  bump (the same date fields different crews at 15 than at 14, and the frozen
+  `DAILY_MUTATORS` never includes `fixed_shift`); and floor 1 can field
+  spiked kinds (Hound and Handler, Golem Escort - 4 of the 9 weight) on the
+  floor the tutorial teaches melee on, an owner taste call kept as shipped:
+  dropping those two packs is a data edit that leaves every floor-1 layout
+  identical.
 - Read-only sim queries (fun pass): six public `Game` functions the shell
   and the tests read and NOTHING in the sim or the bots calls - `resonances()`
   (= `_resonances()`), `tag_counts()` (a copy of `_tag_counts()`),
@@ -1049,7 +1212,9 @@ architecture below is designed to bend rather than block.
   early return), and the three danger forecasts in their own section after
   `_tick_smog`: `smog_forecast(horizon, count_stokers)` (dim / choke / vent
   arrivals in end turns, every `*_in` the SOONEST it can come - relief only
-  pushes it later - `count_stokers=false` the calm walk), `telegraph()` (per
+  pushes it later - `count_stokers=false` the calm walk; since Block E it
+  also returns `spawn_wave`, the wave index of that vent arrival, -1 when
+  none, its spawn test being `reinforce_wave(fdef, s) >= 0`), `telegraph()` (per
   enemy: tiles, marks, drag path, the first blocking status / `screened` /
   `anchor`, plus summed damage per tile) and `end_turn_forecast()` (steps a
   `clone()` with one `end_turn` and reads back what reached the tender). The
@@ -1282,7 +1447,10 @@ architecture below is designed to bend rather than block.
   and a tap off its buttons starts nothing. The menu's PLAY guards a live
   daily try the same way (`_play_armed`: armed by a PLAY tap while
   `_resumable_run()` is a daily, the row then reads `PLAY_ARMED_LABEL`
-  "TAP AGAIN: ABANDON TODAY'S TRY"; any other button, a tap that hits no
+  "TAP AGAIN: ABANDON TODAY'S TRY" when that daily's seed is today's daily
+  seed (`_play_armed_label`), else `PLAY_ARMED_OLD_LABEL` "TAP AGAIN: ABANDON
+  YOUR DAILY TRY" (an older try: yesterday's, or a legacy header-less save
+  routed as a daily on another day's seed); any other button, a tap that hits no
   button, and ESC / Back at the menu root disarm it).
   Settings load and save through `main.cfg_path` (default `CFG_PATH`), which
   every shell `tests/test_shell.gd` builds (`_bare_shell`, `_iso_shell`),
@@ -1436,8 +1604,76 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (14
-  today: Block D5 — one resonance per element. ONE `Content.RESONANCES` row
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (15
+  today: Block E — encounter packs and biome reinforcements; the Encounter
+  packs note has the rules. Every non-boss floor fields one of 4-5 named
+  crews drawn from `_side_rng_at(n, "roster")`, never the main rng, and
+  vents release `reinforce[(wave + vent) % size]`. Constant headcount keeps
+  every mapgen draw and position byte-identical and only the kind on each
+  tile changes, and floor 1 fields no gums kind, so `Game.new`'s rng.state is
+  bump 14's for every seed (`tests/test_economy.gd` section q) - but a
+  different crew plays a different floor, so a stored log diverges from the
+  first floor whose crew is not the classic one (a non-classic floor 1 on
+  199 of seeds 1..300), and the `floor` event's new `encounter` key and the
+  `reinforcement` event's new `kind` key are hash-visible. The `fixed_shift`
+  mutator (both switches off) replays bump 14 action for action: the RefGame
+  floor-entry pins `RNG_FLOOR_ENTRY_BUMP14` hold under it byte for byte, and
+  its arm reproduced `docs/BALANCE.md`'s bump-14 per-loadout optimizer and
+  magpie tables cell for cell. The corpus went 96 -> 100. Against bump 14,
+  `REGEN=1` classified by hand: of the 76 pre-existing hand-authored records
+  72 are STAMP-ONLY (`sim_version` the single differing key) and 4 are
+  HASH-ONLY - `c5_open_pool`, `d4_focus_skip`, `d4_upgrade_slot` and
+  `d6_draft_parity`, the only hand-authored records that enter a generated
+  floor 2 (seed 5 draws Crane Crew there, seed 3 Leech Swarm), each keeping
+  its outcome and every event pattern - with zero action, outcome or
+  event-pattern diffs anywhere. All 20 bot logs were re-recorded on their
+  personas with `tests/rerecord_bots.gd`: 19 CHANGED, and `det_wanderer_s42`
+  came back unchanged and was rewritten anyway, which only re-stamped it
+  (seed 42 draws the classic Drill Pair on floor 1, whose vents release drill
+  bots as before, and a wanderer never leaves floor 1). The 19, outcome then
+  actions: `canary_fanatic_s1` died f5 t91 -> died f5 t95 (321 -> 330),
+  `canary_magpie_s2` died f2 t50 -> died f2 t73 (190 -> 236),
+  `det_deeproot_s11` died f5 t103 -> died f7 t91 (322 -> 348),
+  `det_deeproot_s3` won f7 t60 -> won f7 t64 (251 -> 263),
+  `det_deeproot_s42` won f7 t107 -> won f7 t65 (363 -> 263),
+  `det_fanatic_s11` died f5 t127 -> died f3 t92 (396 -> 281),
+  `det_fanatic_s3` died f4 t161 -> died f5 t135 (476 -> 409),
+  `det_fanatic_s42` died f6 t120 -> WON f7 t63 (396 -> 290),
+  `det_magpie_s11` died f2 t93 -> died f2 t67 (259 -> 207),
+  `det_magpie_s3` died f2 t274 -> died f4 t329 (1011 -> 1553),
+  `det_magpie_s42` died f3 t57 -> died f3 t105 (242 -> 345),
+  `det_optimizer_s11` died f7 t123 -> died f4 t129 (442 -> 311),
+  `det_optimizer_s3` died f6 t107 -> died f6 t99 (406 -> 357),
+  `det_optimizer_s42` WON f7 t123 -> died f6 t96 (437 -> 340),
+  `det_sprout_s11` died f5 t261 -> died f2 t68 (694 -> 201),
+  `det_sprout_s3` died f3 t90 -> died f3 t136 (300 -> 390),
+  `det_sprout_s42` died f4 t150 -> died f5 t87 (433 -> 313),
+  `det_wanderer_s11` died f1 t90 -> died f1 t48 (212 -> 130) and
+  `det_wanderer_s3` died f1 t55 -> died f1 t91 (139 -> 211) - the two
+  wanderer logs moved because seeds 11 and 3 field Hound and Handler and
+  Slick Crew on floor 1. Four demos (`tests/regressions/e1_*.json`,
+  `e2_*.json`): `e1_pack_first_blow` (seed 88 draws Hound and Handler: the
+  hound stands on the classic second drill's tile and lands its first blow
+  on the third end turn, two turns before the classic drill pair does),
+  `e1_floor2_pack` (seed 3 names `leech_swarm` entering floor 2, where the
+  classic crew is `survey_shift`), `e2_reinforce_cycle` (two vents, two
+  waves, list `[drill_bot, rust_hound]`: drill then hound, then hound then
+  drill) and its `fixed_shift` twin `e2_reinforce_fixed_shift` (four drill
+  bots). Ten targeted mutations of `sim/game.gd`, each in a scratch copy run
+  in plain mode over the full corpus, every one failing its demo: (1)
+  `encounter_index` always 0 - both e1 demos and 19 bot logs (21 records);
+  (2) the pack drawn from the main rng - both e1 demos, `c5_open_pool`,
+  `d4_focus_skip`, `d6_draft_parity` and all 20 bot logs (25); (3) the
+  weights ignored, a uniform draw - both e1 demos and 18 bot logs (20); (4)
+  the side stream keyed on floor 1 for every floor - `e1_floor2_pack` and 17
+  bot logs (18); (5) the vent kind hardcoded to drill_bot, (6) the vent term
+  dropped from the cycle and (7) the wave term dropped - each
+  `e2_reinforce_cycle` (at pattern 2, 3 and 3) and the same nine bot logs
+  (10); (8) the `biome_reinforce` switch ignored - `e2_reinforce_fixed_shift`
+  alone (pattern 3); (9) the vent's `reinforcement` event without `kind` -
+  exactly the two e2 demos; (10) the `floor` event without `encounter` -
+  exactly `e1_floor2_pack`. Mutations 8-10 are caught by a demo and nothing
+  else in the corpus. Bump 14 was Block D5 — one resonance per element. ONE `Content.RESONANCES` row
   ships, `cinder_grip` (fire 3 -> an ignite hook that roots), and it changes
   what happens in PLAY the moment a run's kit and grafts reach fire 3, so a
   stored log diverges at its FIRST IGNITION after that and at nothing else —
@@ -1674,9 +1910,15 @@ architecture below is designed to bend rather than block.
   `shell/main.gd` RUN_SAVE_VERSION, `tests/regress_lib.gd` and
   `tests/autopsy.gd` all read it -
   live phone runs persist as replayable action logs and a stale log replayed
-  across sim changes diverges silently. After a bump, re-stamp the corpus
-  (`REGEN=1`) and re-record every bot log the change could have moved — not
-  only the ones that stop replaying. Bump 12 is why: a draft pick is an index,
+  across sim changes diverges silently. After a bump, re-record every bot log
+  the change could have moved — not only the ones that stop replaying — with
+  `tests/rerecord_bots.gd` (the tool since bump 15, never by hand: it replays
+  every `{det,canary}_<persona>_s<seed>.json` on its own persona, rewrites
+  each one, unchanged ones too, and prints `unchanged <name>` or `CHANGED
+  <name> outcome a -> b, acts m -> n, hash ...`; `RERECORD_DRY=1` compares and
+  writes nothing, and on a committed corpus it must say 0 changed), then
+  re-stamp the corpus (`REGEN=1`) and classify its printout by hand. Bump 12
+  is why: a draft pick is an index,
   so a log whose offers changed still replays legally while landing on a
   different ability, and four of the twenty logs were only proved untouched by
   re-recording them and diffing (`det_wanderer_*`, `det_magpie_s11`).
@@ -1851,7 +2093,11 @@ architecture below is designed to bend rather than block.
   `badges` (`BADGE` / `NO_BADGE` / `BLOCK_ICON`: every `INTENT_TYPES` entry
   has a decision, and a blocked intent wears its block glyph and paints no
   red tile), `tile_numbers`, `tethers`, `marks`, `vent_marks`, `gum_slots`,
-  the guard's words and `cues(prev, cur, announced)` (a `warn` when lethal
+  `vent_state` (Block E: what `_tick_smog` does at a vent if a wave fired now
+  - "covered" when `_open` is false, i.e. not floor, a machine or the tender
+  on it, or a terrain kind that `blocks` such as Roots, so it releases
+  NOTHING; "sealed" under growth; "open" - a snapshot mirror of `_open` and
+  the growth seal, change together, that the vent tooltip reads), the guard's words and `cues(prev, cur, announced)` (a `warn` when lethal
   switches on or the choke enters 1..5; at choke 1 the banner THE SMOG
   THICKENS, pushed at `BANNER_PRIO.danger`, its tick passed to `_feedback` as
   an extra sound). The choke cues have HYSTERESIS: the shell keeps

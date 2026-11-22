@@ -69,7 +69,14 @@ The theme should do mechanical work, not just paint.
 - Per-floor meter that rises each turn (curve tunable per floor/biome).
 - Thresholds (all telegraphed in advance, as countdown chips under the smog
   bar: turns to choke, to the vents, to the next dim step):
-  - Reinforcement spawns at marked vents.
+  - Reinforcement spawns at marked vents. Vents release the **biome's
+    machines in a fixed rotation** (Block E2), no dice: the Strip Mine sends
+    drill bots, the Refinery drill bots plus rust hounds and coal golems,
+    Furnace Approach drill bots, coal golems and cinder mites (the boss arena
+    keeps drill bots). Each floor row lists its rotation; wave k releases
+    entry `(k + i) % size` at vent i, so two vents can release different
+    machines on one wave, and holding a vent names what it releases next and
+    when. Growth over a vent seals it; a vent under a wall releases nothing.
   - Heavy smog dims solar regen (3 → 2 → 1 Charge per turn).
 - Deterministic: same seed and actions → same smog events.
 
@@ -268,6 +275,12 @@ The theme should do mechanical work, not just paint.
     your own kit costs turn economy.
   - **Extractor Engine** — visible 3-turn summon cycle until destroyed.
 - Enemy content is data (stats, intents, spawn tables) per style guide §6.
+  Spawn tables exist as **encounter packs** (Block E1): every non-boss floor
+  row lists 4–5 named crews with weights (`Content.FLOORS[n].encounters`),
+  and a run draws one per floor from a side stream of its seed, never the
+  main rng. Pack 0 is the floor's classic crew and carries the top weight on
+  every floor (tied with Slick Works on floor 3), so it stays the likeliest
+  single crew while a run of six classic floors becomes rare.
 - **Enemies read the floor.** Two rules, both data, both aimed at the same
   hole: terrain used to be something only the player could see.
 - **Avoid lists — terrain is a cost, never a wall.** An enemy row may carry
@@ -308,6 +321,15 @@ The theme should do mechanical work, not just paint.
 
 - 7 floors, 3 biomes: Strip Mine (1–2, teaching), Refinery (3–5, combos
   expected), Furnace Approach + Furnace boss (6–7).
+- **Each floor fields one of several named crews** (Strip Mine I can be Drill
+  Pair, Slick Crew, Hound and Handler or Golem Escort), so floor 1 is not the
+  same fight every run, while the **objectives stay fixed per floor**: every
+  crew on a floor carries the same objective machines (the floor's
+  extractor, pump jack or smokestack, where it has one) and the same
+  headcount, so the layout and every position are the seed's and only the
+  kinds on those tiles change. The title card and the floor's log line name
+  the crew. The boss floor and the
+  tutorial's scripted floor have none.
 - Floors are compact tactical spaces: connected rooms, choke points, hazard
   tiles, destructibles. Procgen invariants are pluggable per biome.
 

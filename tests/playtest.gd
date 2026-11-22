@@ -3,7 +3,15 @@ extends SceneTree
 ## Reports wins, deaths by floor and cause, timeouts, turns, bloom, then the
 ## per-persona tally block (casts, pick rates, damage shares, combos, economy,
 ## clock stalls) from tests/tally.gd.
-## Run: [PLAYTEST_SEEDS=30] [PLAYTEST_BOTS=a,b,c] godot --headless --path . --script tests/playtest.gd
+## Run: [PLAYTEST_SEEDS=30] [PLAYTEST_BOTS=a,b,c] [PLAYTEST_MUTATORS=a,b] godot --headless --path . --script tests/playtest.gd
+## PLAYTEST_MUTATORS runs every persona under those Content.MUTATORS ids (an
+## unknown id fails loudly) - e.g. fixed_shift, the Block E control, puts the
+## whole gate on the classic-crew game. Besides the human block, every persona
+## prints one machine-readable line:
+##   PT_PERSONA bot=<b> cfg=<mutators or default> wins=<W>/<N> lo=<%> hi=<%>
+##     timeouts=<T> stall_floors=<S> avg_depth=<2dp> illegal=<n> errors=<n>
+## (stall_floors is tests/tally.gd's stall_floors; illegal counts illegal plus
+## error events as the gate does, errors the error events alone).
 ## CI gate (review §7.6): after every persona, each BALANCE.md band is
 ## checked against the run's Wilson interval (a band fails only when the
 ## whole interval lies outside it), plus zero timeouts for optimizer and
@@ -15,6 +23,7 @@ const AsciiView := preload("res://sim/ascii_view.gd")
 const Sweep := preload("res://tests/sweep_lib.gd")
 const Roster := preload("res://bots/roster.gd")
 const Tally := preload("res://tests/tally.gd")
+const Content := preload("res://sim/content.gd")
 
 const DEFAULT_SEEDS := 30
 const GATE_MIN_SEEDS := 20
@@ -48,30 +57,45 @@ func _init() -> void:
 			push_error("unknown bot '%s' (have: %s)" % [bot_name, ", ".join(Roster.names())])
 			quit(1)
 			return
+	var cfg := {}
+	var muts: Array = []
+	if OS.get_environment("PLAYTEST_MUTATORS").strip_edges() != "":
+		for part in OS.get_environment("PLAYTEST_MUTATORS").split(","):
+			var m: String = part.strip_edges()
+			if m == "":
+				continue
+			if not Content.MUTATORS.has(m):
+				push_error("unknown mutator '%s' (have: %s)" % [m, ", ".join(Content.MUTATORS.keys())])
+				quit(1)
+				return
+			muts.append(m)
+	if not muts.is_empty():
+		cfg["mutators"] = muts
+	var cfg_label := ",".join(muts) if not muts.is_empty() else "default"
 	var seed_arr := Sweep.seed_list_from(seeds, 1)
 	print("=== TENDER playtest: %d seeds x %d personas ===" % [seeds, personas.size()])
-	print(Sweep.header("playtest", ",".join(personas), {}, seed_arr))
+	print(Sweep.header("playtest", ",".join(personas), cfg, seed_arr))
 	var stats := {}
 	for bot_name in personas:
 		var runs: Array = []
 		for s in seed_arr:
-			runs.append(Sweep.run_one(s, {}, bot_name))
-		stats[bot_name] = _report(bot_name, runs)
+			runs.append(Sweep.run_one(s, cfg, bot_name))
+		stats[bot_name] = _report(bot_name, runs, cfg_label)
 	print("\n--- sample frame: optimizer, seed 1, final state ---")
-	print(_final_frame("optimizer", 1))
+	print(_final_frame("optimizer", 1, cfg))
 	var gate_fails := _gate(stats, seeds)
 	quit(1 if gate_fails > 0 else 0)
 
 
-func _final_frame(bot_name: String, seed_v: int) -> String:
-	var game = Game.new(seed_v)
+func _final_frame(bot_name: String, seed_v: int, cfg: Dictionary = {}) -> String:
+	var game = Game.new(seed_v, cfg)
 	Sweep.run_loop(game, Roster.make(bot_name, seed_v))
 	return AsciiView.render(game.snapshot())
 
 
 ## Prints the persona block; returns {wins, n, timeouts, illegal, avg_floor}
 ## for the gate.
-func _report(bot_name: String, runs: Array) -> Dictionary:
+func _report(bot_name: String, runs: Array, cfg_label: String = "default") -> Dictionary:
 	var wins := 0
 	var deaths := 0
 	var timeouts := 0
@@ -147,6 +171,9 @@ func _report(bot_name: String, runs: Array) -> Dictionary:
 			bparts.append("%s %d/%d" % [b, build_wins.get(b, 0), build_runs[b]])
 		print("           build wins: %s" % ", ".join(bparts))
 	tally.print_block(n, kits)
+	print("PT_PERSONA bot=%s cfg=%s wins=%d/%d lo=%.1f hi=%.1f timeouts=%d stall_floors=%d avg_depth=%.2f illegal=%d errors=%d" % [
+		bot_name, cfg_label, wins, n, 100.0 * ci.x, 100.0 * ci.y, timeouts, tally.stall_floors,
+		float(floors) / n, tally.illegal, tally.error_events])
 	return {"wins": wins, "n": n, "timeouts": timeouts, "illegal": tally.illegal,
 		"avg_floor": float(floors) / n}
 

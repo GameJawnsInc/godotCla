@@ -11,6 +11,7 @@ extends RefCounted
 
 const Content := preload("res://sim/content.gd")
 const Names := preload("res://shell/names.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 
 const SKY_HORIZON := 60   # end turns the smog walk looks ahead
 const SKY_AMBER := 5      # choke this close (and not yet choking): amber bar, warn tick
@@ -190,16 +191,22 @@ static func _src_suffix(fc: Dictionary) -> String:
 ## action that ends the run any other way is not. `win` names the kind of the
 ## first winning action ("strike" | "item", "" for none), so the guard can
 ## point at the winning blow before it suggests stepping off; `win_item` is
-## that winning item's slot (-1 for none) and `strikes` counts the surviving
-## strike directions, so the words claim a win only where the player cannot
-## pick the wrong blow (`glow_items`, `guard_flash`).
+## that winning item's slot (-1 for none), `win_kind` the kind standing on the
+## winning strike's tile ("" for none) and `strike_dirs` counts EVERY legal
+## strike direction, surviving or not - counted before any forecast filter,
+## because a minion whose strike still dies is exactly the wrong blow a bare
+## "strike to win" would let the player pick. So the words claim a win without
+## naming its target only where one strike exists at all, and otherwise name
+## the target (`glow_items`, `guard_flash`).
 static func escapes(game) -> Dictionary:
 	var out := {"move": false, "strike": false, "item": [], "descend": false, "win": "",
-		"win_item": -1, "strikes": 0}
+		"win_item": -1, "win_kind": "", "strike_dirs": 0}
 	for a in game.legal_actions():
 		var t := String(a.get("type", ""))
 		if not (t in ["move", "strike", "use_item", "descend"]):
 			continue
+		if t == "strike":
+			out["strike_dirs"] = int(out["strike_dirs"]) + 1
 		var c = game.clone()
 		c.step(a)
 		if c.over and not c.won:
@@ -214,13 +221,18 @@ static func escapes(game) -> Dictionary:
 			out["win"] = "strike" if t == "strike" else "item"
 			if t == "use_item":
 				out["win_item"] = int(a["slot"])
+			else:
+				var at: Vector2i = game.player["pos"] + a["dir"]
+				for e in game.enemies:
+					if e["pos"] == at:
+						out["win_kind"] = String(e["kind"])
+						break
 		if t == "use_item":
 			out["item"].append(int(a["slot"]))
 		elif t == "descend":
 			out["descend"] = true
 		elif t == "strike":
 			out["strike"] = true
-			out["strikes"] = int(out["strikes"]) + 1
 		else:
 			out["move"] = true
 	return out
@@ -239,14 +251,19 @@ static func guard_flash(d: Dictionary) -> String:
 	var dmg := int(d.get("fc", {}).get("dmg", 0))
 	var es: Dictionary = d.get("escapes", {})
 	# a blow that WINS the run is the best way out there is: named first. The
-	# flash names no direction, so with two surviving strikes (the boss and a
-	# minion both adjacent) it says only "strike first", which every one of
-	# them makes true; the winning item is the only slot that glows.
+	# flash names no direction, so a bare "strike to win" is said only when
+	# the winning strike is the ONLY legal strike (`strike_dirs`, every legal
+	# direction, a losing one included); with the boss and a minion both
+	# adjacent it names the target instead ("strike the Overseer to win"), and
+	# with no target to name it falls back to the order below. The winning
+	# item is the only slot that glows.
 	match String(es.get("win", "")):
 		"strike":
-			if int(es.get("strikes", 1)) > 1:
-				return "LETHAL (%d) - strike first, or tap again to end turn" % dmg
-			return "LETHAL (%d) - strike to win, or tap again to end turn" % dmg
+			if int(es.get("strike_dirs", 1)) <= 1:
+				return "LETHAL (%d) - strike to win, or tap again to end turn" % dmg
+			var wk := String(es.get("win_kind", ""))
+			if wk != "":
+				return "LETHAL (%d) - strike %s to win, or tap again" % [dmg, Names.the_name(wk)]
 		"item":
 			return "LETHAL (%d) - the glowing item wins, or tap again" % dmg
 	if bool(es.get("move", false)):
@@ -339,6 +356,34 @@ static func marks(tele: Dictionary) -> Array:
 		for p in ent["marks"]:
 			out.append({"pos": p, "kind": k})
 	return out
+
+
+## What _tick_smog does at vent `v` when a wave fires, by its own two tests in
+## its own order, read off the snapshot: "covered" when Game._open(v) is false
+## - not a floor tile, a machine or the tender standing on it, or a terrain
+## kind whose Content.TERRAIN row "blocks" (Roots) - and the vent releases
+## NOTHING; "sealed" when growth covers it (the seal absorbs the release and
+## is spent); "open" when it releases. The state as it stands: the enemy
+## phase and the terrain decay both run before the smog tick, so a covered
+## vent can be open again by the wave (the words say "while covered").
+## Mirrors Game._open and the vent arm of Game._tick_smog - change together.
+static func vent_state(snap: Dictionary, v: Vector2i) -> String:
+	var m: Dictionary = snap.get("map", {})
+	var w := int(m.get("w", 0))
+	if v.x < 0 or v.y < 0 or v.x >= w or v.y >= int(m.get("h", 0)) \
+			or int(m["tiles"][v.y * w + v.x]) != MapGen.T_FLOOR:
+		return "covered"
+	if snap.get("player", {}).get("pos", Vector2i(-1, -1)) == v:
+		return "covered"
+	for e in snap.get("enemies", []):
+		if e["pos"] == v:
+			return "covered"
+	var k := ""
+	if snap.get("terrain", {}).has(v):
+		k = String(snap["terrain"][v]["kind"])
+	if k != "" and bool(Content.terrain(k, "blocks", false)):
+		return "covered"
+	return "sealed" if k == "growth" else "open"
 
 
 static func vent_marks(snap: Dictionary, sky: Dictionary) -> Array:

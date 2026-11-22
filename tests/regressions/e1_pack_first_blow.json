@@ -1,0 +1,9 @@
+{
+"seed": 88,
+"config": {},
+"actions": [{"type":"end_turn"},{"type":"end_turn"},{"type":"end_turn"}],
+"expect": {"events":[{"src":"rust_hound","t":"damage","who":"player"}],"floor":1,"timeout":true,"turns":3,"won":false},
+"note": "E1 encounter packs: seed 88 draws hound_and_handler on floor 1 (side stream hash([88, 1, 'roster']), weights 3/2/2/2), so the unit standing where the classic drill pair puts its second drill bot is a rust hound - same tile, because a constant headcount keeps every mapgen draw where it was - and the hound is fast: its first blow lands on the third end_turn. The classic roster on this seed (fixed_shift: a drill bot on that same tile) lands its first blow two turns later, on the fifth end_turn.",
+"sim_version": 15,
+"hash": "f0393399f285f77e5ea62a72d8daebc7dfa054ef90c86e66c627086a85f44ad3"
+}

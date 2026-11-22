@@ -1003,9 +1003,14 @@ const CLEANSE_SMOG_RELIEF := 1  # a cleanse pauses the smog clock, never rewinds
 ##                        and every single price/cap lever still failed the
 ##                        30-seed gate (BALANCE.md 2026-09-07e), so default-on
 ##                        is an owner decision, not a data tweak.
+##   encounter_packs      false fields every floor's pack 0 (the classic crew;
+##                        Block E1 - see the FLOORS header)
+##   biome_reinforce      false makes every vent release FLOORS.reinforce[0]
+##                        (the classic drill_bot; Block E2)
 const MUTATOR_CONFIG_KEYS := [
 	"kit_max", "max_hp_delta", "bank_cap", "oil_mult", "extra_common_enemy", "shop",
 	"pool_ban", "kit_ban", "draft_offers", "draft_upgrades_only", "open_pool", "shop_reroll",
+	"encounter_packs", "biome_reinforce",
 ]
 const MUTATORS := {
 	"kit_of_3": {"name": "Kit of Three", "desc": "ability kit capped at 3", "config": {"kit_max": 3}},
@@ -1024,6 +1029,11 @@ const MUTATORS := {
 	# Block D2: the shrine reroll, held behind a switch (see shop_reroll above)
 	"spinning_shrine": {"name": "Spinning Shrine", "desc": "pay bloom to reroll the shrine counter",
 		"config": {"shop_reroll": true}},
+	# Block E: the classic-crew control; no MILESTONES row, never offered. It
+	# replays the pre-v15 game action for action (packs and vent rotation off),
+	# so it is both the measurement control and the one-default reversal.
+	"fixed_shift": {"name": "Fixed Shift", "desc": "every floor fields its classic crew",
+		"config": {"encounter_packs": false, "biome_reinforce": false}},
 }
 
 ## Post-win difficulty tiers. Tier N applies the first N modifiers, stacking.
@@ -1209,6 +1219,24 @@ const VAULTS := {
 	"fuel_depot": ["~~~~~", "~&~&~", "~~~~~"],
 	"sacred_grove": ["\"\"\"\"", "\"&&\"", "\"\"\"\""],
 }
+
+## Block E1: the roster encounter pack `i` of a FLOORS row spawns ({kind: n},
+## insertion order = mapgen placement order); {} for a row with no packs.
+static func encounter_roster(row: Dictionary, i: int) -> Dictionary:
+	var packs: Array = row.get("encounters", [])
+	if packs.is_empty():
+		return {}
+	return packs[clampi(i, 0, packs.size() - 1)]["enemies"]
+
+
+## Block E1: display name of pack `id` (ids are unique across FLOORS), "" if unknown.
+static func encounter_name(id: String) -> String:
+	for row in FLOORS:
+		for p in row.get("encounters", []):
+			if String(p["id"]) == id:
+				return String(p["name"])
+	return ""
+
 
 const RICH_GOO_BLOOM := 3
 const ELITE_HP_BONUS := 2
@@ -1459,47 +1487,107 @@ const ENEMIES := {
 	"the_dredge": {"name": "The Dredge", "hp": 16, "dmg": 2, "slow": false, "traits": ["boss", "massive", "mobile_boss", "dredges"], "slam_range": 2, "drag_range": 4, "gate_hp": 5},
 }
 
+## Block E1 (bump 15): encounter packs. A non-boss row carries "encounters":
+## [{id, name, w, enemies}] instead of a fixed "enemies" dict. Game.floor_def(n)
+## draws ONE pack per floor from the side stream hash([seed, n, "roster"]) by
+## weight w (never the main rng) and writes its roster into fdef.enemies, so
+## sim/mapgen.gd is untouched. Rules (tests/test_content.gd section 14):
+##  - pack 0 is the floor's pre-v15 roster byte for byte, key order included
+##    (the classic crew; the fixed_shift mutator always fields it)
+##  - every pack on a floor has the same headcount: mapgen's placement draws
+##    never read the kind, so equal headcounts keep every main-rng draw and
+##    every position where it was - only the kind on each tile changes
+##  - every pack fields the floor's objective kinds (summons/oozes/stokes)
+##    exactly: packs vary the mobile crew, never the objective
+##  - floor 1 fields no gums kind (a gum intent draws from the main rng)
+##  - mobile threat within 0.75-1.25x of pack 0, weighted mean 0.90-1.10x
+##  - ids unique across the whole table; no sludgeling, welded_hulk or boss
+##    kind in a pack (those are products of split, weld and summon)
+## "reinforce": [kinds] (Block E2): wave k of the floor's smog spawn schedule
+## releases reinforce[(k + i) % size] at vent i (map.vents order) - no rng.
+## Entry 0 is the classic drill_bot.
 const FLOORS := [
 	{
 		"name": "Strip Mine I", "biome": "strip_mine", "w": 22, "h": 14, "rooms": 4,
-		"enemies": {"drill_bot": 2},
+		"encounters": [
+			{"id": "drill_pair", "name": "Drill Pair", "w": 3, "enemies": {"drill_bot": 2}},
+			{"id": "slick_crew", "name": "Slick Crew", "w": 2, "enemies": {"drill_bot": 1, "oil_sludge": 1}},
+			{"id": "hound_and_handler", "name": "Hound and Handler", "w": 2, "enemies": {"drill_bot": 1, "rust_hound": 1}},
+			{"id": "golem_escort", "name": "Golem Escort", "w": 2, "enemies": {"drill_bot": 1, "coal_golem": 1}},
+		],
+		"reinforce": ["drill_bot"],
 		"oil": 4, "goo": 2, "vents": 1, "green_need": 2,
 		"smog_spawn": [10, 20], "smog_spawn_every": 12, "smog_dim": [14, 22], "smog_choke": 38,
 	},
 	{
 		"name": "Strip Mine II", "biome": "strip_mine", "w": 24, "h": 15, "rooms": 5,
-		"enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1},
+		"encounters": [
+			{"id": "survey_shift", "name": "Survey Shift", "w": 3, "enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1}},
+			{"id": "crane_crew", "name": "Crane Crew", "w": 2, "enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "magnet_crane": 1}},
+			{"id": "leech_swarm", "name": "Leech Swarm", "w": 2, "enemies": {"drill_bot": 1, "leech_drone": 3}},
+			{"id": "hound_run", "name": "Hound Run", "w": 2, "enemies": {"drill_bot": 1, "tar_spitter": 1, "rust_hound": 2}},
+			{"id": "tar_pit", "name": "Tar Pit", "w": 1, "enemies": {"oil_sludge": 2, "tar_spitter": 2}},
+		],
+		"reinforce": ["drill_bot"],
 		"oil": 6, "goo": 3, "vents": 2, "green_need": 3, "vaults": ["old_garden"],
 		"smog_spawn": [9, 17], "smog_spawn_every": 10, "smog_dim": [12, 20], "smog_choke": 36,
 	},
 	{
 		"name": "Refinery Gate", "biome": "refinery", "w": 26, "h": 16, "rooms": 5,
-		"enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1, "coal_golem": 1},
+		"encounters": [
+			{"id": "gate_crew", "name": "Gate Crew", "w": 3, "enemies": {"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1, "coal_golem": 1}},
+			{"id": "golem_picket", "name": "Golem Picket", "w": 2, "enemies": {"drill_bot": 1, "leech_drone": 1, "tar_spitter": 1, "coal_golem": 2}},
+			{"id": "slick_works", "name": "Slick Works", "w": 3, "enemies": {"drill_bot": 1, "oil_sludge": 2, "leech_drone": 1, "tar_spitter": 1}},
+			{"id": "kennel", "name": "Kennel", "w": 2, "enemies": {"drill_bot": 1, "coal_golem": 1, "rust_hound": 2, "magnet_crane": 1}},
+			{"id": "spitter_nest", "name": "Spitter Nest", "w": 1, "enemies": {"drill_bot": 1, "oil_sludge": 1, "tar_spitter": 2, "coal_golem": 1}},
+		],
+		"reinforce": ["drill_bot", "drill_bot", "rust_hound"],
 		"oil": 8, "goo": 4, "vents": 2, "green_need": 3, "elites": 1, "vaults": ["tar_hoard", "old_garden"], "pipes": 1,
 		"smog_spawn": [10, 18], "smog_spawn_every": 11, "smog_dim": [14, 22], "smog_choke": 36,
 	},
 	{
 		"name": "Cracking Yard", "biome": "refinery", "w": 26, "h": 16, "rooms": 6,
-		"enemies": {"drill_bot": 1, "oil_sludge": 1, "tar_spitter": 1, "extractor_engine": 1, "rust_hound": 1, "magnet_crane": 1},
+		"encounters": [
+			{"id": "yard_shift", "name": "Yard Shift", "w": 3, "enemies": {"drill_bot": 1, "oil_sludge": 1, "tar_spitter": 1, "extractor_engine": 1, "rust_hound": 1, "magnet_crane": 1}},
+			{"id": "hound_yard", "name": "Hound Yard", "w": 2, "enemies": {"drill_bot": 1, "tar_spitter": 1, "extractor_engine": 1, "rust_hound": 2, "magnet_crane": 1}},
+			{"id": "golem_yard", "name": "Golem Yard", "w": 2, "enemies": {"drill_bot": 1, "leech_drone": 1, "tar_spitter": 1, "coal_golem": 1, "extractor_engine": 1, "magnet_crane": 1}},
+			{"id": "slick_yard", "name": "Slick Yard", "w": 2, "enemies": {"drill_bot": 1, "oil_sludge": 2, "leech_drone": 1, "extractor_engine": 1, "cinder_mite": 1}},
+			{"id": "drill_gang", "name": "Drill Gang", "w": 1, "enemies": {"drill_bot": 2, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1, "extractor_engine": 1}},
+		],
+		"reinforce": ["drill_bot", "rust_hound", "drill_bot", "coal_golem"],
 		"oil": 9, "goo": 4, "vents": 2, "green_need": 3, "vaults": ["oil_spill", "tar_hoard"], "pipes": 1,
 		"smog_spawn": [12, 22], "smog_spawn_every": 12, "smog_dim": [14, 22], "smog_choke": 34,
 	},
 	{
 		"name": "Pipeworks", "biome": "refinery", "w": 28, "h": 16, "rooms": 6,
-		"enemies": {"drill_bot": 1, "oil_sludge": 1, "coal_golem": 1, "extractor_engine": 1, "pump_jack": 1, "rust_hound": 1, "smokestack": 1},
+		"encounters": [
+			{"id": "pipeworks_shift", "name": "Pipeworks Shift", "w": 3, "enemies": {"drill_bot": 1, "oil_sludge": 1, "coal_golem": 1, "extractor_engine": 1, "pump_jack": 1, "rust_hound": 1, "smokestack": 1}},
+			{"id": "golem_works", "name": "Golem Works", "w": 2, "enemies": {"drill_bot": 1, "coal_golem": 2, "extractor_engine": 1, "pump_jack": 1, "smokestack": 1, "magnet_crane": 1}},
+			{"id": "hound_pack", "name": "Hound Pack", "w": 2, "enemies": {"drill_bot": 1, "coal_golem": 1, "extractor_engine": 1, "pump_jack": 1, "rust_hound": 2, "smokestack": 1}},
+			{"id": "tar_works", "name": "Tar Works", "w": 2, "enemies": {"drill_bot": 1, "tar_spitter": 1, "coal_golem": 1, "extractor_engine": 1, "pump_jack": 1, "rust_hound": 1, "smokestack": 1}},
+			{"id": "fire_pumps", "name": "Fire Pumps", "w": 1, "enemies": {"drill_bot": 1, "coal_golem": 1, "extractor_engine": 1, "pump_jack": 1, "cinder_mite": 2, "smokestack": 1}},
+		],
+		"reinforce": ["drill_bot", "coal_golem", "drill_bot", "rust_hound"],
 		"oil": 10, "goo": 5, "vents": 3, "green_need": 3, "elites": 1, "vaults": ["oil_spill", "tar_hoard", "fuel_depot"], "pipes": 2,
 		"smog_spawn": [12, 20], "smog_spawn_every": 12, "smog_dim": [13, 21], "smog_choke": 32,
 	},
 	{
 		"name": "Furnace Approach", "biome": "furnace", "w": 28, "h": 17, "rooms": 6,
-		"enemies": {"drill_bot": 1, "coal_golem": 2, "tar_spitter": 1, "extractor_engine": 1, "cinder_mite": 2, "smokestack": 1},
+		"encounters": [
+			{"id": "furnace_shift", "name": "Furnace Shift", "w": 3, "enemies": {"drill_bot": 1, "coal_golem": 2, "tar_spitter": 1, "extractor_engine": 1, "cinder_mite": 2, "smokestack": 1}},
+			{"id": "cinder_swarm", "name": "Cinder Swarm", "w": 2, "enemies": {"drill_bot": 1, "coal_golem": 2, "extractor_engine": 1, "cinder_mite": 3, "smokestack": 1}},
+			{"id": "golem_foundry", "name": "Golem Foundry", "w": 2, "enemies": {"coal_golem": 3, "tar_spitter": 1, "extractor_engine": 1, "cinder_mite": 1, "smokestack": 1, "magnet_crane": 1}},
+			{"id": "ember_kennel", "name": "Ember Kennel", "w": 2, "enemies": {"drill_bot": 1, "coal_golem": 2, "extractor_engine": 1, "rust_hound": 1, "cinder_mite": 2, "smokestack": 1}},
+			{"id": "drill_furnace", "name": "Drill Furnace", "w": 1, "enemies": {"drill_bot": 3, "coal_golem": 1, "extractor_engine": 1, "cinder_mite": 2, "smokestack": 1}},
+		],
+		"reinforce": ["drill_bot", "coal_golem", "drill_bot", "cinder_mite"],
 		"oil": 12, "goo": 5, "vents": 3, "green_need": 4, "elites": 1, "vaults": ["fuel_depot", "tar_hoard", "sacred_grove"], "pipes": 2,
 		"smog_spawn": [10, 18], "smog_spawn_every": 11, "smog_dim": [12, 20], "smog_choke": 30,
 	},
 	{
 		"name": "The Furnace", "biome": "furnace", "boss": true, "w": 20, "h": 12,
 		"bosses": ["furnace_core", "overseer", "the_dredge"],
-		"enemies": {}, "oil": 6, "goo": 0, "vents": 2, "rooms": 0,
+		"encounters": [], "reinforce": ["drill_bot"], "oil": 6, "goo": 0, "vents": 2, "rooms": 0,
 		"smog_spawn": [12, 24], "smog_spawn_every": 12, "smog_dim": [16, 26], "smog_choke": 44,
 	},
 ]

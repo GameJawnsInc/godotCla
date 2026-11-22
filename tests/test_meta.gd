@@ -780,7 +780,8 @@ func _mutator_invariant_problem(mut: String) -> String:
 		"overtime":
 			var g = Game.new(1, cfg)
 			var fdef: Dictionary = g.floor_def(1)
-			var base_enemies: Dictionary = Content.FLOORS[0]["enemies"]
+			# Block E1: a floor's roster is the drawn pack (floor_def), never a FLOORS key
+			var base_enemies: Dictionary = Game.new(1).floor_def(1)["enemies"]
 			var common := ""
 			var common_n := 0
 			for kind in base_enemies:
@@ -789,7 +790,7 @@ func _mutator_invariant_problem(mut: String) -> String:
 					common = kind
 			if int(fdef["enemies"][common]) != common_n + 1:
 				return "floor_def(1).enemies[%s] == %d, expected %d" % [common, int(fdef["enemies"][common]), common_n + 1]
-			if g.floor_def(Content.FLOORS.size())["enemies"] != Content.FLOORS[Content.FLOORS.size() - 1]["enemies"]:
+			if g.floor_def(Content.FLOORS.size())["enemies"] != Game.new(1).floor_def(Content.FLOORS.size())["enemies"]:
 				return "boss floor enemies changed by overtime"
 		"no_lance":
 			# gone from the starting kit, the draft pool and (through the pool)
@@ -890,6 +891,35 @@ func _mutator_invariant_problem(mut: String) -> String:
 					return "base game lists a reroll (check proves nothing)"
 			if int(base_g.snapshot()["shop"].get("rerolls_left", -1)) != 0:
 				return "base game rerolls_left %s, expected 0" % str(base_g.snapshot()["shop"].get("rerolls_left"))
+		"fixed_shift":
+			# Block E: the classic-crew control - every floor fields pack 0 and
+			# every vent releases reinforce[0] (the drill bot); the base game
+			# fields some other crew somewhere, or the check proves nothing
+			var base_differs := false
+			for s in range(1, 11):
+				var g = Game.new(s, cfg)
+				var base = Game.new(s)
+				for n in range(1, Content.FLOORS.size()):
+					var classic: Dictionary = Content.FLOORS[n - 1]["encounters"][0]["enemies"]
+					if str(g.floor_def(n)["enemies"]) != str(classic):
+						return "seed %d floor %d fields %s, expected the classic %s" % [s, n, str(g.floor_def(n)["enemies"]), str(classic)]
+					if str(base.floor_def(n)["enemies"]) != str(classic):
+						base_differs = true
+			if not base_differs:
+				return "base game fields the classic crew everywhere in seeds 1..10 (check proves nothing)"
+			var fs = Game.new(1, cfg)
+			var base1 = Game.new(1)
+			var rotated := false
+			for n in range(1, Content.FLOORS.size() + 1):
+				var fdef: Dictionary = fs.floor_def(n)
+				for w in range(0, 6):
+					for v in range(0, 3):
+						if fs.reinforce_kind(fdef, w, v) != "drill_bot":
+							return "floor %d wave %d vent %d releases %s, expected drill_bot" % [n, w, v, fs.reinforce_kind(fdef, w, v)]
+						if base1.reinforce_kind(fdef, w, v) != "drill_bot":
+							rotated = true
+			if not rotated:
+				return "base game's vents release only drill bots (check proves nothing)"
 		_:
 			return "no invariant row in tests/test_meta.gd for mutator '%s'" % mut
 	return ""

@@ -808,7 +808,13 @@ static func _line(ev: Dictionary, pre: Dictionary, game, ctx: Dictionary, evs: A
 				s = "You descend"
 			cat = "heal"
 		"floor":
-			s = "— %s —" % str(ev.get("name", "next floor"))
+			# Block E1: a generated floor names the crew it drew; the tutorial's
+			# scripted floor and the boss floor carry no "encounter" key
+			var crew := Content.encounter_name(String(ev.get("encounter", "")))
+			if crew != "":
+				s = "— %s · %s —" % [str(ev.get("name", "next floor")), crew]
+			else:
+				s = "— %s —" % str(ev.get("name", "next floor"))
 		"illegal":
 			s = "Can't do that"
 		"surge":

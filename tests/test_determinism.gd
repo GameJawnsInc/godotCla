@@ -4,7 +4,8 @@ extends SceneTree
 ## 2) replaying the recorded action list on a fresh game -> identical hash
 ## 3) a mid-run clone driven by an identical bot stays in lockstep
 ## 4) the main rng after Game.new is independent of kit / grafts / pool /
-##    bloom / packages config (shop stock is side-stream only)
+##    bloom / packages config (shop stock is side-stream only) and of the
+##    fixed_shift control (the Block E pack draw is side-stream too)
 ## Every roster persona (bots/roster.gd) is checked.
 ## Run: godot --headless --path . --script tests/test_determinism.gd
 
@@ -20,6 +21,9 @@ const RNG_VARIANTS := [
 	{"pool": ["solar_lance", "seed_bomb", "vine_whip"]},
 	{"bloom": 9},
 	{"packages": ["mycology", "hydraulics", "aeolian"]},
+	# Block E: the classic-crew control - floor 1 fields no gums kind and the
+	# pack draw is side-stream, so the crew never moves Game.new's rng.state
+	{"mutators": ["fixed_shift"]},
 ]
 
 
