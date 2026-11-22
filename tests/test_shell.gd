@@ -33,9 +33,64 @@ const TEST_RUN_SAVE := "user://test_shell_run.save"
 ## every set: tap saves them, and a test must not leave the player's
 ## difficulty, loadout or package changed (nor drop a legacy seed_mode key)
 const TEST_CFG := "user://test_shell_settings.cfg"
+## ...and archives a finished run's log here, never into the player's runs dir
+const TEST_RUNS := "user://test_shell_runs"
+## the shell's default runs dir (main.gd `runs_dir`), checked untouched at the end
+const REAL_RUNS := "user://runs"
 const TMP_JSON := "user://test_import_record.json"
 
 var fails := 0
+
+
+## Counts every engine error, push_error and SCRIPT ERROR raised while the
+## body runs (tests/test_draw.gd keeps the same gate). A SCRIPT ERROR inside a
+## _check_* helper aborts only that helper, so without this the body would
+## run on and print OK; one in the body itself aborts the body before quit(),
+## and the process used to sit idle forever. Either way it is exit 1 now.
+class ErrorCounter extends Logger:
+	var errors := 0
+	var first: Array = []
+	var _mx := Mutex.new()
+
+	func _log_error(function: String, file: String, line: int, code: String, rationale: String,
+			_editor_notify: bool, error_type: int, _script_backtraces: Array[ScriptBacktrace]) -> void:
+		if error_type == ERROR_TYPE_WARNING:
+			return
+		_mx.lock()
+		errors += 1
+		if first.size() < 20:
+			first.append("%s:%d %s: %s %s" % [file, line, function, code, rationale])
+		_mx.unlock()
+
+	func _log_message(_message: String, _error: bool) -> void:
+		pass
+
+
+var log_counter := ErrorCounter.new()
+var _started := false   # the body was entered (first frame)
+var _body_done := false  # ...and reached its own quit()
+
+
+func _initialize() -> void:
+	OS.add_logger(log_counter)
+
+
+## The body runs from the first frame, not from _init: if it is aborted
+## part-way (a SCRIPT ERROR in the body never reaches quit()), the next frame
+## fails the run with exit 1 instead of idling forever.
+func _process(_dt: float) -> bool:
+	if not _started:
+		_started = true
+		_run_body()
+		return _body_done
+	if _body_done:
+		return true
+	print("FAIL: the test body was aborted before it finished (%d engine/script error(s)):" % log_counter.errors)
+	for m in log_counter.first:
+		print("  " + m)
+	OS.remove_logger(log_counter)
+	quit(1)
+	return true
 
 
 func _check(ok: bool, what: String) -> void:
@@ -44,7 +99,7 @@ func _check(ok: bool, what: String) -> void:
 		print("FAIL: " + what)
 
 
-func _init() -> void:
+func _run_body() -> void:
 	# 1. every sprite rasterizes; every enemy/terrain/legend id has art
 	for id in Art.ART:
 		var t = Art.tex(id, 36)
@@ -748,12 +803,29 @@ func _init() -> void:
 	day.mode = "normal"
 	day._tap("play")
 	_check(day.game == live_try and day.run_kind == "daily" and day.screen == "menu"
-		and String(day._menu_rows().filter(func(r): return String(r[1]) == "play")[0][0]) == "TAP AGAIN TO ABANDON",
+		and String(day._menu_rows().filter(func(r): return String(r[1]) == "play")[0][0]) == Shell.PLAY_ARMED_LABEL,
 		"PLAY over a live daily try starts nothing and asks for a second tap")
+	_check(Shell.PLAY_ARMED_LABEL.contains("TODAY'S TRY"), "the armed PLAY names the loss (%s)" % Shell.PLAY_ARMED_LABEL)
 	day._tap("settings")
 	day.mode = "normal"
 	_check(String(day._menu_rows().filter(func(r): return String(r[1]) == "play")[0][0]) == "PLAY",
 		"...any other tap disarms it")
+	# a tap that hits no button disarms it too (mutation: drop the disarm in
+	# _click's menu branch), and so does ESC / Back at the menu root (mutation:
+	# drop it in _back's menu arm) - else a later single PLAY tap abandons the try
+	day._tap("play")
+	day.hotspots.clear()
+	day._click(Vector2(3, 3))
+	_check(not day._play_armed and day.game == live_try, "an off-button tap on the menu disarms PLAY")
+	day._tap("play")
+	_check(day._play_armed, "fixture: PLAY armed again")
+	day._key(KEY_ESCAPE)
+	_check(not day._play_armed and day.screen == "menu", "ESC at the menu root disarms PLAY")
+	day._tap("play")
+	day._back(false)
+	_check(not day._play_armed, "Back at the menu root disarms PLAY")
+	day._tap("play")
+	_check(day.game == live_try and day.run_kind == "daily", "...so the next PLAY tap only re-arms it")
 	day._tap("play")
 	day._tap("play")
 	_check(day.run_kind == "career" and day.game != live_try and day.screen == "game",
@@ -910,11 +982,21 @@ func _init() -> void:
 	shell.free()
 	shell2.free()
 	_check(_real_files() == real_before,
-		"no test shell wrote the player's real settings, profile or run save")
+		"no test shell wrote the player's real settings, profile, run save or runs dir")
 	DirAccess.remove_absolute(TEST_PROFILE)
 	DirAccess.remove_absolute(TEST_PROFILE + ".tmp")
 	DirAccess.remove_absolute(TEST_CFG)
+	for n in _dir_files(TEST_RUNS):
+		DirAccess.remove_absolute(TEST_RUNS + "/" + n)
+	DirAccess.remove_absolute(TEST_RUNS)
+	if log_counter.errors > 0:
+		fails += 1
+		print("FAIL: %d engine/script error(s) while the body ran, first %d:" % [log_counter.errors, log_counter.first.size()])
+		for m in log_counter.first:
+			print("  " + m)
 	print("FAILURES: %d" % fails if fails > 0 else "shell smoke: OK")
+	_body_done = true
+	OS.remove_logger(log_counter)
 	quit(1 if fails > 0 else 0)
 
 
@@ -926,14 +1008,17 @@ func _iso_shell():
 	sh.profile_path = TEST_PROFILE
 	sh.run_save_path = TEST_RUN_SAVE
 	sh.cfg_path = TEST_CFG
+	sh.runs_dir = TEST_RUNS
 	return sh
 
 
-## The player's real settings, profile and run save, as text ("" = absent).
+## The player's real settings, profile and run save, as text ("" = absent),
+## and the names in the real runs dir.
 func _real_files() -> Array:
 	var out: Array = []
 	for pth in [Shell.CFG_PATH, Shell.PROFILE_PATH, Shell.RUN_SAVE_PATH]:
 		out.append(FileAccess.get_file_as_string(pth) if FileAccess.file_exists(pth) else "")
+	out.append(_dir_files(REAL_RUNS))
 	return out
 
 
@@ -944,6 +1029,7 @@ func _bare_shell(keep_save := false):
 	sh.profile_path = TEST_PROFILE  # before _ready: it loads from here
 	sh.run_save_path = TEST_RUN_SAVE  # ...and restores (or deletes) a run save from here
 	sh.cfg_path = TEST_CFG  # ...and its settings: every bare shell boots on the defaults
+	sh.runs_dir = TEST_RUNS  # ...and archives a finished run's log at scratch too
 	DirAccess.remove_absolute(TEST_CFG)
 	if not keep_save:
 		DirAccess.remove_absolute(TEST_RUN_SAVE)  # an earlier shell's run is not restored here
@@ -2293,6 +2379,26 @@ func _check_danger_readouts() -> void:
 	_check(Danger.guard_flash(gd) == "LETHAL (3) - descend, or tap again to end turn", "guard: then descend")
 	gd["escapes"] = {}
 	_check(Danger.guard_flash(gd) == "LETHAL (3) - tap again to end the turn", "guard: nothing saves you")
+	# a WINNING escape is named before stepping off (mutation: drop the `win`
+	# match at the top of guard_flash and both of these read "step off")
+	gd["escapes"] = {"move": true, "strike": true, "item": [0], "descend": true, "win": "strike"}
+	_check(Danger.guard_flash(gd) == "LETHAL (3) - strike to win, or tap again to end turn",
+		"guard: a boss-killing strike is advised first (%s)" % Danger.guard_flash(gd))
+	gd["escapes"] = {"move": true, "strike": false, "item": [1], "descend": false, "win": "item"}
+	_check(Danger.guard_flash(gd) == "LETHAL (3) - the glowing item wins, or tap again",
+		"guard: a winning item is advised first (%s)" % Danger.guard_flash(gd))
+	# the words claim a win only where the player cannot pick the wrong blow:
+	# two surviving strikes (boss and minion adjacent) read "strike first"
+	# (mutation: drop the `strikes` arm and this reads "strike to win"), and
+	# with a winning item only that slot glows (mutation: glow_items returns
+	# every surviving item and this lights slot 0 too)
+	gd["escapes"] = {"move": true, "strike": true, "item": [], "descend": false, "win": "strike", "strikes": 2}
+	_check(Danger.guard_flash(gd) == "LETHAL (3) - strike first, or tap again to end turn",
+		"guard: two surviving strikes claim no win (%s)" % Danger.guard_flash(gd))
+	var es_w := {"move": false, "strike": false, "item": [0, 1], "descend": false, "win": "item", "win_item": 1}
+	_check(Danger.glow_items(es_w) == [1], "only the winning item glows (%s)" % str(Danger.glow_items(es_w)))
+	es_w["win"] = ""
+	_check(Danger.glow_items(es_w) == [0, 1], "with no win every surviving item glows")
 	# cues: transitions only
 	var p0 := {"ok": true, "floor": 1, "lethal": false, "sky": {"choke_in": 6, "choking": false}}
 	var p1 := {"ok": true, "floor": 1, "lethal": false, "sky": {"choke_in": 5, "choking": false}}
@@ -2358,17 +2464,26 @@ func _check_danger_readouts() -> void:
 	cw.step({"type": "strike", "dir": wd[0]})
 	_check(bool(dzw["lethal"]) and cw.over and cw.won, "fixture: lethal, and the strike on the 1-HP boss wins the run")
 	_check(bool(ew["strike"]), "a boss-killing strike counts as a strike escape (%s)" % str(ew))
+	# ...and is the one the guard names (mutation: drop the `win` assignment in
+	# Danger.escapes; the unit rows above hold it ahead of a surviving step)
+	_check(String(ew.get("win", "")) == "strike" and int(ew.get("strikes", 0)) == 1,
+		"the winning strike is marked as the win, the only strike that survives (%s)" % str(ew))
+	dzw["escapes"] = ew
+	_check(Danger.guard_flash(dzw).contains("strike to win"),
+		"the live guard flash points at the winning blow (%s)" % Danger.guard_flash(dzw))
 
 	var sh = _bare_shell()
 	# fit gate: the worst context line (the two longest enemy names, +9) and the
-	# four guard flashes, at the context line's own size in its own box
+	# five guard flashes (plus the two winning ones) and the NEXT TURN choke
+	# line, at the context line's own size in its own box
 	var names: Array = []
 	for k in Content.ENEMIES:
 		names.append(String(Content.ENEMIES[k]["name"]))
 	names.sort_custom(func(a, b): return a.length() > b.length())
 	var worst_ctx := "! INCOMING 99 - LETHAL  ·  %s, %s +9" % [names[0], names[1]]
 	var fit_lines: Array = [worst_ctx, "Smog chokes NEXT TURN - descend to escape it"]
-	for esc in [{"move": true}, {"strike": true}, {"item": [0]}, {"descend": true}, {}]:
+	for esc in [{"move": true}, {"strike": true}, {"item": [0]}, {"descend": true}, {},
+			{"win": "strike"}, {"win": "strike", "strikes": 2}, {"win": "item"}]:
 		fit_lines.append(Danger.guard_flash({"fc": {"dmg": 99}, "escapes": esc}))
 	var worst_fit := 1.0
 	var worst_what := ""
@@ -2632,6 +2747,41 @@ func _check_intent_badges() -> void:
 	_check(calm2 > c2 and tip2.has("stokers bring the choke %d turns sooner" % (calm2 - c2))
 		and not tip2.any(func(l): return String(l).begins_with("brings")),
 		"two stokers: the total is worded as shared (%s)" % str(tip2))
+	# the calm walk finds NO choke inside its horizon while the stokers bring
+	# one: the line still shows, naming the horizon (mutation: restore the
+	# `calm > c` condition alone and neither line appears)
+	var choke_v := int(g.floor_def(int(g.floor_num))["smog_choke"])
+	var far_ok := false
+	for gap in range(Danger.SKY_HORIZON + 1, Danger.SKY_HORIZON * 3):
+		g.smog = choke_v - gap
+		tip_sh._danger_rev += 1
+		var dzf: Dictionary = tip_sh._danger_state()
+		var cf := int(dzf["sky"]["choke_in"])
+		if cf > 0 and int(dzf["sky_calm"]["choke_in"]) < 0:
+			far_ok = true
+			var want2 := "stokers bring the choke in %d turns - none for %d+ without them" % [cf, Danger.SKY_HORIZON]
+			_check(tip_sh._danger_tip(stack, dzf).has(want2),
+				"two stokers, no calm choke: %s (want %s)" % [str(tip_sh._danger_tip(stack, dzf)), want2])
+			g.enemies.erase(stack2)
+			tip_sh._danger_rev += 1
+			var dz1: Dictionary = tip_sh._danger_state()
+			var c1 := int(dz1["sky"]["choke_in"])
+			if c1 > 0 and int(dz1["sky_calm"]["choke_in"]) < 0:
+				var want1 := "brings the choke in %d turns - none for %d+ without it" % [c1, Danger.SKY_HORIZON]
+				_check(tip_sh._danger_tip(stack, dz1).has(want1),
+					"one stoker, no calm choke: %s (want %s)" % [str(tip_sh._danger_tip(stack, dz1)), want1])
+			g.enemies.append(stack2)
+			break
+	_check(far_ok, "fixture: a smog level where only the stokers bring the choke inside the horizon")
+	# both forms fit the tooltip's own wrap (<= 2 lines, nothing shrunk under
+	# CARD_MIN_VH) at every viewport, with the widest numbers
+	var tip_fit_bad := 0
+	for vp in CARD_VIEWPORTS:
+		for ln in [tip_sh._stoker_line(59, -1, 2), tip_sh._stoker_line(59, -1, 1), tip_sh._stoker_line(9, 59, 2)]:
+			var wr: Dictionary = tip_sh._wrap(String(ln), int(vp.y * 0.021), vp.x * 0.86, 2)
+			if wr["lines"].size() > 2 or float(wr["size"]) / vp.y < CARD_MIN_VH:
+				tip_fit_bad += 1
+	_check(tip_fit_bad == 0, "the stoker lines fit the tooltip at every viewport (%d bad)" % tip_fit_bad)
 	g.enemies.erase(stack2)
 	g.smog = g_smog
 	tip_sh.free()
@@ -2928,6 +3078,24 @@ func _check_menu_layout() -> void:
 	_check(outside == 0, "%d menu row(s) leave the viewport or run into their badge" % outside)
 	_check(badges >= 5 * CARD_VIEWPORTS.size(), "the maxed menu carries its badges (%d)" % badges)
 	_check(small_badge == 0, "%d menu badge(s) below %.2f%% of vh" % [small_badge, CARD_MIN_VH * 100.0])
+	# the armed PLAY label names the loss and still draws at >= 1.5% vh inside
+	# the viewport at every shape
+	ml._play_armed = true
+	var armed_bad := 0
+	var armed_seen := 0
+	for vp in CARD_VIEWPORTS:
+		var view := Rect2(0, 0, vp.x, vp.y)
+		for m in ml._menu_layout(vp.x, vp.y):
+			if String(m["tag"]) != "play":
+				continue
+			armed_seen += 1
+			if String(m["label"]) != Shell.PLAY_ARMED_LABEL or float(m["size"]) / vp.y < 0.015 \
+					or not view.encloses(m["rect"]) \
+					or ml.font.get_string_size(String(m["label"]), HORIZONTAL_ALIGNMENT_LEFT, -1, int(m["size"])).x > m["rect"].size.x:
+				armed_bad += 1
+	ml._play_armed = false
+	_check(armed_seen == CARD_VIEWPORTS.size() and armed_bad == 0,
+		"the armed PLAY label fits its row at every viewport (%d bad of %d)" % [armed_bad, armed_seen])
 	print("menu layout: %d viewports, worst label %.4f%% of vh (%s)" % [CARD_VIEWPORTS.size(), worst * 100.0, worst_at])
 	ml.game = null
 	ml.free()
@@ -3061,8 +3229,17 @@ func _check_run_end() -> void:
 		and not sh._over_locked(at + Shell.OVER_LOCK_MS), "beat -> fade -> sheet, unlocked at OVER_LOCK_MS")
 	var g0 = sh.game
 	var seed0: int = sh.seed_v
+	# a LIVE hotspot under every click, and a MENU one - the one tag _tap lets
+	# through the lock - so it is _click's own lock that holds (mutation: drop
+	# `if _over_locked(): return` from _click and these clicks reach the menu)
+	sh.hotspots = [{"rect": Rect2(0, 0, 9999, 9999), "tag": "menu"}]
 	for pt in [Vector2(5, 5), Vector2(270, 600), Vector2(270, 1100), Vector2(500, 1150)]:
 		sh._click(pt)
+	_check(sh.screen == "game" and sh.game == g0, "a click on a live hotspot during the beat does nothing")
+	sh.hotspots = [{"rect": Rect2(0, 0, 9999, 9999), "tag": "new_run"}]
+	for pt in [Vector2(5, 5), Vector2(500, 1150)]:
+		sh._click(pt)
+	sh.hotspots.clear()
 	sh._key(KEY_R)
 	sh._key(KEY_N)
 	sh._key(KEY_SPACE)
@@ -3126,6 +3303,14 @@ func _check_run_end() -> void:
 	var ul: Array = RunEnd.unlock_lines(["tier:1", "hydraulics", "kit_of_3", "double_oil", "skyrunner"], [])
 	_check(ul.size() == 4 and String(ul[3]) == "+2 more  ·  tap for all",
 		"three unlock lines, then +2 more and the pager's cue (%s)" % str(ul))
+	# a summary whose folded killer is empty (a game set over from outside:
+	# RunStats always carries killer.cause, "" without a player_death) falls
+	# back to death_cause (mutation: restore killer.get("cause", fallback))
+	var bare_s := {"won": false, "floor": 2, "killer": {"cause": "", "kind": ""}, "death_cause": "drill_bot"}
+	_check(String(RunEnd.end_banner(bare_s, {})[0]) == "THE DRILL BOT TAKES YOU"
+		and RunEnd.cause_line(bare_s, {}).begins_with("struck down by a Drill Bot"),
+		"an empty folded killer falls back to death_cause (%s / %s)" % [
+			str(RunEnd.end_banner(bare_s, {})), RunEnd.cause_line(bare_s, {})])
 	_check(RunEnd.cause_text("spikes", "welded_hulk") == "cut on a Welded Hulk's spikes"
 		and RunEnd.cause_text("smog") == "choked by the smog" and RunEnd.cause_text("fire") == "burned in the flames",
 		"cause words (%s)" % RunEnd.cause_text("spikes", "welded_hulk"))
@@ -3156,6 +3341,7 @@ func _check_run_end() -> void:
 ## DEEPEST YET read from the bests BEFORE the record, the daily's buttons,
 ## a first win's unlocks and NEXT, and a tutorial death.
 func _check_over_facts() -> void:
+	const RunEnd := preload("res://shell/run_end.gd")
 	var sh = _bare_shell()
 	sh.runs_dir = RUNEND_RUNS
 	sh.profile = Profile.new()
@@ -3215,6 +3401,35 @@ func _check_over_facts() -> void:
 		"its unlocks, the difficulty first (%s)" % str(info["unlocks"]))
 	_check(String(info["next"]).begins_with("NEXT  ·  "), "...and the next goal (%s)" % info["next"])
 	_check(String(info["banner"][0]) == "THE FURNACE FALLS", "the win's beat banner")
+	# the feats the run earned ride behind the unlocks: counted in the overflow
+	# (mutation: drop the feat loop in _build_over_info and the count shrinks)
+	var n_ann: int = sh._run_unlocks.size() + (sh._run_report.get("feats", []) as Array).size()
+	_check((sh._run_report.get("feats", []) as Array).has("barefoot") and int(info.get("unlock_n", 0)) == n_ann
+		and String(info["unlocks"].back()) == RunEnd.unlock_more(n_ann - 3),
+		"a first win's feats count in the unlock rows (%d: %s)" % [n_ann, str(info["unlocks"])])
+	# a maxed career: every milestone and difficulty owned, so the feats ARE
+	# the unlock rows and the NEXT line falls back to a feat
+	var mx = Profile.new()
+	for m in Content.MILESTONES:
+		var bk = mx._bucket(String(m["kind"]))
+		if bk != null and not bk.has(String(m["id"])):
+			bk.append(String(m["id"]))
+	mx.unlocked_tier = Content.TIERS.size()
+	sh.profile = mx
+	g = Game.new(4242, {})
+	g.floor_num = 7
+	g.won = true
+	g.over = true
+	sh.game = g
+	sh._run_recorded = false
+	sh._record_finished_run()
+	info = sh._over_info_now()
+	var mfeats: Array = sh._run_report.get("feats", [])
+	_check(sh._run_unlocks.is_empty() and not mfeats.is_empty()
+		and String(info["unlocks"][0]) == "FEAT  ·  " + String(Content.FEATS[mfeats[0]]["name"])
+		and info["unlocks"].has("FEAT  ·  Barefoot"),
+		"a maxed career's new feats are its unlock rows (%s)" % str(info["unlocks"]))
+	_check(String(info["next"]).contains("  ·  feat "), "...and its NEXT names a feat (%s)" % info["next"])
 	# a daily: the three-button row, no unlocks, no goal
 	sh.run_kind = "daily"
 	g = Game.new(77, {})
@@ -3229,7 +3444,25 @@ func _check_over_facts() -> void:
 	_check(info["unlocks"].is_empty() and String(info["next"]) == "" and String(info["seed"]).ends_with("daily"),
 		"a daily shows no unlock rows and no goal (%s)" % str(info["unlocks"]))
 	_check(String(info["best"][0]) == "RANKED  ·  your first finish today", "a first daily finish is ranked (%s)" % str(info["best"]))
-	# a tutorial death: TUTORIAL AGAIN, and nothing scored
+	# a tutorial death THROUGH _act: the tutorial branch starts its own beat
+	# and builds its sheet (mutation: drop _begin_over / _build_over_info from
+	# _act's tutorial branch and neither the beat nor TUTORIAL AGAIN is there)
+	var runs_t: int = sh.profile.runs
+	sh._start_tutorial()
+	sh._act({"type": "move", "dir": Vector2i(1, 0)})
+	sh._act({"type": "move", "dir": Vector2i(1, 0)})
+	_check(sh.tut_step == 2, "fixture: the tutorial's end-turn step (%d)" % sh.tut_step)
+	var tg = sh.game
+	var tdirs := _open_dirs(tg)
+	var tbot: Dictionary = tg._spawn("drill_bot", tg.player["pos"] + tdirs[0])
+	tbot["intent"] = {"type": "attack", "tile": tg.player["pos"], "dmg": 99}
+	sh._act({"type": "end_turn"})
+	_check(tg.over and not tg.won and sh._over_phase() == "beat" and sh._over_locked(),
+		"a tutorial death through _act starts the beat (%s)" % sh._over_phase())
+	_check(sh._over_info.get("buttons", []) == [["TUTORIAL AGAIN", "tutorial"], ["MENU", "menu"]]
+		and String(sh._over_info["banner"][0]) == "THE DRILL BOT TAKES YOU" and sh.profile.runs == runs_t,
+		"...its sheet offers TUTORIAL AGAIN, names the killer and records nothing (%s)" % str(sh._over_info.get("buttons", [])))
+	# a tutorial death set from outside: TUTORIAL AGAIN, and nothing scored
 	sh._start_tutorial()
 	sh.game.over = true
 	info = sh._over_info_now()
@@ -3324,6 +3557,44 @@ func _check_over_text() -> void:
 		"next": "NEXT  ·  Shut down the Furnace  ·  unlocks Hydraulics, Kit of Three and 5 more",
 		"seed": "seed 123456  ·  Tender", "buttons": [["NEW RUN", "new_run"], ["RETRY SEED", "retry_seed"], ["MENU", "menu"]],
 	}
+	# the "+n more" row counts what the sheet REALLY hides: on a short screen
+	# the priority drop takes an unlock row, and the last kept one is rebuilt
+	# with the new count (mutation: skip _over_fix_overflow in _over_layout and
+	# the sheet shows a label, or a stale "+2 more", with three hidden)
+	var long_line := "struck down by a Welded Hulk's spikes on the longest floor name there is  ·  Pipeworks deep"
+	var u_ids := ["tier:1", "skyrunner", "double_oil", "mycology", "overtime"]
+	var crowded := {"won": false, "title": "YOU DIED", "cause": long_line, "near": long_line, "stats": long_line,
+		"grafts": long_line, "kit": [{"icon": "ab_default", "count": 999, "up": true}],
+		"chips": ["a chip that is long", "another chip", "third"], "score": "SCORE 99999", "score_parts": long_line,
+		"best": ["best 1449  ·  this run 85%", false], "floor_best": "DEEPEST YET  ·  floor 6 (was 5)",
+		"unlocks": RunEnd.unlock_lines(u_ids, []), "unlock_n": u_ids.size(), "next": long_line, "seed": "seed 1",
+		"buttons": [["NEW RUN", "new_run"], ["MENU", "menu"]]}
+	var short_lay: Dictionary = sh._over_layout(crowded, 1080, 1250)
+	var kept_u: Array = []
+	for it in short_lay["items"]:
+		if String(it["id"]).begins_with("unlock"):
+			kept_u.append(String(it["lines"][0]))
+	var u_dropped: bool = short_lay["dropped"].any(func(d): return String(d).begins_with("unlock"))
+	_check(u_dropped and kept_u.size() >= 2 and kept_u.back() == RunEnd.unlock_more(u_ids.size() - (kept_u.size() - 1))
+		and kept_u.slice(0, kept_u.size() - 1).all(func(l): return not String(l).begins_with("+")),
+		"a dropped unlock row is counted in the rebuilt '+n more' (%s, dropped %s)" % [str(kept_u), str(short_lay["dropped"])])
+	# a wrapped row keeps RunEnd's two-space pad around its separator, as the
+	# one-line rows do (mutation: _over_text_fit wraps without keep_pad)
+	var padded: Dictionary = crowded.duplicate()
+	padded["stats"] = "floor 5 of 7  ·  263 turns  ·  124 kills  ·  141 bloom earned  ·  12 rooms bloomed  ·  3 floors restored"
+	var pad_lay: Dictionary = sh._over_layout(padded, 1080, 2400)
+	var pad_ok := false
+	for it in pad_lay["items"]:
+		if String(it["id"]) == "stats":
+			pad_ok = String(" ".join(it["lines"])).contains("·")
+			for ln in it["lines"]:
+				var l := String(ln)
+				pad_ok = pad_ok and l.replace("  ·  ", "").find("·") == -1 \
+					and not l.begins_with("·") and not l.ends_with("·")
+	var one_wrap: Dictionary = sh._wrap("floor 5 of 7  ·  63 turns  ·  24 kills", 40, 10000.0, 2, true)
+	_check(pad_ok and one_wrap["lines"] == ["floor 5 of 7  ·  63 turns  ·  24 kills"]
+		and sh._wrap("aaa  ·  bbb", 40, sh.font.get_string_size("aaa  ·", HORIZONTAL_ALIGNMENT_LEFT, -1, 40).x, 2, true)["lines"] == ["aaa", "bbb"],
+		"the over sheet's wrap keeps the '  ·  ' pad and never leaves a bare dot at a line end (%s)" % str(one_wrap["lines"]))
 	var prio := {}
 	for r in Shell.OVER_ROWS:
 		prio[String(r[0])] = int(r[1])
@@ -3756,9 +4027,11 @@ func _check_unlock_pager() -> void:
 	_check(sh._back() == "menu" and sh.screen == "menu", "...and the next Back goes to the menu")
 	sh.screen = "game"
 	sh._tap("unlocks")
+	_check(sh.mode == "unlocks", "the pager reopens after a trip to the menu")
 	sh._notification(Node.NOTIFICATION_WM_GO_BACK_REQUEST)
 	_check(sh.mode == "normal" and sh.screen == "game", "Android's Back closes the pager into the sheet")
 	sh._tap("unlocks")
+	_check(sh.mode == "unlocks", "...and opens again for ENTER")
 	sh._key(KEY_ENTER)
 	_check(sh.mode == "normal", "ENTER is the pager's DONE")
 	# the geometry, every page, every phone shape
@@ -3848,6 +4121,8 @@ func _check_career_pings() -> void:
 	var cast_lines: Array = []
 	var deep_lines: Array = []
 	var career_banners := 0
+	var deep_prio := -1
+	var deep_shown := false
 	for a in acts:
 		sh._banner = []
 		sh._banner_q = []
@@ -3858,6 +4133,10 @@ func _check_career_pings() -> void:
 		var seen: Array = [sh._banner]
 		for q in sh._banner_q:
 			seen.append(q["lines"])
+			if not had_deep and q["lines"].size() == 2 and String(q["lines"][0]) == "DEEPEST YET":
+				deep_prio = int(q["prio"])
+		if not had_deep and sh._banner.size() == 2 and String(sh._banner[0]) == "DEEPEST YET":
+			deep_shown = true
 		for ln in seen:
 			if ln.size() == 2 and String(ln[1]).ends_with("unlocks when this run ends"):
 				career_banners += 1
@@ -3875,6 +4154,11 @@ func _check_career_pings() -> void:
 		"floor 2 on a best of 1 is DEEPEST YET (%s)" % str(deep_lines))
 	_check(career_banners == 2, "each ping is announced exactly once (%d)" % career_banners)
 	_check(int(Feedback.BANNER_PRIO["career"]) < int(Feedback.BANNER_PRIO["stairs"]), "pings queue at the lowest priority")
+	# _act pushes the ping AT career priority: on the floor-change step it waits
+	# in the queue behind the title card instead of showing (mutation: push it
+	# at BANNER_PRIO.boss and it shows at once; at 0 its queue prio is wrong)
+	_check(deep_prio == int(Feedback.BANNER_PRIO["career"]) and not deep_shown,
+		"DEEPEST YET is held in the queue at career priority on its step (prio %d, shown %s)" % [deep_prio, str(deep_shown)])
 	_check(int(sh._career_ref["best_floor"]) == int(sh.profile.bests_snapshot(sh.sel_loadout)["best_floor"]),
 		"the ref's best floor IS bests_snapshot's (C10)")
 	# a ping lands with the floor title card: it waits in the queue until the
@@ -3998,6 +4282,8 @@ func _check_objective_line() -> void:
 	for lid in Content.LOADOUTS:
 		crowd.append(String(Content.LOADOUTS[lid]["name"]))
 	var drop_bad := 0
+	var hint_dropped := 0
+	var log_bad := 0
 	var bad := 0
 	var worst := 9.9
 	var worst_at := ""
@@ -4030,7 +4316,19 @@ func _check_objective_line() -> void:
 			var oc: Dictionary = sh._objective_line(big2, vw, vh)
 			if float(sh._fit_size(String(oc["text"]), int(vh * 0.022), vw * 0.95)) / vh < Shell.OBJECTIVE_MIN_VH:
 				drop_bad += 1
+			# on a stairs-awake floor a dropped hint gives the goal back its
+			# "tap for log" (mutation: delete the had_hint restore in _objective_line)
+			var aw: Dictionary = snap.duplicate()
+			aw["floor"] = 4
+			var oa: Dictionary = sh._objective_line(aw, vw, vh)
+			if not String(oa["text"]).contains("unlocks"):
+				hint_dropped += 1
+				if String(oa["text"]) != "Reach the gold-ringed stairs  ·  tap for log":
+					log_bad += 1
+					print("a dropped hint left the stairs line bare at %dx%d: %s" % [vw, vh, oa["text"]])
 	_check(drop_bad == 0, "a hint too long to fit is dropped, never drawn under the floor (%d)" % drop_bad)
+	_check(hint_dropped > 0 and log_bad == 0,
+		"a dropped hint restores 'tap for log' beside the stairs goal (%d dropped, %d bare)" % [hint_dropped, log_bad])
 	_check(bad == 0, "%d objective line(s) under %.1f%% of vh or without the career hint (worst %s)" % [
 		bad, Shell.OBJECTIVE_MIN_VH * 100.0, worst_at])
 	sh.free()

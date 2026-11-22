@@ -136,7 +136,9 @@ screen says about what is about to hurt you. Nothing here changes a run.
 - **Tooltips.** Holding an enemy adds why its intent will not land (stunned,
   rooted, lost in the smoke, your anchor holds) and for a smokestack how many
   turns sooner it brings the choke (on its idle turns too; with two or more
-  alive, "stokers bring the choke N turns sooner", since that is their total); holding yourself reads `ending here: 3
+  alive, "stokers bring the choke N turns sooner", since that is their total;
+  when without them the choke would not come inside the 60-turn look-ahead
+  at all, "brings the choke in N turns - none for 60+ without it"); holding yourself reads `ending here: 3
   incoming - LETHAL`; holding a vent reads `releases in 4 turns` or `sealed -
   absorbs the next release`.
 
@@ -151,7 +153,10 @@ buttons at the bottom. Everything is tappable — no keyboard needed:
   tap on yourself, asks for a second press when the forecast says that end
   turn would kill you: the line above the D-pad says `LETHAL (3) - step off,
   or tap again to end turn` (or `strike first` when only hitting the
-  attacker saves you, or names the glowing satchel item, or the stairs) and a second press within 1.5 s goes through. END TURN, the
+  attacker saves you, or names the glowing satchel item, or the stairs; a
+  blow that wins the run outright comes first of all: `strike to win` when
+  only one strike survives, `the glowing item wins` with only the winning
+  item glowing) and a second press within 1.5 s goes through. END TURN, the
   D-pad's END, SPACE and ENTER never ask — pressing END is a decision
 - **hold your finger on any tile**: tooltip naming what's there, its HP,
   and exactly what it will do next turn
@@ -248,7 +253,8 @@ death or washes gold on a win, three bursts land on the tender (on a win, on
 the boss's last tile), the controls dim behind a veil, and a banner names
 the moment - `THE SMOG TAKES YOU`, `THE DRILL BOT TAKES YOU`, `THE SPIKES
 TAKE YOU`, `YOUR EMBER SAP TAKES YOU`, `THE FURNACE FALLS`. Then the sheet
-fades in over 0.4 s (`OVER_FADE_MS`). Taps and keys are ignored until 1.9 s
+fades in over 0.4 s (`OVER_FADE_MS`), over the beat's tint and veil, so the
+dimmed controls never flash back. Taps and keys are ignored until 1.9 s
 after the end (`OVER_LOCK_MS`, 0.3 s after the sheet is opaque), so a finger
 still hammering the D-pad cannot skip the death or start a run by accident;
 while locked the buttons draw dim. Back and ESC are never locked - they go
@@ -282,7 +288,8 @@ no unlock rows and no NEXT; a tutorial death shows no score, best, unlocks,
 goal or seed and offers TUTORIAL AGAIN / MENU. When a phone is too short for
 every row, the least important present row is dropped first (the seed line,
 then the third chip, then the score parts...), and the title, cause, score
-and best never go; `tests/test_shell.gd` `_check_over_text` holds every row
+and best never go; when that takes an unlock row, the last one kept becomes
+`+n more · tap for all` with the number really hidden; `tests/test_shell.gd` `_check_over_text` holds every row
 to the card text floor at every phone shape.
 
 **The unlock pager.** Once the sheet is live, tapping its unlock rows (they
@@ -373,8 +380,9 @@ button reads PLAY TODAY'S RUN until you finish and PLAY AGAIN · unranked
 after. While a try of today's daily is still in progress (you left it for
 the menu, or the tutorial displaced it) the button reads RESUME TODAY'S TRY
 and takes you back into that try instead of starting over; the menu's PLAY
-then reads TAP AGAIN TO ABANDON on the first tap, because a career start
-overwrites the one run save and the try is already counted. Every start
+then reads TAP AGAIN: ABANDON TODAY'S TRY on the first tap, because a career
+start overwrites the one run save and the try is already counted; any other
+tap, on a button or not, and Back / ESC disarm it. Every start
 counts as a try, a retry included. A streak line counts
 the days in a row you finished a daily (it stays alive until a whole day is
 missed) next to your longest, re-derived from the dates themselves.
@@ -560,7 +568,8 @@ career hint - `Reach the gold-ringed stairs · floor 5 unlocks Mycology`, the
 quota shortening to `cleanse 1/3 to wake the stairs` beside it. Alone, the
 goal is followed by `tap for log` as before (the quota never was). Parts
 drop from the hint backwards until the line draws at 1.3% of the screen
-height or more, so a long hint goes rather than shrinking the line.
+height or more, so a long hint goes rather than shrinking the line - and the
+goal it leaves alone gets its `tap for log` back.
 
 ## Career sheet
 
@@ -582,7 +591,9 @@ LEFT / RIGHT page it from a keyboard, and Back or ESC closes it.
   the run that earned it and reads NEW until the tab has been opened once
   (which is also what clears the CAREER button's NEW badge); one still open
   shows its progress where it has a number to chase. Feats are earned by
-  career runs only - a daily never earns one - and they buy nothing.
+  career runs only - a daily never earns one - and they buy nothing. A career
+  older than feats gets every one-run feat its RECORDS already show (a
+  biggest hit of 9 is Heavy Hand) when it loads, quietly, with no NEW badge.
 - **RECORDS** shows the career's bests (score, machines felled, biggest hit,
   most felled in one turn, rooms bloomed, bloom earned, combos, fastest win)
   with the run, loadout and difficulty that set each, then one card per

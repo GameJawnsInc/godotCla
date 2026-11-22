@@ -286,6 +286,7 @@ func _init() -> void:
 	_check_feats()
 	_check_feat_folds()
 	_check_feat_progress()
+	_check_feat_backfill()
 	_check_goal_rows()
 	# 11) fun pass, career C: the in-run ping data
 	_check_run_ref()
@@ -418,8 +419,8 @@ func _check_load_filters() -> void:
 	# the filtered profile still evaluates predicates over what survived
 	_expect(p._meets({"won_with": ["seed_bomb+tangle"]}), true, "migrated history still satisfies won_with")
 	# the career layer's stores: an unseen id must name something owned now
-	# (hydraulics is not unlocked, tier 5 is past unlocked_tier, feats are not
-	# in the tables yet), each once; tries are positive ints keyed by a seed;
+	# (hydraulics is not unlocked, tier 5 is past unlocked_tier, an unearned
+	# or unknown feat goes), each once; tries are positive ints keyed by a seed;
 	# a daily result is rebuilt, its non-number score dropped
 	_expect(p.unseen, ["mycology", "tier:1", "feat:green_thumb"],
 		"load_from filters unseen to what the career owns (an unearned or unknown feat goes)")
@@ -1889,9 +1890,39 @@ func _feat_fixture(p, s: Dictionary, k: String, v, miss: bool) -> bool:
 	return true
 
 
+## The feat req keys whose bar is a SET (or a named member of one): their
+## missed-by-one fixture also has a contributing form (_feat_contrib_miss).
+const SET_FEAT_KEYS := ["boss", "all_bosses", "all_loadouts_won", "all_bases_cast"]
+
+
+## A set key one short while this run DOES add to it: a different boss, the
+## career's next-to-last boss, a win with a loadout that already has one, a
+## cast of a base already cast.
+func _feat_contrib_miss(p, s: Dictionary, k: String, v) -> void:
+	match k:
+		"boss":
+			var others: Array = Profile.boss_set().filter(func(b): return String(b) != String(v))
+			s["bosses_killed"] = [others[0]]
+		"all_bosses":
+			var bs: Array = Profile.boss_set()
+			p.bosses_beaten = bs.slice(0, bs.size() - 2)
+			s["bosses_killed"] = [bs[bs.size() - 2]]
+		"all_loadouts_won":
+			var lids: Array = Content.LOADOUTS.keys()
+			for lid in lids.slice(0, lids.size() - 1):
+				p.records["loadouts"][lid] = Profile._loadout_rec(7, 0, 0, 1, 1)
+			s["loadout"] = lids[0]
+			s["won"] = true
+		"all_bases_cast":
+			var bases: Array = Profile.base_set()
+			p.cast_ever = bases.slice(0, bases.size() - 1)
+			s["uses_by_base"] = {bases[0]: 1}
+
+
 func _check_feats() -> void:
 	var met := 0
 	var missed := 0
+	var contrib := 0
 	for fid in Content.FEATS:
 		var req: Dictionary = Content.FEATS[fid]["req"]
 		# met: every key at its exact bar
@@ -1920,6 +1951,23 @@ func _check_feats() -> void:
 				_fail("feat %s: a run missing '%s' by one still earned it" % [fid, miss_k])
 			else:
 				missed += 1
+			# a set key missed by one while the run DOES contribute: an arm
+			# that reads only this run (any boss, "killed a boss", "won",
+			# "cast something") passes the plain miss above and fails this one
+			if not SET_FEAT_KEYS.has(String(miss_k)):
+				continue
+			var pc = Profile.new()
+			var sc := _feat_base()
+			for k in req:
+				if k == miss_k:
+					_feat_contrib_miss(pc, sc, String(k), req[k])
+				else:
+					_feat_fixture(pc, sc, String(k), req[k], false)
+			pc.record_run(sc)
+			if pc.feats.has(fid):
+				_fail("feat %s: a run that contributes to '%s' but leaves it one short still earned it" % [fid, miss_k])
+			else:
+				contrib += 1
 	# earned once only, dated off the summary, and named in the report once
 	var p1 = Profile.new()
 	var s1 := _feat_base()
@@ -1947,7 +1995,8 @@ func _check_feats() -> void:
 	d.record_daily(ds)
 	_expect([str(d.feats), str(d.records), str(d.totals), str(d.unseen), str(d.bosses_beaten), str(d.cast_ever)], before,
 		"record_daily leaves feats, records, totals, unseen, bosses and casts untouched")
-	print("feats: %d rows met at the bar, %d single-key misses rejected, once only, dated, legacy and daily isolation: OK" % [met, missed])
+	_expect(contrib >= SET_FEAT_KEYS.size(), true, "feats: every set key has a contributing miss (%d)" % contrib)
+	print("feats: %d rows met at the bar, %d single-key misses and %d contributing set misses rejected, once only, dated, legacy and daily isolation: OK" % [met, missed, contrib])
 
 
 func _check_feat_folds() -> void:
@@ -2045,6 +2094,54 @@ func _check_feat_progress() -> void:
 	_expect([Profile.unlock_name("feat:heavy_hand"), Profile.unlock_kind("feat:heavy_hand")], ["Heavy Hand", "feat"],
 		"unlock_name names a feat from Content.FEATS")
 	print("feat progress: stat/total/set/binary, next_feats ranking and shape, the NEXT fallback: OK")
+
+
+## A career saved before feats (records since stage 2, no feats store): on
+## load, every lone stat_min feat its stored record already meets is claimed
+## silently - undated, credited to the record's run, never filed unseen - so
+## the FEATS tab, the RECORDS tab and next_feats agree. A record under the
+## bar claims nothing. (Mutation: drop the backfill loop in load_from and
+## Heavy Hand reads 5/6 beside a RECORDS biggest hit of 9, and leads next_feats.)
+func _check_feat_backfill() -> void:
+	var p = Profile.new()
+	p.runs = 4
+	p.records["score_v"] = Content.RUN_SCORE_VERSION
+	p.records["best"]["biggest_hit_amt"] = Profile._rec(9, 4, "tender", 0)
+	p.records["best"]["rooms_bloomed"] = Profile._rec(5, 3, "tender", 0)
+	p.records["best"]["combos"] = Profile._rec(19, 2, "tender", 0)
+	var d: Dictionary = p.to_dict()
+	d.erase("feats")
+	d.erase("totals")
+	d.erase("bosses_beaten")
+	d.erase("cast_ever")
+	d["unseen"] = []
+	var path := "user://test_profile_prefeat.json"
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(JSON.stringify(d))
+	f.close()
+	var q = Profile.load_from(path)
+	DirAccess.remove_absolute(path)
+	_expect(str(q.feats.get("heavy_hand", {})), str({"date": "", "run": 4}),
+		"backfill: a record at the bar claims its feat, undated, on the record's run")
+	_expect(str(q.feats.get("green_thumb", {})), str({"date": "", "run": 3}), "backfill: exactly at the bar counts")
+	_expect(q.feats.has("chain_reaction"), false, "backfill: a record one under the bar claims nothing")
+	_expect(q.unseen.is_empty(), true, "backfill: a silent claim is never filed unseen")
+	_expect(q.feat_progress("heavy_hand")["text"], "6/6", "backfill: FEATS agrees with RECORDS")
+	_expect(q.feat_progress("chain_reaction")["text"], "19/20", "backfill: an unmet feat still reads its record")
+	var nf_ids: Array = q.next_feats(1 << 20).map(func(r): return String(r["ids"][0]))
+	_expect(nf_ids.has("feat:heavy_hand") or nf_ids.has("feat:green_thumb"), false,
+		"backfill: next_feats never asks for a feat the records show done")
+	_expect(nf_ids[0], "feat:chain_reaction", "backfill: the nearest unmet feat leads next_feats")
+	# a feat already stored keeps its own date and run
+	var d2 := d.duplicate(true)
+	d2["feats"] = {"heavy_hand": {"date": "2026-02-02", "run": 1}}
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(JSON.stringify(d2))
+	f.close()
+	var q2 = Profile.load_from(path)
+	DirAccess.remove_absolute(path)
+	_expect(str(q2.feats["heavy_hand"]), str({"date": "2026-02-02", "run": 1}), "backfill: a stored feat is never re-dated")
+	print("feat backfill: a pre-feat career's records claim their feats on load, silently: OK")
 
 
 func _check_goal_rows() -> void:

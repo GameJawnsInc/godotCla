@@ -310,6 +310,7 @@ const OVER_LOCK_MS := 1900
 ## Wall-clock ms the live game ended at this session; -1 = unknown (a game
 ## set over from outside, a resumed save): no beat, no lock, sheet at once.
 var _over_ms := -1
+var _beat_draws := 0  # _draw_over_beat calls, for tests/test_draw.gd only
 ## The game the beat and the sheet facts belong to (stale when `game` moved).
 var _over_for = null
 ## The game-over sheet's facts (_build_over_info), built once per ended game.
@@ -331,8 +332,12 @@ var _save_head_path := ""
 ## next tap starts the daily and abandons that run. Cleared when the sheet opens.
 var _daily_armed := false
 ## The menu's PLAY was tapped once while a daily try is resumable (its try is
-## already counted): the next tap abandons it. Any other tap disarms it.
+## already counted): the next tap abandons it. Any other tap disarms it - a
+## button, a tap that hits nothing, and ESC / Back at the menu root.
 var _play_armed := false
+## The armed PLAY row names what the second tap throws away (the menu has no
+## note line, unlike the DAILY sheet); _check_menu_layout holds it to size.
+const PLAY_ARMED_LABEL := "TAP AGAIN: ABANDON TODAY'S TRY"
 ## The CAREER sheet (mode "career" on the menu): GOALS / FEATS / RECORDS, paged
 ## CARDS_PER_PAGE cards at a time (layout, so a shell const, not a Profile one).
 const CARDS_PER_PAGE := 5
@@ -857,6 +862,7 @@ func _build_over_info() -> Dictionary:
 		for fid in _run_report.get("feats", []):
 			ann.append("feat:" + String(fid))
 		info["unlocks"] = RunEnd.unlock_lines(ann, profile.unlocked_packages)
+		info["unlock_n"] = ann.size()  # _over_layout rebuilds "+n more" from it
 		var nxt: Array = _run_report.get("next", [])
 		if not nxt.is_empty():
 			info["next"] = RunEnd.next_goal_text(nxt[0])
@@ -1306,6 +1312,9 @@ func _back(quit_at_root: bool = false) -> String:
 		queue_redraw()
 		return "tooltip"
 	if screen == "menu":
+		if _play_armed:
+			_play_armed = false  # backing off the armed PLAY disarms it
+			queue_redraw()
 		if mode == "settings" or mode == "daily" or mode == "career":
 			var closed := mode
 			mode = "normal"
@@ -1568,16 +1577,24 @@ func _danger_tip(e: Dictionary, dz: Dictionary) -> Array:
 	if _is_stoker(String(e.get("kind", ""))):
 		var c := int(dz.get("sky", {}).get("choke_in", -1))
 		var calm := int(dz.get("sky_calm", {}).get("choke_in", -1))
-		if c > 0 and calm > c:
+		if c > 0 and (calm > c or calm < 0):
 			var n_stokers := 0
 			for o in game.enemies:
 				if _is_stoker(String(o["kind"])):
 					n_stokers += 1
-			if n_stokers > 1:
-				out.append("stokers bring the choke %d turns sooner" % (calm - c))
-			else:
-				out.append("brings the choke %d turns sooner" % (calm - c))
+			out.append(_stoker_line(c, calm, n_stokers))
 	return out
+
+
+## The stoker tooltip line. `calm` < 0 is the calm walk finding no choke at
+## all inside its horizon - the stokers are the whole reason it comes - so
+## that case names the horizon instead of a "sooner" it cannot measure.
+func _stoker_line(choke_in: int, calm: int, n_stokers: int) -> String:
+	var who := "stokers bring" if n_stokers > 1 else "brings"
+	if calm < 0:
+		return "%s the choke in %d turns - none for %d+ without %s" % [
+			who, choke_in, Danger.SKY_HORIZON, "them" if n_stokers > 1 else "it"]
+	return "%s the choke %d turns sooner" % [who, calm - choke_in]
 
 
 func _is_stoker(kind: String) -> bool:
@@ -1960,8 +1977,12 @@ func _click(pos: Vector2) -> void:
 			if hsp["rect"].has_point(pos):
 				_tap(hsp["tag"])
 				return
-		# a sheet over the menu (settings, daily) closes on an off-button tap
-		# for settings; the DAILY sheet takes only its own buttons
+		# a tap that hits no button disarms the menu's armed PLAY...
+		if _play_armed:
+			_play_armed = false
+			queue_redraw()
+		# ...and a sheet over the menu (settings, daily, career) closes on an
+		# off-button tap for settings; DAILY and CAREER take only their own buttons
 		if mode == "settings":
 			mode = "normal"
 			queue_redraw()
@@ -2258,7 +2279,7 @@ func _menu_rows() -> Array:
 		or FileAccess.file_exists(run_save_path)
 	if has_resume:
 		rows.append(["RESUME RUN", "resume", true, "", ""])
-	rows.append(["TAP AGAIN TO ABANDON" if _play_armed else "PLAY", "play", true, "", ""])
+	rows.append([PLAY_ARMED_LABEL if _play_armed else "PLAY", "play", true, "", ""])
 	var di := _daily_now()
 	rows.append(["DAILY", "daily", not bool(di["streak"]["played_today"]), "", "a"])
 	rows.append(["CAREER", "career", false, _new_badge("feat"), "a"])
@@ -2517,22 +2538,48 @@ func _txt_c_fit(cx: float, ypos: float, s: String, color: Color, size: int, max_
 ## goes all the way down to 9px, which is what made a long card description
 ## unreadable on a phone; tests/test_shell.gd _check_card_text holds every
 ## shipped description to a size this can wrap without shrinking much.
-func _wrap(s: String, size: int, max_w: float, lines: int) -> Dictionary:
-	var words := s.split(" ", false)
+## `keep_pad` keeps each word's own run of spaces in front of it, so a
+## RunEnd "  ·  " separator stays two-space padded on a wrapped row (the
+## over sheet's one-line rows keep it too), and a line that would start or
+## end on the bare "·" drops it; off, runs of spaces collapse to one, as the
+## card and tooltip text has always been measured.
+func _wrap(s: String, size: int, max_w: float, lines: int, keep_pad := false) -> Dictionary:
+	var toks: Array = []  # [spaces before, word]
+	if keep_pad:
+		var ws := ""
+		var w := ""
+		for ch in s:
+			if ch == " ":
+				if w != "":
+					toks.append([ws, w])
+					ws = ""
+					w = ""
+				ws += " "
+			else:
+				w += ch
+		if w != "":
+			toks.append([ws, w])
+	else:
+		for w in s.split(" ", false):
+			toks.append([" ", String(w)])
 	while size > 9:
 		var out: Array = []
 		var cur := ""
-		for w in words:
-			var test: String = String(w) if cur == "" else cur + " " + String(w)
+		for tk in toks:
+			var w := String(tk[1])
+			var test: String = w if cur == "" else cur + String(tk[0]) + w
 			if font.get_string_size(test, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x <= max_w:
 				cur = test
 			else:
 				if cur != "":
 					out.append(cur)
-				cur = String(w)
+				cur = w
 		if cur != "":
 			out.append(cur)
 		if out.size() <= lines:
+			if keep_pad:
+				for i in out.size():
+					out[i] = String(out[i]).trim_prefix("·").trim_suffix("·").strip_edges()
 			return {"lines": out, "size": size}
 		size -= 1
 	return {"lines": [s], "size": size}
@@ -2649,9 +2696,14 @@ func _draw() -> void:
 	if screen == "tutorial" and tut_done:
 		_draw_tut_done(vw, vh)
 	elif snap["over"]:
-		if _over_phase() == "beat":
+		var oph := _over_phase()
+		if oph == "beat":
 			_draw_over_beat(vw, vh)
 		else:
+			if oph == "fade":
+				# the beat's tint and veil (at full strength by now) stay under
+				# the fading sheet, so the dimmed controls never flash back
+				_draw_over_beat(vw, vh)
 			_draw_over(snap, vw, vh)
 			if mode == "unlocks":
 				_draw_unlocks(vw, vh)
@@ -4227,10 +4279,12 @@ func _objective_line(snap: Dictionary, vw: float = 0.0, vh: float = 0.0) -> Dict
 	else:
 		head = "Reach the gold-ringed stairs"
 	var parts: Array = []
+	var had_hint := false
 	if screen == "game" and _game_is_run and not _career_ref.is_empty():
 		var hint := Profile.objective_hint(_career_ref, int(snap["floor"]))
 		if hint != "":
 			parts.append(hint)
+			had_hint = true
 	if parts.is_empty() and head_short == "":
 		parts.append("tap for log")
 	var bits: Array = []
@@ -4239,11 +4293,22 @@ func _objective_line(snap: Dictionary, vw: float = 0.0, vh: float = 0.0) -> Dict
 		bits = [head if parts.is_empty() or head_short == "" else head_short]
 		bits.append_array(parts)
 		text = "  ·  ".join(bits)
-		if parts.is_empty() or vw <= 0.0 or vh <= 0.0 \
-				or float(_fit_size(text, int(vh * 0.022), vw * 0.95)) / vh >= OBJECTIVE_MIN_VH:
+		if parts.is_empty() or _objective_fits(text, vw, vh):
 			break
 		parts.pop_back()
+	# a career hint too long to fit is gone, and the goal stands alone again:
+	# it gets back the "tap for log" it carries whenever nothing else rides
+	if had_hint and parts.is_empty() and head_short == "":
+		var with_log := head + "  ·  tap for log"
+		if _objective_fits(with_log, vw, vh):
+			bits = [head, "tap for log"]
+			text = with_log
 	return {"text": text, "col": col, "parts": bits}
+
+
+func _objective_fits(text: String, vw: float, vh: float) -> bool:
+	return vw <= 0.0 or vh <= 0.0 \
+		or float(_fit_size(text, int(vh * 0.022), vw * 0.95)) / vh >= OBJECTIVE_MIN_VH
 
 
 func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
@@ -4277,7 +4342,7 @@ func _draw_controls(snap: Dictionary, vw: float, vh: float) -> void:
 			_icon_button(ir, "it_" + String(items[i]).trim_suffix("+"), "item:%d" % i, false)
 			if String(items[i]).ends_with("+"):
 				_txt(Vector2(ir.position.x + ir.size.x * 0.74, ir.position.y + ir.size.y * 0.3), "+", COL_GOLD, int(ir.size.y * 0.3))
-			if lethal and dz.get("escapes", {}).get("item", []).has(i):
+			if lethal and Danger.glow_items(dz.get("escapes", {})).has(i):
 				# this item, used now, survives the end turn: it glows
 				draw_rect(ir.grow(-b * 0.03), Color(COL_GOLD, 0.5 + 0.4 * sin(Time.get_ticks_msec() / 170.0)), false, 3.0)
 		else:
@@ -4864,35 +4929,34 @@ func _over_layout(info: Dictionary, vw: float, vh: float) -> Dictionary:
 			it["pre"] = pre
 			rows.append(it)
 			continue
-		var lines: Array = [text]
-		if int(r[3]) > 1:
-			var wr := _wrap(text, size, vw * float(r[4]), int(r[3]))
-			lines = wr["lines"]
-			size = int(wr["size"])
-		else:
-			size = _fit_size(text, size, vw * float(r[4]))
 		it["kind"] = "text"
-		it["lines"] = lines
-		it["size"] = size
-		it["line_h"] = size * 1.2
 		it["col"] = _over_row_col(info, id)
-		it["h"] = pre + lines.size() * size * 1.2 + gap
 		it["pre"] = pre
+		it["nominal"] = size
+		_over_text_fit(it, text, r, vw, gap)
 		rows.append(it)
-	# the priority drop: the least important present row goes first
+	# the priority drop: the least important present row goes first (on a tie
+	# the LATER row, so unlock1 goes before unlock0). An unlock row it takes
+	# leaves its unlock hidden, so the last kept unlock row is rebuilt as the
+	# "+n more" overflow with the count the sheet really hides - and that can
+	# change its height, so the drop runs again until the rows fit.
 	var budget := vh * (OVER_BOTTOM - OVER_TOP)
-	var total := 0.0
-	for it in rows:
-		total += float(it["h"])
 	var dropped: Array = []
-	while total > budget and not rows.is_empty():
-		var wi := 0
-		for k in rows.size():
-			if int(rows[k]["prio"]) > int(rows[wi]["prio"]):
-				wi = k
-		total -= float(rows[wi]["h"])
-		dropped.append(String(rows[wi]["id"]))
-		rows.remove_at(wi)
+	var unlock_n := int(info.get("unlock_n", (info.get("unlocks", []) as Array).size()))
+	while true:
+		var total := 0.0
+		for it in rows:
+			total += float(it["h"])
+		while total > budget and not rows.is_empty():
+			var wi := 0
+			for k in rows.size():
+				if int(rows[k]["prio"]) >= int(rows[wi]["prio"]):
+					wi = k
+			total -= float(rows[wi]["h"])
+			dropped.append(String(rows[wi]["id"]))
+			rows.remove_at(wi)
+		if not _over_fix_overflow(rows, unlock_n, vw, gap):
+			break
 	var items: Array = []
 	var y := vh * OVER_TOP
 	for it in rows:
@@ -4944,6 +5008,44 @@ func _over_layout(info: Dictionary, vw: float, vh: float) -> Dictionary:
 		"unlock_rect": ur}
 
 
+## Fit one text row of the over sheet: wrap (keeping the "  ·  " pad) for a
+## multi-line row, else one fitted line; sets lines, size, line_h and h.
+func _over_text_fit(it: Dictionary, text: String, r: Array, vw: float, gap: float) -> void:
+	var size := int(it["nominal"])
+	var lines: Array = [text]
+	if int(r[3]) > 1:
+		var wr := _wrap(text, size, vw * float(r[4]), int(r[3]), true)
+		lines = wr["lines"]
+		size = int(wr["size"])
+	else:
+		size = _fit_size(text, size, vw * float(r[4]))
+	it["lines"] = lines
+	it["size"] = size
+	it["line_h"] = size * 1.2
+	it["h"] = float(it["pre"]) + lines.size() * size * 1.2 + gap
+
+
+## After the priority drop: make the last kept unlock row say how many
+## unlocks the sheet does NOT show ("+n more  ·  tap for all"), or leave it a
+## label when nothing is hidden. Returns true when a row's text changed (the
+## caller re-checks the budget).
+func _over_fix_overflow(rows: Array, unlock_n: int, vw: float, gap: float) -> bool:
+	var kept: Array = []
+	for it in rows:
+		if String(it["id"]).begins_with("unlock"):
+			kept.append(it)
+	if kept.is_empty() or unlock_n <= kept.size():
+		return false
+	var last: Dictionary = kept.back()
+	var want := RunEnd.unlock_more(unlock_n - (kept.size() - 1))
+	if String(last["lines"][0]) == want:
+		return false
+	for r in OVER_ROWS:
+		if String(r[0]) == String(last["id"]):
+			_over_text_fit(last, want, r, vw, gap)
+	return true
+
+
 ## The end beat's two banner lines, centred in the map band [top, bottom]:
 ## [{text, size, y, col}].
 func _over_beat_layout(info: Dictionary, vw: float, vh: float, top: float, bottom: float) -> Array:
@@ -4962,6 +5064,7 @@ func _over_beat_layout(info: Dictionary, vw: float, vh: float, top: float, botto
 ## a death), the controls dim behind a veil and take no taps, and the banner
 ## names the moment ("THE DRILL BOT TAKES YOU").
 func _draw_over_beat(vw: float, vh: float) -> void:
+	_beat_draws += 1  # read by tests/test_draw.gd: the fade draws over the beat
 	var info := _over_info_now()
 	var age := float(Time.get_ticks_msec() - _over_ms)
 	var t := clampf(age / OVER_BEAT_MS, 0.0, 1.0)

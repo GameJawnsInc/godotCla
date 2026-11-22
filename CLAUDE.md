@@ -161,9 +161,12 @@ architecture below is designed to bend rather than block.
     through the load filters and the wrong-type fixture; then feats: every
     `Content.FEATS` row met at its bar and missed by one per req key, on
     fixtures built from the row's OWN req (a new row is covered with no edit;
-    a req key with no fixture arm fails), earned once, dated off the summary,
+    a req key with no fixture arm fails; a set key - `boss`, `all_bosses`,
+    `all_loadouts_won`, `all_bases_cast` - is also missed by one while the
+    run DOES contribute), earned once, dated off the summary,
     a legacy win earning nothing, dailies untouched; the career folds,
-    `feat_progress`, `next_feats` and the NEXT fallback, `goal_rows`; the
+    `feat_progress`, `next_feats` and the NEXT fallback, the pre-feat
+    backfill in `load_from`, `goal_rows`; the
     career loop must earn >= `CAREER_MIN_FEATS` (5) feats by run 40; then
     `_check_run_ref`: `run_ref` (floors and casts by display name, owned and
     reached rows out, merged by (base, need), multi-key rows skipped,
@@ -177,9 +180,15 @@ architecture below is designed to bend rather than block.
     to a readable size on the tightest shrine card, and `_check_cleanse_hint`
     holds CLEANSE's refusal to the truth; `_check_resume_stats` holds a
     resumed run's stats fold equal to an uninterrupted one, and every
-    `_bare_shell` keeps its career in a scratch `profile_path` and its run
-    save in a scratch `run_save_path` (the shell's `_ready` restores, and may
-    delete, a save it finds there);
+    shell it builds (`_bare_shell`, `_iso_shell`) keeps its career in a
+    scratch `profile_path`, its run save in a scratch `run_save_path` (the
+    shell's `_ready` restores, and may delete, a save it finds there), its
+    settings in a scratch `cfg_path` and its archived logs in a scratch
+    `runs_dir`, and the end checks the player's real cfg, profile, run save
+    and runs dir are untouched; the body runs from the first `_process`
+    frame under an `OS.add_logger` error counter (the test_draw gate), so a
+    SCRIPT ERROR anywhere is exit 1 - one that aborts the body itself fails
+    on the next frame instead of leaving the process idle;
     `_check_names` holds the one names module (short and long source names,
     articles, the floor title card) and `_check_feedback` the feedback layer:
     callouts, the cleanse gain, kill weight, the boss shield, log names / xN,
@@ -188,7 +197,7 @@ architecture below is designed to bend rather than block.
     `_check_danger_readouts` the danger layer's verdicts and words (the HP
     rule table, the SKIES chips and bar alert, every context line and guard
     flash, the cues) plus its two gates - the FIT gate (the worst INCOMING line,
-    built from the two longest `Content.ENEMIES` names, the five guard
+    built from the two longest `Content.ENEMIES` names, the seven guard
     flashes and the NEXT TURN choke line draw at >= `CARD_MIN_VH` in the
     context line's box at every `CARD_VIEWPORTS` shape) and the LAYOUT gate (`_sky_row_layout` with chips
     60/12/9: numbers >= `CARD_MIN_VH`, chips end by 0.55vw, the config line
@@ -246,12 +255,14 @@ architecture below is designed to bend rather than block.
     pages and intro, both game-over screens set from outside, and the end
     of a run through the real path (the end beat after a smog death through
     `_act`, and a first win's beat started by hand, the sheet fading in locked with no live
-    hotspot, the live recorded sheet with its buttons and its unlock rows as
+    hotspot over the beat's own tint and veil, the live recorded sheet with its buttons and its unlock rows as
     a live `unlocks` target, the unlock pager on its first and last page, a
     career ping banner beside an objective line carrying the career hint, a
     tutorial death's TUTORIAL AGAIN), each phase asserting the state its draw
     code needs. The gate is an `OS.add_logger` `Logger` that
-    counts every engine error, `push_error` and SCRIPT ERROR: any one exits 1.
+    counts every engine error, `push_error` and SCRIPT ERROR: any one exits 1,
+    and a phase that logs one ends at once (the bot phase counts each action
+    BEFORE taking it), so an error never makes a run crawl to its frame cap.
     It writes nothing real (scratch `profile_path`, `run_save_path` and
     `runs_dir`, all set before `_ready`; `SHELL_SEED` cleared, run save
     closed, `_game_is_run` false, audio muted)
@@ -1136,11 +1147,17 @@ architecture below is designed to bend rather than block.
   `_over_layout(info, vw, vh)` is the sheet as data (`OVER_ROWS`: id, prio,
   size, lines, width, gap; content between `OVER_TOP` 0.11 and `OVER_BOTTOM`
   0.86 of vh; buttons through `_sheet_button_y(vh*0.875, ...)`); when the rows
-  overflow, the present row with the LARGEST prio is dropped until they fit.
+  overflow, the present row with the LARGEST prio is dropped until they fit
+  (a tie drops the LATER row), and when that takes an unlock row the last
+  kept one is rebuilt as `RunEnd.unlock_more(n)` with the count the sheet
+  really hides (`info.unlock_n`), re-checking the budget after. Two-line rows
+  wrap with `_wrap(..., keep_pad = true)`, so RunEnd's "  ·  " stays padded
+  and no line starts or ends on a bare dot.
   Chips fit to 0.72vw in a 0.78vw box (the spec's 0.66vw shrank the longest
   big-hit chip to 1.14% on a 1080x2640 phone). `_draw_over_beat` tints the map
-  and veils the controls with no hotspots; `_draw_over` fades in and draws the
-  buttons dim and dead while locked.
+  and veils the controls with no hotspots, and keeps drawing (at full
+  strength) under the sheet through the fade so nothing undimmed flashes
+  back; `_draw_over` fades in and draws the buttons dim and dead while locked.
 - Run summary and effective casts (C4): `Game.effective_uses` (base id -> int)
   counts a cast only when something happened — an effect outcome fired or a
   rider ran — while `player.uses` stays the raw count. It is copied by
@@ -1234,7 +1251,8 @@ architecture below is designed to bend rather than block.
   `feat:x` only while `x` is earned - part 2). The menu (`_menu_rows` ->
   `[label, tag, gold, badge, group]`, drawn from `_menu_layout(vw, vh)` at
   0.80vw; `tests/test_shell.gd` `_check_menu_layout` holds every label >= 1.5%
-  vh at every `CARD_VIEWPORTS` shape) puts NEW on the DIFFICULTY / LOADOUT /
+  vh and every badge >= `CARD_MIN_VH` (`bsz >= ceil(vh*0.0115)`) at every
+  `CARD_VIEWPORTS` shape, the armed PLAY label included) puts NEW on the DIFFICULTY / LOADOUT /
   PACKAGE / MUTATOR rows and WON / WON D<n> on the selected loadout, shares
   one line between TUTORIAL / SETTINGS / QUIT, and its footer is `runs ·
   wins · best floor` (part 2 adds `feats n/m` and CAREER beside DAILY). The daily is its own entry: `run_kind` ("career" |
@@ -1259,8 +1277,13 @@ architecture below is designed to bend rather than block.
   While a daily try on the sheet's seed is still resumable (the live run, or
   the run save's header when the tutorial displaced it: `_daily_try_live`),
   the DAILY sheet's PLAY reads RESUME TODAY'S TRY and taps `daily_resume`
-  instead of overwriting the save and counting a second try; a tap on a
-  finished run's over sheet is NEW RUN, a career run (C25), never a daily try.
+  instead of overwriting the save and counting a second try;
+  the over sheet's NEW RUN button is a career run (C25), never a daily try,
+  and a tap off its buttons starts nothing. The menu's PLAY guards a live
+  daily try the same way (`_play_armed`: armed by a PLAY tap while
+  `_resumable_run()` is a daily, the row then reads `PLAY_ARMED_LABEL`
+  "TAP AGAIN: ABANDON TODAY'S TRY"; any other button, a tap that hits no
+  button, and ESC / Back at the menu root disarm it).
   Settings load and save through `main.cfg_path` (default `CFG_PATH`), which
   every shell `tests/test_shell.gd` builds (`_bare_shell`, `_iso_shell`),
   `tests/test_draw.gd`'s shell and `tests/render_sheet.gd`'s point at a
@@ -1315,8 +1338,11 @@ architecture below is designed to bend rather than block.
   count). `record_daily` touches none of it.
   `feat_progress(fid)` -> `{have, need, frac, text}` (a lone `stat_min` reads
   the career RECORD for that key, `total_min` the total, the `all_*` sets
-  their counts, anything else 0/1; an unearned feat is capped at need - 1, so
-  a record that predates feats never reads N/N); `next_feats(n)` is unearned feats with a
+  their counts, anything else 0/1; an unearned feat is capped at need - 1,
+  and `load_from` silently claims - undated, on the record's run, never
+  unseen - every lone `stat_min` feat whose stored record already meets the
+  bar, so a career from before feats has FEATS, RECORDS and `next_feats`
+  agreeing); `next_feats(n)` is unearned feats with a
   need above 1, frac descending then table order, in `next_goals`' exact
   shape (ids `["feat:<id>"]`); `goal_rows()` is every milestone, unowned
   ranked by the `next_goals` rank then owned in table order; `unlock_name`
@@ -1396,7 +1422,8 @@ architecture below is designed to bend rather than block.
   "tap for log" only when the goal stands alone and is not the quota (so
   every pre-stage line is byte-identical without a hint); given a viewport,
   parts drop from the end until `_fit_size(text, vh*0.022, vw*0.95) / vh >=
-  OBJECTIVE_MIN_VH` (0.013). `_draw_context` passes its viewport.
+  OBJECTIVE_MIN_VH` (0.013), and a dropped hint gives a stairs or boss goal
+  its "tap for log" back. `_draw_context` passes its viewport.
 - Balance targets and the measurement discipline live in `docs/BALANCE.md`;
   `tests/daily_run.gd` generates the date-seeded daily challenge through
   `Profile.daily_config`.
@@ -1856,13 +1883,16 @@ architecture below is designed to bend rather than block.
   ordinary floor still offers the descent - and "cleansing thins it"
   otherwise. A stoker's tooltip line keys on the row's `stokes` trait (an idle
   turn keeps it) and, with more than one stoker alive, words the `sky` vs
-  `sky_calm` gap as shared ("stokers bring the choke N turns sooner"). A drag's tether is grey and
+  `sky_calm` gap as shared ("stokers bring the choke N turns sooner"); when
+  the calm walk finds no choke inside `SKY_HORIZON` at all it says so
+  (`_stoker_line`: "brings the choke in N turns - none for 60+ without it"). A drag's tether is grey and
   RINGLESS when blocked (`tethers` nulls `land`, since the sim fills `path`
   before it applies the block). The lethal guard (`_guard_lets_end`) asks only before an
   IMPLICIT end turn - a D-pad press or cleanse tap that ran out of charge,
   and a tap on the tender's own tile: when the forecast kills, the first press
-  is refused with a red flash naming the way out (step off > strike first >
-  the glowing item > descend > tap again; a dry cleanse stays in cleanse mode,
+  is refused with a red flash naming the way out (a WINNING strike or item
+  first - `escapes.win` - then step off > strike first > the glowing item >
+  descend > tap again; a dry cleanse stays in cleanse mode,
   so that arm of `_context_msg` shows a red flash too) and the `warn` tick, and a second press within
   `GUARD_MS` (1500) with nothing changed (`guard_sig`) goes through. END TURN,
   the D-pad's END, SPACE and ENTER are NEVER guarded. `HINT_ESCAPES` (true) is

@@ -100,7 +100,13 @@ func _init() -> void:
 	sh.profile_path = "user://render_sheet_profile.json"
 	sh.run_save_path = "user://render_sheet_run.save"
 	sh.cfg_path = "user://render_sheet_settings.cfg"
+	sh.runs_dir = "user://render_sheet_runs"  # a finished run's log never lands in the real runs dir
+	OS.set_environment("SHELL_SEED", "")  # else _ready starts (and saves) a run
 	sh._ready()
+	if sh._run_save != null:
+		sh._run_save.close()
+		sh._run_save = null
+	sh._game_is_run = false
 	var g = Game.new(_env("SHEET_SEED", 7), {"bloom": _env("SHEET_BLOOM", 9)})
 	sh.game = g
 	sh.screen = "game"

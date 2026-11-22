@@ -407,8 +407,9 @@ func _feat_met(req: Dictionary, summary: Dictionary) -> bool:
 ## where the feat has one number to chase - a lone stat_min reads the career
 ## record for that key (the best one run has done), total_min the career
 ## total, the all_* sets how many are done - else 0/1. An earned feat reads
-## have == need; an unearned one is capped at need - 1 (a record that predates
-## feats can stand at the bar without the feat ever having been claimed).
+## have == need; an unearned one is capped at need - 1 (load_from claims a
+## lone stat_min feat whose stored record already meets the bar, so the cap
+## only ever bites on a profile built in memory).
 func feat_progress(fid: String) -> Dictionary:
 	var req: Dictionary = Content.FEATS.get(fid, {}).get("req", {})
 	var have := 0
@@ -1354,6 +1355,21 @@ static func load_from(path: String):  # -> Profile (or fresh if missing)
 			var e = stored_feats[k]
 			if Content.FEATS.has(fid) and e is Dictionary:
 				fts[fid] = _feat_rec(_as_str(e.get("date")), maxi(0, _as_int(e.get("run"), 0)))
+	# a career saved before feats existed already holds records (stage 2 on):
+	# a lone stat_min feat its stored record already meets is claimed now,
+	# silently (no NEW badge: nothing happened this session), undated and
+	# credited to the record's run - so FEATS, RECORDS and next_feats agree
+	for fid in Content.FEATS:
+		if fts.has(fid):
+			continue
+		var rq: Dictionary = Content.FEATS[fid].get("req", {})
+		if rq.size() != 1 or not rq.has("stat_min") or not (rq["stat_min"] is Dictionary) \
+				or rq["stat_min"].size() != 1:
+			continue
+		var sk := String(rq["stat_min"].keys()[0])
+		var rec: Dictionary = profile.records["best"].get(sk, {})
+		if not rec.is_empty() and int(rec["v"]) >= int(rq["stat_min"][sk]):
+			fts[fid] = _feat_rec("", maxi(0, int(rec["run"])))
 	profile.feats = fts
 	var tots: Dictionary = {}
 	var stored_totals = data.get("totals", {})

@@ -7,6 +7,11 @@ extends SceneTree
 ## to expire.
 ## Run: FRAME_SEED=42 FRAME_ACTIONS=150 FRAME_OUT=/tmp/frame.svg \
 ##   godot --headless --path . --script tests/render_frame.gd
+##
+## It builds NO shell instance: it reads shell/main.gd's constants only (the
+## biome palette), so it never touches the player's profile, settings, run
+## save or runs dir. A shell built here later must get scratch profile_path /
+## run_save_path / cfg_path / runs_dir before _ready, as render_sheet.gd does.
 
 const Game := preload("res://sim/game.gd")
 const Content := preload("res://sim/content.gd")

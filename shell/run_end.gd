@@ -29,13 +29,22 @@ static func _own_source(id: String) -> bool:
 	return Content.GRAFTS.has(id) or Content.RESONANCES.has(id)
 
 
+## What ended the run: the folded killer's cause, else the summary's
+## death_cause. RunStats.summary() always carries killer.cause ("" when no
+## player_death was folded - a game set over from outside), so a plain
+## .get(key, fallback) would never reach the fallback.
+static func _cause_of(s: Dictionary) -> String:
+	var killer = s.get("killer", {})
+	var cause := String(killer.get("cause", "")) if killer is Dictionary else ""
+	return cause if cause != "" else String(s.get("death_cause", ""))
+
+
 ## The end-of-run beat's two lines, drawn over the map before the sheet:
 ## [line0 (the moment), line1 (where)].
 static func end_banner(s: Dictionary, snap: Dictionary) -> Array:
 	if bool(s.get("won", snap.get("won", false))):
 		return ["THE FURNACE FALLS", "the valley breathes again"]
-	var killer: Dictionary = s.get("killer", {})
-	var cause := String(killer.get("cause", s.get("death_cause", "")))
+	var cause := _cause_of(s)
 	var line0 := ""
 	if cause == "smog":
 		line0 = "THE SMOG TAKES YOU"
@@ -85,7 +94,7 @@ static func cause_line(s: Dictionary, snap: Dictionary) -> String:
 			return "the valley breathes again"
 		return "%s is scrap%sthe valley breathes again" % [Names.boss_name(String(bosses.back())), SEP]
 	var killer: Dictionary = s.get("killer", {})
-	var cause := String(killer.get("cause", s.get("death_cause", "")))
+	var cause := _cause_of(s)
 	var where := floor_name(int(s.get("floor", snap.get("floor", 0))))
 	var t := cause_text(cause, String(killer.get("kind", "")))
 	return t if where == "" else t + SEP + where
@@ -277,8 +286,14 @@ static func unlock_lines(ids: Array, unlocked_packages: Array, max_n := 3) -> Ar
 	for i in mini(max_n, ids.size()):
 		out.append(unlock_label(String(ids[i]), unlocked_packages))
 	if ids.size() > max_n:
-		out.append("+%d more%stap for all" % [ids.size() - max_n, SEP])
+		out.append(unlock_more(ids.size() - max_n))
 	return out
+
+
+## The overflow row under the unlock lines: "+2 more  ·  tap for all". The
+## sheet rebuilds it from the rows it actually kept after its priority drop.
+static func unlock_more(n: int) -> String:
+	return "+%d more%stap for all" % [n, SEP]
 
 
 ## The next goal (profile.last_report.next[0]: a next_goals row plus

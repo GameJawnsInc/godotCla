@@ -187,9 +187,15 @@ static func _src_suffix(fc: Dictionary) -> String:
 ## `strike` is a deliberate addition to the spec's {move, item, descend}
 ## shape. An action that WINS the run (c.over and c.won: a strike or an item
 ## that kills the boss) is an escape of its kind - the best one there is; an
-## action that ends the run any other way is not.
+## action that ends the run any other way is not. `win` names the kind of the
+## first winning action ("strike" | "item", "" for none), so the guard can
+## point at the winning blow before it suggests stepping off; `win_item` is
+## that winning item's slot (-1 for none) and `strikes` counts the surviving
+## strike directions, so the words claim a win only where the player cannot
+## pick the wrong blow (`glow_items`, `guard_flash`).
 static func escapes(game) -> Dictionary:
-	var out := {"move": false, "strike": false, "item": [], "descend": false}
+	var out := {"move": false, "strike": false, "item": [], "descend": false, "win": "",
+		"win_item": -1, "strikes": 0}
 	for a in game.legal_actions():
 		var t := String(a.get("type", ""))
 		if not (t in ["move", "strike", "use_item", "descend"]):
@@ -204,20 +210,45 @@ static func escapes(game) -> Dictionary:
 			continue
 		if not c.over and bool(c.end_turn_forecast()["dies"]):
 			continue
+		if c.over and String(out["win"]) == "" and t in ["strike", "use_item"]:
+			out["win"] = "strike" if t == "strike" else "item"
+			if t == "use_item":
+				out["win_item"] = int(a["slot"])
 		if t == "use_item":
 			out["item"].append(int(a["slot"]))
 		elif t == "descend":
 			out["descend"] = true
 		elif t == "strike":
 			out["strike"] = true
+			out["strikes"] = int(out["strikes"]) + 1
 		else:
 			out["move"] = true
 	return out
 
 
+## The satchel slots that glow: every surviving item, except that when an
+## item WINS only that one glows - "the glowing item wins" must not light a
+## slot that merely survives.
+static func glow_items(es: Dictionary) -> Array:
+	if String(es.get("win", "")) == "item" and int(es.get("win_item", -1)) >= 0:
+		return [int(es["win_item"])]
+	return es.get("item", [])
+
+
 static func guard_flash(d: Dictionary) -> String:
 	var dmg := int(d.get("fc", {}).get("dmg", 0))
 	var es: Dictionary = d.get("escapes", {})
+	# a blow that WINS the run is the best way out there is: named first. The
+	# flash names no direction, so with two surviving strikes (the boss and a
+	# minion both adjacent) it says only "strike first", which every one of
+	# them makes true; the winning item is the only slot that glows.
+	match String(es.get("win", "")):
+		"strike":
+			if int(es.get("strikes", 1)) > 1:
+				return "LETHAL (%d) - strike first, or tap again to end turn" % dmg
+			return "LETHAL (%d) - strike to win, or tap again to end turn" % dmg
+		"item":
+			return "LETHAL (%d) - the glowing item wins, or tap again" % dmg
 	if bool(es.get("move", false)):
 		return "LETHAL (%d) - step off, or tap again to end turn" % dmg
 	if bool(es.get("strike", false)):

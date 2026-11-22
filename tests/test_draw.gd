@@ -95,6 +95,8 @@ var left := 0           # frames left in the current phase
 var frames := 0
 var draws := 0
 var phase_draws := 0
+var phase_beat_draws := 0
+var phase_errors := 0   # log_counter.errors when the current phase began
 var fails: Array = []
 var fx_seen := {}
 var lethal_frames := 0
@@ -172,6 +174,8 @@ func _next_phase() -> bool:
 	var ph: Dictionary = phases[pi]
 	sh.queue_redraw()
 	phase_draws = draws
+	phase_beat_draws = sh._beat_draws if sh != null else 0
+	phase_errors = log_counter.errors
 	phase_arg = ph["arg"]
 	call(String(ph["setup"]))
 	left = int(ph["frames"])
@@ -198,6 +202,8 @@ func _process(_dt: float) -> bool:
 	if sh != null and sh.game != null:
 		for f in sh._fx:
 			fx_seen[String(f["kind"])] = true
+	if left > 0 and log_counter.errors > phase_errors:
+		left = 0  # an error is already a failure: end the phase, do not crawl on
 	if left > 0:
 		var ph: Dictionary = phases[pi]
 		if String(ph["each"]) != "":
@@ -345,7 +351,7 @@ func _build_phases() -> Array:
 		["game over (died)", 3, "_over_setup", "_over_check", "", false],
 		["game over (won)", 3, "_over_setup", "_over_check", "", true],
 		["end beat (died)", 3, "_beat_setup", "_beat_check", "", false],
-		["over sheet (fading, locked)", 2, "_fade_setup", "_fade_check", "", null],
+		["over sheet (fading, locked)", 2, "_fade_setup", "_fade_check", "_fade_setup", null],
 		["over sheet (recorded, live)", 2, "_live_setup", "_live_check", "", null],
 		["end beat (won)", 3, "_beat_setup", "_beat_check", "", true],
 		["over sheet (first win)", 2, "_live_setup", "_live_check", "", null],
@@ -637,8 +643,11 @@ func _bot_each() -> void:
 	if bool(sh._danger_state().get("lethal", false)):
 		lethal_frames += 1
 	sh.mode = "normal"
-	sh._act(bot.choose_action(sh.game.snapshot(), sh.game.legal_actions()))
+	# count the action BEFORE taking it: an error inside choose_action or _act
+	# aborts this call, and a decrement after it would never run - the phase
+	# would then crawl to its frame cap on every viewport before failing
 	bot_left -= 1
+	sh._act(bot.choose_action(sh.game.snapshot(), sh.game.legal_actions()))
 
 
 ## Lethal: a drill bot strikes for 3 at 2 HP, no charge, a balm fruit that
@@ -850,14 +859,23 @@ func _beat_check() -> String:
 	return "" if sh._run_recorded and String(sh._over_info.get("score", "")) != "" else "the run was not recorded"
 
 
-## Skip into the fade: the sheet draws translucent with dead buttons.
+## Skip into the fade (re-pinned every frame, so every frame of the phase IS
+## the fade): the beat's tint and veil under the sheet fading in, translucent,
+## with dead buttons.
 func _fade_setup() -> void:
 	sh._over_ms = Time.get_ticks_msec() - Shell.OVER_BEAT_MS - 40
 
 
 func _fade_check() -> String:
+	if sh._over_phase() != "fade":
+		return "not in the fade (%s)" % sh._over_phase()
 	if not sh._over_locked():
 		return "the fade is not locked"
+	# every fade frame drew the beat's tint and veil under the sheet (mutation:
+	# drop the `oph == "fade"` branch in main._draw and this fails)
+	var beats: int = sh._beat_draws - phase_beat_draws
+	if beats <= 0 or beats < draws - phase_draws:
+		return "the beat's tint and veil were not drawn under the fade (%d of %d frames)" % [beats, draws - phase_draws]
 	return "" if sh.hotspots.is_empty() else "a locked sheet drew %d live button(s)" % sh.hotspots.size()
 
 
