@@ -36,7 +36,7 @@ const Content := preload("res://sim/content.gd")
 ## because "how often did it fire" is only half the question a free permanent
 ## asks: the other half is how many runs reached it at all, from which floor,
 ## and how often a draft drop or a forge scrap turned it back off.
-## Block E (bump 15) adds the variety columns - the encounter pack met on every
+## Block E (bump 17) adds the variety columns - the encounter pack met on every
 ## floor visited (game.encounter(n), read once per floor change), the kinds the
 ## vents released (the reinforcement event's "kind", the boss phase-2 golem
 ## included) and the distinct non-boss kinds a run met - printed as one
@@ -242,7 +242,7 @@ var quota_unmet_deaths := 0
 var quota_reclamps := 0  # green gates that shrank because corruption vanished uncleansed
 var runs := 0  # runs finished into this tally (finish() increments, merge() sums)
 
-# --- encounter variety (Block E, bump 15) -------------------------------------
+# --- encounter variety (Block E, bump 17) -------------------------------------
 ## Instrument only (existing KPIs unchanged). encounters_by_floor: floor ->
 ## {pack id: floor visits} (game.encounter(n), "classic" where no pack was
 ## drawn - a scripted floor 1 or the boss floor); reinforce_by_kind: vent

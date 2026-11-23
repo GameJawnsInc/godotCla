@@ -40,50 +40,39 @@ static func _cause_of(s: Dictionary) -> String:
 
 
 ## The end-of-run beat's two lines, drawn over the map before the sheet:
-## [line0 (the moment), line1 (where)].
+## [line0 (the moment), line1 (what it was)]. A lost run wilts - the tender
+## rests, it is never killed off - and line 1 says what ended it.
 static func end_banner(s: Dictionary, snap: Dictionary) -> Array:
 	if bool(s.get("won", snap.get("won", false))):
-		return ["THE FURNACE FALLS", "the valley breathes again"]
-	var cause := _cause_of(s)
-	var line0 := ""
-	if cause == "smog":
-		line0 = "THE SMOG TAKES YOU"
-	elif Content.ENEMIES.has(cause):
-		var n := Names.ename(cause).to_upper()
-		line0 = "%s TAKES YOU" % (n if n.begins_with("THE ") else "THE " + n)
-	elif cause == "spikes":
-		line0 = "THE SPIKES TAKE YOU"
-	elif cause == "fire" or cause == "goo":
-		line0 = "THE %s TAKES YOU" % cause.to_upper()
-	elif _own_source(cause):
-		line0 = "YOUR %s TAKES YOU" % Names.source_name(cause).to_upper()
-	elif cause == "":
-		line0 = "YOU FALL"
-	else:
-		line0 = "%s TAKES YOU" % cause.replace("_", " ").to_upper()
-	var f := int(s.get("floor", snap.get("floor", 0)))
-	return [line0, "floor %d%s%s" % [f, SEP, floor_name(f)]]
+		return ["THE FURNACE IS COLD", "the valley breathes again"]
+	var killer = s.get("killer", {})
+	var kk := String(killer.get("kind", "")) if killer is Dictionary else ""
+	return ["YOU WILTED", cause_text(_cause_of(s), kk)]
 
 
-## How the tender died, mid-sentence: "struck down by a Drill Bot".
+## How the run ended, in a few gentle words, mid-sentence: "felled by a
+## Drill Bot", "lost in the smog" - what felled the tender, never a raw id. A
+## qualified source ("fire:solar_lance") reads as its bare source.
 static func cause_text(cause: String, killer_kind: String = "") -> String:
-	if cause == "smog":
-		return "choked by the smog"
-	if Content.ENEMIES.has(cause):
-		return "struck down by " + Names.a_name(cause)
-	if cause == "spikes":
-		if Content.ENEMIES.has(killer_kind):
-			return "cut on %s's spikes" % Names.a_name(killer_kind)
-		return "cut on spikes"
-	if cause == "fire":
-		return "burned in the flames"
-	if cause == "goo":
-		return "stung by the goo"
-	if _own_source(cause):
-		return "caught by your own " + Names.source_name(cause)
-	if cause == "":
-		return "fell"
-	return "killed by " + cause.replace("_", " ")
+	var base := cause.get_slice(":", 0)
+	if Content.ENEMIES.has(base):
+		return "felled by " + Names.a_name(base)
+	match base:
+		"smog":
+			return "lost in the smog"
+		"fire":
+			return "caught in the fire"
+		"goo", "rich_goo":
+			return "stuck in the goo"
+		"spikes":
+			if Content.ENEMIES.has(killer_kind):
+				return "worn down by %s's spikes" % Names.a_name(killer_kind)
+			return "worn down by spikes"
+		"":
+			return "the light went out"
+	if _own_source(base):
+		return "caught by your own " + Names.source_name(base)
+	return "felled by " + Names.src_name(base)
 
 
 ## The sheet's second line: the boss you scrapped, or what killed you and where.

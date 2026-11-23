@@ -60,7 +60,7 @@ extends SceneTree
 ##     rng.state untouched; and a Game subclass that swaps only the two D3
 ##     entry points back (the reference BFS for _chase_step, _screened false)
 ##     drives the optimizer over seeds 1..10 to the rng.state recorded at
-##     every floor entry (RNG_FLOOR_ENTRY_BUMP14) - so nothing outside those
+##     every floor entry (RNG_FLOOR_ENTRY_BUMP16) - so nothing outside those
 ##     two functions moved a draw
 ##  n) Block D4 (bump 12): the draft draws moved on purpose (exactly one
 ##     main-rng draw per slot, see tests/test_grammar.gd (d)), so the
@@ -75,7 +75,7 @@ extends SceneTree
 ##     and listing or forging spends no main-rng draw. The floor-entry pins
 ##     were re-recorded again: the draw COUNT per draft slot is still one, but
 ##     the universe now holds both siblings of every held base, so each index
-##     resolves differently (see the note on RNG_FLOOR_ENTRY_BUMP14)
+##     resolves differently (see the note on RNG_FLOOR_ENTRY_BUMP16)
 ##  p) Block D5 (bump 14): a resonance is a passive SOURCE, so it must not
 ##     touch the main rng - firing the shipped ignite hook, and a stat row,
 ##     leaves rng.state where it was, and so do _resonances / snapshot /
@@ -84,13 +84,13 @@ extends SceneTree
 ##     _passive_mod scans the grafts first so a graft mod SHADOWS a resonance
 ##     mod. Only the `hooks` shape ships, so the stat and mod orders are both
 ##     pinned through hand-built rows
-##  q) Block E (bump 15, encounter packs and biome reinforcements): the pack
+##  q) Block E (bump 17, encounter packs and biome reinforcements): the pack
 ##     draw is a side-stream draw keyed on the floor, and floor 1 fields no
 ##     gums kind, so rng.state after Game.new is RNG_STATE_BUMP8 for every
 ##     seed with AND without the fixed_shift control. Section (m) replays the
-##     bump-14 floor-entry table under fixed_shift (byte-identical: the classic
-##     path gained no draw) and pins the default config in its own bump-15
-##     table (RNG_FLOOR_ENTRY_BUMP15)
+##     bump-16 floor-entry table under fixed_shift (byte-identical: the classic
+##     path gained no draw) and pins the default config in its own bump-17
+##     table (RNG_FLOOR_ENTRY_BUMP17)
 ## Run: godot --headless --path . --script tests/test_economy.gd
 
 const Content := preload("res://sim/content.gd")
@@ -157,16 +157,23 @@ const RNG_STATE_BUMP8 := [
 ## row: the fire row and the persona's new drop guard together change nothing
 ## these ten runs can see, which is the strongest form of "adds no draw".
 ## From here on, anything that moves one of these is a stray main-rng draw.
-## Block E (bump 15) did NOT re-stamp this table: section (m) now replays it
+## Bump 16 (the floor-2 clock) re-stamped the rows whose runs cross floor 2's
+## moved thresholds:
+## Strip Mine II's smog thresholds moved, the clock's vent spawns draw from
+## the main rng, and the persona plays a different run from that floor on.
+## Every row is identical to its bump-14 row through AT LEAST the floor-2
+## entry - nothing before the changed floor moved a draw - and six rows are
+## byte-identical end to end (the constant was renamed, so `git show` it).
+## Block E (bump 17) did NOT re-stamp this table: section (m) now replays it
 ## under the fixed_shift mutator (every floor's classic crew, drill-only
 ## vents), where it holds byte for byte - the classic path gained no draw.
 ## The default config, which fields encounter packs, is pinned separately in
-## RNG_FLOOR_ENTRY_BUMP15 below.
-const RNG_FLOOR_ENTRY_BUMP14 := [
-	[5089575408282122190, -184513544007953650, 8759944363161018601, 2868822161275640310, -8152873371107847509],
-	[-1543445859615755461, -8411093148249300473, 1787517375204971321, 8582635207152789512],
-	[5249088221260300708, -8668300741929293400, 4694250479173219183, 5574227338355628461, -3061484965246952852, -1172107250573503496],
-	[-7365291246896200391, 9118581067688907677, 4174390183580078064, -5937068460318379825, 516707025151674802, -3494329032662390890, 3201227568282568284],
+## RNG_FLOOR_ENTRY_BUMP17 below.
+const RNG_FLOOR_ENTRY_BUMP16 := [
+	[5089575408282122190, -184513544007953650, 8759944363161018601, 2868822161275640310, 3937219494565775732, 3539856330929230112, 109341832312744600],
+	[-1543445859615755461, -8411093148249300473, 6431007824064540393, 5383934907921248555, 975509274548734484, -2134773163254049076, -6926263913968380732],
+	[5249088221260300708, -8668300741929293400, 4694250479173219183, -6470395114759174281, -3012881572387084823],
+	[-7365291246896200391, 9118581067688907677, 4174390183580078064, -1769302175855516454, 8580300391172121205, 2216684603156017793, -6524984188267776030],
 	[-4307724339993763098, -3504797669898524666, 6961354990307791117, 464051487255323640, -4057801299652768257, 7021950593982289331, -3832266116403619108],
 	[-5880482361733646265, -808239912685928521, -4338090631578911018, -8046437620736313008, 4196872015560688783, -422735934883274349, -1941129409381335253],
 	[-2810552436854674636, 5839575857474482460, 4565013434687613195, -1843283859693427995, -7995792451489974632, -174968855415995460],
@@ -176,19 +183,26 @@ const RNG_FLOOR_ENTRY_BUMP14 := [
 ]
 
 
-## The same optimizer runs as RNG_FLOOR_ENTRY_BUMP14 on the same RefGame, but
-## on the DEFAULT config of the bump-15 tree (Block E: encounter packs drawn
+## The same optimizer runs as RNG_FLOOR_ENTRY_BUMP16 on the same RefGame, but
+## on the DEFAULT config of the bump-17 tree (Block E: encounter packs drawn
 ## from the side stream, biome vent rotation). Floor 1's column equals
 ## RNG_STATE_BUMP8 (no gums kind on floor 1, the pack draw is side-stream);
 ## from floor 2 on a different crew plays a different floor (gum intents draw
 ## from the main rng, and the persona plays differently), so most entries
-## differ from the bump-14 table by design. Re-stamp with _floor_entry_states.
+## differ from the bump-16 table by design. Re-stamp with _floor_entry_states.
+## Against RNG_FLOOR_ENTRY_BUMP16 every one of the ten rows moves, and every
+## row agrees with it through AT LEAST the floor-2 entry (index 1): seeds 2,
+## 3, 5, 7 and 8 diverge at the floor-3 entry, seeds 1, 4, 9 and 10 at the
+## floor-4 entry and seed 6 only at its floor-7 entry. Ported on top of main's
+## bumps 15 (tending by any means) and 16 (the floor-2 clock), it differs from
+## the branch's own pre-port default-config table (Block E recorded as 15) in
+## rows 1, 2 and 4 alone, each from the floor-4 entry on.
 ## From here on, anything that moves one of these is a stray main-rng draw.
-const RNG_FLOOR_ENTRY_BUMP15 := [
-	[5089575408282122190, -184513544007953650, 8759944363161018601, 2868822161275640310, 3937219494565775732],
-	[-1543445859615755461, -8411093148249300473, -5880195202691535665, 5359721235503091099, -1796875765925557603, -7216726704369277839, 676360471912886089],
+const RNG_FLOOR_ENTRY_BUMP17 := [
+	[5089575408282122190, -184513544007953650, 8759944363161018601, -9010068920889716299, -8735078121544526557, 1825191967124165790, -6525657896446115548],
+	[-1543445859615755461, -8411093148249300473, -5880195202691535665, -6755849057068564264, 4897037761492988786, -3695311793062553198, -7671363578745795208],
 	[5249088221260300708, -8668300741929293400, -4401277841123554436, -5287603347965820930, 8856035233686701109, 4418786177135995197],
-	[-7365291246896200391, 9118581067688907677, 4174390183580078064, 4074606386311278477, 7354162084516242321, -1942974218758671363, -7065019342646581521],
+	[-7365291246896200391, 9118581067688907677, 4174390183580078064, -4859546454634277330, -3196161665882029257, -3645455209664466189, -5869395669247953781],
 	[-4307724339993763098, -3504797669898524666, 629704092931937326, -786957130363125194, 278783950483940221, -5759867275603309639],
 	[-5880482361733646265, -808239912685928521, -4338090631578911018, -8046437620736313008, 4196872015560688783, -422735934883274349, -5788992495637518788],
 	[-2810552436854674636, 5839575857474482460, -5851591017676203272, 7921899231902060538, 4167500181947425809, 5989040945971106265],
@@ -974,6 +988,7 @@ func _check_quota_reclamp() -> void:
 		and int(gs.terrain[Vector2i(6, 1)].get("bloom", 1)) == 0
 	_ok(trail_ok, "sludge trail: terrain at (6,1) %s" % str(gs.terrain.get(Vector2i(6, 1))))
 	_check_pending_corruption()
+	_check_tending_by_any_means()
 	print("quota reclamp: wash 2->0, ignite no reclamp (fire counts), burnout to ash no reclamp, fire/ash wash 2->0, partial 3->2; enemy oil / bloom-0 ash pay 0 bloom, count greened")
 
 
@@ -1026,6 +1041,53 @@ func _check_pending_corruption() -> void:
 		"pending: %d illegal / %d error events during the run" % [_events_of(seen, "illegal").size(), _events_of(seen, "error").size()])
 	print("pending corruption: fire counts for the quota, the room bloom and the floor restore; it never shields the core and is never cleansable")
 
+
+## Tending by any means: the room bloom (bonus + supply pod) and the floor
+## restore follow the corruption, not the CLEANSE action - a Reclaimer Bomb
+## convert or a Water Jet wash that clears the last of it pays both. A removal
+## on the enemies' turn (end_turn: a dredge) is not tending and pays neither.
+func _check_tending_by_any_means() -> void:
+	var rows := [
+		"#########",
+		"#.@.~...#",
+		"#.......#",
+		"#########",
+	]
+	# 1. Reclaimer Bomb converts the room's last oil
+	var g = Game.new(1, _fixed(rows, ["seed_bomb+reclaim", "water_jet"], {"fdef": {"green_need": 0}}))
+	g.map["rooms"] = [Rect2i(1, 1, 7, 2)]
+	var b0: int = g.bloom
+	var ev: Array = g.step({"type": "ability", "slot": 0, "target": Vector2i(4, 1)})
+	_ok(_events_of(ev, "convert").size() == 1, "tending: reclaim converted %d tiles" % _events_of(ev, "convert").size())
+	_ok(_events_of(ev, "room_bloom").size() == 1, "tending: reclaim cleared the room and it did not bloom (%s)" % str(ev))
+	_ok(_events_of(ev, "floor_restored").size() == 1, "tending: reclaim cleared the floor and it was not restored")
+	_ok(g.bloom == b0 + Content.ROOM_BLOOM_BONUS + 5, "tending: reclaim bloom %d -> %d" % [b0, g.bloom])
+	var pods := 0
+	for t in g.terrain:
+		if String(g.terrain[t]["kind"]) == "supply":
+			pods += 1
+	_ok(pods == 1, "tending: %d supply pods after a reclaim room bloom" % pods)
+	# 2. Water Jet washes it away instead
+	var gw = Game.new(1, _fixed(rows, ["seed_bomb+reclaim", "water_jet"], {"fdef": {"green_need": 0}}))
+	gw.map["rooms"] = [Rect2i(1, 1, 7, 2)]
+	var evw: Array = gw.step({"type": "ability", "slot": 1, "target": Vector2i(1, 0)})
+	_ok(_events_of(evw, "wash").size() == 1, "tending: jet washed %d tiles" % _events_of(evw, "wash").size())
+	_ok(_events_of(evw, "room_bloom").size() == 1 and _events_of(evw, "floor_restored").size() == 1,
+		"tending: a wash that clears the floor bloomed %d / restored %d" % [_events_of(evw, "room_bloom").size(), _events_of(evw, "floor_restored").size()])
+	# 3. corruption that vanishes on end_turn pays nothing
+	var ge = Game.new(1, _fixed(rows, ["seed_bomb+reclaim", "water_jet"], {"fdef": {"green_need": 0}}))
+	ge.map["rooms"] = [Rect2i(1, 1, 7, 2)]
+	ge.terrain.erase(Vector2i(4, 1))
+	var eve: Array = ge.step({"type": "end_turn"})
+	_ok(_events_of(eve, "room_bloom").is_empty() and _events_of(eve, "floor_restored").is_empty(), "tending: end_turn bloomed/restored (%s)" % str(eve))
+	# 4. a cleanse still pays exactly once (the sweep finds nothing left to pay)
+	var gc = Game.new(1, _fixed(rows, ["seed_bomb+reclaim", "water_jet"], {"fdef": {"green_need": 0}}))
+	gc.map["rooms"] = [Rect2i(1, 1, 7, 2)]
+	gc.step({"type": "move", "dir": Vector2i(1, 0)})
+	var evc: Array = gc.step({"type": "cleanse", "target": Vector2i(4, 1)})
+	_ok(_events_of(evc, "room_bloom").size() == 1 and _events_of(evc, "floor_restored").size() == 1,
+		"tending: cleanse bloomed %d / restored %d" % [_events_of(evc, "room_bloom").size(), _events_of(evc, "floor_restored").size()])
+	print("tending by any means: reclaim convert and jet wash bloom the room and restore the floor; end_turn removals pay nothing; cleanse pays once")
 
 # --- h) config keys -----------------------------------------------------------
 
@@ -1586,17 +1648,17 @@ func _check_d3_rng_untouched() -> void:
 	_ok(g2.rng.state == st and _events_of(g2._step_events, "screened").size() == 1 and _events_of(g2._step_events, "gummed").is_empty(),
 		"a screened gum executes without an rng draw: %s" % str(g2._step_events))
 	# 3) the D3-swapped sim (RefGame) under the optimizer reproduces the
-	# recorded floor-entry states. Block E (bump 15): the bump-14 table is
+	# recorded floor-entry states. Block E (bump 17): the bump-16 table is
 	# replayed under the fixed_shift control (classic crews, drill-only vents),
 	# so it stays byte-identical - the proof the bump added no stray draw on
-	# the classic path - and the default config has its own bump-15 table
-	var r14 := _floor_entry_pins(RNG_FLOOR_ENTRY_BUMP14, {"mutators": ["fixed_shift"]}, "bump-14 / fixed_shift")
-	_ok(r14[2] == 0, "RefGame optimizer run under fixed_shift: rng.state at every floor entry matches the bump-14 pins (%d seeds, %d floor entries, %d moved)" % r14)
-	var r15 := _floor_entry_pins(RNG_FLOOR_ENTRY_BUMP15, {}, "bump-15 / default")
-	_ok(r15[2] == 0, "RefGame optimizer run, default config: rng.state at every floor entry matches the bump-15 pins (%d seeds, %d floor entries, %d moved)" % r15)
+	# the classic path - and the default config has its own bump-17 table
+	var r16 := _floor_entry_pins(RNG_FLOOR_ENTRY_BUMP16, {"mutators": ["fixed_shift"]}, "bump-16 / fixed_shift")
+	_ok(r16[2] == 0, "RefGame optimizer run under fixed_shift: rng.state at every floor entry matches the bump-16 pins (%d seeds, %d floor entries, %d moved)" % r16)
+	var r17 := _floor_entry_pins(RNG_FLOOR_ENTRY_BUMP17, {}, "bump-17 / default")
+	_ok(r17[2] == 0, "RefGame optimizer run, default config: rng.state at every floor entry matches the bump-17 pins (%d seeds, %d floor entries, %d moved)" % r17)
 	_ok(RefGame.new(1).rng.state == int(RNG_STATE_BUMP8[0]) and Game.new(1).rng.state == int(RNG_STATE_BUMP8[0]), "RefGame and Game share the Game.new pins")
-	print("d3 rng: floor-entry pins bump-14 under fixed_shift %d seeds / %d entries, %d moved; bump-15 default %d seeds / %d entries, %d moved" % [
-		r14[0], r14[1], r14[2], r15[0], r15[1], r15[2]])
+	print("d3 rng: floor-entry pins bump-16 under fixed_shift %d seeds / %d entries, %d moved; bump-17 default %d seeds / %d entries, %d moved" % [
+		r16[0], r16[1], r16[2], r17[0], r17[1], r17[2]])
 
 
 ## The optimizer on RefGame(seed, cfg) for seeds 1..pins.size(): rng.state at

@@ -13,22 +13,20 @@ extends RefCounted
 ##           when there is none, and then there is no multi-kill, room clear,
 ##           streak, awaken banner or cleanse number - everything else works
 ##
-## step() returns {callouts, fx, banners, log, sounds, shake, hitstop, lunge};
-## main._feedback applies it. Feedback never invents an outcome: every word it
-## puts on the map names something the event stream says happened. Names come
-## from shell/names.gd and nowhere else.
+## step() returns {callouts, banners, log, sounds}; main._feedback applies it.
+## The map itself is the reel's (shell/anim.gd draws every number, word, pop,
+## ghost, lunge and shake), so callouts are DATA here - they feed the combo
+## chime and the log's claims - and the only words the shell adds to the reel
+## are the three ctx_words (multi-kill, room clear, streak) the reel cannot
+## know. A landed hook's name reaches the context line as a toast
+## (combo_line). There is no hit-stop, no lunge, no shake and no fx clock.
+## Feedback never invents an outcome: every word it names something the event
+## stream says happened. Names come from shell/names.gd and nowhere else.
 
 const Content := preload("res://sim/content.gd")
 const Names := preload("res://shell/names.gd")
 
-const HITSTOP_MS := 70
 const CALLOUT_CAP := 4          # regular callouts per step (big ones never count)
-const CALLOUT_MS := 1100        # callout life (fx clock)
-const BIG_MS := 1300
-const STACK_MS := 110           # damage numbers on one tile fan out in time
-const CALLOUT_STACK_MS := 160   # words on one tile fan out in time...
-const CALLOUT_LIFT := 0.42      # ...and stack upward by this many tiles each
-const IGNITE_BURST_CAP := 6
 const CHIME_STEPS := [0, 2, 4, 7]   # semitones: the rising combo chain (max 4 notes)
 const CHIME_FIRST_MS := 120
 const CHIME_GAP_MS := 90
@@ -119,18 +117,15 @@ const SCREEN_WORDS := {"gum": "tar", "drain": "drain", "drag": "grapple"}
 
 # --- the whole step -----------------------------------------------------------
 
-static func step(evs: Array, pre: Dictionary, game, ctx: Dictionary, now: int, extra_sounds: Array = []) -> Dictionary:
+## `_now` is unused (the reel owns every timing) and kept so callers keep
+## their shape.
+static func step(evs: Array, pre: Dictionary, game, ctx: Dictionary, _now: int, extra_sounds: Array = []) -> Dictionary:
 	var calls := callouts(evs, pre, game, ctx)
-	var hs := hitstop(evs)
 	return {
 		"callouts": calls,
-		"fx": fx(evs, pre, game, ctx, now, calls, hs),
 		"banners": banners(evs, pre, game, ctx),
 		"log": log_entries(evs, pre, game, ctx),
-		"sounds": sounds(evs, game, ctx, calls, hs, extra_sounds),
-		"shake": shake(evs, ctx),
-		"hitstop": hs,
-		"lunge": lunge(evs, pre, game),
+		"sounds": sounds(evs, game, ctx, calls, false, extra_sounds),
 	}
 
 
@@ -486,162 +481,26 @@ static func callouts(evs: Array, pre: Dictionary, game, ctx: Dictionary) -> Arra
 	return kept
 
 
-# --- map effects --------------------------------------------------------------
-
-## Is the damage event at `i` the blow that killed its target (a later death of
-## the same id with no other damage to it in between)?
-static func _killing_blow(evs: Array, i: int) -> bool:
-	var id = evs[i].get("id", null)
-	if not (id is int):
-		return false
-	for j in range(i + 1, evs.size()):
-		var t := String(evs[j].get("t", ""))
-		if not _same(evs[j].get("id", null), id):
-			continue
-		if t == "death":
-			return true
-		if t == "damage":
-			return false
-	return false
-
-
-static func fx(evs: Array, pre: Dictionary, game, ctx: Dictionary, now: int, calls: Array, _hitstop: bool) -> Array:
-	var out: Array = []
-	var stack := {}  # tile -> count, so numbers landing together fan out in time
-	var ignites := 0
-	for i in evs.size():
-		var ev: Dictionary = evs[i]
-		match String(ev.get("t", "")):
-			"damage":
-				var p := ev_pos(ev, pre, game)
-				if p.x < -0.5:
-					continue
-				var k := str(p)
-				stack[k] = int(stack.get(k, -1)) + 1
-				var amt := int(ev.get("amt", 0))
-				var mine := String(ev.get("who", "")) == "player"
-				var f := {"kind": "float", "pos": p, "text": "-%d" % amt, "t0": now + int(stack[k]) * STACK_MS}
-				if not mine and _killing_blow(evs, i):
-					f.merge({"col": GOLD, "scale": 1.5, "bold": true})
-				else:
-					f.merge({"col": RED if mine else CREAM, "scale": 1.0 + 0.1 * clampf(float(amt - 1), 0.0, 5.0),
-						"bold": amt >= (3 if mine else 4)})
-				out.append(f)
-				out.append({"kind": "flash", "pos": p, "col": Color(1, 1, 1), "t0": now})
-			"heal":
-				out.append({"kind": "float", "pos": _ppos(game), "text": "+%d" % int(ev.get("amt", 0)), "col": GREEN, "t0": now})
-			"shield":
-				out.append({"kind": "float", "pos": _ppos(game), "text": "shield", "col": BLOCK, "t0": now})
-			"cleanse":
-				var cp := Vector2(ev["tile"])
-				out.append({"kind": "burst", "pos": cp, "col": GOLD, "t0": now})
-				# the event's bloom is the running TOTAL: the gain is the fold's
-				if ctx.has("cleanse_gain"):
-					var g := int(ctx["cleanse_gain"])
-					out.append({"kind": "float", "pos": cp, "text": "+%d" % g, "col": GOLD if g > 0 else DIM, "t0": now})
-			"death":
-				var dp := ev_pos(ev, pre, game)
-				if dp.x > -0.5:
-					out.append({"kind": "puff", "pos": dp, "col": Color(0.62, 0.64, 0.66), "t0": now})
-					var sk := kind_of(ev.get("id"), pre, game)
-					if sk == "":
-						sk = String(ev.get("who", ""))
-					out.append({"kind": "ghost", "pos": dp, "sprite": sk, "t0": now, "dur": 60})
-			"room_bloom":
-				var bp := _ppos(game)
-				out.append({"kind": "burst", "pos": bp, "col": Color(0.91, 0.70, 0.82), "t0": now})
-				out.append({"kind": "float", "pos": bp, "text": "BLOOM +%d" % int(ev.get("bonus", 2)), "col": GOLD, "t0": now + 120})
-			"stairs_awaken":
-				if ev.get("tile") != null:
-					out.append({"kind": "burst", "pos": Vector2(ev["tile"]), "col": GOLD, "t0": now})
-			"floor_restored":
-				out.append({"kind": "burst", "pos": _ppos(game), "col": Color(0.6, 0.9, 0.5), "t0": now})
-			"verdant":
-				if ev.get("tile") != null:
-					out.append({"kind": "burst", "pos": Vector2(ev["tile"]), "col": Color(0.55, 0.9, 0.45), "t0": now})
-			"ignite":
-				if ignites < IGNITE_BURST_CAP and ev.get("tile") != null:
-					ignites += 1
-					out.append({"kind": "burst", "pos": Vector2(ev["tile"]), "col": IGNITE_COL, "t0": now})
-			"core_shielded":
-				var bpos := ev_pos(ev, pre, game)
-				if bpos.x > -0.5:
-					out.append({"kind": "ring", "pos": bpos, "col": CYAN, "t0": now, "dur": 650})
-	var per_tile := {}
-	for c in calls:
-		var big := bool(c["big"])
-		var f2 := {"kind": "callout", "pos": c["pos"], "text": c["text"], "col": c["col"], "bold": true,
-			"dur": BIG_MS if big else CALLOUT_MS, "scale": 1.35 if big else 1.0}
-		if big:
-			var clear := String(c["text"]) == "ROOM CLEAR"
-			f2["t0"] = now + (280 if clear else 160)
-			f2["lift"] = 0.5 if clear else 0.0
-		else:
-			var key := str(c["pos"])
-			var n := int(per_tile.get(key, 0))
-			per_tile[key] = n + 1
-			f2["t0"] = now + CALLOUT_STACK_MS * n
-			f2["lift"] = CALLOUT_LIFT * n
-		out.append(f2)
-	return out
-
-
-## Screen shake: the strongest of a hit on the tender, a board-wide event and
-## the step's kills (the fold's count, else the death events).
-static func shake(evs: Array, ctx: Dictionary) -> float:
-	var mag := 0.0
-	var deaths := 0
-	for ev in evs:
-		match String(ev.get("t", "")):
-			"damage":
-				if String(ev.get("who", "")) == "player":
-					mag = maxf(mag, 2.0 + minf(float(int(ev.get("amt", 0))) * 1.2, 6.0))
-			"boss_phase", "ignite_all", "flood", "smoke_burst":
-				mag = maxf(mag, 9.0)
-			"death":
-				deaths += 1
-	var kills := int(ctx["step_kills"]) if ctx.has("step_kills") else deaths
-	if kills > 0:
-		mag = maxf(mag, minf(2.5 + 1.5 * float(kills - 1), 6.0))
-	return mag
-
-
-## A kill, or any hit of 4 or more, freezes the fx clock for HITSTOP_MS.
-static func hitstop(evs: Array) -> bool:
-	for ev in evs:
-		var t := String(ev.get("t", ""))
-		if t == "death" or (t == "damage" and int(ev.get("amt", 0)) >= 4):
-			return true
-	return false
-
-
-## The tender leans into its first strike: a unit vector toward the struck
-## enemy, or ZERO.
-static func lunge(evs: Array, pre: Dictionary, game) -> Vector2:
-	for ev in evs:
-		if String(ev.get("t", "")) == "strike":
-			var tp := ev_pos(ev, pre, game)
-			if tp.x < -0.5:
-				return Vector2.ZERO
-			var d := tp - _ppos(game)
-			return d.normalized() if d.length() > 0.0 else Vector2.ZERO
-	return Vector2.ZERO
-
-
 # --- banners ------------------------------------------------------------------
 
+## Each banner carries `ev`, the index of the event that raised it (the LAST
+## boss_phase for the boss banner, -1 for a resonance banner), so the shell can
+## hold it until the reel reaches that event's beat.
 static func banners(evs: Array, _pre: Dictionary, game, ctx: Dictionary) -> Array:
 	var out: Array = []
 	var phase := 0
-	for ev in evs:
+	var phase_ev := -1
+	for i in evs.size():
+		var ev: Dictionary = evs[i]
 		match String(ev.get("t", "")):
 			"stairs_awaken":
-				out.append({"lines": ["THE STAIRS AWAKEN"], "col": GOLD, "prio": BANNER_PRIO["stairs"]})
+				out.append({"lines": ["THE STAIRS AWAKEN"], "col": GOLD, "prio": BANNER_PRIO["stairs"], "ev": i})
 			"floor_restored":
 				out.append({"lines": ["FLOOR RESTORED", "the skies clear · +%d bloom" % int(ev.get("bonus", 5))],
-					"col": GOLD, "prio": BANNER_PRIO["restored"]})
+					"col": GOLD, "prio": BANNER_PRIO["restored"], "ev": i})
 			"boss_phase":
 				phase = maxi(phase, int(ev.get("phase", 0)))
+				phase_ev = i
 	if phase > 0:
 		var boss := ""
 		for e in game.enemies:
@@ -652,7 +511,7 @@ static func banners(evs: Array, _pre: Dictionary, game, ctx: Dictionary) -> Arra
 			var lines: Array = phase_words(boss, phase, evs)
 			if lines.is_empty():
 				lines = ["BOSS PHASE %d" % phase]
-			out.append({"lines": lines.duplicate(), "col": BOSS, "prio": BANNER_PRIO["boss"]})
+			out.append({"lines": lines.duplicate(), "col": BOSS, "prio": BANNER_PRIO["boss"], "ev": phase_ev})
 	var counts: Dictionary = game.tag_counts() if not Array(ctx.get("res_new", [])).is_empty() else {}
 	for rid in ctx.get("res_new", []):
 		var row: Dictionary = Content.RESONANCES.get(String(rid), {})
@@ -661,7 +520,7 @@ static func banners(evs: Array, _pre: Dictionary, game, ctx: Dictionary) -> Arra
 		var tag := String(row["tag"])
 		out.append({"lines": ["%s AWAKENS" % String(row["name"]).to_upper(),
 			"%s %d/%d - %s" % [tag, int(counts.get(tag, 0)), int(row["need"]), String(row["desc"]).split(" · ")[0]]],
-			"col": GOLD, "prio": BANNER_PRIO["resonance"]})
+			"col": GOLD, "prio": BANNER_PRIO["resonance"], "ev": -1})
 	var idx: Array = range(out.size())
 	idx.sort_custom(func(a, b):
 		var pa := int(out[a]["prio"])
@@ -685,70 +544,69 @@ static func _line(ev: Dictionary, pre: Dictionary, game, ctx: Dictionary, evs: A
 		"damage":
 			var src := String(ev.get("src", ""))
 			if String(ev.get("who", "")) == "player":
-				return ["You take %d dmg (%s)" % [int(ev.get("amt", 0)), Names.src_name(src if src != "" else "?")], "hurt"]
+				return ["You take %d (%s)" % [int(ev.get("amt", 0)), Names.src_name(src if src != "" else "?")], "hurt"]
 			s = "%s takes %d" % [Names.subj(String(ev.get("who", ""))), int(ev.get("amt", 0))]
 			if src.begins_with("collision:"):
 				return [s + " (collision)", "combo"]
 			if src != "" and src != "strike":
 				s += " (%s)" % Names.src_name(src)
 		"death":
-			s = "%s destroyed" % Names.subj(String(ev.get("who", "")))
+			s = "%s scrapped" % Names.subj(String(ev.get("who", "")))
 		"player_death":
-			return ["You die (%s)" % Names.src_name(String(ev.get("cause", "?"))), "hurt"]
+			return ["You wilt (%s)" % Names.src_name(String(ev.get("cause", "?"))), "hurt"]
 		"heal":
 			s = "Growth heals you +%d" % int(ev.get("amt", 0))
 		"cleanse":
 			var green := " · green %d/%d" % [int(game.greened), int(game.green_need)] if int(game.green_need) > 0 else ""
 			if not ctx.has("cleanse_gain"):
-				s = "Cleansed" + green
+				s = "Cleansed - growth takes root" + green
 			elif int(ctx["cleanse_gain"]) > 0:
 				s = "Cleansed +%d bloom%s" % [int(ctx["cleanse_gain"]), green]
 			else:
 				s = "Cleansed - enemy-made %s pays no bloom%s" % [String(ev.get("kind", "oil")).replace("_", " "), green]
 			cat = "reward"
 		"room_bloom":
-			s = "Room BLOOMS - +%d bloom and a supply pod" % int(ev.get("bonus", 2))
+			s = "The room blooms! +%d bloom, a supply pod" % int(ev.get("bonus", 2))
 		"item_pickup":
-			s = "Picked up %s" % Names.item_name(String(ev.get("id", "")))
+			s = "Got %s" % Names.item_name(String(ev.get("id", "")))
 		"item_use":
-			var irow: Dictionary = Content.ITEMS.get(String(ev.get("id", "")), {})
-			s = "%s used - %s" % [Names.item_name(String(ev.get("id", ""))), String(irow.get("desc", ""))] if irow.has("desc") \
-				else "%s used" % Names.item_name(String(ev.get("id", "")))
+			# what it does stays in the item's hold-tooltip; the log says what happened
+			s = "Used %s" % Names.item_name(String(ev.get("id", "")))
 		"satchel_full":
-			s = "Satchel full (2 slots)"
+			s = "Your satchel is full (2 slots)"
 		"stairs_dormant":
-			s = "Stairs dormant - green the floor (%d/%d)" % [int(ev.get("have", 0)), int(ev.get("need", 0))]
+			s = "The stairs sleep - green %d/%d" % [int(ev.get("have", 0)), int(ev.get("need", 0))]
 		"stairs_awaken":
-			s = "The floor greens - THE STAIRS AWAKEN"
+			s = "The floor is green - the stairs wake!"
 		"quota_reclamp":
-			s = "Corruption burned away - gate now needs %d" % int(ev.get("need", 0))
+			s = "Less to tend now - the stairs need %d" % int(ev.get("need", 0))
 		"seal_burst":
-			s = "Overgrown vent chokes - spawn absorbed"
+			s = "Growth seals a vent - nothing gets out"
 		"floor_restored":
-			s = "FLOOR RESTORED - skies clear (+%d bloom)" % int(ev.get("bonus", 5))
+			s = "Floor restored! Clear skies, +%d bloom" % int(ev.get("bonus", 5))
 		"assimilate":
-			s = "The machines WELD into a hulk"
+			s = "Two machines weld into a hulk!"
 		"upcycle":
-			s = "Upcycled: %s" % Names.item_name(String(ev.get("id", "")))
+			s = "Pressed into %s" % Names.item_name(String(ev.get("id", "")))
 		"upcycle_ability":
 			s = "Forged %s" % Names.aname(ev.get("id", ""))
 		"upcycle_scrap":
-			s = "Scrapped %s for parts" % Names.aname(ev.get("id", ""))
+			s = "Recycled %s for parts" % Names.aname(ev.get("id", ""))
 		"choke":
-			s = "The smog chokes you"
+			s = "The smog stings - keep moving"
 		"smog_dim":
-			s = "Skies dim - charge regen drops"
+			s = "Skies dim - charge refills slower"
 		"gummed":
 			return ["Tar gums up %s" % Names.aname(ev.get("id", "")), "hurt"]
 		"screened":
 			var it := String(ev.get("intent", ""))
 			s = "%s's %s is lost in the smoke" % [Names.subj(kind_of(ev.get("id"), pre, game)), String(SCREEN_WORDS.get(it, it))]
 		"drain":
-			return ["%s drains %d banked charge" % [Names.subj(kind_of(ev.get("id"), pre, game)), int(ev.get("amt", 0))], "hurt"]
+			return ["%s sips %d banked charge" % [Names.subj(kind_of(ev.get("id"), pre, game)), int(ev.get("amt", 0))], "hurt"]
 		"drag":
-			return ["%s drags you" % Names.subj(kind_of(ev.get("id"), pre, game)), "hurt"]
+			return ["%s drags you closer" % Names.subj(kind_of(ev.get("id"), pre, game)), "hurt"]
 		"stoke":
-			s = "Smokestack thickens the smog"
+			s = "A smokestack thickens the smog"
 		"boss_phase":
 			var ph := int(ev.get("phase", 0))
 			var bk := ""
@@ -761,14 +619,14 @@ static func _line(ev: Dictionary, pre: Dictionary, game, ctx: Dictionary, evs: A
 		"vents_clogged":
 			s = "The boss clogs the vents with goo"
 		"core_shielded":
-			return ["%s is shielded: cleanse or grow beside it" % Names.subj(kind_of(ev.get("id"), pre, game)), "boss"]
+			return ["Core shielded - cleanse or grow beside it", "boss"]
 		"dredge":
 			s = "The Dredge eats %d growth and heals" % int(ev.get("tiles", 0))
 		"summon":
 			var ck := kind_of(ev.get("child"), pre, game)
 			if ck == "":
 				ck = _death_kind(evs, ev.get("child"))  # spawned and destroyed this step
-			s = "%s summons %s" % [Names.subj(kind_of(ev.get("id"), pre, game)), Names.a_name(ck)]
+			s = "%s makes %s" % [Names.subj(kind_of(ev.get("id"), pre, game)), Names.a_name(ck)]
 		"split":
 			s = "%s splits" % Names.subj(kind_of(ev.get("id"), pre, game))
 		"ooze":
@@ -788,7 +646,7 @@ static func _line(ev: Dictionary, pre: Dictionary, game, ctx: Dictionary, evs: A
 		"reroll":
 			s = "Rerolled (-%d bloom)" % int(ev.get("cost", 0))
 		"draft_upgrade":
-			s = "Upgraded to %s" % Names.aname(ev.get("id", ""))
+			s = "Grew into %s" % Names.aname(ev.get("id", ""))
 		"draft_pick":
 			s = "Drafted %s" % Names.aname(ev.get("id", ""))
 		"draft_drop":
@@ -802,18 +660,24 @@ static func _line(ev: Dictionary, pre: Dictionary, game, ctx: Dictionary, evs: A
 		"anchor":
 			s = "Anchored - drags can't move you"
 		"undim":
-			s = "Air clears - regen recovers"
+			s = "The air clears - charge refills faster"
 		"immune":
 			s = "%s shrugs it off" % Names.subj(kind_of(ev.get("id"), pre, game))
 		"stunned":
 			s = "%s is stunned" % Names.subj(kind_of(ev.get("id"), pre, game))
 		"staggered":
-			s = "%s staggers - wind-up lost" % Names.subj(kind_of(ev.get("id"), pre, game))
+			s = "%s staggers - its wind-up is lost" % Names.subj(kind_of(ev.get("id"), pre, game))
 		"rooted":
 			s = "%s is rooted in place" % Names.subj(kind_of(ev.get("id"), pre, game))
 		"resisted":
+			# a status re-applied inside its cooldown (Content.STATUSES) - "not
+			# yet", in the tender's words, never the rule's
 			var stn := String(ev.get("status", "root"))
-			s = "%s shakes off the %s (cooldown)" % [Names.subj(kind_of(ev.get("id"), pre, game)), String(Names.SRC_WORDS.get(stn, stn))]
+			var rkind := kind_of(ev.get("id"), pre, game)
+			if stn == "root":
+				s = "Roots slide off %s - not yet" % Names.the_name(rkind)
+			else:
+				s = "%s resists - not yet" % Names.subj(rkind)
 		"status":
 			var nm := Names.subj(kind_of(ev.get("id"), pre, game))
 			var st := String(ev.get("status", ""))
@@ -887,16 +751,10 @@ static func log_entries(evs: Array, pre: Dictionary, game, ctx: Dictionary) -> A
 		match t:
 			"hook":
 				if cl.get(i) is int:
-					var land: Dictionary = evs[cl[i]]
-					var nm := Names.source_name(ev.get("id", ""))
-					match String(land.get("t", "")):
-						"status":
-							var sw: Array = STATUS_WORDS.get(String(land.get("status", "")), ["", "affects", ""])
-							out.append({"text": "%s %s %s" % [nm, sw[1], Names.the_name(kind_of(land.get("id"), pre, game))], "cat": "combo"})
-						"terrain":
-							out.append({"text": "%s: %s springs up%s" % [nm, String(land.get("kind", "")).replace("_", " "),
-								" where it fell" if String(ev.get("on", "")) == "kill" else ""], "cat": "combo"})
 					# a damage landing needs no line: the damage line ends "(Ember Sap)"
+					var ht := _hook_text(evs, i, int(cl[i]), pre, game)
+					if ht != "":
+						out.append({"text": ht, "cat": "combo"})
 				continue
 			"rider":
 				var aid := String(ev.get("id", ""))
@@ -957,9 +815,12 @@ static func log_entries(evs: Array, pre: Dictionary, game, ctx: Dictionary) -> A
 			var rk2 := String(e2["kind"])
 			var cnt := int(reinf[rk2])
 			if rk2 == "":
-				e2["text"] = "A vent releases a machine" if cnt == 1 else "Vents release %d machines" % cnt
+				e2["text"] = "A machine climbs out of a vent" if cnt == 1 else "%d machines climb out of the vents" % cnt
+			elif cnt == 1:
+				var an := Names.a_name(rk2)
+				e2["text"] = "%s climbs out of a vent" % (an.substr(0, 1).to_upper() + an.substr(1))
 			else:
-				e2["text"] = ("A vent releases %s" % Names.a_name(rk2)) if cnt == 1 else ("Vents release %d %ss" % [cnt, Names.ename(rk2)])
+				e2["text"] = "%d %ss climb out of the vents" % [cnt, Names.ename(rk2)]
 		e2.erase("agg")
 		e2.erase("n")
 		e2.erase("kind")
@@ -975,6 +836,71 @@ static func log_entries(evs: Array, pre: Dictionary, game, ctx: Dictionary) -> A
 			var tag := String(row["tag"])
 			out.append({"text": "%s awakens - %s %d/%d" % [String(row["name"]), tag, int(counts.get(tag, 0)), int(row["need"])], "cat": "combo"})
 	return out
+
+
+## The log's words for a hook at `i` that LANDED on event `j` (a status or a
+## terrain landing: "Cinder Grip roots the Coal Golem", "Compost: growth
+## springs up where it fell"); "" for a damage landing, whose damage line
+## already names the source.
+static func _hook_text(evs: Array, i: int, j: int, pre: Dictionary, game) -> String:
+	var ev: Dictionary = evs[i]
+	var land: Dictionary = evs[j]
+	var nm := Names.source_name(ev.get("id", ""))
+	match String(land.get("t", "")):
+		"status":
+			var sw: Array = STATUS_WORDS.get(String(land.get("status", "")), ["", "affects", ""])
+			return "%s %s %s" % [nm, sw[1], Names.the_name(kind_of(land.get("id"), pre, game))]
+		"terrain":
+			return "%s: %s springs up%s" % [nm, String(land.get("kind", "")).replace("_", " "),
+				" where it fell" if String(ev.get("on", "")) == "kill" else ""]
+	return ""
+
+
+## The step's combo toast (main's context-line toast, behind COMBO_TOAST): the
+## FIRST hook that landed, in words - the spark the reel draws cannot say
+## WHICH graft or resonance fired. {text, ev} with `ev` the hook's index, {}
+## when no hook landed. Riders and surges never make one: the player just
+## cast that ability.
+static func combo_line(evs: Array, pre: Dictionary, game) -> Dictionary:
+	var cl := claims(evs, game)
+	for i in evs.size():
+		if String(evs[i].get("t", "")) != "hook" or not (cl.get(i) is int):
+			continue
+		var j := int(cl[i])
+		var text := _hook_text(evs, i, j, pre, game)
+		if text == "" and String(evs[j].get("t", "")) == "damage":
+			text = String(_line(evs[j], pre, game, {}, evs, j)[0])
+		if text != "":
+			return {"text": text, "ev": i}
+	return {}
+
+
+## The three words the reel cannot know, because they come from the run's
+## fold (ctx) rather than from the step's events: the multi-kill, the room
+## clear and the kill streak - exactly callouts()' three ctx arms. Each is
+## {text, pos, col, ev, delay}: `ev` the index of the step's LAST death (-1
+## for none), `delay` the ms after that beat it lands (main appends them to
+## the reel as ordinary float clips, _reel_word).
+static func ctx_words(evs: Array, pre: Dictionary, game, ctx: Dictionary) -> Array:
+	var out: Array = []
+	var last_kill := _ppos(game)
+	var last_ev := -1
+	for i in evs.size():
+		if String(evs[i].get("t", "")) == "death":
+			last_ev = i
+			var dp := ev_pos(evs[i], pre, game)
+			if dp.x > -0.5:
+				last_kill = dp
+	var mk := _multi(ctx)
+	if mk > 0:
+		var words := {2: "DOUBLE KILL", 3: "TRIPLE KILL"}
+		out.append({"text": String(words.get(mk, "%d KILLS" % mk)), "pos": last_kill, "col": GOLD, "ev": last_ev, "delay": 160})
+	if bool(ctx.get("room_cleared", false)):
+		out.append({"text": "ROOM CLEAR", "pos": _ppos(game), "col": CLEAR, "ev": last_ev, "delay": 320})
+	var sk := _streak(ctx)
+	if sk > 0:
+		out.append({"text": "STREAK %d" % sk, "pos": _ppos(game), "col": FIRE, "ev": last_ev, "delay": 160})
+	return out.filter(func(w): return Vector2(w["pos"]).x >= -0.5)
 
 
 ## The single-event, context-free formatter: one event's line, or "".

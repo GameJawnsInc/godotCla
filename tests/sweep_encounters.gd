@@ -1,7 +1,7 @@
 extends SceneTree
-## Block E (bump 15) paired acceptance runner: encounter packs and biome
+## Block E (bump 17) paired acceptance runner: encounter packs and biome
 ## reinforcements (the default config) against the fixed_shift control, which
-## replays the pre-v15 classic-crew game action for action, on the SAME seeds
+## replays the pre-v17 classic-crew game action for action, on the SAME seeds
 ## for every loadout. The precedent is tests/sweep_resonance.gd.
 ##
 ## Run: [ENC_BOT=optimizer] [ENC_SEEDS=300] [ENC_SEED_FROM=1]

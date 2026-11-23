@@ -4,6 +4,6 @@
 "actions": [{"type":"end_turn"},{"type":"end_turn"}],
 "expect": {"events":[{"kind":"drill_bot","t":"reinforcement","tile":"(1, 3)"},{"kind":"rust_hound","t":"reinforcement","tile":"(7, 3)"},{"kind":"rust_hound","t":"reinforcement","tile":"(1, 3)"},{"kind":"drill_bot","t":"reinforcement","tile":"(7, 3)"}],"floor":1,"timeout":true,"won":false},
 "note": "E2 biome reinforcements: the kind a vent releases is reinforce[(wave + vent) % size], wave = the index of this spawn in the floor's smog schedule, vent = the vent's index in map.vents. Two vents, two waves, list [drill_bot, rust_hound]: wave 0 releases drill then hound, wave 1 hound then drill. Hardcoding drill_bot fails pattern 2 (no hound at (7, 3) at all); dropping the vent term (wave 0 drill, drill; wave 1 hound, hound) or the wave term (both waves drill then hound) fails pattern 3: neither puts a hound at (1, 3) AFTER a hound at (7, 3), which is what the in-order match needs.",
-"sim_version": 15,
+"sim_version": 17,
 "hash": "b21adabcac5f4b7dcb114b54e23c77fdf8316120f3dad24a51c1da2b4992cc47"
 }

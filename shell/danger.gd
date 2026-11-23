@@ -2,7 +2,7 @@ extends RefCounted
 ## Danger readability (fun pass, phase 1): pure functions from the sim's
 ## three read-only forecasts - Game.smog_forecast, Game.telegraph and
 ## Game.end_turn_forecast - to the data the shell draws: the SKIES countdown
-## chips, the INCOMING line, intent badges, tile numbers, drag tethers, vent
+## chips, the incoming line, intent badges, tile numbers, drag tethers, vent
 ## countdowns, the HP danger level, the lethal guard's words and the
 ## transition cues. No drawing, no Node, no state of its own:
 ## tests/test_shell.gd asserts on what these return, and tests/render_frame.gd
@@ -175,10 +175,10 @@ static func context_line(d: Dictionary, awake: bool) -> Dictionary:
 	var dmg := int(fc.get("dmg", 0))
 	if dmg > 0:
 		if bool(fc.get("dies", false)):
-			return {"text": "! INCOMING %d - LETHAL%s" % [dmg, _src_suffix(fc)], "col": COL_RED, "pulse": true}
+			return {"text": "Incoming %d - LETHAL%s" % [dmg, _src_suffix(fc)], "col": COL_RED, "pulse": true, "kind": "incoming"}
 		if int(fc.get("absorbed", 0)) >= dmg:
-			return {"text": "! INCOMING %d - shield holds" % dmg, "col": COL_AMBER, "pulse": false}
-		return {"text": "! INCOMING %d%s" % [dmg, _src_suffix(fc)], "col": COL_AMBER, "pulse": false}
+			return {"text": "Incoming %d - your shield holds" % dmg, "col": COL_AMBER, "pulse": false, "kind": "incoming"}
+		return {"text": "Incoming %d%s" % [dmg, _src_suffix(fc)], "col": COL_AMBER, "pulse": false, "kind": "incoming"}
 	var sky: Dictionary = d["sky"]
 	var c := int(sky.get("choke_in", -1))
 	if not bool(sky.get("choking", false)) and c >= 1 and c <= SKY_AMBER:
@@ -186,10 +186,10 @@ static func context_line(d: Dictionary, awake: bool) -> Dictionary:
 		# and its cleanses stop thinning the smog after four (choke_remedy)
 		var how := "descend to escape it" if awake else choke_remedy(d)
 		if c == 1:
-			return {"text": "Smog chokes NEXT TURN - %s" % how, "col": COL_RED, "pulse": true}
-		return {"text": "Smog chokes in %d - %s" % [c, how], "col": COL_AMBER, "pulse": false}
+			return {"text": "Smog stings NEXT TURN - %s" % how, "col": COL_RED, "pulse": true, "kind": "choke"}
+		return {"text": "Smog stings in %d - %s" % [c, how], "col": COL_AMBER, "pulse": false, "kind": "choke"}
 	if int(sky.get("spawn_in", -1)) == 1 and int(sky.get("spawn_open", 0)) > 0:
-		return {"text": "The vents release next turn", "col": COL_AMBER, "pulse": false}
+		return {"text": "Machines climb out next turn", "col": COL_AMBER, "pulse": false, "kind": "vents"}
 	return {}
 
 
@@ -344,8 +344,25 @@ static func badges(snap: Dictionary, tele: Dictionary) -> Array:
 	return out
 
 
+## A telegraph cut to the machines in `ids` (a set: id -> true), for the
+## shell's held view while a reel plays (main._tele_view): the kept entries,
+## and `tiles` rebuilt from those whose intent is not blocked, summed exactly
+## as Game.telegraph() sums them - mirrors that sum, change together. Pure.
+static func tele_subset(tele: Dictionary, ids: Dictionary) -> Dictionary:
+	var out := {"enemies": [], "tiles": {}}
+	for ent in tele.get("enemies", []):
+		if not ids.has(ent["id"]):
+			continue
+		out["enemies"].append(ent)
+		if String(ent.get("blocked", "")) != "":
+			continue
+		for t in ent.get("tiles", []):
+			out["tiles"][t] = int(out["tiles"].get(t, 0)) + int(ent["dmg"])
+	return out
+
+
 ## Summed telegraphed damage per tile, minus the tender's own tile (the
-## INCOMING line speaks for that one).
+## incoming line speaks for that one).
 static func tile_numbers(tele: Dictionary, pp: Vector2i) -> Dictionary:
 	var out: Dictionary = tele.get("tiles", {}).duplicate()
 	out.erase(pp)
@@ -477,7 +494,7 @@ static func cues(prev: Dictionary, cur: Dictionary, announced: int = NO_CUE) -> 
 		ann = mini(ann, c_prev)
 	if c_now >= 1 and c_now <= SKY_AMBER and c_now < ann:
 		if c_now == 1:
-			out["banner"] = ["THE SMOG THICKENS", "it chokes from next turn"]
+			out["banner"] = ["THE SMOG THICKENS", "it stings from next turn"]
 			if not out["sounds"].has("warn"):
 				out["sounds"].append("warn")
 		elif ann > SKY_AMBER and not out["sounds"].has("warn"):

@@ -1035,7 +1035,7 @@ const MUTATORS := {
 	"spinning_shrine": {"name": "Spinning Shrine", "desc": "pay bloom to reroll the shrine counter",
 		"config": {"shop_reroll": true}},
 	# Block E: the classic-crew control; no MILESTONES row, never offered. It
-	# replays the pre-v15 game action for action (packs and vent rotation off),
+	# replays the pre-v17 game action for action (packs and vent rotation off),
 	# so it is both the measurement control and the one-default reversal.
 	"fixed_shift": {"name": "Fixed Shift", "desc": "every floor fields its classic crew",
 		"config": {"encounter_packs": false, "biome_reinforce": false}},
@@ -1492,14 +1492,14 @@ const ENEMIES := {
 	"the_dredge": {"name": "The Dredge", "hp": 16, "dmg": 2, "slow": false, "traits": ["boss", "massive", "mobile_boss", "dredges"], "slam_range": 2, "drag_range": 4, "gate_hp": 5},
 }
 
-## Block E1 (bump 15): encounter packs. A non-boss row carries "encounters":
+## Block E1 (bump 17): encounter packs. A non-boss row carries "encounters":
 ## [{id, name, w, enemies}] instead of a fixed "enemies" dict. Game.floor_def(n)
 ## draws ONE pack per floor from the side stream hash([seed, n, "roster"]) by
 ## weight w (never the main rng) and writes its roster into fdef.enemies, so
 ## sim/mapgen.gd is untouched. Rules (R2-R8 linted by tests/test_content.gd
 ## section 14; R1 pinned by tests/test_grammar.gd section e against its frozen
 ## CLASSIC_ROSTERS):
-##  - pack 0 is the floor's pre-v15 roster byte for byte, key order included
+##  - pack 0 is the floor's pre-v17 roster byte for byte, key order included
 ##    (the classic crew; the fixed_shift mutator always fields it)
 ##  - every pack on a floor has the same headcount: mapgen's placement draws
 ##    never read the kind, so equal headcounts keep every main-rng draw and
@@ -1537,7 +1537,7 @@ const FLOORS := [
 		],
 		"reinforce": ["drill_bot"],
 		"oil": 6, "goo": 3, "vents": 2, "green_need": 3, "vaults": ["old_garden"],
-		"smog_spawn": [9, 17], "smog_spawn_every": 10, "smog_dim": [12, 20], "smog_choke": 36,
+		"smog_spawn": [10, 19], "smog_spawn_every": 11, "smog_dim": [14, 22], "smog_choke": 37,
 	},
 	{
 		"name": "Refinery Gate", "biome": "refinery", "w": 26, "h": 16, "rooms": 5,

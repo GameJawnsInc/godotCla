@@ -22,7 +22,7 @@ Reference numbers for TENDER's difficulty, and the discipline for changing them.
 | optimizer | 45–65% wins             | skilled play should win often but never be safe (raised from 30–50 after the tempo fix — the old band measured a bot flaw). **2026-09-08 (D5) reads 16/30 = 53% [36, 70]** at 30 seeds, identical to the pre-D5 tree on the same seeds |
 | fanatic   | every build > 0 at 100 seeds (hard); 20–40% total (soft) | committing to a niche build must stay viable; the total tracks content difficulty and moves when content does |
 | magpie    | 0–5% design target, top bloom; gate trips at a 10% CI lower bound | full greed loses to the current game almost always; a RISE means greed got cheap (canary, like turtle). Under instrument v2 the recorded baseline is 10/100 [6, 17] (2026-09-07d reads 7/100 [3, 14], a fall inside noise); a 100-seed lower bound clearing 17% is the signal — see 2026-09-05d. **2026-09-07e (the D2 shrine reroll) is the first reading to fail the merge gate**: 7/30 CI [12, 41] at 30 seeds, 13/100 [8, 21] in sample and 18/100 [12, 27] out of sample, pooled 31/200 = 15.5% [11, 21] against 16/200 = 8% [5, 13] before, paired sign p = 0.0026 — the sink shipped behind the `spinning_shrine` mutator, so the default-config reading is 07d's 7/100 [3, 14] again. Bump 12 (D4, 2026-09-07g) re-reads it at 8/100 [4, 15] wins - unmoved from 07f - with stall floors 71 against 59 (1.20x, inside the 1.25x limit and the highest recorded) |
-| sprout    | avg depth 3.5–5, wins rare | noobs feel progress; full clears are earned |
+| sprout    | avg depth 3.5–5, wins rare (gate: Wilson lower bound <= 5%, re-derived 2026-11-09) | noobs feel progress; full clears are earned. **2026-11-09 (bump 16) reads avg floor 4.0 at 200 seeds** against 3.7 before, with floor-2 deaths 38/200 against 54/200 |
 | wanderer  | dies floor 1–2, 0 wins  | the world must punish random play |
 | all       | zero timeouts/softlocks | every run ends in win or death |
 
@@ -9417,31 +9417,50 @@ pinned optimizer floor-entry rng states are unmoved by the content AND by the
   resonance is, by construction - has to run them by hand or it has not been
   measured.
 
-### Bump-15 additions (2026-11-22)
+### Block E additions (2026-11-22, re-read on the merged sim 2026-11-23)
 
-- **Optimizer stall floors rose 1.14x under Block E** (bump 15, 2026-11-22):
-  372 -> 423 over 1800 runs, tender alone 60 -> 75 (1.25x). No limit was
-  pre-registered for the optimizer (the stall canary is magpie and turtle,
-  1.03x and 1.00x); read it beside the clock lines after any change to packs,
-  vents or the smog curve.
-- **The magpie spiker cell sits at the 10% trip line in BOTH arms.** Seeds
-  301..600 read 43/300 [10.8, 18.8] on the default game and on `fixed_shift`
-  alike; seeds 1..300 read 40/300 [9.9, 17.6] default and 37/300 [9.1, 16.5]
-  control. An absolute reading of the canary fails the classic game itself on
-  those seeds, so any block that moves spiker has to be judged paired.
-- **The fanatic turtle reads 1/100** on the bump-15 default (control 2/100):
-  it passes "every build above zero" with no margin. It is the designed
-  anti-pattern (2026-09-08b), so this is a canary reading, not a target.
+Block E was measured on the branch as bump 15 against bump 14 (2026-11-22)
+and re-measured after the merge as SIM_VERSION 17 against bump 16
+(2026-11-23). Each item gives the merged reading first and the pre-port one
+in brackets; the two come from different base games and are never compared
+except as paired deltas.
+
+- **Optimizer stall floors rise about 1.1x under Block E**: 379 -> 426 over
+  1800 runs (1.12x) on the merged sim [pre-port 372 -> 423, 1.14x]; per
+  loadout tender 58 -> 73 (1.26x) and flarekeeper 62 -> 77 (1.24x) [tender
+  60 -> 75]. No limit was pre-registered for the optimizer (the stall canary
+  is magpie and turtle: 1.01x and 1.02x merged [1.03x and 1.00x]); read it
+  beside the clock lines after any change to packs, vents or the smog curve.
+- **The magpie spiker cell sits at the 10% trip line in BOTH arms.** On the
+  merged sim seeds 1..300 read 39/300 [9.7, 17.3] on the default game AND on
+  `fixed_shift`; out of sample (seeds 301..600) the CONTROL clears the line,
+  42/300 [10.5, 18.4], against 40/300 [9.9, 17.6] default [pre-port: 43/300
+  [10.8, 18.8] in both arms out of sample, 40/300 default against 37/300
+  control in sample]. An absolute reading of the canary fails the classic
+  game itself on those seeds, before the port and after it, so any block that
+  moves spiker has to be judged paired.
+- **Magpie out of sample reads +18 on the merged sim** (150 -> 168 of 1800,
+  information only; the in-sample limit is +33) [pre-port +7], and 15 of the
+  18 are flarekeeper (22/300 -> 37/300 [9.1, 16.5]; in sample that cell reads
+  26 -> 30). The next magpie reading looks at flarekeeper first.
+- **The fanatic turtle reads 1/100** on the default game, merged and
+  pre-port alike (control 3/100 merged [2/100]): it passes "every build above
+  zero" with no margin. It is the designed anti-pattern (2026-09-08b), so
+  this is a canary reading, not a target.
 - **Floor 1 can field spiked kinds** (Hound and Handler, Golem Escort: 44% of
   floor-1 draws). Kept as shipped; an owner taste call, and dropping them is
   a data edit that leaves floor-1 layouts identical.
-- **Cross-bump comparisons go through `fixed_shift` from bump 15 on**, and the
-  control is only a control while it still IS bump 14: its arm matched the
-  bump-14 tables cell for cell and `RNG_FLOOR_ENTRY_BUMP14` holds under it.
+- **Cross-bump comparisons go through `fixed_shift` from bump 17 on**, and
+  the control is only a control while it still IS the bump before. On the
+  merged sim it is bump 16: every one of bump 16's 97 records replays under
+  it event for event, `RNG_FLOOR_ENTRY_BUMP16` holds under it byte for byte,
+  and the two bump-16 sprout counts recorded at seeds it also ran (2/30,
+  3/100) read the same. (Before the port it was bump 14, and matched the
+  bump-14 tables cell for cell; `RNG_FLOOR_ENTRY_BUMP14` no longer exists.)
   A later change that touches the classic path moves the control too, so
   re-check those pins under `fixed_shift` before comparing an old number with
-  a new one. Daily scores are not comparable across bump 15 at all (same date,
-  different crews).
+  a new one. Daily scores are not comparable across bump 17 at all (same
+  date, different crews).
 
 ## 2026-09-08b - the two 6.6 design tensions, answered
 
@@ -9487,7 +9506,126 @@ if `roots_burn` were ever enabled that row is where the pressure would land
 first. `damp` is unaffected by either decision - it is the unbuilt `on_wash`
 consumer, not a design tension.
 
-## 2026-11-22 - bump 15 (E): encounter packs and biome reinforcements
+## 2026-09-27 - tending by any means (SIM_VERSION 15)
+
+Owner report: Reclaimer Bomb on a floor's last corruption paid no
+`floor_restored`, and a room it emptied paid no `room_bloom` (bonus + supply
+pod). Both payoffs were inside `_act_cleanse` only, so every non-cleanse
+removal (convert, wash) skipped them. They now follow the corruption: any
+play-phase player action except `end_turn` that empties a room or the floor
+pays them (enemy-turn removals such as a dredge still pay nothing). Per-tile
+convert/wash bloom is unchanged (still 0).
+
+playtest.gd, default config, seeds 1..30, before -> after:
+deeproot 26/30 -> 27/30 (CI [74%, 97%]); optimizer 16/30, magpie 3/30,
+sprout 1/30, wanderer 0 unchanged; optimizer bloom earned 44.7 -> 45.0/run.
+All gates pass. The shift is inside noise; not verified at 30+ seeds per
+persona beyond this run.
+
+## 2026-11-09 - bump 16: the floor-2 clock
+
+**Finding.** `Content.FLOORS[1]` (Strip Mine II) carried the tightest smog
+spawn and dim clock of floors 1-4 (its choke only tied floor 3 and was looser
+than floor 4's) - spawn `[9, 17]` every 10, dim `[12, 20]`, choke 36,
+against floor 1's `[10, 20]`/12/`[14, 22]`/38, floor 3's
+`[10, 18]`/11/`[14, 22]`/36 and floor 4's `[12, 22]`/12/`[14, 22]`/34 - on
+the floor that also raises the quota from 2 to 3 and introduces the first
+drain and gum enemies. No entry in this file gives a reason for the dip, and
+the Targets section asks for deaths that "spread across floors rather than
+piling on one wall". The noob persona's did not:
+
+| sprout, base tree | f1 | f2 | f3 | f4 | f5 | f6 | f7 |
+|---|---|---|---|---|---|---|---|
+| deaths, seeds 1..200 | 15 | **54** | 27 | 28 | 41 | 18 | 12 |
+
+157 of the 195 (81%) were smog deaths. Floor 2 was the modal death floor for sprout AND magpie
+(51/200), the standing watch item "magpie deaths cluster on floor 2".
+
+**Change.** One row: spawn `[10, 19]` every 11, dim `[14, 22]`, choke 37 -
+between its neighbours on every key, so the clock no longer dips at floor 2
+on the way from floor 1 to floor 3. No rule changed.
+
+**Measurement** (`PLAYTEST_BOTS=... PLAYTEST_SEEDS=200 PLAYTEST_GATE=0
+tests/playtest.gd`, tier 0, config `{}`, seeds 1..200, the same seeds on the
+pre-change tree in a worktree; optimizer at seeds 1..100):
+
+| persona | before | after |
+|---|---|---|
+| sprout floor-2 deaths | 54/200 = 27% | **38/200 = 19%** (seeds 1..100: 28 -> 18; 101..200: 26 -> 20) |
+| sprout avg floor | 3.7 | **4.0** (band 3.5-5) |
+| sprout deaths by floor | 15/54/27/28/41/18/12 | 15/38/31/23/48/25/13 |
+| sprout wins | 3/200 [1, 4] | 4/200 [1, 5] |
+| magpie wins (canary) | 16/200 = 8% [5, 13] | 19/200 = 9.5% [6, 14] (1..100: 9 -> 8; 101..200: 7 -> 11) |
+| magpie stall floors | 136 | 153 (1.125x, inside the 1.25x limit) |
+| optimizer wins | 53/100 [43, 62] | 55/100 [45, 64] (band 45-65) |
+| optimizer deaths by floor (3..7) | 2/6/12/16/11 | 2/5/14/14/10 |
+
+The unpaired two-proportion test on sprout's floor-2 deaths
+is z = 1.9, p = 0.06 - the direction holds in both halves of the seed range,
+the size is not pinned tighter than "about a third fewer".
+
+Re-measured on the merged tree, after main's bump 15 ("tending by any
+means") landed underneath it, against main as the control: every cell in the
+table above read the same on both sides (sprout 54 -> 38 floor-2 deaths and
+3 -> 4 wins of 200, magpie 16 -> 19 of 200, optimizer 53 -> 55 of 100).
+
+**Reading.** The relief lands where it was aimed (the noob), does not reach
+skilled play (optimizer +2 inside noise) and does not move the greed canary
+outside its interval - but magpie's out-of-sample half read +4 and its stall
+floors are the highest recorded, so **the next 100-seed canary reading is
+compared against [6, 17] as before, and a rise is first looked for here.**
+The deaths did not vanish, they moved one wall down: sprout's floor-5 count
+went 41 -> 48 and floor 6 18 -> 25. Floor 5 (Pipeworks: pump jack,
+smokestack, choke 32) now kills 48 of the at most 93 sprouts that reach it (about half) and is
+the persona's modal death floor; that is the designed ramp doing its job
+later in the run, and it is the next place to look if the noob curve is
+revisited.
+
+**Corpus.** `SIM_VERSION` 15 -> 16 (main took 15 for "tending by any means" while this
+was measured; the row was re-recorded on the merged tree). 84 of 97 records are stamp-only
+(`sim_version` the single differing key). All 20 bot logs were re-recorded on
+their personas: 13 changed and 7 came back byte-identical (same actions,
+same final hash) - the three wanderers, which never leave floor 1,
+`det_fanatic_s42` and all three deeproot logs.
+`tests/test_economy.gd`'s floor-entry rng pins moved on 4 of 10 seeds, every
+row identical through at least the floor-2 entry.
+
+**The sprout gate was re-derived (owner decision, 2026-11-09).** The
+30-seed playtest on this tree read `FAIL sprout wins rare (<= 1 per 30
+seeds): 2/30`. The line was a raw count sitting on its own edge: the baseline
+read exactly 1/30, two of the first 30 seeds died on floor 7, and three
+milder variants of the row (floor 3's row copied; dim `[13, 21]`; the dim
+change alone) read 2/30, 2/30 and 3/30 - any relief on floor 2 tips one of
+them. The same rule scaled to its own larger sample passed throughout (2/100
+before, 3/100 after; 3/200 before, 4/200 = 2% [1, 5] after - one more win
+at every sample size). It is now a Wilson line
+like the magpie canary's (`SPROUT_MAX_LOWER` 0.05): it trips when the lower
+bound clears 5% - from 4/30, 10/100 or 17/200 up. This is the 2026-09-05d
+move again ("a line that flips on one win"), and it LOOSENS the 30-seed gate
+from 1 win to 3; the target row above is unchanged ("wins rare"), and a
+100-seed sprout reading above 5/100 is still the thing to look at.
+
+### Not done, and why
+
+- **`water_jet+pin` and `vine_whip+lash`** (riders that fire ~0 times for
+  heuristic play) were the other balance candidates. Both need a decision
+  the watch list already frames (row, bot or board) and a deeproot
+  locked-kit measurement; neither is a one-row fix and neither was touched.
+- **Bloom overhang.** Every persona ends a run with 24-44 bloom unspent
+  (optimizer earns 50, spends 17). The one repeatable sink is held behind
+  `spinning_shrine` on the canary; a human can forge and press where no bot
+  does, so the bots cannot price this. Recorded, not patched.
+
+## 2026-11-22 - Block E (branch bump 15, shipped as 17): encounter packs and biome reinforcements
+
+*(Measured and recorded on the branch as bump 15 against bump 14, before
+main's bump 15 "tending by any means" and bump 16 "the floor-2 clock" were
+merged underneath it. Block E ships as SIM_VERSION 17, and every number in
+this entry is the PRE-PORT measurement: read "bump 15" below as the branch's
+Block E and "bump 14" as its control. The ten lines were re-run unchanged on
+the merged sim, against bump 16, in the 2026-11-23 entry - all ten PASS -
+and that entry is the current Block E reading. The two are on different base
+games and are compared only through their paired deltas.)*
 
 **Status: SHIPPED DEFAULT-ON.** Every one of the ten pre-registered lines
 passed on the first run. **No lever was applied** and the fallback (both
@@ -9510,7 +9648,9 @@ a frozen copy of the tree whose `sim/`, `bots/`, `meta/`, `tests/tally.gd`,
 control arm is `{mutators: ["fixed_shift"]}`, which sets `encounter_packs`
 and `biome_reinforce` false.
 
-**Comparison rule from here on.** The DEFAULT game changed: a default-config
+**Comparison rule (pre-port).** [On the merged tree the same rule reads
+pre-17 against post-17, and the control is bump 16 - see the 2026-11-23
+entry and the watch list.] The DEFAULT game changed: a default-config
 number recorded before this entry is not comparable with a default-config
 number after it. The `fixed_shift` arm reproduces the bump-14 game action for
 action (shown below: its arm equals this file's bump-14 tables cell for cell),
@@ -9593,7 +9733,7 @@ pooled +18 sits well inside +33. The out-of-sample half (seeds 301..600,
 sample it reads **43/300 [10.8, 18.8] in BOTH arms** - the classic game
 itself clears the 10% trip line on those seeds, so an absolute reading of
 line 3 would fail on bump 14. That is why the line was pre-registered as a
-paired judgement, and it is on the watch list (Bump-15 additions).
+paired judgement, and it is on the watch list (Block E additions).
 
 ### Line 4 - fanatic, 100 seeds per build
 
@@ -9637,7 +9777,7 @@ Out of sample, magpie 13 -> 16 over 1800 runs (information only).
 The optimizer column has no pre-registered limit. Per loadout it reads tender
 60 -> 75 (1.25x, the prototype's own figure), tidewarden 66 -> 71,
 flarekeeper 56 -> 72, spiker 64 -> 70, lasher 64 -> 68, skyrunner 62 -> 67.
-On the watch list (Bump-15 additions).
+On the watch list (Block E additions).
 
 ### Lines 1, 7 and 8 - the playtest gate, deeproot and sprout
 
@@ -9727,7 +9867,9 @@ single skyrunner timeout; fanatic 204/800 with turtle 2/100; and the playtest
 gate's magpie 3/30, optimizer 16/30 [36, 70] and deeproot 26/30 [70, 95]. That
 is the measured basis of the comparison rule above, and it agrees with the
 code-level proof: the RefGame floor-entry pins `RNG_FLOOR_ENTRY_BUMP14` hold
-byte for byte under `fixed_shift` (`tests/test_economy.gd`).
+byte for byte under `fixed_shift` (`tests/test_economy.gd`). [On the merged
+tree that table is `RNG_FLOOR_ENTRY_BUMP16`, which holds under `fixed_shift`
+the same way; `RNG_FLOOR_ENTRY_BUMP14` no longer exists.]
 
 ### Attribution and composition (prototype numbers)
 
@@ -9773,3 +9915,265 @@ seeds 1..100: 11/100 -> 10/100; out of sample, seeds 101..200: 4/100 ->
 `encounters` list that leaves every floor-1 layout identical (rule R2 keeps
 the headcount), and a first-sighting callout is the follow-up that matters
 most if they stay.
+
+## 2026-11-23 - Block E on the merged sim (SIM_VERSION 17)
+
+**Status: all ten pre-registered lines PASS on the merged sim; Block E stays
+default-on.** No lever was applied and nothing was re-tuned. This is the
+2026-11-22 entry's measurement re-run line for line after the merge put
+Block E on top of main's bump 15 ("tending by any means") and bump 16 ("the
+floor-2 clock") and shipped it as SIM_VERSION 17. The lines, their limits
+and the runners are the 2026-11-22 entry's; only the base game moved.
+
+**The arms.** Default is `{}` (`{loadout: id}` per `sweep_encounters` cell),
+control is `{mutators: ["fixed_shift"]}`. **On this tree the control is
+`fixed_shift` = bump 16, NOT bump 14**: main's floor-2 clock and the tending
+payoffs run in BOTH arms, so the paired delta still isolates Block E alone,
+but every control number below is a bump-16 number. (The judge summary these
+tables were transcribed from still labels the control "fixed_shift = v14";
+that label is a leftover of the branch measurement and is wrong on this
+tree.) What shows the control is bump 16: every one of bump 16's 97 records
+replays under `fixed_shift` on this tree event for event (CLAUDE.md, the
+SIM_VERSION note); the RefGame floor-entry pins `RNG_FLOOR_ENTRY_BUMP16`
+hold under it byte for byte (`tests/test_economy.gd`); and the two
+whole-run counts the 2026-11-09 entry records at seeds this run also
+covered read the same on the control arm - sprout 2/30 (the 30-seed
+playtest that tripped the old gate) and sprout 3/100. Nothing else recorded
+at bump 16 is comparable cell for cell - its optimizer 55/100 is seeds
+1..100 of a cell run here over 1..300, its 200-seed sprout and magpie
+readings were not re-run, and no per-loadout table was ever recorded at
+bump 16 - so this entry makes no cell-for-cell claim against bump 16. (The
+tending entry's deeproot 27/30 is a bump-15 reading, before the floor-2
+clock; the control's 26/30 below is not compared with it.)
+
+**Instrument.** Instrument v2. Every number below was taken on a frozen copy
+of the merged tree (44 jobs, four at a time, 2026-11-22T23:26Z to
+2026-11-23T00:28Z) whose `sim/`, `bots/`, `meta/`, `tests/tally.gd`,
+`tests/sweep_encounters.gd`, `tests/playtest.gd`, `tests/measure_fanatic.gd`,
+`tests/sweep_tiers.gd` and `tests/sweep_lib.gd` are byte-identical to the
+merge as staged (checked with `diff -r` when this entry was written). Against
+the 2026-11-22 measurement the instrument differs in ONE place:
+`tests/playtest.gd`'s sprout gate is main's re-derived Wilson line
+(`SPROUT_MAX_LOWER` 0.05, 2026-11-09) instead of the raw "<= 1 win per 30"
+count, so lines 1 and 8 judge "wins rare" on the Wilson line.
+`tests/tally.gd` and `tests/sweep_encounters.gd` differ only in comments, and
+`bots/` and `tests/measure_fanatic.gd` not at all. Each arm ran in its own
+process.
+
+**Measurement discipline.** These are post-instrument-v2 numbers on a
+different base game (bump 16) from the 2026-11-22 entry's (bump 14). The two
+entries are never mixed in one comparison except as their paired deltas (the
+last section below); a control count here is not compared with a control
+count there.
+
+Headers, verbatim (the `sweep_encounters` header repeats per loadout and arm,
+with the `loadouts` and `arms` fields naming the cell; the runners print the
+config, not the base game, so they read as the 2026-11-22 headers do):
+
+    === sweep_encounters | bot optimizer | seeds 1..300 (300) | loadouts tender | arms control (control = {mutators: ["fixed_shift"]}) | instrument v2 ===
+    === sweep_encounters | bot magpie | seeds 1..300 (300) | loadouts tender | arms control (control = {mutators: ["fixed_shift"]}) | instrument v2 ===
+    === sweep_encounters | bot magpie | seeds 301..600 (300) | loadouts tender | arms control (control = {mutators: ["fixed_shift"]}) | instrument v2 ===
+    === measure_fanatic | bot fanatic | config {  } | seeds 1..100 (100) ===
+    === measure_fanatic | bot fanatic | config { "mutators": ["fixed_shift"] } | seeds 1..100 (100) ===
+    === playtest | bot wanderer,sprout,magpie,fanatic,optimizer,deeproot | config {  } | seeds 1..30 (30) ===
+    === playtest | bot wanderer,sprout,magpie,fanatic,optimizer,deeproot | config { "mutators": ["fixed_shift"] } | seeds 1..30 (30) ===
+    === playtest | bot sprout | config {  } | seeds 1..100 (100) ===
+    === playtest | bot sprout | config { "mutators": ["fixed_shift"] } | seeds 1..100 (100) ===
+    === sweep_tiers | bot optimizer | config {  } | seeds 1..35 (35) ===
+    === sweep_encounters | bot optimizer | seeds 1..60 (60) | loadouts tender | arms both (control = {mutators: ["fixed_shift"]}) | instrument v2 ===
+
+Wilson 95% intervals throughout; a per-cell interval is the runner's own
+(`ENC_CELL` / `PT_PERSONA` `lo`/`hi` to one decimal, or the human line's
+whole percents where that is all the runner prints). A pooled interval is
+Wilson over the summed cells, computed for this entry from the cell counts.
+
+### The ten pre-registered lines
+
+| # | line, as stated before the 2026-11-22 measurement | merged result | verdict |
+|---|------|--------|---------|
+| 1 | `tests/playtest.gd` 30 seeds, default config: exit 0 (control run beside it) | `gate: all PASS`, exit 0; control exit 0 | **PASS** |
+| 2 | optimizer 300 seeds x 6 loadouts: every default cell's CI overlaps 35-65; pooled \|delta\| <= 60/1800 | six of six overlap; pooled 862 -> 889, **+27** | **PASS** |
+| 3 | magpie 300 x 6, judged paired: pooled delta <= +33/1800; no default cell's lower bound > 10% unless its control's is too | pooled 157 -> 148, **-9**; highest default lower bound spiker 9.7 (control 9.7) | **PASS** |
+| 4 | fanatic 100 seeds x 8 builds: every build > 0 | minimum turtle 1/100; total 198 -> 236 | **PASS** |
+| 5 | timeouts: optimizer and deeproot 0; magpie <= control + 5 | optimizer 0 (control 1); deeproot 0; magpie 18 -> 14 | **PASS** |
+| 6 | stall canary, magpie and turtle stall floors <= 1.25x control | magpie 1328 -> 1342 (1.01x); turtle 43 -> 44 (1.02x) | **PASS** |
+| 7 | deeproot 30 seeds: CI overlaps 70-90 | 25/30 [66.4, 92.7] | **PASS** |
+| 8 | sprout 100 seeds: average depth >= 3.5, wins rare | 2/100 [0.6, 7.0], depth 3.88, gate exit 0 | **PASS** |
+| 9 | `sweep_tiers` 35 seeds: every tier's upper bound >= 10% | lowest tier 7, 7/35 [10%, 36%]; exit 0 | **PASS** |
+| 10 | tally `variety:` line, optimizer 60 seeds: >= 4 distinct packs met on every floor 1-6; floor-1 non-classic share in [0.55, 0.78] | 4/5/5/5/5/5 distinct; share 0.67 | **PASS** |
+
+### Line 2 - optimizer, 300 seeds per loadout
+
+| loadout | control (`fixed_shift` = bump 16) | default | delta |
+|---------|-----------------------------------|---------|-------|
+| tender | 166/300 [49.7, 60.9] | 159/300 [47.3, 58.6] | -7 |
+| tidewarden | 126/300 [36.6, 47.7] | 142/300 [41.8, 53.0] | +16 |
+| flarekeeper | 143/300 [42.1, 53.3] | 142/300 [41.8, 53.0] | -1 |
+| spiker | 173/300 [52.0, 63.1] | 170/300 [51.0, 62.2] | -3 |
+| lasher | 135/300 [39.5, 50.7] | 135/300 [39.5, 50.7] | 0 |
+| skyrunner | 119/300 [34.3, 45.3] | 141/300 [41.4, 52.7] | +22 |
+| **pooled** | **862/1800 = 47.9% [45.6, 50.2]** | **889/1800 = 49.4% [47.1, 51.7]** | **+27** |
+
+Every default cell overlaps 35-65 and every pair of intervals overlaps; the
+pooled move is +27 wins in 1800 against a stated limit of 60. As before the
+port, the two kits that gain are tidewarden and skyrunner (skyrunner +22 is
+the largest single-cell move, its intervals still overlapping); the other
+four sit within -7..0.
+
+### Line 3 - magpie canary, 300 seeds per loadout, paired
+
+| loadout | control, seeds 1..300 | default, seeds 1..300 | delta | control, 301..600 | default, 301..600 | delta |
+|---------|-----------------------|-----------------------|-------|-------------------|-------------------|-------|
+| tender | 29/300 [6.8, 13.5] | 24/300 [5.4, 11.6] | -5 | 28/300 [6.5, 13.2] | 31/300 [7.4, 14.3] | +3 |
+| tidewarden | 20/300 [4.4, 10.1] | 17/300 [3.6, 8.9] | -3 | 20/300 [4.4, 10.1] | 22/300 [4.9, 10.9] | +2 |
+| flarekeeper | 26/300 [6.0, 12.4] | 30/300 [7.1, 13.9] | +4 | 22/300 [4.9, 10.9] | **37/300 [9.1, 16.5]** | **+15** |
+| spiker | **39/300 [9.7, 17.3]** | **39/300 [9.7, 17.3]** | 0 | **42/300 [10.5, 18.4]** | 40/300 [9.9, 17.6] | -2 |
+| lasher | 20/300 [4.4, 10.1] | 16/300 [3.3, 8.5] | -4 | 21/300 [4.6, 10.5] | 20/300 [4.4, 10.1] | -1 |
+| skyrunner | 23/300 [5.2, 11.2] | 22/300 [4.9, 10.9] | -1 | 17/300 [3.6, 8.9] | 18/300 [3.8, 9.3] | +1 |
+| **pooled** | **157/1800 = 8.7% [7.5, 10.1]** | **148/1800 = 8.2% [7.0, 9.6]** | **-9** | **150/1800 = 8.3% [7.1, 9.7]** | **168/1800 = 9.3% [8.1, 10.8]** | **+18** |
+
+In sample no default cell's lower bound clears 10% (spiker is the highest at
+9.7, exactly its control's), so line 3 passes before the paired clause is
+consulted, and the pooled -9 sits well inside +33. The out-of-sample half
+(seeds 301..600, `ENC_GATE=0`, information only) reads +18, inside the
+in-sample limit, and 15 of the 18 are flarekeeper (22 -> 37; in sample that
+cell reads 26 -> 30). **Spiker is still the pre-existing edge, not a Block E
+effect**: in sample both arms read 39/300 with a lower bound of 9.7, AT the
+10% trip line, and out of sample it is the CONTROL that clears the line
+(42/300 [10.5, 18.4]) while the default does not (40/300 [9.9, 17.6]). An
+absolute reading of line 3 would fail the bump-16 classic game itself, which
+is why the line is judged paired.
+
+### Line 4 - fanatic, 100 seeds per build
+
+| build | control (`fixed_shift`) | default |
+|-------|-------------------------|---------|
+| pyro | 24/100 [17%, 33%] | 24/100 [17%, 33%] |
+| gardener | 41/100 [32%, 51%] | 49/100 [39%, 59%] |
+| turtle | 3/100 [1%, 8%] | **1/100 [0%, 5%]** |
+| shover | 25/100 [18%, 34%] | 20/100 [13%, 29%] |
+| pyro_nolance | 43/100 [34%, 53%] | 58/100 [48%, 67%] |
+| shover_nolance | 22/100 [15%, 31%] | 28/100 [20%, 37%] |
+| ember | 33/100 [25%, 43%] | 48/100 [38%, 58%] |
+| anchor | 7/100 [3%, 14%] | 8/100 [4%, 15%] |
+| **total** | **198/800 = 24.8% [21.9, 27.9]** | **236/800 = 29.5% [26.4, 32.8]** |
+
+0 timeouts in either arm. Every build stays above zero; the turtle reads
+1/100 on the default game again (control 3/100), passing the hard target
+with no margin - the designed anti-pattern (2026-09-08b), read, not tuned.
+The total rises 198 -> 236 (soft target 20-40%: both arms inside); the
+largest moves are pyro_nolance +15, ember +15, gardener +8 and
+shover_nolance +6, against shover -5 and turtle -2 - the same builds, in the
+same directions, as before the port.
+
+### Line 5 - timeouts
+
+| persona | control | default |
+|---------|---------|---------|
+| optimizer, 1800 runs | 1 (tidewarden) | **0** |
+| deeproot, 30 seeds (playtest) | 0 | 0 |
+| magpie, 1800 runs | 18 (spiker 6, tender 3, flarekeeper 3, lasher 2, skyrunner 2, tidewarden 2) | 14 (spiker 4, lasher 4, tidewarden 3, flarekeeper 2, tender 1) |
+
+Out of sample, magpie 17 -> 21 over 1800 runs (information only). Sprout at
+100 seeds: control 2, default 0. Fanatic 0 in both arms.
+
+### Line 6 - stall floors (tally `stall_floors`, summed over the runs)
+
+| persona | control | default | ratio |
+|---------|---------|---------|-------|
+| magpie, 1800 runs | 1328 | 1342 | 1.01x |
+| turtle (fanatic), 100 runs | 43 | 44 | 1.02x |
+| optimizer, 1800 runs (no limit; watch) | 379 | 426 | 1.12x |
+
+The optimizer column has no pre-registered limit. Per loadout it reads
+tender 58 -> 73 (1.26x), tidewarden 69 -> 70, flarekeeper 62 -> 77 (1.24x),
+spiker 61 -> 70, lasher 64 -> 71, skyrunner 65 -> 65. On the watch list
+(Block E additions).
+
+### Lines 1, 7 and 8 - the playtest gate, deeproot and sprout
+
+`tests/playtest.gd`, 30 seeds, both arms (`PT_PERSONA` lines):
+
+| persona | control (`fixed_shift` = bump 16) | default |
+|---------|-----------------------------------|---------|
+| wanderer | 0/30 [0.0, 11.4], depth 1.00, stall 20 | 0/30 [0.0, 11.4], depth 1.00, stall 22 |
+| sprout | 2/30 [1.8, 21.3], depth 4.03, stall 13 | 1/30 [0.6, 16.7], depth 3.60, stall 19 |
+| magpie | 3/30 [3.5, 25.6], depth 3.57, stall 26 | 1/30 [0.6, 16.7], depth 3.40, stall 16 |
+| fanatic | 7/30 [11.8, 40.9], depth 5.47, stall 6 | 3/30 [3.5, 25.6], depth 5.07, stall 8 |
+| optimizer | 17/30 [39.2, 72.6], depth 6.43, stall 5 | 16/30 [36.1, 69.8], depth 6.37, stall 7 |
+| deeproot | 26/30 [70.3, 94.7], depth 6.83, stall 3 | 25/30 [66.4, 92.7], depth 6.77, stall 5 |
+
+0 timeouts, 0 illegal actions and 0 error events in every cell; `gate: all
+PASS` and exit 0 in both arms. The 30-seed fanatic cell (a random build per
+seed) reads 7 -> 3; the 100-seed per-build table above is the fanatic number
+and reads the other way, as it did before the port. Sprout's 30-seed depth
+reads 4.03 -> 3.60, but at 100 seeds the two arms are level (below).
+
+Sprout, 100 seeds: default **2/100 [0.6, 7.0]**, depth 3.88, 0 timeouts,
+stall 57; control 3/100 [1.0, 8.5], depth 3.89, 2 timeouts, stall 49. Both
+gate runs exit 0 (`PASS sprout wins rare (<= 5%)`, main's Wilson line).
+
+### Line 9 - tiers, 35 seeds (default config)
+
+| tier | wins | CI |
+|------|------|----|
+| 0 base | 20/35 | [41%, 72%] |
+| 1 Thicker Smog | 20/35 | [41%, 72%] |
+| 2 Busy Vents | 20/35 | [41%, 72%] |
+| 3 Rich Veins | 10/35 | [16%, 45%] |
+| 4 Dim Skies | 11/35 | [19%, 48%] |
+| 5 Gouging Prices | 14/35 | [26%, 56%] |
+| 6 Hardened Plating | 13/35 | [23%, 54%] |
+| 7 Sharpened Drills | 7/35 | [10%, 36%] |
+| 8 Overcharged Core | 10/35 | [16%, 45%] |
+
+0 timeouts, exit 0; every upper bound is at or above 10% (the lowest, tier
+7, by 26 points). Only the default arm was run, as on 2026-11-22. Rich Veins
+reads 10/35 again, the same dip the 2026-11-22 entry read as noise.
+
+### Line 10 - variety (tally `variety:` line, optimizer, tender, 60 seeds)
+
+    ENC_VARIETY arm=control variety: packs met/floor f1 1/60 f2 1/60 f3 1/60 f4 1/59 f5 1/54 f6 1/48 (distinct ids/visits)  f1 non-classic 0.00  vents 735 {drill_bot 99%, coal_golem 1%}  kinds met/run 12.15
+    ENC_VARIETY arm=default variety: packs met/floor f1 4/60 f2 5/60 f3 5/60 f4 5/60 f5 5/54 f6 5/49 (distinct ids/visits)  f1 non-classic 0.67  vents 772 {drill_bot 59%, coal_golem 23%, cinder_mite 9%, rust_hound 9%}  kinds met/run 11.87
+
+Every pack on every floor is met (4 of 4 on floor 1, 5 of 5 on floors 2-6).
+Floor 1's non-classic share is 0.67 on the visits; the spawn-time probe over
+the seed draw alone (`Game.new(s).encounter_index(1) != 0`) reads 40/60 =
+0.667 on seeds 1..60 and 199/300 = 0.663 on seeds 1..300, against the
+weights' 6/9 - the same counts as before the port, as they must be: the draw
+reads only the seed and floor 1's weights, which the merge did not touch.
+Distinct kinds met per run fall slightly again, 12.15 -> 11.87. Same 60
+seeds: control 32/60 [40.9, 65.4], default 31/60 [39.3, 63.8] (13 seeds won
+only by the default arm, 14 only by the control, sign p = 1.00).
+
+### Watch items
+
+- **Optimizer stall floors 379 -> 426 (1.12x)**, tender 1.26x and
+  flarekeeper 1.24x. No limit; same size as before the port (1.14x).
+- **Magpie on spiker, 39/300, lower bound 9.7** against the 10% trip line, in
+  BOTH arms; out of sample the control clears it and the default does not.
+  Judged paired, it passes; read absolutely, the classic game fails.
+- **Magpie out of sample +18** (150 -> 168 of 1800), information only and
+  inside the in-sample limit, with flarekeeper carrying 15 of it (22 -> 37).
+  The next magpie reading looks there first.
+- **Turtle 1/100** on the default game: "every build above zero" with no
+  margin, as before the port.
+
+The watch list's Block E section carries all four, with the pre-port readings
+beside them.
+
+### Against the 2026-11-22 reading (paired deltas only)
+
+The pre-port measurement (bump 15 on the branch against bump 14) read
+optimizer pooled **858 -> 853, -5**, magpie pooled **141 -> 159, +18** in
+sample and **+7** out of sample, and fanatic total 204 -> 235. On the merged
+sim (bump 17 against bump 16) the same lines read optimizer **862 -> 889,
++27**, magpie **157 -> 148, -9** in sample and **+18** out of sample, and
+fanatic 198 -> 236. Every reading sits inside its pre-registered limit in
+both entries (optimizer |delta| <= 60, magpie <= +33). The optimizer and
+in-sample magpie deltas moved in opposite directions between the two
+readings, and the kits that move are the same ones (tidewarden and skyrunner
+gain on the optimizer, the fanatic gains come from pyro_nolance, ember and
+gardener), so this is read as two samples of one small effect on two base
+games, not as an interaction between Block E and main's floor-2 clock or
+tending; no test of the difference between the two deltas was run.

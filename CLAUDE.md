@@ -150,7 +150,7 @@ architecture below is designed to bend rather than block.
     every new query pure (rng.state and `state_hash`), `_side_rng(tag)` ==
     `_side_rng_at(floor_num, tag)` == `hash([seed, floor, tag])` on floor_num
     1..6 and `_side_rng_at(m, tag)` for every m (a wrapper that pins the floor
-    fails), pack 0 against the frozen pre-v15 `CLASSIC_ROSTERS` (key order
+    fails), pack 0 against the frozen pre-v17 `CLASSIC_ROSTERS` (key order
     included) and `fixed_shift` fielding it, the weights over 2000 seeds
     (every pack within 4 sigma), tier `extra_enemy` and overtime applied to
     the DRAWN crew, the fixed floor (no pack, no `encounter` key), a generated
@@ -164,11 +164,11 @@ architecture below is designed to bend rather than block.
     the cap, offer exclusion, closed slots, rng-state independence), quota
     re-clamp, damage attribution, and the D5 resonances (no main-rng draw, the
     graft + resonance stat sum, a graft mod shadowing a resonance mod); since
-    Block E the RefGame floor-entry pins `RNG_FLOOR_ENTRY_BUMP14` run under
-    `fixed_shift` and hold byte for byte (the classic path gained no draw),
-    `RNG_FLOOR_ENTRY_BUMP15` pins the default config, and section q holds
-    `Game.new`'s rng.state equal to `RNG_STATE_BUMP8` with AND without
-    `fixed_shift` (seeds 1..50)
+    Block E (bump 17) the RefGame floor-entry pins `RNG_FLOOR_ENTRY_BUMP16`
+    (bump 16's table, kept verbatim) run under `fixed_shift` and hold byte for
+    byte (the classic path gained no draw), `RNG_FLOOR_ENTRY_BUMP17` pins the
+    default config, and section q holds `Game.new`'s rng.state equal to
+    `RNG_STATE_BUMP8` with AND without `fixed_shift` (seeds 1..50)
   - `godot --headless --path . --script tests/test_regressions.gd` — replays every
     `tests/regressions/*.json` (seed, config, actions) pair: illegal/error events,
     outcome, expected event patterns; `REGRESS_STRICT=1` also checks the state
@@ -219,59 +219,81 @@ architecture below is designed to bend rather than block.
     both keys, nothing on a first run's DEEPEST YET or an empty ref),
     `pings_fired_now` and `objective_hint`
   - `godot --headless --path . --script tests/test_shell.gd` — shell smoke test
-    (the shell reads the sim, so a sim change can break it), plus the two
-    player-facing gates: `_check_card_text` holds every shipped description
-    to a readable size on the tightest shrine card, and `_check_cleanse_hint`
-    holds CLEANSE's refusal to the truth; `_check_resume_stats` holds a
-    resumed run's stats fold equal to an uninterrupted one, and every
-    shell it builds (`_bare_shell`, `_iso_shell`) keeps its career in a
-    scratch `profile_path`, its run save in a scratch `run_save_path` (the
-    shell's `_ready` restores, and may delete, a save it finds there), its
-    settings in a scratch `cfg_path` and its archived logs in a scratch
-    `runs_dir`, and the end checks the player's real cfg, profile, run save
-    and runs dir are untouched; the body runs from the first `_process`
-    frame under an `OS.add_logger` error counter (the test_draw gate), so a
-    SCRIPT ERROR anywhere is exit 1 - one that aborts the body itself fails
-    on the next frame instead of leaving the process idle;
-    `_check_names` holds the one names module (short and long source names,
-    articles, the floor title card) and `_check_feedback` the feedback layer:
-    callouts, the cleanse gain, kill weight, the boss shield, log names / xN,
-    sound picks and the chime, the vocabulary tripwire, and two bot-driven runs
-    through `_act` (no raw id and no line over 60 chars in the log, scanned
-    after EVERY step - the log keeps only `LOG_KEEP` lines, so a check at the
-    end never saw most of what the runs wrote);
+    (the shell reads the sim, so a sim change can break it), plus the
+    player-facing gates: `_check_card_text` holds every composed description
+    to >= 1.15% vh and <= 2 lines at every sheet geometry (shrine 1..8
+    offers, draft/drop, forge) and every `CARD_VIEWPORTS` shape (see the
+    choice-card bullet), `_check_cleanse_hint`
+    holds CLEANSE's refusal to the truth, `_check_tutorial_text` /
+    `_check_intro_text` / `_check_legend_text` hold the text budgets (no
+    walls of text), and `_check_camera` / `_check_camera_gestures` hold the
+    camera (the tender on screen at every step of real bot play, never a view
+    past the floor's edge, a room that fits framed whole, a pinch or a drag
+    never read as a tap); `_check_back` / `_check_aim_cancel` /
+    `_check_modal_dpad`, `_check_aim_preview` and `_check_haptics` are the
+    Back, aim-preview and haptics bullets' gates below. Every shell it builds
+    (`_bare_shell`, `_iso_shell`) keeps its career in a scratch
+    `profile_path`, its run save in a scratch `run_save_path` (the shell's
+    `_ready` restores, and may delete, a save it finds there), its settings
+    in a scratch `cfg_path` and its archived logs in a scratch `runs_dir`,
+    and the end checks the player's real cfg, profile, run save and runs dir
+    are untouched; the body runs from the first `_process` frame under an
+    `OS.add_logger` error counter (the test_draw gate), so a SCRIPT ERROR
+    anywhere is exit 1 - one that aborts the body itself fails on the next
+    frame instead of leaving the process idle. `_check_resume_stats` holds a
+    resumed run's stats fold equal to an uninterrupted one;
+    `_check_tier_clamp` a profile's out-of-table `unlocked_tier` to a whole
+    menu; `_check_names` the one names module (short and long source names,
+    articles, the floor title card); `_check_feedback` the feedback layer as
+    DATA (callouts feeding the chime, callouts and log built on one claim
+    table, the reel's cleanse
+    number being the GAIN, a kill landed by the reel - its `die` track, its
+    ghost, the kill sound - the ctx words, the boss shield, log names / xN,
+    sound picks worst-first and the chime, the vocabulary tripwire, and two
+    bot-driven runs through `_act` with no raw id and no line over 60 chars
+    in the log, scanned after EVERY step - the log keeps only `LOG_KEEP`
+    lines, so a check at the end never saw most of what the runs wrote);
     `_check_danger_readouts` the danger layer's verdicts and words (the HP
-    rule table, the SKIES chips and bar alert, every context line and guard
-    flash, the cues) plus its two gates - the FIT gate (the worst INCOMING line,
-    built from the two longest `Content.ENEMIES` names, the seven guard
-    flashes and the NEXT TURN choke line with each of its three non-descend
-    remedies draw at >= `CARD_MIN_VH` in the
-    context line's box at every `CARD_VIEWPORTS` shape) and the LAYOUT gate (`_sky_row_layout` with chips
-    60/12/9: numbers >= `CARD_MIN_VH`, chips end by 0.55vw, the config line
-    keeps >= 0.2vw, icon tops clear the bar) - and the cue reaching the banner
-    queue at danger priority with boss > warn > hurt; `_check_lethal_guard`
-    the guard through the real input paths; `_check_intent_badges` the badge
-    tables against `tests/test_content.gd` `INTENT_TYPES`, `Art.ART`, the
-    LEGEND and `Content.STATUSES`, then badges, tile numbers, tethers, vent
-    marks, gum slots and the stoker tooltip line on live states;
-    `_check_new_badges` / `_check_menu_layout` / `_check_daily_layout` the
-    career menu (NEW / WON badges, every label >= 1.5% vh) and the DAILY sheet
-    (lines, cards and its button row at every viewport), and
+    rule table on the HELD hp, the SKIES chips and bar alert, every context
+    line and guard flash, the toast's slot in the chain, the cues and their
+    hysteresis, a killing blow holding every readout) plus its two gates -
+    the FIT gate (the worst `Incoming` line, built from the two longest
+    `Content.ENEMIES` names, every guard flash - the winning and per-boss
+    named-target ones included - and the NEXT TURN choke line with each of
+    its three non-descend remedies draw at >= `CARD_MIN_VH` in the context
+    line's 0.88vw box at every `CARD_VIEWPORTS` shape) and the LAYOUT gate
+    (`_sky_row_layout` with chips 60/12/9: numbers >= `CARD_MIN_VH`, the
+    first chip one label gap after the measured "SKIES", chips end by
+    0.55vw, the config line keeps >= 0.2vw, icon tops clear the bar) - and
+    the cue reaching the banner queue at danger priority with boss > warn >
+    hurt; `_check_lethal_guard` the guard through the real input paths;
+    `_check_intent_badges` the badge tables against `tests/test_content.gd`
+    `INTENT_TYPES`, `Art.ART`, the LEGEND and `Content.STATUSES`, then
+    badges, tile numbers, tethers, vent marks, gum slots and the stoker
+    tooltip line on live states; `_check_new_badges` / `_check_legacy_notice`
+    / `_check_menu_layout` / `_check_daily_layout` the career menu (NEW / WON
+    badges, the legacy notice said once, every label >= 1.5% vh) and the
+    DAILY sheet (lines, cards and its button row at every viewport), and
     `_check_card_text` holds the DAILY cards' names and descriptions to
-    `CARD_MIN_VH` at the 0.105vh geometry; `_check_run_end` the end beat and
-    lock through a real smog death (banner, bursts, cleared banners, every
-    tap / key / button ignored but ESC, no tap-anywhere, RETRY SEED and NEW
-    RUN, the Drill Bot cause in words, "1 more HP would have saved you" on
-    one drill bot's exact kill and not on two, where 3 HP still dies) plus
-    `shell/run_end.gd`'s pinned
-    strings, `_check_over_facts` the sheet against real records (total turns,
-    NEW BEST and DEEPEST YET from the bests before the record, a first win's
+    `CARD_MIN_VH` at the 0.105vh geometry; `_check_tutorial_keys` R
+    (restarts the tutorial) and N (nothing) mid-tutorial;
+    `_check_career_sheet` / `_check_career_layout` the CAREER sheet (career
+    part 2); `_check_run_end` the end beat and lock through a real
+    smog death at Animations off (`YOU WILTED` over `lost in the smog`,
+    cleared banners, every tap / key / button ignored but ESC, no
+    tap-anywhere, RETRY SEED and NEW RUN, the Drill Bot cause in words, "1
+    more HP would have saved you" on one drill bot's exact kill and not on
+    two, where 3 HP still dies) plus `shell/run_end.gd`'s pinned strings,
+    `_check_over_facts` the sheet against real records (total turns, NEW
+    BEST and DEEPEST YET from the bests before the record, a first win's
     unlocks and NEXT, the daily's three buttons, a tutorial death) and
     `_check_over_text` the over-sheet geometry gate (a worst and a typical
     sheet at every `CARD_VIEWPORTS` shape: rows >= `CARD_MIN_VH` and <= 2
     lines, buttons legible, apart and inside 0.955vh, nothing with prio <= 13
-    dropped in the worst case and nothing in the typical one, and the beat's
-    lines legible for every cause the banner can name); `_check_unlock_pager`
+    dropped in the worst case and nothing in the typical one, the beat's
+    lines legible for every cause the banner can name, and the beat banner
+    off the tender's tile - never over it, inside the map band, centred when
+    there is no tile to avoid); `_check_unlock_pager`
     a first win's pager (`_run_unlocks` == `last_report.unlocks`, tier first;
     a card per id, named in words with a badge; "Skyrunner (needs Aeolian)";
     "opens Skyrunner"; the "+n more · tap for all" row; the unlock rows' tap
@@ -283,10 +305,11 @@ architecture below is designed to bend rather than block.
     and DEEPEST YET once each at career priority, the ref's best floor ==
     `bests_snapshot`'s), the same log resumed (nothing re-fires) and no ref
     in the tutorial or a daily, and `_check_objective_line` the objective
-    line's words (the hint, the shortened quota, the pre-hint lines exactly,
-    `_context_msg` ending in it) and its fit gate (every shipped hint kept at
-    >= `OBJECTIVE_MIN_VH` beside the table's longest quota at every viewport;
-    a hint too long to fit is dropped); `_check_card_text` also sweeps every
+    line's words (the hint, the shortened goal, the bare goal sentence
+    exactly without a ref, `_context_msg` ending in it) and its fit gate (every shipped hint
+    kept at >= `OBJECTIVE_MIN_VH` beside the table's longest quota at every
+    viewport; a hint too long to fit is dropped and the goal gets its whole
+    sentence back); `_check_card_text` also sweeps every
     `_unlock_cards` string (every milestone, tier and feat, three careers);
     `_check_encounters` the Block E shell: the title card's crew line on
     generated floors and none on the tutorial or the boss floor, the floor
@@ -303,36 +326,92 @@ architecture below is designed to bend rather than block.
     Furnace's phase-2 words announcing its golem only when the step's
     `reinforcement` brought one, and fit gates for every crew's
     log line, title-card line and vent line (the reinforcement line's kind,
-    its tile fallback and "a machine" are in the body's section 8c)
+    its tile fallback and "a machine" are in the body's section 8c). The
+    merge's own gates pin the rules the feedback, danger and end-of-run
+    bullets state: `_check_tele_hold` (the held telegraph, Animations off
+    included), `_check_over_reel` (the death reel inside the beat at full and
+    quick, the skip, the wilted tender gone, a win's bursts and the winner
+    still drawn), `_check_banner_beats` (banners, the choke cue and the pings
+    on their beats, the floor-card hold, the RESUME drop),
+    `_check_reel_words` (only the three ctx words, two rows over a rising
+    float, `_reel_word` the only float builder; the streak flame on the
+    death beat), `_check_toast` (`TOAST_EVENTS` in the log's words,
+    `COMBO_TOAST`, the latest beat winning), `_check_one_clock`
+    (`Time.get_ticks_msec` only inside `_now()`, `_reset_reel` clearing the
+    floor-card clock), `_check_settings_rows` (the seven rows inside the
+    panel at every viewport), `_check_haptics_paths` (one
+    `Input.vibrate_handheld` site, one counted `_vibrate` per step on both
+    `_act` branches) and `_check_idle_rate` (the SKIES pulse at the idle
+    rate, low HP every frame)
   - `godot --headless --path . --script tests/test_draw.gd` — the draw smoke
     test, and the ONLY test that runs the shell's `_draw` code: it hosts
     `shell/main.gd` in a `SubViewport` (`UPDATE_ALWAYS`) at the four named
     shapes 1080x2400 / 720x1600 / 1440x3200 / 1920x1080 plus every
-    `CARD_VIEWPORTS` shape, and drives real frames through the menu and
-    settings, the career menu (every badge, the legacy notice) and the DAILY
-    sheet unplayed and finished, tutorial steps, an optimizer game through `_act` (300 actions on
-    the first shape, 90 on the rest) with tooltips raised on every enemy, vent
-    and the tender (each tip raised before the next action and required to
-    name the enemy or the tender it was aimed at), a lethal state (vignette, outline, guard flash, escape
-    glow), a danger board (tether, gum slot, SKIES chips, vent countdown), a
-    floor title card naming its crew, a vent tooltip naming its release and a
-    Roots-covered vent's naming none (Block E), a
-    kill (ghost, streak flame), the boss floor (core shield ring up and down,
-    a phase banner), the shrine / forge / draft / drop sheets, the log, help
-    pages and intro, both game-over screens set from outside, and the end
-    of a run through the real path (the end beat after a smog death through
-    `_act`, and a first win's beat started by hand, the sheet fading in locked with no live
-    hotspot over the beat's own tint and veil, the live recorded sheet with its buttons and its unlock rows as
-    a live `unlocks` target, the unlock pager on its first and last page, a
-    career ping banner beside an objective line carrying the career hint, a
-    tutorial death's TUTORIAL AGAIN), each phase asserting the state its draw
-    code needs. The gate is an `OS.add_logger` `Logger` that
+    `CARD_VIEWPORTS` shape, with Animations at full so the step reel paints
+    under the gate on every step, and drives real frames through the menu
+    and settings, the career menu (every badge, the legacy notice), the DAILY
+    sheet unplayed and finished, the CAREER sheet (every tab, a middle and a
+    last page), tutorial steps, an optimizer game through `_act` (300 actions
+    on the first shape, 90 on the rest, a whole-floor peek every 25) with
+    tooltips raised on every enemy, vent and the tender the camera shows
+    (each tip raised before the next action and required to name what it was
+    aimed at), a lethal state (vignette, outline, guard flash, escape glow),
+    a danger board (tether, gum slot, SKIES chips), a floor title card naming
+    its crew and the two Block E vent tooltips (a release, a Roots-covered
+    vent's none), an enemy turn frozen mid-reel (the held telegraph), a
+    chained out-of-charge reel, Animations quick and off, two kills in one
+    turn (the reel's ghosts, the DOUBLE KILL word, the streak flame) and a
+    kill's flame still on the held count before its death beat, the camera's
+    peek and edge markers, direction and tile aims with their preview labels,
+    a toast, the boss floor (core shield ring up and down, a phase banner),
+    the shrine / forge (keep, scrap, variant) / draft / drop sheets, the log,
+    the four help pages and the intro, a career ping banner beside an
+    objective line carrying the career hint, and the end of a run: both
+    game-over sheets set from outside, a killing blow still on its way (every
+    danger readout held, the SKIES chips and the Iron Seed glow included), a
+    survived enemy turn mid-reel (chip, edges, outline and END on the turn
+    ended, not the next), a smog death's end beat through `_act` (frozen
+    mid-wilt with the death reel painting under the beat, then after the wilt
+    at full, at quick and after a skip tap, the tender not drawn), a first
+    win through `_act` (its gold bursts, and after its reel the winner still
+    drawn), the sheet fading in locked with no live hotspot over the beat's
+    tint and veil, the live recorded sheet with its unlock rows as a live
+    `unlocks` target, the unlock pager on its first and last page, and a
+    tutorial death's TUTORIAL AGAIN - each phase asserting the state its draw
+    code needs. A phase that needs one exact frame pins the shell's clock
+    (`clock_override`). The reel and danger gates read what `_draw_map`,
+    `_draw_status`, `_draw_controls` and `_draw_context` actually drew, never
+    the shell's reel state: `_reel_draws` and the clip kinds, layers and
+    words live on those frames (`_reel_kinds_drawn` / `_reel_layers_drawn` /
+    `_reel_words_drawn`, recorded by `_paint_reel`, the one call that paints
+    a layer: it hands the painter a recording visibility test, `_vis_noted`,
+    so a clip with a tile is recorded only once the painter itself asked
+    about that tile, and a tileless clip such as a beam by the mirror in
+    `_note_reel_draw`), `_flame_draws` / `_flame_value_drawn`, `_tele_drawn`
+    (the telegraph view a frame used, the held one mid-reel) with the
+    `_numbers_drawn` / `_tethers_drawn` / `_badges_drawn` drawn from it,
+    `_hp_chip_drawn` / `_hp_vignette_drawn`, `_outline_drawn`,
+    `_end_lethal_drawn`, `_glow_drawn`, `_sky_chips_drawn`, `_ctx_drawn`,
+    `_tender_drawn` and the end beat's `_beat_avoid_drawn` /
+    `_beat_lines_drawn`. The gate is an `OS.add_logger` `Logger` that
     counts every engine error, `push_error` and SCRIPT ERROR: any one exits 1,
     and a phase that logs one ends at once (the bot phase counts each action
     BEFORE taking it), so an error never makes a run crawl to its frame cap.
-    It writes nothing real (scratch `profile_path`, `run_save_path` and
-    `runs_dir`, all set before `_ready`; `SHELL_SEED` cleared, run save
-    closed, `_game_is_run` false, audio muted)
+    It writes nothing real (scratch `profile_path`, `run_save_path`,
+    `cfg_path` and `runs_dir`, all set before `_ready`; `SHELL_SEED`
+    cleared, run save closed, `_game_is_run` false, sound effects off)
+  - `godot --headless --path . --script tests/test_anim.gd` — the step
+    animations: every effect op and enemy intent type has a builder, and a
+    reel for every staged scene (`tests/anim_scenes.gd`: the tender's verbs,
+    every ability, every intent and its two failures, and the `x:` edge
+    cases) is pure, deterministic, lands every creature on its post tile,
+    paints finite geometry (the same at quick speed) and fits its budget;
+    plus the one-blow-per-machine attribution, the holds (telegraphs, HUD
+    chips, room dressing), the shell's playback and setting, and a soak over
+    real bot runs (`ANIM_SOAK_SEEDS`, default 4). ANY engine or script error
+    raised while planning or painting fails it. Its shells keep their career,
+    run save, settings and run archive on scratch paths (`_scratch_shell`,
+    deleted at the end), never the player's own
 - Bots live in one registry, `bots/roster.gd` (`Roster.names()/make(name, seed)`);
   every runner resolves persona names through it, and an unknown name fails
   loudly. `deeproot_rollout` is deeproot with rollout drafting (a separate
@@ -658,8 +737,9 @@ architecture below is designed to bend rather than block.
   `{t: "screened", id, intent}` and ends that enemy's action; `tests/tally.gd`
   counts it as `screened_by_intent` (the denial line prints `screened n/run`
   beside `enemy fire dmg n/run`), and the shell logs it as
-  "<Name>'s <intent> is lost in the smoke" and adds an `avoids: fire` line to
-  the enemy tooltip straight off the row. `tests/test_content.gd` lints `avoid`
+  "<Name>'s <tar|drain|grapple> is lost in the smoke" (the intent through
+  `Feedback.SCREEN_WORDS`) and adds an "avoids fire when it can" line to the
+  enemy tooltip straight off the row. `tests/test_content.gd` lints `avoid`
   entries against `Content.TERRAIN`, `ENEMY_AVOID_COST` as an int >= 1,
   `SCREENED_INTENTS` as a subset of the intent vocabulary and `screens` as a
   TERRAIN bool. Five demos, each of which a targeted mutation breaks in plain
@@ -727,7 +807,7 @@ architecture below is designed to bend rather than block.
   (`shop_reroll: true` — the D2 shrine reroll, held behind this switch after
   its measurement; unlocked at one win), plus the one Block E row:
   `fixed_shift` (`encounter_packs: false, biome_reinforce: false` — every
-  floor's classic crew and drill bots from every vent, i.e. bump 14 action for
+  floor's classic crew and drill bots from every vent, i.e. bump 16 action for
   action). It is the FIRST row with no `Content.MILESTONES` entry, so the
   career never unlocks it and the menu never offers it: it is the Block E
   measurement control and the one-default reversal switch, and giving it a
@@ -804,10 +884,10 @@ architecture below is designed to bend rather than block.
   `offers_by_slot` / `picks_by_slot` / `focus_drafts` and prints one `draft:`
   line (picks/offers by slot, focus drafts of drafts, skips); the shell's
   draft sheet labels each card with its role and its skip button reads
-  "skip - next draft: +1 affinity offer"; the sheet learns whether the ROLL
+  "SKIP" over "+1 FOCUS offer next floor"; the sheet learns whether the ROLL
   spent a focus from the `draft_offer` event (`_draft_focus_spent`), not from
-  the cards, so a focus slot that dealt nothing says "your skip found nothing
-  left to focus on" instead of reading as an ordinary draft. `tests/test_content.gd` lints
+  the cards, so a focus slot that dealt nothing heads the sheet "Nothing left
+  to focus on this time" instead of reading as an ordinary draft. `tests/test_content.gd` lints
   `DRAFT_SLOTS` (non-empty, entries from `DRAFT_SLOT_ROLES`) and
   `AFFINITY_IGNORED_TAGS` (a duplicate-free `Content.TAGS` subset) with a
   self-test fixture per bad shape (an ignored-tag list covering every
@@ -968,7 +1048,7 @@ architecture below is designed to bend rather than block.
   stores `"seed_bomb+"`, which `Profile._migrate_ability_id` maps to that
   base's FIRST variant (derived through `Content.variants_of`, never a rename
   table), so old history keeps satisfying that milestone.
-  **Demos** (`tests/regressions/d6_*.json`, nine): `d6_lance_pierce`,
+  **Demos** (`tests/regressions/d6_*.json`, ten): `d6_lance_pierce`,
   `d6_rake_pull_line`, `d6_drift_center`, `d6_smoulder_ignite_ttl`,
   `d6_palisade_kind` and `d6_palisade_ttl` are one per new op or key;
   `d6_forge_variant_a` and `d6_forge_variant_b` are the SAME seed, board and
@@ -976,9 +1056,14 @@ architecture below is designed to bend rather than block.
   kits (Noon Lance kills the smokestack for 4 and lights nothing past it,
   Piercing Lance deals 2 and lights the oil behind it); `d6_draft_parity`
   descends twice and is dealt `solar_lance+noon` from the upgrade slot
-  entering floor 2 and `moss_filter+prism` entering floor 3. Each fails in
-  plain (non-strict) mode under a targeted mutation of the rule it pins —
-  eleven mutations run and checked: restore the lance `break`; break out of
+  entering floor 2 and `moss_filter+prism` entering floor 3; and
+  `d6_rake_targeting` pins the `dir_enemy` target shape `vine_whip+rake` aims
+  by (the one legal direction holds a drill bot behind `blocks_beam` smoke,
+  in range: walking the line as a beam or short of the row's range makes the
+  cast illegal; the WIDENING revert to plain `dir` no record can catch, so
+  `tests/test_grammar.gd` `_check_d6_dir_enemy` pins that half). The first
+  nine each fail in plain (non-strict) mode under a targeted mutation of the
+  rule they pin — eleven mutations run and checked: restore the lance `break`; break out of
   the `pull_line` loop after the first enemy, or reverse its walk order;
   force `center` to "self"; ignore `ignite_ttl`; force `convert_radius`
   `kind` to "growth", or drop its stairs guard (which fails the record on an
@@ -1127,7 +1212,7 @@ architecture below is designed to bend rather than block.
   from before bump 14 is comparable to one after it — and neither is a two-row
   bump-14 column comparable to a one-row one, because the optimizer drop guard
   has one fewer row to protect and its drafting moved; BALANCE.md says so.
-- Encounter packs (Block E, bump 15; fun pass stage 9): spawn tables are
+- Encounter packs (Block E, bump 17; fun pass stage 9): spawn tables are
   data. Every non-boss `Content.FLOORS` row carries `encounters: [{id, name,
   w, enemies}]` (4-5 named crews per floor, 29 in all) instead of a fixed
   `enemies` dict, plus `reinforce: [kinds]`; the boss row is `encounters:
@@ -1135,7 +1220,7 @@ architecture below is designed to bend rather than block.
   `tests/test_content.gd` section 14 (`_lint_floors`), and R1 is pinned by
   `tests/test_grammar.gd` section e (`_check_e_classic` against the frozen
   `CLASSIC_ROSTERS`; the lint has no frozen roster to compare with). R1 pack
-  0 is the floor's pre-v15 roster byte for byte, key order included (the
+  0 is the floor's pre-v17 roster byte for byte, key order included (the
   classic crew); R2 every pack on a floor has the same headcount - mapgen's
   placement draws never read the kind, so equal headcounts keep every
   main-rng draw, every position and the elite index where they were and
@@ -1144,7 +1229,7 @@ architecture below is designed to bend rather than block.
   vary the mobile crew, never the objective (a prototype draft without this
   rule measured +90 / 1800 optimizer wins: the summoner is the floor's real
   threat); R4 floor 1 fields no `gums` kind (a gum intent draws from the main
-  rng, so `Game.new`'s rng.state stays bump 14's); R5 each pack's mobile
+  rng, so `Game.new`'s rng.state stays bump 16's); R5 each pack's mobile
   threat (EHP x DPT, every trait priced in the lint's `PACK_TRAIT_DPT`) is
   within 0.75-1.25x of pack 0 and the weighted mean within 0.90-1.10x - a
   guard against gross mistakes, not balance truth, which the gates decide;
@@ -1182,7 +1267,7 @@ architecture below is designed to bend rather than block.
   attribute packs and vents separately. The `fixed_shift` row sets both
   false and is the first mutator with no `Content.MILESTONES` entry - never
   offered, the measurement control and the one-default reversal - and it
-  replays bump 14 action for action (see the SIM_VERSION note).
+  replays bump 16 action for action (see the SIM_VERSION note).
   **Events** (hash-visible, part of the bump): the `floor` event gains
   `encounter` (the pack id) only when a pack was drawn, and both
   `reinforcement` sites (vents and the boss phase-2 golem) gain `kind`. No
@@ -1209,10 +1294,18 @@ architecture below is designed to bend rather than block.
   follows the weights: floor 1 fields a non-classic crew on 199 of seeds
   1..300 (0.663) at spawn time. **Shipped default-on** after every one of
   the ten pre-registered lines passed on the first run with no lever applied
-  (`docs/BALANCE.md` 2026-11-22); cross-bump comparisons go through the
-  `fixed_shift` arm, which reproduces the bump-14 tables cell for cell. Two
+  (`docs/BALANCE.md` 2026-11-22, measured on the branch against bump 14), and
+  all ten passed again, unchanged and with no lever, on the merged sim
+  against bump 16 (`docs/BALANCE.md` 2026-11-23). Cross-bump comparisons go
+  through the `fixed_shift` arm, which on this tree IS bump 16: every one of
+  bump 16's 97 records replays under it event for event (the SIM_VERSION
+  note), and the two bump-16 whole-run counts BALANCE.md records at seeds
+  the control arm also ran - sprout 2/30 and 3/100 - read the same on it.
+  No bump-16 per-loadout table was ever recorded, so there is no
+  cell-for-cell table claim against bump 16 (the 2026-11-22 entry's
+  cell-for-cell match is against bump 14, before the port). Two
   consequences outside the sim: daily scores are not comparable across the
-  bump (the same date fields different crews at 15 than at 14, and the frozen
+  bump (the same date fields different crews at 17 than at 16, and the frozen
   `DAILY_MUTATORS` never includes `fixed_shift`); and floor 1 can field
   spiked kinds (Hound and Handler, Golem Escort - 4 of the 9 weight) on the
   floor the tutorial teaches melee on, an owner taste call kept as shipped:
@@ -1309,7 +1402,8 @@ architecture below is designed to bend rather than block.
   board's key is `Profile.daily_key(seed)`, the one spelling `record_daily`
   writes and the game-over site reads (the game's own seed, never `seed_v`). The shell's `profile_path` (default `PROFILE_PATH`)
   is where the career is read and saved; tests set it before `_ready`.
-- The end of a run (fun pass, stage 6): words live in `shell/run_end.gd`
+- The end of a run (fun pass, stage 6; merged with the step reel's death
+  reel): words live in `shell/run_end.gd`
   (static, no Node, no font: `end_banner`, `cause_text`/`cause_line`,
   `near_miss_text`, `stats_line` - the run's TOTAL turns, never the floor's
   `turn` - `grafts_line`, `chip_text` (the `record` chip reads
@@ -1319,33 +1413,55 @@ architecture below is designed to bend rather than block.
   best + tries off `record_daily`'s report), `floor_best_line`,
   `unlock_label`/`unlock_lines` (kind + `Profile.unlock_name`, a gated loadout
   `(needs <Pkg>)`, then `+n more · tap for all`), `next_goal_text` (numbers only when need
-  > 1) and `seed_line`); names come from `shell/names.gd` only. A death or win
-  through `_act` calls `_begin_over` AFTER the step's `_feedback` (it clears
-  `_banner` and `_banner_q`, lands three bursts and a shake) and BEFORE
-  `_record_finished_run`, then `_build_over_info` builds the sheet facts once;
-  the tutorial branch does the same minus the record. `_over_ms` (wall clock)
-  drives `_over_phase` beat < `OVER_BEAT_MS` (1200) < fade < +`OVER_FADE_MS`
-  (400) < sheet, and `_over_locked` ignores every tap and key until
-  `OVER_LOCK_MS` (1900) except ESC/Back and the `menu` tag (`_tap`'s first
-  line). `_over_for` ties the beat and the facts to ONE game and
-  `_recorded_for` ties `_run_summary` / `_over_prev` / `_run_report` /
-  `_run_unlocks` / `_daily_report` to the game they filed, so a game swapped
-  in from outside (tests set `game.over` directly) gets no beat, no lock, an
-  unrecorded sheet built lazily (`_over_info_now`), and never another run's
-  record; `_reset_over` runs in `_new_game`, `_start_tutorial` and
-  `_load_run`. There is NO tap-anywhere: `_click` on an over sheet only hits
-  the buttons, `[NEW RUN new_run, RETRY SEED retry_seed, MENU]` (a daily:
-  RETRY DAILY; a tutorial: `[TUTORIAL AGAIN tutorial, MENU]`), `new_run` ->
+  > 1) and `seed_line`) in the shell's voice (a lost run wilts: "felled by a
+  Drill Bot", "lost in the smog"); names come from `shell/names.gd` (a
+  floor's from `RunEnd.floor_name`, a package's from `Profile.unlock_name`). A
+  death or win through `_act` calls `_begin_over(evs, pre, bt)` AFTER the
+  step's `_feedback` and BEFORE `_record_finished_run`, then
+  `_build_over_info` builds the sheet facts once; the tutorial branch does
+  the same minus the record. `_begin_over` clears `_banner` and `_banner_q`
+  (the end banner owns the screen), on a win with Animations on appends three
+  staggered gold `burst` clips to the reel on the boss's last tile at its
+  death's beat, and sets `_over_ms = _now() + max(the beat of the event that
+  ended the run - the tender's `player_death` or the boss's `death` -,
+  _reel_left() - OVER_BEAT_MS)`: the death reel plays INSIDE the beat,
+  which never starts before the killing blow lands (Animations quick
+  included) and never ends before the wilt; with Animations off every beat
+  is 0 and the shift is 0. `_skip_death_reel` (in `_click` and `_key`,
+  ahead of the lock; ESC / Back still go to the menu) turns a tap or key
+  during the reel into finishing it (the reel's own skip rule) and pulls a
+  beat not yet begun up to the tap (`_over_ms = mini(_over_ms, _now())`) - one already under way
+  runs on. `_tender_pose` keeps a lost run's tender hidden once its reel has
+  ended (the map stays up under the beat and the fade, where pre-merge main's
+  (8d888a7) opaque sheet took the screen). `_over_ms`, on the shell clock `_now()`, drives
+  `_over_phase` beat < `OVER_BEAT_MS` (1200) < fade < +`OVER_FADE_MS` (400) <
+  sheet, and `_over_locked` ignores every tap and key until `OVER_LOCK_MS`
+  (1900) except ESC/Back and the `menu` tag (`_tap`'s first line). The beat's
+  two lines are `YOU WILTED` in `COL_ROSE` over the cause (`THE FURNACE IS
+  COLD` in gold on a win), laid out by `_over_beat_layout(..., avoid)` to
+  step just below (or above) the tender's tile, which the follow camera
+  centres in the same band. `_over_for` ties the beat and the facts to ONE
+  game and `_recorded_for` ties `_run_summary` / `_over_prev` / `_run_report`
+  / `_run_unlocks` / `_daily_report` to the game they filed, so a game
+  swapped in from outside (tests set `game.over` directly) gets no beat, no
+  lock, an unrecorded sheet built lazily (`_over_info_now`), and never
+  another run's record; `_reset_over` runs in `_new_game`,
+  `_start_tutorial` and `_load_run`. There is NO tap-anywhere (pre-merge
+  main's "- tap for a new run -" is gone): `_click` on an over sheet only hits the
+  buttons, `[NEW RUN new_run, RETRY SEED retry_seed, MENU]` (a daily: RETRY
+  DAILY; a tutorial: `[TUTORIAL AGAIN tutorial, MENU]`), `new_run` ->
   `_start_run("career")`, `retry_seed` -> `_start_run(run_kind, seed_v)`.
   `_over_layout(info, vw, vh)` is the sheet as data (`OVER_ROWS`: id, prio,
   size, lines, width, gap; content between `OVER_TOP` 0.11 and `OVER_BOTTOM`
-  0.86 of vh; buttons through `_sheet_button_y(vh*0.875, ...)`); when the rows
+  0.86 of vh; buttons through `_sheet_button_y(vh*0.875, ...)`); a death's
+  title is the rose `YOU WILTED` over a drooping sprout, with the `spring`
+  row "Every sprout gets another spring." under the cause. When the rows
   overflow, the present row with the LARGEST prio is dropped until they fit
-  (a tie drops the LATER row), and when that takes an unlock row the last
-  kept one is rebuilt as `RunEnd.unlock_more(n)` with the count the sheet
-  really hides (`info.unlock_n`), re-checking the budget after. Two-line rows
-  wrap with `_wrap(..., keep_pad = true)`, so RunEnd's "  ·  " stays padded
-  and no line starts or ends on a bare dot.
+  (a tie drops the LATER row; the spring row goes first), and when that
+  takes an unlock row the last kept one is rebuilt as `RunEnd.unlock_more(n)`
+  with the count the sheet really hides (`info.unlock_n`), re-checking the
+  budget after. Two-line rows wrap with `_wrap(..., keep_pad = true)`, so
+  RunEnd's "  ·  " stays padded and no line starts or ends on a bare dot.
   Chips fit to 0.72vw in a 0.78vw box (the spec's 0.66vw shrank the longest
   big-hit chip to 1.14% on a 1080x2640 phone). `_draw_over_beat` tints the map
   and veils the controls with no hotspots, and keeps drawing (at full
@@ -1606,20 +1722,24 @@ architecture below is designed to bend rather than block.
   in `_new_game` and `_load_run`, `{}` for a daily and in `_start_tutorial`)
   and `_pings_fired` (`{}`, or `pings_fired_now` of the replayed game on
   resume); `_act` (non-tutorial, after the danger cue, only while the game is
-  not over and `_game_is_run`) pushes each ping at `BANNER_PRIO.career`.
+  not over and `_game_is_run`) pushes each ping at `BANNER_PRIO.career`, due
+  on the step's LAST beat, so it rises behind everything the step itself
+  announced (a descent has no reel: due at once).
   A floor or DEEPEST YET ping lands on the step that raises the floor title
-  card, so `_career_held(prio)` keeps a career-priority banner queued (both
-  in `_push_banner` and `_tick_banner`) until `FLOOR_CARD_MS` (1400) has
-  passed since `_floor_fade_ms` - the two never draw on top of each other.
+  card, so `_career_held(prio)` keeps a career-priority banner queued (in
+  `_tick_banner`, which `_push_banner` calls) until `FLOOR_CARD_MS` (1400)
+  has passed since `_floor_fade_ms` - the two never draw on top of each other.
   **Objective line**: `_context_msg(snap, vw := 0, vh := 0)`'s last arm is
-  `_objective_line(snap, vw, vh)` -> `{text, col, parts}`: the floor's goal
-  (boss, quota - shortened to "cleanse a/b to wake the stairs" beside another
-  part - or stairs), the career hint (a career run's `_career_ref` only), and
-  "tap for log" only when the goal stands alone and is not the quota (so
-  every pre-stage line is byte-identical without a hint); given a viewport,
-  parts drop from the end until `_fit_size(text, vh*0.022, vw*0.95) / vh >=
-  OBJECTIVE_MIN_VH` (0.013), and a dropped hint gives a stairs or boss goal
-  its "tap for log" back. `_draw_context` passes its viewport.
+  `_objective_line(snap, vw, vh)` -> `{text, col, parts}`: the goal words
+  ("Defeat the boss to cool the Furnace", "Cleanse N more to wake the stairs"
+  or "The stairs are awake - head down when ready", shortened to "Cleanse N
+  more" / "The stairs are awake" beside a hint) and the career hint (a career
+  run's `_career_ref` only); without a hint the line is the goal sentence
+  alone, byte for byte as pre-merge main (8d888a7) drew it. Given a
+  viewport, parts drop from the end until `_fit_size(text, vh*0.022,
+  vw*0.88) / vh >= OBJECTIVE_MIN_VH` (0.013), and a dropped hint gives the goal its whole sentence back. There is no "tap for log" part:
+  the whole line is the log's button and `_draw_context` draws a list mark
+  at its end. `_draw_context` passes its viewport.
 - Balance targets and the measurement discipline live in `docs/BALANCE.md`;
   `tests/daily_run.gd` generates the date-seeded daily challenge through
   `Profile.daily_config`.
@@ -1632,76 +1752,131 @@ architecture below is designed to bend rather than block.
   IMPORT_OUT=<record.json> [IMPORT_NOTE=...]` replays a phone run's saved action
   log through the pure sim and writes the regression record it proves; a save
   whose header version is not `Game.SIM_VERSION` is refused, never guessed at.
-- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (15
+- `Game.SIM_VERSION` in `sim/game.gd` is the single replay-version source (17
   today: Block E — encounter packs and biome reinforcements; the Encounter
-  packs note has the rules. Every non-boss floor fields one of 4-5 named
-  crews drawn from `_side_rng_at(n, "roster")`, never the main rng, and
-  vents release `reinforce[(wave + vent) % size]`. Constant headcount keeps
-  every mapgen draw and position byte-identical and only the kind on each
-  tile changes, and floor 1 fields no gums kind, so `Game.new`'s rng.state is
-  bump 14's for every seed (`tests/test_economy.gd` section q) - but a
-  different crew plays a different floor, so a stored log diverges from the
-  first floor whose crew is not the classic one (a non-classic floor 1 on
-  199 of seeds 1..300), and the `floor` event's new `encounter` key and the
-  `reinforcement` event's new `kind` key are hash-visible. The `fixed_shift`
-  mutator (both switches off) replays bump 14 action for action: the RefGame
-  floor-entry pins `RNG_FLOOR_ENTRY_BUMP14` hold under it byte for byte, and
-  its arm reproduced `docs/BALANCE.md`'s bump-14 per-loadout optimizer and
-  magpie tables cell for cell. The corpus went 96 -> 100. Against bump 14,
-  `REGEN=1` classified by hand: of the 76 pre-existing hand-authored records
-  72 are STAMP-ONLY (`sim_version` the single differing key) and 4 are
+  packs note has the rules. Block E was developed on a branch as 15 against
+  bump 14 and renumbered 17 when it was merged on top of main's 15 and 16, so
+  every number in this paragraph is the post-port one, recorded against bump
+  16. Every non-boss floor fields one of 4-5 named crews drawn from
+  `_side_rng_at(n, "roster")`, never the main rng, and vents release
+  `reinforce[(wave + vent) % size]`. Constant headcount keeps every mapgen
+  draw and position byte-identical and only the kind on each tile changes,
+  and floor 1 fields no gums kind, so `Game.new`'s rng.state is bump 16's
+  (still `RNG_STATE_BUMP8`) for every seed (`tests/test_economy.gd` section
+  q) - but a different crew plays a different floor, so a stored log
+  diverges from the first floor whose crew is not the classic one (a
+  non-classic floor 1 on 199 of seeds 1..300), and the `floor` event's new
+  `encounter` key and the `reinforcement` event's new `kind` key are
+  hash-visible. The `fixed_shift` mutator (both switches off) replays bump 16
+  action for action. Under it the RefGame floor-entry pins
+  `RNG_FLOOR_ENTRY_BUMP16` (bump 16's table, kept verbatim) hold byte for
+  byte, 10 seeds and 65 entries, while the default config is pinned in its
+  own `RNG_FLOOR_ENTRY_BUMP17`, every row of which equals bump 16's through
+  at least the floor-2 entry; and every one of bump 16's 97 records (its 20
+  bot logs and 77 hand-authored ones), replayed with `fixed_shift` appended
+  to its config, shows 0 illegal and 0 error events, the same outcome, floor
+  and turn count, every event pattern, and an event stream and final state
+  view identical to bump 16's own replay once the two Block E event keys and
+  the `fixed_shift` entry in `snapshot().mutators` are normalised (the raw
+  stored hash differs on exactly those). The corpus went 97 -> 101. Against
+  bump 16, `REGEN=1` classified by hand: of the 77 hand-authored records 73
+  are STAMP-ONLY (`sim_version` the single differing key) and 4 are
   HASH-ONLY - `c5_open_pool`, `d4_focus_skip`, `d4_upgrade_slot` and
   `d6_draft_parity`, the only hand-authored records that enter a generated
   floor 2 (seed 5 draws Crane Crew there, seed 3 Leech Swarm), each keeping
-  its outcome and every event pattern - with zero action, outcome or
-  event-pattern diffs anywhere. All 20 bot logs were re-recorded on their
-  personas with `tests/rerecord_bots.gd`: 19 CHANGED, and `det_wanderer_s42`
-  came back unchanged and was rewritten anyway, which only re-stamped it
-  (seed 42 draws the classic Drill Pair on floor 1, whose vents release drill
-  bots as before, and a wanderer never leaves floor 1). The 19, outcome then
-  actions: `canary_fanatic_s1` died f5 t91 -> died f5 t95 (321 -> 330),
-  `canary_magpie_s2` died f2 t50 -> died f2 t73 (190 -> 236),
+  its actions, outcome and every event pattern - with zero action, outcome or
+  event-pattern diffs anywhere. The four Block E demos, recorded at 15 on the
+  branch, replayed on the merged sim with their outcome, every event pattern
+  and even their stored hash, so they are stamp-only (15 -> 17) and were not
+  re-pinned. All 20 bot logs were re-recorded on their personas with
+  `tests/rerecord_bots.gd`: 19 CHANGED, and `det_wanderer_s42` came back
+  unchanged and was rewritten anyway, which only re-stamped it (seed 42 draws
+  the classic Drill Pair on floor 1, whose vents release drill bots as
+  before, and a wanderer never leaves floor 1). The 19, bump 16 -> 17,
+  outcome then actions: `canary_fanatic_s1` died f5 t95 -> died f5 t93
+  (325 -> 330), `canary_magpie_s2` died f2 t68 -> died f2 t69 (232 -> 232),
   `det_deeproot_s11` died f5 t103 -> died f7 t91 (322 -> 348),
-  `det_deeproot_s3` won f7 t60 -> won f7 t64 (251 -> 263),
-  `det_deeproot_s42` won f7 t107 -> won f7 t65 (363 -> 263),
-  `det_fanatic_s11` died f5 t127 -> died f3 t92 (396 -> 281),
-  `det_fanatic_s3` died f4 t161 -> died f5 t135 (476 -> 409),
+  `det_deeproot_s3` won f7 t60 -> won f7 t61 (251 -> 259),
+  `det_deeproot_s42` won f7 t104 -> won f7 t65 (358 -> 263),
+  `det_fanatic_s11` died f5 t128 -> died f3 t94 (398 -> 285),
+  `det_fanatic_s3` died f4 t142 -> died f4 t140 (432 -> 399),
   `det_fanatic_s42` died f6 t120 -> WON f7 t63 (396 -> 290),
-  `det_magpie_s11` died f2 t93 -> died f2 t67 (259 -> 207),
-  `det_magpie_s3` died f2 t274 -> died f4 t329 (1011 -> 1553),
-  `det_magpie_s42` died f3 t57 -> died f3 t105 (242 -> 345),
-  `det_optimizer_s11` died f7 t123 -> died f4 t129 (442 -> 311),
-  `det_optimizer_s3` died f6 t107 -> died f6 t99 (406 -> 357),
-  `det_optimizer_s42` WON f7 t123 -> died f6 t96 (437 -> 340),
-  `det_sprout_s11` died f5 t261 -> died f2 t68 (694 -> 201),
-  `det_sprout_s3` died f3 t90 -> died f3 t136 (300 -> 390),
-  `det_sprout_s42` died f4 t150 -> died f5 t87 (433 -> 313),
+  `det_magpie_s11` died f3 t163 -> died f2 t90 (457 -> 261),
+  `det_magpie_s3` died f2 t281 -> died f4 t329 (1049 -> 1553),
+  `det_magpie_s42` died f3 t58 -> died f3 t96 (247 -> 330),
+  `det_optimizer_s11` died f7 t121 -> died f4 t127 (439 -> 307),
+  `det_optimizer_s3` died f5 t71 -> died f6 t99 (293 -> 357),
+  `det_optimizer_s42` WON f7 t120 -> died f6 t96 (431 -> 340),
+  `det_sprout_s11` died f3 t119 -> died f2 t74 (347 -> 221),
+  `det_sprout_s3` died f3 t103 -> died f3 t136 (333 -> 390),
+  `det_sprout_s42` died f5 t141 -> died f5 t87 (452 -> 313),
   `det_wanderer_s11` died f1 t90 -> died f1 t48 (212 -> 130) and
   `det_wanderer_s3` died f1 t55 -> died f1 t91 (139 -> 211) - the two
   wanderer logs moved because seeds 11 and 3 field Hound and Handler and
-  Slick Crew on floor 1. Four demos (`tests/regressions/e1_*.json`,
-  `e2_*.json`): `e1_pack_first_blow` (seed 88 draws Hound and Handler: the
-  hound stands on the classic second drill's tile and lands its first blow
-  on the third end turn, two turns before the classic drill pair does),
-  `e1_floor2_pack` (seed 3 names `leech_swarm` entering floor 2, where the
-  classic crew is `survey_shift`), `e2_reinforce_cycle` (two vents, two
-  waves, list `[drill_bot, rust_hound]`: drill then hound, then hound then
-  drill) and its `fixed_shift` twin `e2_reinforce_fixed_shift` (four drill
-  bots). Ten targeted mutations of `sim/game.gd`, each in a scratch copy run
-  in plain mode over the full corpus, every one failing its demo: (1)
-  `encounter_index` always 0 - both e1 demos and 19 bot logs (21 records);
-  (2) the pack drawn from the main rng - both e1 demos, `c5_open_pool`,
-  `d4_focus_skip`, `d6_draft_parity` and all 20 bot logs (25); (3) the
-  weights ignored, a uniform draw - both e1 demos and 18 bot logs (20); (4)
-  the side stream keyed on floor 1 for every floor - `e1_floor2_pack` and 17
-  bot logs (18); (5) the vent kind hardcoded to drill_bot, (6) the vent term
-  dropped from the cycle and (7) the wave term dropped - each
-  `e2_reinforce_cycle` (at pattern 2, 3 and 3) and the same nine bot logs
-  (10); (8) the `biome_reinforce` switch ignored - `e2_reinforce_fixed_shift`
-  alone (pattern 3); (9) the vent's `reinforcement` event without `kind` -
-  exactly the two e2 demos; (10) the `floor` event without `encounter` -
-  exactly `e1_floor2_pack`. Mutations 8-10 are caught by a demo and nothing
-  else in the corpus. Bump 14 was Block D5 — one resonance per element. ONE `Content.RESONANCES` row
+  Slick Crew on floor 1. Four demos:
+  `tests/regressions/e1_pack_first_blow.json` (seed 88 draws Hound and
+  Handler: the hound stands on the classic second drill's tile and lands its
+  first blow on the third end turn, two turns before the classic drill pair
+  does), `e1_floor2_pack.json` (seed 3 names
+  `leech_swarm` entering floor 2, where the classic crew is
+  `survey_shift`), `e2_reinforce_cycle.json` (two vents, two waves, list
+  `[drill_bot, rust_hound]`: drill then hound, then hound then drill) and
+  its `fixed_shift` twin `e2_reinforce_fixed_shift.json` (four drill bots);
+  `e1_reclaim_restores.json` shares the `e1_` prefix by coincidence - it is
+  bump 15's tending demo, not a Block E one. Ten targeted mutations of
+  `sim/game.gd`, each in a scratch copy run in plain mode over the full
+  101-record corpus on the merged sim, every one failing its demo (counts
+  and pattern positions equal to the ones the branch recorded before the
+  port): (1) `encounter_index` always 0 - both Block E e1 demos and 19 bot
+  logs (21 records); (2) the pack drawn from the main rng - both e1 Block E
+  demos, `c5_open_pool`, `d4_focus_skip`, `d6_draft_parity` and all 20 bot
+  logs (25); (3) the weights ignored, a uniform draw - both Block E e1 demos
+  and 18 bot logs (20); (4) the side stream keyed on floor 1 for every floor
+  - `e1_floor2_pack` and 17 bot logs (18); (5) the vent kind hardcoded to
+  drill_bot, (6) the vent term dropped from the cycle and (7) the wave term
+  dropped - each `e2_reinforce_cycle` (at pattern 2, 3 and 3) and the same
+  nine bot logs (10); (8) the `biome_reinforce` switch ignored -
+  `e2_reinforce_fixed_shift` alone (pattern 3); (9) the vent's
+  `reinforcement` event without `kind` - exactly the two e2 demos; (10) the
+  `floor` event without `encounter` - exactly `e1_floor2_pack`. Mutations
+  8-10 are caught by a demo and nothing else in the corpus.
+  Bump 16 was the floor-2 clock. One `Content.FLOORS` row moved — Strip Mine II
+  carried the tightest smog spawn and dim clock of floors 1-4 (spawn `[9, 17]`
+  every 10, dim `[12, 20]`; its choke 36 only tied floor 3) on the floor that introduces the first drain/gum
+  roster, and the noob persona's deaths piled there (sprout 54/200 on floor 2,
+  its modal death floor). It now sits between its neighbours (`[10, 19]` every
+  11, dim `[14, 22]`, choke 37): sprout floor-2 deaths 54 -> 38 of 200 and avg
+  floor 3.7 -> 4.0, optimizer 53 -> 55 of 100 and the magpie canary 16 -> 19
+  of 200, both inside noise (`docs/BALANCE.md` 2026-11-09). A stored log
+  can diverge at floor 2's first moved smog threshold and at nothing earlier.
+  The sprout gate in `tests/playtest.gd` was re-derived with it, by owner
+  decision: the raw count "<= 1 win per 30" sat on its own edge (2/30 here,
+  4/200 against 3/200) and is now a Wilson line like the canary's
+  (`SPROUT_MAX_LOWER` 0.05, trips from 4/30, 10/100 or 17/200). 84 of 97
+  records are stamp-only; all 20 bot logs were re-recorded and 13 changed
+  (the wanderers, `det_fanatic_s42` and all three deeproot logs came back
+  byte-identical); `tests/test_economy.gd`'s floor-entry pins
+  (`RNG_FLOOR_ENTRY_BUMP16`) moved on 4 of 10 seeds, every row identical
+  through at least the floor-2 entry.
+  Bump 15 was tending by any means. The room bloom (bonus + supply pod) and the
+  floor restore used to live inside `_act_cleanse` alone, so a Reclaimer Bomb
+  convert or a Water Jet wash that took a room's or the floor's last
+  corruption paid neither (owner report). `Game.step` now snapshots the
+  corrupt rooms (`_corrupt_rooms`) before every play-phase player action
+  except `end_turn` - a removal on the enemies' turn, a dredge, is not
+  tending - and `_settle_tending` blooms each room the action emptied and
+  restores a floor it emptied (`_bloom_room` / `_check_restored`, the same
+  code the cleanse calls inline, so a cleanse is byte-identical and pays
+  once). Corridor corruption counts for the restore as it always did.
+  Per-tile convert/wash stay bloomless. Corpus: 96 records re-stamped with
+  no outcome diff, hash-only moves on `blockb_quota_reclamp_wash`,
+  `d6_palisade_ttl` and `det_fanatic_s42`; all 20 bot logs re-recorded and
+  only `det_deeproot_s42` changed (still wins floor 7, 104 turns, was 107);
+  `e1_reclaim_restores.json` is the demo and `tests/test_economy.gd`
+  `_check_tending_by_any_means` covers convert, wash, end_turn and cleanse.
+  Playtest at 30 seeds: every gate passes, deeproot 26 -> 27/30, every other
+  persona's wins unchanged.
+  Bump 14 was Block D5 — one resonance per element. ONE `Content.RESONANCES` row
   ships, `cinder_grip` (fire 3 -> an ignite hook that roots), and it changes
   what happens in PLAY the moment a run's kit and grafts reach fire 3, so a
   stored log diverges at its FIRST IGNITION after that and at nothing else —
@@ -1779,9 +1954,9 @@ architecture below is designed to bend rather than block.
   a default `convert_radius` now writes through `_tile_dict`, so a converted
   enemy-made oil tile carries its `bloom` flag into the growth (hash-visible,
   no rule reads it). The nine package `+` rows and every `Content.ITEMS` `+`
-  row are untouched by construction. The corpus went 83 -> 92 with nine
-  `d6_*` demos (one per new op or key, the two forge halves and the parity
-  draft). Twenty hand-authored records carried 52 base-`+` id occurrences
+  row are untouched by construction. The corpus went 83 -> 93 with ten
+  `d6_*` demos (one per new op or key, the two forge halves, the parity
+  draft and the `dir_enemy` targeting pin `d6_rake_targeting`). Twenty hand-authored records carried 52 base-`+` id occurrences
   (`seed_bomb+` 14, `grow_spike+` 8, `water_jet+` 7, `solar_lance+` 7,
   `sun_flare+` 6, `mycelium_dash+` 6, `vine_whip+` 4; the other eight base
   `+` ids appeared in no record at all), every one renamed to the A variant
@@ -1940,9 +2115,9 @@ architecture below is designed to bend rather than block.
   live phone runs persist as replayable action logs and a stale log replayed
   across sim changes diverges silently. After a bump, re-record every bot log
   the change could have moved — not only the ones that stop replaying — with
-  `tests/rerecord_bots.gd` (the tool since bump 15, never by hand: it replays
-  every `{det,canary}_<persona>_s<seed>.json` on its own persona, rewrites
-  each one, unchanged ones too, and prints `unchanged <name>` or `CHANGED
+  `tests/rerecord_bots.gd` (the tool since Block E, bump 17, never by hand: it
+  replays every `{det,canary}_<persona>_s<seed>.json` on its own persona,
+  rewrites each one, unchanged ones too, and prints `unchanged <name>` or `CHANGED
   <name> outcome a -> b, acts m -> n, hash ...`; `RERECORD_DRY=1` compares and
   writes nothing, and on a committed corpus it must say 0 changed), then
   re-stamp the corpus (`REGEN=1`) and classify its printout by hand. Bump 12
@@ -1955,18 +2130,60 @@ architecture below is designed to bend rather than block.
   headless; `tests/render_frame.gd` renders any game state as a standalone
   SVG screenshot and `tests/render_sheet.gd` does the same for a shrine or
   draft SHEET (`SHEET=shop|draft|drop`), which is where the reading happens —
-  both are the agent's way to see the shell. Sprites are hand-written
-  SVG strings in `shell/svg_art.gd`. The sim must never depend on the shell.
+  both are the agent's way to see the shell. `tests/capture_screens.gd` renders
+  the REAL shell full-screen to PNGs under `xvfb-run` (menu, intro, every
+  tutorial step, a live floor, the camera's states, the sheets, both end
+  cards) - the way to judge text density and the camera by eye. Sprites are
+  hand-written SVG strings in `shell/svg_art.gd`. The sim must never depend on
+  the shell.
   `render_frame.gd` draws the sim's own telegraph (red tiles with their
   summed damage) and the `Danger.badges` glyphs, and its panel prints the
   SKIES countdowns and "end turn here: N incoming"; `tests/autopsy.gd` prints
   a `danger:` line (incoming, LETHAL, choke, vent) under every frame, so a
   death autopsy shows whether the death was announced. The audio bank's
   `warn` (the danger tick) is appended LAST in `build_bank`, like every
-  fun-pass sound. The LEGEND carries a row for every intent badge, every
-  blocked-intent glyph and the two SKIES countdown chips (`ic_choke`,
-  `ic_dim`) - 50 rows, four help pages - and `_check_intent_badges` fails
-  a badge icon without one.
+  fun-pass sound. The LEGEND carries pre-merge main's 29 rows (in its words)
+  plus a short
+  row for every intent badge, every blocked-intent glyph and the two SKIES
+  countdown chips (`ic_choke`, `ic_dim`) - 50 rows, `HELP_PAGE_SIZE` 13 a
+  page, so four help pages - and `_check_intent_badges` fails a badge icon
+  without one.
+- The camera is ONE view, never a mode (`docs/SHELL.md` "The camera";
+  `shell/main.gd` `_cam_target`, a pure read of shell state). It frames the
+  tender's room (grown by one) when the room fits, else the tender, at the zoom
+  the player picked (`cam_cols`, tiles across, saved in `tender.cfg`), and
+  GLIDES (`_cam_step`, `CAM_GLIDE_MS`); never past the floor's edge, a short
+  floor top-aligned so its slack still feeds the log. Pinch, the wheel and
+  +/- zoom from close (`CAM_COLS_MIN`) to the whole floor; a one-finger drag
+  looks around (`cam_pan`); the camera button / Z is a whole-floor PEEK
+  (`cam_overview`). Peek and look-around both end on the next action
+  (`_cam_follow`) and on Back, so neither is a mode to leave - the old
+  whole-floor/room-crop toggle was. A tile aim widens the frame to every
+  target. Off-screen stairs, a stocked shrine, the nearest corruption (while
+  the floor is not green and none is on screen) and nearby machines get an
+  edge marker (`_edge_pois`). Map sprites rasterise at `_raster` and draw
+  scaled to `_ts`: exact at rest, one of `RASTER_LADDER` during a pinch, so a
+  zoom never rasterises every in-between size. The map is drawn BEFORE the
+  status strip, which masks the half tile a glide can show above the zone.
+- Step animations (`docs/SHELL.md` "Animations") are presentation only and
+  never a rule: `shell/anim.gd` plans each step into a reel from (pre
+  snapshot, action, events, post snapshot) alone, the verb families
+  `shell/fx_lines.gd` / `fx_areas.gd` / `fx_self.gd` build ability ops and
+  `shell/fx_enemy.gd` enemy intents (a new effect op or intent type needs a
+  builder there, or `tests/test_anim.gd` fails), and builders read DATA (op,
+  numbers, tags, target shape, statuses, traits), never an ability id or an
+  enemy kind. No sim change is ever needed for an animation; if one seems
+  to be, the event stream is missing information - flag it rather than
+  reading the Game object. The reel is the shell's one numbers source: the
+  shell appends only the three ctx words and a win's bursts to it (see the
+  feedback bullet). Between moves `_process` redraws at `IDLE_FRAME_MS`
+  (~20 fps) for the slow things - idle loops, the smog haze, the toast, the
+  SKIES bar's amber / red pulse (`Danger.sky_alert`); only a low-HP or lethal
+  pulse, a reel, a banner (shown, or still waiting in `_banner_q`), a delayed
+  sound in `_sfx_q`, the floor fade, the camera glide, the over screens and
+  the title menu redraw every frame (`_check_idle_rate`). To SEE them,
+  `tests/capture_anim.gd` renders the real shell into filmstrip PNGs under
+  `xvfb-run` (GL renderer), which the Read tool displays.
 - Every choice card — shrine, draft, drop, forge — is ONE function
   (`shell/main.gd` `_card`) over ONE layout dict (`_card_layout`), and the
   three card lists (`_shop_cards` / `_draft_cards` / `_drop_cards`) are data
@@ -2012,14 +2229,43 @@ architecture below is designed to bend rather than block.
   it fitted each line to one `_txt_fit` line, so the ABILITY_DESC row a card
   shows at 34px landed there at 25px, and because the lines share one size the
   widest one dragged the enemy's name and HP down with it.
-- `! INCOMING` is no longer in the status strip (it was `_txt_fit` into the
-  gap left by the right-aligned floor and green readouts, and before that ran
-  ~280px through them at 1080x2400): it is the context line now,
-  `_context_msg` / `Danger.context_line`, held to size by the danger FIT gate
-  - see the Danger readability bullet.
+- The context line is ONE priority chain, `shell/main.gd`
+  `_context_msg(snap, vw, vh)` -> `{text, col, pulse}`, drawn by
+  `_draw_context` (text in a 0.88vw box, a list mark at its end: the whole
+  line is the event log's button): the mode prompts (aim, the forge's three
+  steps, cleanse - a lethal-guard refusal first, in red), then a flash (red
+  when `_flash_red`), then `Danger.context_line` - never in the tutorial,
+  where the guide teaches the red tile - when it is an incoming blow or
+  pulses ("Incoming 3 - LETHAL  ·  Drill Bot, smog" pulsing red, "Incoming 2
+  ·  Drill Bot" amber, "Incoming 2 - your shield holds", "Smog stings NEXT
+  TURN - ..."), then the step's toast (`_toast_live`), then the rest of the
+  danger line (the choke countdown, "Machines climb out next turn"), then
+  `_objective_line`. It replaces both pre-merge main's fixed "Incoming! Step off the
+  red tile" (a shell-side mirror of three intents) and the older
+  "! INCOMING" in the status strip (`_txt_fit` into the gap beside the
+  right-aligned readouts, about 9px on a phone): its numbers are the sim's
+  own end-turn forecast (amount, lethality, source), read through
+  `_danger_shown`, so while a reel plays it may already speak for the next
+  turn. The danger FIT gate holds every one of its lines to size.
+- Text budgets (`docs/SHELL.md` "Text, briefly"): the owner asked for no
+  walls of text and a warm solarpunk voice. The intro card is
+  `shell/main.gd` `INTRO_STORY` (two lines) + `INTRO_RULES` (six icon rows) -
+  it was 18 rules; the rest are said where they are met, by a HOLD on the
+  readout they are about (`_info_lines`: health, charge, bloom, shield,
+  skies, green, elements, the camera and lens buttons). A guide step is at
+  most `TUT_LINES` (2) lines, all drawn at ONE size; a legend blurb is one
+  unshrunk line; the log under the map is gone from the main screen (the
+  camera fills the zone; it still fills the slack under a floor shorter than
+  the view) and the context line carries the step's one notable event for
+  `TOAST_MS` instead, on that event's beat (`TOAST_EVENTS`, plus the first
+  landed hook behind `COMBO_TOAST`). Machines are "scrapped", a lost run
+  "wilts" (`YOU WILTED`, "Every sprout gets another spring."), forge scraps
+  are "recycled". `tests/test_shell.gd`
+  `_check_tutorial_text` / `_check_intro_text` / `_check_legend_text` hold the
+  budgets on every phone shape the card gate uses.
 - CLEANSE reaches a tile BESIDE the tender, and only corruption. Its refusal
   is `shell/main.gd` `_cleanse_hint`, because "no corruption beside you" was
-  the only answer and it is a LIE in the two cases that happen: standing ON
+  the only answer (it reads "nothing to cleanse beside you" now) and it is a LIE in the two cases that happen: standing ON
   the slick, and a slick the tender's own lance set alight (fire is not
   corruption until it burns down to ash, which IS). Both read as a soft lock
   from the player's seat - the tutorial's last cleanse step allows no ability,
@@ -2027,6 +2273,46 @@ architecture below is designed to bend rather than block.
   by the owner as "wasn't able to clean up the second oil spill".
   `tests/test_shell.gd` `_check_cleanse_hint` drives all three refusals and
   then checks the ash the burning one promises really does open the aim.
+- An armed aim PREVIEWS its result (`shell/main.gd` `_preview_aim` /
+  `_preview_labels`): every legal cast of the armed slot is stepped on a
+  `clone()` of the sim and its own events are folded per enemy, so the map
+  labels `-3` / `KILL` / `-2 rooted` on each enemy a direction aim reaches and
+  the total on each target tile of a tile aim. It is exact (riders, surges,
+  collisions and hooks run on the copy) and leaks nothing, because a cast
+  draws no rng and only `end_turn` resolves the turn — a future op that DID
+  roll the main rng on cast would make the preview an oracle, and is the
+  thing to re-check here. The labels are data before they are drawn, and
+  `tests/test_shell.gd` `_check_aim_preview` holds them to the truth: the
+  label equals what the cast then deals, a lethal cast reads `KILL`, and
+  arming an aim leaves the live game's `state_hash()` untouched.
+- Every LINE shape is a direction aim in the shell: `_ability_press` routes
+  `dir`, `dir_enemy` (through `Game._is_dir_shape`) and `enemy_line` to
+  `target_dir`, and `_try_ability_target` resolves a direction to the nearest
+  legal body along it for `enemy_line`, whose legal targets are enemy
+  POSITIONS. Before this the whip answered every D-pad press with "not a
+  legal target" and the rake armed a tile aim whose "tiles" were unit
+  vectors - neither could be cast from a phone at all, and it was the aim
+  preview's review that found it. `_check_aim_preview` casts both.
+- Haptics (`shell/main.gd` `_buzz_events`, called once per step from
+  `_feedback` on both `_act` branches, and by the `_play_events` test
+  wrapper): ONE vibration per step, the strongest any of its events asks for
+  (rider 20 ms, kill/stagger 25, collision 30, a hit on the tender 40-100,
+  boss beats 90, death 250), fired when the step is taken rather than on each
+  reel beat; the chained second step of one input keeps a stronger first
+  buzz. `_vibrate` is the one `Input.vibrate_handheld` call site (counted in
+  `_vibrations`; the settings toggle's 30 ms test buzz goes through it too).
+  `permissions/vibrate=true` in `export_presets.cfg`; Settings ->
+  Vibration, cfg key `haptics_on`. `tests/test_shell.gd` `_check_haptics` /
+  `_check_haptics_paths`. (The fun pass also carried floating payoff words;
+  the step reel already draws statuses, riders, surges and hooks, so the merge
+  dropped them rather than port them. The one thing the reel's hook spark
+  cannot say - which graft or resonance fired - goes to the context line's
+  toast behind `COMBO_TOAST`.)
+- The APK is two commands on a fresh container: `tools/setup_android_export.sh`
+  (range-fetches the debug template, installs Ubuntu's `apksigner` package,
+  builds an SDK-shaped stub dir, a debug keystore and the editor settings)
+  and then the export line in `docs/SHELL.md`. The keystore is per container,
+  so a build will not install over an earlier session's: uninstall first.
 - Going back is ONE function (`shell/main.gd` `_back(quit_at_root)`), and it is
   the only place in the shell that implements "back". Android's Back button
   reaches it through `_notification(NOTIFICATION_WM_GO_BACK_REQUEST)` (with
@@ -2035,8 +2321,8 @@ architecture below is designed to bend rather than block.
   comments, NOT `#`, which are silently swallowed along with the line after
   them), ESC reaches it from `_key`, and the sheets' own BACK/CLOSE tags
   reach the same tap tags it calls. It goes UP ONE LEVEL per press - tooltip,
-  then sheet, then the forge's three taps one at a time, then an aim, then the
-  room camera, then the menu - and only the MENU quits, only for Back
+  then sheet, then the forge's three taps one at a time, then an aim, then a
+  camera peek or look-around, then the menu - and only the MENU quits, only for Back
   (`quit_at_root`), never for ESC. Aims are cancelled through `_cancel_aim`,
   which the Back button, a D-pad press in a tile aim and a second tap on the
   aiming slot all share: entering an aim costs nothing, so leaving one costs
@@ -2053,49 +2339,96 @@ architecture below is designed to bend rather than block.
   `_check_aim_cancel` / `_check_modal_dpad` drive the notification itself and
   assert an adjacent enemy's HP, the tender's position, the charge and the turn
   counter are all untouched.
-- Shell feedback layer (fun pass): `shell/feedback.gd` is pure static
-  functions over `(events, pre, game, ctx)` - `pre` the facts from before the
-  step (`main._pre_step`: positions, enemy kinds, bloom, hp, floor), `ctx` the
-  RunStats StepCtx (`{}` = no multi-kill, room clear, streak, awaken banner or
-  cleanse number, everything else still works) - and never writes the game,
-  steps it or clones it. `Feedback.step` returns `{callouts, fx, banners, log,
-  sounds, shake, hitstop, lunge}` and `main._feedback` applies it. Names come
+- Shell feedback layer (fun pass, merged onto the step reel): `shell/feedback.gd`
+  is pure static functions over `(events, pre, game, ctx)` - `pre` the facts
+  from before the step (`main._pre_step`: positions, enemy kinds, bloom, hp,
+  floor), `ctx` the RunStats StepCtx (`{}` = no multi-kill, room clear,
+  streak, awaken banner or cleanse number, everything else still works) -
+  and never writes the game, steps it or clones it. **One numbers source**:
+  the step reel (`shell/anim.gd`) draws every number, word, pop, spark, ghost,
+  lunge and shake on the map. The shell adds only the three words the reel
+  cannot know, because they come from the fold - the multi-kill, ROOM CLEAR
+  and STREAK n (`Feedback.ctx_words` -> `_reel_word`: ordinary `float` clips
+  160 ms after the step's last `death` beat, ROOM CLEAR 320, two rows over
+  any float rising on their tile or a row neighbour, at the reel's start with
+  Animations off) - and a win's three gold bursts (`_begin_over`). The fun
+  pass's own floats, callout painter, FX clock, 70 ms hit-stop, lunge, kill
+  shake and gold killing number were dropped at the merge, not ported (a
+  hit-stop would have to freeze `_reel_t()`, which test_anim's carry, chain
+  and budget pins forbid). **The step path** (`_act`, both branches):
+  `game.step` -> `_cam_follow` -> `_start_reel(pre, a, evs, prev_floor,
+  pre_d)`, which plans (or chains) the reel and RETURNS the step's beats
+  `bt` (ms from now until each event lands, right on a chained reel too;
+  `[]` on a descent, which has no reel) -> `stats.feed` -> the danger cue
+  (`Danger.cues`; never in the tutorial) -> `_feedback(evs, pre, ctx,
+  extra_sounds, bt)`: `Feedback.step` (`{callouts, banners, log, sounds}`),
+  the log lines through `_log`, every banner queued with `at = _now() +
+  _beat(bt, ev)`, the toast (`_spawn_toast`), the ctx words, ONE buzz
+  (`_buzz_events`) and the sounds (`_play_picks`, fired when the step is
+  taken); then the career pings and `_begin_over` / `_record_finished_run`.
+  No banner, toast or ctx word ever shows before the reel reaches the event
+  that caused it; nothing writes `_banner` but `_tick_banner`, `_begin_over`
+  and `_reset_feedback`. **One clock**: every time read in `shell/main.gd`
+  goes through `_now()` - `Time.get_ticks_msec` appears only there, and
+  `clock_override` pins it for filmstrips and tests (`_check_one_clock` is
+  the source tripwire). **Callouts** are DATA: `Feedback.callouts` names
+  every payoff (CINDER GRIP, GROWTH +1 dmg, BURNING +1 dmg, ROOTED!, SURGE +1
+  dmg, COLLISION, SHIELDED, BLOCKED n, IGNITE, TITHE -n, BOUNTY +4, DOUBLE
+  KILL, ROOM CLEAR, STREAK n), deduped per text and tile, sorted by priority,
+  every big one plus at most `CALLOUT_CAP` (4) regular ones; the combo chime
+  reads the list and nothing draws it, while the log does NOT read it -
+  `Feedback.callouts` and `Feedback.log_entries` both build on the one claim
+  table `Feedback.claims()`, so a change to what the log says goes there. A
+  `hook` LANDED
+  only when `evs[i+1]` is its row's effect (a `damage` with src = the hook
+  id, its `status`, or a `terrain` on the hook tile): 58% of hooks land
+  nothing, and those get no line and no toast. A then-rider claims the run of
+  unclaimed `status` events right before it. **The toast**: `_spawn_toast`
+  sets the context line's `_toast` from the step's `TOAST_EVENTS` (pre-merge
+  main's set minus `boss_phase`, whose banner says it) in `Feedback.ev_text`'s words
+  and, behind `COMBO_TOAST` (true: the owner's one-line switch), from
+  `Feedback.combo_line` - the first LANDED hook in words ("Cinder Grip roots
+  the Coal Golem"), since the reel's spark cannot say which graft or
+  resonance fired; each candidate on its own beat, the latest beat winning,
+  up for `TOAST_MS`. Riders and surges are never toasted (the player just
+  cast that ability); their amounts live in the violet log lines.
+  Multi-kill, streak and room clear read ctx only (`step_kills`,
+  `turn_kills`, `turn_kills_prev`, `kill_streak`, `room_cleared`); the log's
+  cleanse line reads `ctx.cleanse_gain`, because the `cleanse` event's
+  `bloom` is the running TOTAL and the event must not gain a key - the hash
+  sees `snapshot().events` (the reel's cleanse number follows the balance
+  itself). The streak flame beside the tender (hung on its reel pose, `_tender_pose`) moves
+  when the reel gets there: `_streak_shown` holds the pre-step count
+  (`_reel_streak`) until the step's last `death` beat, or to the reel's end
+  on a step with no death. The log's single append point is
+  `main._log(text, cat)` (`Feedback.log_push`: a repeat bumps "x3" instead
+  of vanishing, `log_cats` stays parallel, `LOG_KEEP` 60), each line
+  coloured by category (`LOG_COL`: hurt, reward, heal, combo, boss, info), in
+  the shell's words (scrapped, wilt, recycled); `_ev_text` delegates to
+  `Feedback.ev_text`; the log is the sheet behind the context line (and
+  fills the slack under a floor shorter than the view). Banners go through
+  ONE queue, `main._push_banner(lines, col, prio, at)`
+  (`Feedback.BANNER_PRIO`: boss 90, danger 85, resonance 80, restored 60,
+  stairs 50, career 10; at most 3 waiting): `_tick_banner` promotes only an
+  entry whose `at` has come and that `_career_held` does not hold behind the
+  floor card, so FLOOR RESTORED rises after the scrub that restored the
+  floor; RESUME drops entries older than `BANNER_MS`
+  (`_drop_stale_banners` - the queue does not tick on the menu). Names come
   from `shell/names.gd`, the ONE names module (`ename`, `the_name` "the
   Overseer", `boss_name` "The Furnace Core", `a_name`, `aname`,
   `source_name`, `src_name` SHORT - cut at ":", so 8c's "(fire)" holds -
   and `src_long` "Solar Lance fire" / "Water Jet slam", plus `subj` (a
   sentence-start enemy: "Drill Bot" / "The Furnace Core"), `item_name`,
-  `shop_name` and the menu's `choice_name`); no other file defines a name or
-  article helper (main's old `_ename` / `_choice_name`, feedback's `_subj` /
-  `shop_name` / `_item_name` and danger's `src_name` delegate all moved here
-  or went). Callouts name every payoff over its tile
-  (CINDER GRIP, GROWTH +1 dmg, BURNING +1 dmg, ROOTED!, SURGE +1 dmg,
-  COLLISION, SHIELDED, BLOCKED n, IGNITE, TITHE -n, BOUNTY +4, DOUBLE KILL,
-  ROOM CLEAR, STREAK n), deduped per text and tile, sorted by priority, every
-  big one plus at most `CALLOUT_CAP` (4) regular ones; a dropped callout keeps
-  its log line. A `hook` LANDED only when `evs[i+1]` is its row's effect (a
-  `damage` with src = the hook id, its `status`, or a `terrain` on the hook
-  tile): 58% of hooks land nothing, and those get no word and no line. A
-  then-rider claims the run of unclaimed `status` events right before it.
-  Multi-kill, streak and room clear read ctx only (`step_kills`,
-  `turn_kills`, `turn_kills_prev`, `kill_streak`, `room_cleared`); the
-  cleanse float and line read `ctx.cleanse_gain`, because the `cleanse`
-  event's `bloom` is the running TOTAL (the float used to print it) and the
-  event must not gain a key - the hash sees `snapshot().events`. Kills land
-  with weight: the killing blow is gold, bold and 1.5x, the dead machine
-  leaves a white ghost, the tender lunges a quarter tile, and a kill or any
-  hit of 4+ is a 70 ms hit-stop - the FX CLOCK `main._fx_now()` holds still
-  (floats, callouts, slides); input never waits on it. The log's single
-  append point is `main._log(text, cat)` (`Feedback.log_push`: a repeat bumps
-  "x3" instead of vanishing, `log_cats` stays parallel, `LOG_KEEP` 60), each
-  line coloured by category (`LOG_COL`: hurt, reward, heal, combo, boss,
-  info); `_ev_text` delegates to `Feedback.ev_text`. Banners go through ONE
-  queue, `main._push_banner(lines, col, prio)` (`Feedback.BANNER_PRIO`: boss
-  90, danger 85, resonance 80, restored 60, stairs 50, career 10; at most 3
-  waiting). Sounds: at most 3 per step, sorted by `SOUND_PRIO` (worst first,
-  which the old cap only claimed), `extra` ids merged before the cap, a win or
-  a death alone, then the combo chime climbing `CHIME_STEPS` per combo
-  callout (delayed through `_sfx_q`); `shell/audio.gd` has 8 players, a
+  `shop_name` and the menu's `choice_name`); no other shell file defines a
+  name or article helper (pre-merge main's own went at the merge, their words
+  moved into feedback.gd, run_end.gd and danger.gd), with two exceptions: a
+  package's name goes through `Profile.unlock_name` via `shell/main.gd`'s
+  static `_package_name` (the menu and the DAILY sheet), and a floor's through
+  `RunEnd.floor_name`. Sounds: at most 3 per step,
+  sorted by `SOUND_PRIO` (worst first, which the old cap only claimed),
+  `extra` ids merged before the cap, a win or a death alone, then the combo
+  chime climbing `CHIME_STEPS` per combo callout (delayed through `_sfx_q`);
+  `shell/audio.gd` has 8 players, a
   deterministic per-id pitch `jitter` cycle and six new sounds appended AFTER
   the old ones (the bank's `_noise` calls are `_rng`'s only consumer; the
   music's noise bed draws from its own `_music_rng`, re-seeded per render,
@@ -2119,8 +2452,8 @@ architecture below is designed to bend rather than block.
   `clone()`) - from the three read-only sim forecasts (`smog_forecast`,
   `telegraph`, `end_turn_forecast`; exact against reality, see the read-only
   queries bullet) to what the shell draws: `compute(game)` ->
-  `{ok, floor, sky, sky_calm, tele, fc, lethal, hp, escapes, thins, restored}` (ok false and
-  only `hp` kept when over or drafting), the SKIES chips (`sky_chips`: choke,
+  `{ok, floor, sky, sky_calm, tele, fc, lethal, hp, escapes, thins, restored}` (ok false,
+  with `hp` and empty defaults, when over or drafting), the SKIES chips (`sky_chips`: choke,
   vents, dim within 9; colours by `SKY_AMBER` 5), `context_line`, the intent
   `badges` (`BADGE` / `NO_BADGE` / `BLOCK_ICON`: every `INTENT_TYPES` entry
   has a decision, and a blocked intent wears its block glyph and paints no
@@ -2134,8 +2467,8 @@ architecture below is designed to bend rather than block.
   NOTHING; "sealed" under growth; "open" - a snapshot mirror of `_open` and
   the growth seal, change together, that the vent tooltip reads), the guard's words and `cues(prev, cur, announced)` (a `warn` when lethal
   switches on or the choke enters 1..5; at choke 1 the banner THE SMOG
-  THICKENS, pushed at `BANNER_PRIO.danger`, its tick passed to `_feedback` as
-  an extra sound). The choke cues have HYSTERESIS: the shell keeps
+  THICKENS / it stings from next turn, pushed at `BANNER_PRIO.danger` and due
+  on the step's last beat, its tick passed to `_feedback` as an extra sound). The choke cues have HYSTERESIS: the shell keeps
   `_choke_cued`, the lowest countdown already announced on the floor
   (`Danger.NO_CUE` = none; reset by `_reset_danger`, i.e. a new game, the
   tutorial and a run load, and by `cues` itself on a floor change), and a cue
@@ -2148,17 +2481,40 @@ architecture below is designed to bend rather than block.
   The shell caches `compute` per state change (`_danger_state`, keyed on
   `_danger_rev` - bumped after every step and on every new or restored game -
   and the game instance), never per frame: the forecast steps a clone and the
-  escape search clones once per candidate action, only when lethal.
-  `_threat_tiles` IS the sim's telegraph now, so a stunned, rooted or
-  screened attacker no longer paints a false red tile. ONE HP-danger rule,
-  `Danger.hp_state` (`hp <= max(3, max_hp / 4)`, or "lethal" when the forecast
-  kills), drives the HP chip, the vignette and the `_process` pulse, which
-  used to disagree (red at 3, vignette at `max(2, ...)`). `! INCOMING` left
-  the status strip (9px and overlapping on a tall phone) for the context line,
-  whose ONE priority chain is `_context_msg(snap, vw, vh)`: mode prompts, flash (red
-  when `_flash_red`), `Danger.context_line` outside the tutorial ("! INCOMING
-  3 - LETHAL  ·  Drill Bot, smog", the choke countdown, the vents), then
-  `_objective_line` (career part 3). The choke countdown says "descend to escape it" only when
+  escape search clones once per candidate action, only when lethal. **The
+  held telegraph** (pre-merge main's hold rule, now over the sim's telegraph): `_act` reads
+  `pre_d := _danger_state()` BEFORE the step, and `_start_reel` keeps, for a
+  fresh reel, its telegraph (`_reel_tele`), the whole state (`_reel_danger`)
+  and whether the reel carries out the enemy turn (`_reel_holds_lethal`: an
+  `end_turn`); while the reel plays, `_threat_snap` marks the held board
+  (`held`: the pre-step enemies minus those whose stagger has landed, or
+  whose death has - on its ghost's `t_die`, or on its own `death` beat when
+  the reel keeps no ghost for it, i.e. Animations off) and `_tele_view` cuts
+  `_reel_tele` to it through `Danger.tele_subset`. Every telegraph draw reads
+  `_tele_view` - the red tiles (`_threat_tiles`), their numbers, the marks,
+  the badges (`Danger.badges` of the held board), the tethers and the gum
+  slot - so a stunned, rooted or screened attacker paints nothing in either
+  phase, a scrapped machine takes its tile with it on its own beat, and the
+  next turn's telegraph appears when the reel ends. **ONE HP-danger rule**,
+  `Danger.hp_state` (`hp <= max(3, max_hp / 4)`, or "lethal" when the
+  forecast kills), judged by `_hp_state_shown` on the HELD hp (the reel's
+  `Anim.hp_shown`, the number the chip shows), drives the HP chip, the red
+  edges and the `_process` pulse. Its lethal half, the tender's outline
+  (lethal / amber / calm), END's border and the escape glow read ONE
+  verdict, `_verdict_danger`: `_reel_danger` while an enemy turn's reel
+  plays on a live game (`_turn_reel_held`; `_reel_lethal` is its `lethal`,
+  kept for the tests), so a survivable turn whose aftermath is lethal turns
+  them red together when its reel ends, else `_danger_shown` - the live
+  forecast, except while a LOST run's killing blow is still coming
+  (`_death_held`: an enemy turn's reel, the tender's shown HP above 0), when
+  it is `_reel_danger` too. The SKIES chips, the vent marks and the context
+  line read `_danger_shown` (the context line may already speak for the next
+  turn). A finished game has no forecast (`compute` is `{ok: false}`), and
+  calm readouts between the tap and the blow would read as a reprieve; once
+  over, the chip keeps the low-HP red on the held HP through the blow and
+  the wilt. A player action's reel reads the live forecast at once, so a step
+  off a red tile is safe on the frame it is taken. The context line's chain
+  is its own bullet above. The choke countdown says "descend to escape it" only when
   `Danger.stairs_awake(snap)` - a real stairs tile (the boss arena's is
   (-1, -1)) and `greened >= green_need`, so a quota RECLAMPED to 0 on an
   ordinary floor still offers the descent - and otherwise
@@ -2197,5 +2553,15 @@ architecture below is designed to bend rather than block.
   profile) and clamps `unlocked_tier` to `Content.TIERS.size()`, the one unlock
   with no Content table to filter against - the shell bounds it a second time
   in `_max_tier()`, because an out-of-range tier read empties the whole menu.
-- Workflow: no PRs; commit on `claude/godot-setup-q6hk6p` and merge/push
-  straight to `main`.
+- Workflow: no PRs; work on the session's branch and merge/push straight to
+  `main`. **Before touching anything, `git fetch origin main` and compare:
+  `git log --oneline HEAD..origin/main`.** A session branch is cut from
+  wherever its base happened to be and can be weeks behind - if that log is
+  not empty, rebase onto (or restart the branch from) `origin/main` first.
+  The 2026-11-09 session skipped this, started 34 commits behind, and paid
+  for it: feedback floats built on code the animation reel had already
+  replaced (dropped at the merge), a floor-2 bump recorded as SIM_VERSION 15
+  when main had already used 15 (re-recorded as 16), balance numbers measured
+  on a stale tree, and an APK that had to be rebuilt. Fetch again before
+  merging, too. (`claude/godot-setup-q6hk6p`, the branch this note used to
+  name, is itself stale.)

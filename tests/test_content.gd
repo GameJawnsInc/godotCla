@@ -2045,7 +2045,7 @@ func _lint_floor_row(row, n: int, enemies: Dictionary, seen: Dictionary) -> Arra
 	var boss := bool(row.get("boss", false))
 	var id_re := RegEx.create_from_string("^[a-z_]+$")
 	if row.has("enemies"):
-		out.append("%s: carries the pre-v15 \"enemies\" key (a roster lives in \"encounters\")" % where)
+		out.append("%s: carries the pre-v17 \"enemies\" key (a roster lives in \"encounters\")" % where)
 	var packs = row.get("encounters", null)
 	if not (packs is Array):
 		out.append("%s: missing \"encounters\" Array" % where)

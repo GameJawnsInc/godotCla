@@ -67,7 +67,7 @@ extends SceneTree
 ## takes and is identical under a re-seeded clone rng, the enemy damage equals
 ## the telegraph sum, smog_forecast matches an end-turn-only clone, and no
 ## query moves state_hash or rng.state.
-## e (Block E, bump 15): the encounter-pack draw recomputed independently
+## e (Block E, bump 17): the encounter-pack draw recomputed independently
 ## (hash([seed, n, "roster"]), weighted walk) over seeds 1..50 x floors 1..6
 ## from a game standing on floor 1, no main-rng or hash movement from any of
 ## the new queries, the frozen classic rosters (pack 0, key order included,
@@ -4669,7 +4669,7 @@ func _check_fq_aliases() -> void:
 		"fq aliases: the variant kit plus oil_tithe reads fire 3, cinder_grip lit")
 
 
-# --- e) Block E: encounter packs and biome reinforcements (bump 15) -----------
+# --- e) Block E: encounter packs and biome reinforcements (bump 17) -----------
 
 ## The independent pack draw: the side stream hash([seed, n, "roster"]), one
 ## randi_range over the summed weights, the cumulative walk. Recomputed here
@@ -4792,7 +4792,7 @@ func _check_e_purity() -> void:
 	_ok(same, "e purity: _side_rng(tag) == _side_rng_at(floor_num, tag) == hash([seed, floor, tag]) on floor_num 1..6, and _side_rng_at(m, tag) == hash([seed, m, tag]) for every m (%d grid probes) %s" % [grid, str(bad)])
 
 
-## The pre-v15 rosters, frozen verbatim (key order is mapgen placement order).
+## The pre-v17 rosters, frozen verbatim (key order is mapgen placement order).
 const CLASSIC_ROSTERS := [
 	{"drill_bot": 2},
 	{"drill_bot": 1, "oil_sludge": 1, "leech_drone": 1, "tar_spitter": 1},
@@ -4808,7 +4808,7 @@ func _check_e_classic() -> void:
 	for n in range(1, Content.FLOORS.size() + 1):
 		var row: Dictionary = Content.FLOORS[n - 1]
 		_ok(str(Content.encounter_roster(row, 0)) == str(CLASSIC_ROSTERS[n - 1]),
-			"e classic: floor %d pack 0 is the pre-v15 roster byte for byte: %s" % [n, str(Content.encounter_roster(row, 0))])
+			"e classic: floor %d pack 0 is the pre-v17 roster byte for byte: %s" % [n, str(Content.encounter_roster(row, 0))])
 	var fixed_ok := true
 	var differs := false
 	for s in range(1, 21):
@@ -4964,7 +4964,7 @@ func _check_e_reinforce_wave() -> void:
 				old = every > 0 and sv > last and (sv - last) % every == 0
 			if old != (Game.reinforce_wave(f, sv) >= 0):
 				agree = false
-	_ok(agree, "e wave: reinforce_wave >= 0 is exactly the pre-v15 spawn test on every floor, smog 0..200")
+	_ok(agree, "e wave: reinforce_wave >= 0 is exactly the pre-v17 spawn test on every floor, smog 0..200")
 
 
 func _check_e_reinforce_kind() -> void:

@@ -1,0 +1,872 @@
+extends SceneTree
+## Animation suite (docs/SHELL.md "Animations"), headless. The director
+## (shell/anim.gd) is pure data over snapshots, so everything a reel promises
+## can be asserted without a display:
+##   1. coverage: every effect op an ability can carry, every enemy intent
+##      type, has a builder - a new op or intent with no animation fails here,
+##      the way the content lint fails an unknown op
+##   2. every staged scene (tests/anim_scenes.gd: the tender's verbs, all
+##      Content.ABILITIES rows, every intent and its two failures, and the
+##      x: edge cases) plans a reel that is pure (inputs untouched),
+##      deterministic, lands every creature exactly where the post snapshot
+##      has it, hides the dead and the not-yet-spawned, flips every changed
+##      tile inside the reel, draws the ability's verb, holds each HP bar
+##      until its blow, gives concurrent numbers on a tile their own rows,
+##      and stays inside the time budget at each speed ('off' keeping every
+##      number and word)
+##   3. every clip of every reel paints through a recording canvas at five
+##      points of its life with finite coordinates, paints the SAME thing at
+##      quick speed (painters read k * span), and every pose is sane; idle
+##      loops stay in bounds
+##   4. the director credits one blow per machine (x:pack, x:shielded) and
+##      keeps a haul's tile events with the crane (x:haul_goo); telegraphs,
+##      HUD chips and room dressing hold until their beat and the cleanse
+##      float says the gain; the shell starts and ends a reel per step,
+##      carries numbers over, chains an out-of-charge move INTO the enemy
+##      turn per track (a free tender hops at once, a bitten one after the
+##      bite, the regen glow follows it), lets machines finish their moves
+##      when a new step cuts a reel off (Anim.carry), lets no tap during the death reel start a new run, starts a new
+##      game with no reel and a descent with none, and cycles and persists
+##      the setting
+##   5. a soak over real bot-played runs (ANIM_SOAK_SEEDS, default 4 seeds x
+##      2 personas): every step's reel lands every creature, hides the dead,
+##      flips its tiles, paints finite geometry and fits the budget - the
+##      enemy-phase event attribution meets whole packs, bosses and deaths
+##      it was never staged for
+## A Logger counts every engine or script error raised meanwhile, and any
+## error fails the suite.
+## Run: godot --headless --path . --script tests/test_anim.gd
+## To SEE the animations: tests/capture_anim.gd (needs xvfb-run).
+
+const Anim := preload("res://shell/anim.gd")
+const L := preload("res://shell/anim_lib.gd")
+const Paint := preload("res://shell/anim_paint.gd")
+const FxEnemy := preload("res://shell/fx_enemy.gd")
+const Scenes := preload("res://tests/anim_scenes.gd")
+const Content := preload("res://sim/content.gd")
+const ContentLint := preload("res://tests/test_content.gd")
+const Shell := preload("res://shell/main.gd")
+const Game := preload("res://sim/game.gd")
+const Roster := preload("res://bots/roster.gd")
+const Tutorial := preload("res://shell/tutorial.gd")
+
+## Reel budgets (ms). Numbers keep their reading time at every speed, so the
+## quick budget is the full one scaled plus a float's life.
+const MAX_LEN_FULL := 2400
+const SEG_KINDS := ["path", "squash", "lunge", "recoil", "tint", "flash", "cast", "struggle", "die", "pop",
+	"hide", "shake"]
+
+var fails := 0
+var checks := 0
+var errs: ErrCount
+
+## The shells this test builds keep their career, run save, settings and run
+## archive in scratch files (deleted at the end): _ready reads the profile and
+## the settings and restores (or deletes) a run save it finds, and _new_game
+## writes the run save - never the player's own.
+const SCRATCH := "user://test_anim_"
+
+
+## Counts every engine/script error raised while the suite runs: a GDScript
+## runtime error aborts only the function it happens in, so without this a
+## builder that dies halfway through a reel would still let the suite pass.
+class ErrCount:
+	extends Logger
+	var n := 0
+	var first: Array = []
+
+	func _log_error(function: String, file: String, line: int, code: String, rationale: String,
+			editor_notify: bool, error_type: int, script_backtraces: Array[ScriptBacktrace]) -> void:
+		n += 1
+		if first.size() < 5:
+			first.append("%s:%d %s %s" % [file, line, code, rationale])
+
+	func _log_message(message: String, error: bool) -> void:
+		pass
+
+
+class RecCanvas:
+	extends RefCounted
+	var calls := 0
+	var bad := 0
+	var sig := ""  # every call's arguments, to compare two paints exactly
+
+	func _v(args: Array) -> void:
+		calls += 1
+		sig += str(args) + ";"
+		for a in args:
+			if a is Vector2 and not (is_finite(a.x) and is_finite(a.y)):
+				bad += 1
+			elif a is float and not is_finite(a):
+				bad += 1
+			elif a is PackedVector2Array:
+				for q in a:
+					if not (is_finite(q.x) and is_finite(q.y)):
+						bad += 1
+
+	func draw_circle(p, r, col, filled = true, width = -1.0, aa = false) -> void:
+		_v([p, float(r)])
+
+	func draw_line(a, b, col, width = -1.0, aa = false) -> void:
+		_v([a, b, float(width)])
+
+	func draw_arc(c, r, a0, a1, n, col, width = -1.0, aa = false) -> void:
+		_v([c, float(r), float(a0), float(a1), float(width)])
+
+	func draw_polyline(pts, col, width = -1.0, aa = false) -> void:
+		_v([pts, float(width)])
+
+	func draw_colored_polygon(pts, col, uvs = PackedVector2Array(), tex = null) -> void:
+		_v([pts])
+
+	func draw_polygon(pts, cols, uvs = PackedVector2Array(), tex = null) -> void:
+		_v([pts])
+
+	func draw_rect(r, col, filled = true, width = -1.0, aa = false) -> void:
+		_v([r.position, r.size])
+
+	func draw_string(font, p, s, align = 0, w = -1.0, size = 16, col = Color.WHITE) -> void:
+		_v([p])
+
+	func draw_texture(tex, p, mod = Color.WHITE) -> void:
+		_v([p])
+
+	func draw_set_transform(p, rot = 0.0, sc = Vector2.ONE) -> void:
+		_v([p, float(rot), sc])
+
+
+## Track clearing for the chained step: the tender's second step waits only
+## for what it shares with the enemy turn (its own blows and hauls, the
+## machines it touches), not for every machine's turn to play out.
+func _check_chain_tracks() -> void:
+	# nothing touches the tender: its hop starts well inside the enemy turn
+	var mv: Dictionary = Scenes.intent_scene("move")
+	var g = mv["game"]
+	var pre: Dictionary = g.snapshot()
+	var ea: Array = g.step({"type": "end_turn"})
+	var mid: Dictionary = g.snapshot()
+	var a := Anim.plan(pre, {"type": "end_turn"}, ea, mid)
+	var mvac := {"type": "move", "dir": Vector2i(0, -1)}
+	var evb: Array = g.step(mvac)
+	var b := Anim.plan(mid, mvac, evb, g.snapshot())
+	var off := Anim.chain_offset(a, b)
+	_check(int(a["len"]) > 200 and off < int(a["len"]) - 200,
+		"chain: a free tender does not wait out the enemy turn (offset %d of %d)" % [off, int(a["len"])])
+	var ch := Anim.chain(a, b, off)
+	var hop0 := -1
+	for s in ch["tracks"].get("player", []):
+		if String(s["kind"]) == "path":
+			hop0 = int(s["t0"])
+	_check(hop0 >= 0 and hop0 < int(a["len"]), "chain: the tender's hop plays during the enemy turn (t0 %d)" % hop0)
+	_check(Anim.pos_at(ch, "player", float(ch["len"]) + 1.0, Vector2.ZERO) == Vector2(g.player["pos"]), "chain: the tender still lands")
+	for key in a["tracks"]:
+		if key is String:
+			continue
+		_check(Anim.pos_at(ch, key, float(ch["len"]) + 1.0, Vector2(-9, -9)) == Anim.pos_at(a, key, float(a["len"]) + 1.0, Vector2(-9, -9)),
+			"chain: machine %s still finishes its own walk" % str(key))
+	# a machine bites the tender: the hop waits for the blow to land
+	var at: Dictionary = Scenes.intent_scene("attack")
+	var ga = at["game"]
+	var pa: Dictionary = ga.snapshot()
+	var eva: Array = ga.step({"type": "end_turn"})
+	var ma: Dictionary = ga.snapshot()
+	var ra := Anim.plan(pa, {"type": "end_turn"}, eva, ma)
+	var up := {"type": "move", "dir": Vector2i(0, -1)}
+	var evu: Array = ga.step(up)
+	var rb := Anim.plan(ma, up, evu, ga.snapshot())
+	var blow := -1
+	for h in ra.get("hp", {}).get("player", []):
+		if int(h[1]) < 0:
+			blow = maxi(blow, int(h[0]))
+	var offa := Anim.chain_offset(ra, rb)
+	_check(blow >= 0 and offa > blow, "chain: a bitten tender moves only after the bite lands (blow %d, offset %d)" % [blow, offa])
+	# a bite the shield soaks whole leaves no mark on the tender's track, only
+	# its pop: the hop still waits for it
+	var sh_sc: Dictionary = Scenes.intent_scene("attack")
+	var gs = sh_sc["game"]
+	gs.player["shield"] = 9
+	var ps: Dictionary = gs.snapshot()
+	var evs: Array = gs.step({"type": "end_turn"})
+	var ms: Dictionary = gs.snapshot()
+	var rs := Anim.plan(ps, {"type": "end_turn"}, evs, ms)
+	var evs2: Array = gs.step(up)
+	var rs2 := Anim.plan(ms, up, evs2, gs.snapshot())
+	var pop := -1
+	for cl in rs["clips"]:
+		if String(cl["kind"]) == "en_word" and String(cl.get("text", "")) == "blocked":
+			pop = int(cl["t0"])
+	var offs := Anim.chain_offset(rs, rs2)
+	_check(pop >= 0 and offs > pop, "chain: a shielded tender moves only after the blocked bite (pop %d, offset %d)" % [pop, offs])
+	# the soft regen glow never plays on the tile the tender left
+	var hg: Dictionary = Scenes.intent_scene("move")
+	var gh = hg["game"]
+	gh.terrain[gh.player["pos"]] = {"kind": "growth"}
+	gh.player["hp"] = 10
+	var ph: Dictionary = gh.snapshot()
+	var evh: Array = gh.step({"type": "end_turn"})
+	var mh: Dictionary = gh.snapshot()
+	var rh := Anim.plan(ph, {"type": "end_turn"}, evh, mh)
+	var evm: Array = gh.step(mvac)
+	var rm := Anim.plan(mh, mvac, evm, gh.snapshot())
+	var offh := Anim.chain_offset(rh, rm)
+	var chh := Anim.chain(rh, rm, offh)
+	var softs := 0
+	var misplaced := 0
+	for cl in chh["clips"]:
+		if bool(cl.get("soft", false)):
+			softs += 1
+			if cl.has("at") and Vector2(cl["at"]).round() != Vector2(gh.player["pos"]):
+				misplaced += 1
+	_check(softs >= 2 and misplaced == 0, "chain: the regen glow follows the tender (%d soft clips, %d left behind)" % [softs, misplaced])
+	_check(offh < int(rh["len"]), "chain: the regen glow does not hold the tender (offset %d of %d)" % [offh, int(rh["len"])])
+
+## A new step during a reel: machines finish their moves instead of snapping
+## (Anim.carry), and the new step still starts at once.
+func _check_carry(sh) -> void:
+	# the shell: end the turn, act again mid-walk
+	var mv: Dictionary = Scenes.intent_scene("move")
+	sh.game = mv["game"]
+	sh.clock_override = 100000
+	sh._act({"type": "end_turn"})
+	var old: Dictionary = sh._reel
+	var key = null
+	var ort := 0
+	for k in old["tracks"]:
+		if k is String:
+			continue
+		for sg in old["tracks"][k]:
+			if String(sg["kind"]) == "path" and key == null:
+				key = k
+				ort = int(sg["t0"]) + int(sg["dur"]) / 2
+	_check(key != null, "carry: the enemy turn walks a machine")
+	if key == null:
+		return
+	var mid := Anim.pos_at(old, key, float(ort), Vector2(-9, -9))
+	sh.clock_override = 100000 + ort
+	sh._act({"type": "move", "dir": Vector2i(0, -1)})
+	var nr: Dictionary = sh._reel
+	var post_pos := Vector2(-9, -9)
+	for e in sh.game.enemies:
+		if e["id"] == key:
+			post_pos = Vector2(e["pos"])
+	_check(Anim.pos_at(nr, key, 0.0, post_pos).distance_to(mid) < 0.01,
+		"carry: a walking machine does not snap when the tender acts (%s vs %s)" % [str(Anim.pos_at(nr, key, 0.0, post_pos)), str(mid)])
+	_check(Anim.pos_at(nr, key, float(nr["len"]) + 1.0, post_pos) == post_pos, "carry: the machine still ends on its post tile")
+	var hop0 := -1
+	for sg in nr["tracks"].get("player", []):
+		if String(sg["kind"]) == "path":
+			hop0 = int(sg["t0"])
+	_check(hop0 >= 0 and hop0 < 100, "carry: the tender's new step still starts at once (t0 %d)" % hop0)
+	sh.clock_override = -1
+	# the rules, on hand-built reels
+	var o := Anim.empty_reel()
+	o["tracks"] = {
+		"player": [{"kind": "path", "t0": 0, "dur": 400, "pts": [Vector2(0, 0), Vector2(0, 1)], "hop": 0.2}],
+		5: [{"kind": "path", "t0": 0, "dur": 400, "pts": [Vector2(1, 1), Vector2(2, 1), Vector2(3, 1)], "hop": 0.0}],
+		6: [{"kind": "path", "t0": 0, "dur": 400, "pts": [Vector2(5, 5), Vector2(5, 6)], "hop": 0.0}],
+		7: [{"kind": "path", "t0": 300, "dur": 200, "pts": [Vector2(8, 8), Vector2(9, 8)], "hop": 0.0},
+			{"kind": "lunge", "t0": 520, "dur": 200, "dir": Vector2(1, 0)}],
+		9: [{"kind": "die", "t0": 300, "dur": 400}],
+	}
+	o["ghosts"] = [{"id": 9, "kind": "drill_bot", "elite": false, "pos": Vector2i(4, 4), "t_die": 300}]
+	o["len"] = 720
+	var n := Anim.empty_reel()
+	n["tracks"] = {
+		"player": [{"kind": "path", "t0": 40, "dur": 160, "pts": [Vector2(4, 6), Vector2(5, 6)], "hop": 0.2}],
+		5: [{"kind": "recoil", "t0": 100, "dur": 150, "dir": Vector2(1, 0), "amt": 0.1}],
+	}
+	n["len"] = 250
+	var cr := Anim.carry(o, 100.0, n)
+	var g5: Array = cr["tracks"].get(5, [])
+	_check(g5.size() == 2 and String(g5[0]["kind"]) == "path" and int(g5[0]["t0"]) == 0 and int(g5[0]["dur"]) == 100,
+		"carry: a machine the new step hits glides the rest of its walk before the hit (%s)" % str(g5))
+	if g5.size() == 2:
+		_check(Vector2(g5[0]["pts"][0]).distance_to(Anim.pos_at(o, 5, 100.0, Vector2.ZERO)) < 0.01
+			and Vector2(g5[0]["pts"].back()) == Vector2(3, 1), "carry: the glide starts where it was and ends where it was going")
+	var g6: Array = cr["tracks"].get(6, [])
+	_check(g6.size() == 1 and int(g6[0]["dur"]) == 40, "carry: a machine walking across the tender's path is out of it before the tender sets off (%s)" % str(g6))
+	var g7: Array = cr["tracks"].get(7, [])
+	_check(g7.size() == 1 and String(g7[0]["kind"]) == "path" and int(g7[0]["t0"]) == 200,
+		"carry: a machine the new step leaves alone walks on its own beat, its lunge dropped (%s)" % str(g7))
+	var gh_ok := false
+	for g in cr["ghosts"]:
+		if g["id"] == 9 and int(g["t_die"]) == 200:
+			gh_ok = true
+	_check(gh_ok and cr["tracks"].has(9), "carry: a machine still dying keeps dying where it fell")
+	var p_paths := 0
+	for sg in cr["tracks"]["player"]:
+		if String(sg["kind"]) == "path":
+			p_paths += 1
+	_check(p_paths == 1, "carry: the tender's old track ends - the new step is the tender's")
+	n["tracks"][5] = [{"kind": "recoil", "t0": 20, "dur": 150, "dir": Vector2(1, 0), "amt": 0.1}]
+	var cs := Anim.carry(o, 100.0, n)
+	_check(cs["tracks"][5].size() == 1, "carry: with no room before the hit the machine snaps, as before")
+	var done := Anim.carry(o, 900.0, n)
+	_check(done["tracks"].size() == n["tracks"].size() and done["ghosts"].is_empty(), "carry: a finished reel carries nothing")
+
+func _check(ok: bool, what: String) -> void:
+	checks += 1
+	if not ok:
+		fails += 1
+		print("FAIL: " + what)
+
+
+func _init() -> void:
+	errs = ErrCount.new()
+	OS.add_logger(errs)
+	_check_coverage()
+	var n := 0
+	for sc in Scenes.all_scenes():
+		_check_scene(sc)
+		n += 1
+	_check_idle()
+	_check_attribution()
+	_check_holds()
+	_check_shell()
+	_check_soak()
+	_check(errs.n == 0, "no engine or script errors while planning and painting (%d: %s)" % [errs.n, str(errs.first)])
+	_clean_scratch()
+	print("anim: %d scenes, %d checks" % [n, checks])
+	if fails > 0:
+		print("anim: %d FAILED" % fails)
+		quit(1)
+	else:
+		print("anim: OK")
+		quit(0)
+
+
+## --- 1. coverage ----------------------------------------------------------------
+func _ops_of(effects: Array, into: Dictionary) -> void:
+	for eff in effects:
+		into[String(eff["op"])] = true
+		_ops_of(eff.get("then", []), into)
+
+
+func _check_coverage() -> void:
+	var ops := {}
+	for aid in Content.ABILITIES:
+		_ops_of(Content.ABILITIES[aid]["effects"], ops)
+	for op in ContentLint.OP_KEYS:
+		ops[op] = true
+	for op in ops:
+		_check(Anim.family_for_op(op) != null, "effect op '%s' has an animation builder" % op)
+	for fam in Anim.OP_FAMILIES:
+		for op in fam.OPS:
+			_check(ops.has(op), "builder op '%s' is a real effect op (dead vocabulary otherwise)" % op)
+	for it in ContentLint.INTENT_TYPES:
+		_check(FxEnemy.INTENTS.has(it), "intent '%s' has an animation builder" % it)
+	for it in [Anim.BLOCKED_VERB, Anim.SCREENED_VERB]:
+		_check(FxEnemy.INTENTS.has(it), "pseudo-intent '%s' has a builder" % it)
+	# every clip kind is owned exactly once
+	var owner := {}
+	for k in Paint.CORE_KINDS:
+		owner[k] = "core"
+	for fam in Paint.FAMILIES:
+		for k in fam.KINDS:
+			_check(not owner.has(k), "clip kind '%s' has one painter (also %s)" % [k, owner.get(k, "")])
+			owner[k] = fam.resource_path
+	for fam in Anim.OP_FAMILIES:
+		_check(Paint.FAMILIES.has(fam), "%s is painted" % fam.resource_path)
+	_check(Scenes.INTENT_SCENES.size() >= ContentLint.INTENT_TYPES.size() - 1 + 2,
+		"every intent (bar idle) and both failures have a staged scene")
+	for it in ContentLint.INTENT_TYPES:
+		if it != "idle":
+			_check(Scenes.INTENT_SCENES.has(it), "intent '%s' has a staged scene" % it)
+
+
+## --- 2 + 3. every scene ---------------------------------------------------------
+func _check_scene(sc: Dictionary) -> void:
+	var nm := String(sc.get("name", "?"))
+	if sc.is_empty() or sc.get("action") == null:
+		_check(false, "%s: scene stages a legal action" % nm)
+		return
+	var g = sc["game"]
+	var pre: Dictionary = g.snapshot()
+	var pre_s := str(pre)
+	var evs: Array = g.step(sc["action"])
+	var evs_s := str(evs)
+	var post: Dictionary = g.snapshot()
+	var post_s := str(post)
+	for ev in evs:
+		_check(String(ev.get("t", "")) != "illegal", "%s: the staged action is legal (%s)" % [nm, str(ev)])
+	var reel := Anim.plan(pre, sc["action"], evs, post)
+	_check(str(pre) == pre_s and str(post) == post_s and str(evs) == evs_s, "%s: plan() leaves its inputs untouched" % nm)
+	_check(str(Anim.plan(pre, sc["action"], evs, post)) == str(reel), "%s: plan() is deterministic" % nm)
+	var ln := int(reel["len"])
+	_check(ln > 0, "%s: the step animates (len %d)" % [nm, ln])
+	_check(ln <= MAX_LEN_FULL, "%s: reel fits the budget (%d <= %d ms)" % [nm, ln, MAX_LEN_FULL])
+	var end_t := float(ln) + 1.0
+	# landing: every creature ends exactly where the sim put it
+	for e in post["enemies"]:
+		var cur := Vector2(e["pos"])
+		_check(Anim.pos_at(reel, e["id"], end_t, cur) == cur, "%s: enemy %d lands on its post tile" % [nm, e["id"]])
+		var ps := Anim.pose(reel, e["id"], end_t, cur)
+		_check(ps["visible"] and is_equal_approx(float(ps["alpha"]), 1.0), "%s: enemy %d is visible at the end" % [nm, e["id"]])
+	_check(Anim.pos_at(reel, "player", end_t, Vector2(post["player"]["pos"])) == Vector2(post["player"]["pos"]),
+		"%s: the tender lands on its post tile" % nm)
+	var pps := Anim.pose(reel, "player", end_t, Vector2(post["player"]["pos"]))
+	_check(pps["visible"] == (not bool(post.get("over", false)) or bool(post.get("won", false))),
+		"%s: the tender is visible at the end unless dead" % nm)
+	# the departed are ghosts that vanish; the arrived pop in
+	var post_ids := {}
+	for e in post["enemies"]:
+		post_ids[e["id"]] = true
+	var pre_ids := {}
+	for e in pre["enemies"]:
+		pre_ids[e["id"]] = true
+		if not post_ids.has(e["id"]):
+			var found := false
+			for gh in reel["ghosts"]:
+				if gh["id"] == e["id"]:
+					found = true
+					_check(not Anim.pose(reel, e["id"], end_t, Vector2(gh["pos"]))["visible"], "%s: ghost %d vanishes" % [nm, e["id"]])
+					_check(Anim.pose(reel, e["id"], 0.0, Vector2(gh["pos"]))["visible"], "%s: ghost %d is there at t=0" % [nm, e["id"]])
+			_check(found, "%s: enemy %d that left the board is drawn as a ghost" % [nm, e["id"]])
+	for e in post["enemies"]:
+		if not pre_ids.has(e["id"]):
+			_check(reel["spawns"].has(e["id"]), "%s: new enemy %d has a spawn time" % [nm, e["id"]])
+			_check(not Anim.pose(reel, e["id"], -1.0, Vector2(e["pos"]))["visible"], "%s: new enemy %d is hidden before it spawns" % [nm, e["id"]])
+	# terrain flips inside the reel
+	for p in reel["tswap"]:
+		var sw: Dictionary = reel["tswap"][p]
+		_check(sw.has("t") and int(sw["t"]) >= 0 and int(sw["t"]) <= ln, "%s: tile %s flips inside the reel" % [nm, str(p)])
+		_check(String(Anim.terrain_at(reel, p, end_t)) == L.tkind(post, p), "%s: tile %s ends as the post kind" % [nm, str(p)])
+	# the verb: an ability draws at least one clip of each family its ops use
+	var kinds := {}
+	for cl in reel["clips"]:
+		kinds[String(cl["kind"])] = true
+		_check(Paint.known(String(cl["kind"])), "%s: clip kind '%s' has a painter" % [nm, cl["kind"]])
+		_check(int(cl["dur"]) > 0 and ["ground", "air"].has(String(cl.get("layer", ""))), "%s: clip '%s' is well formed" % [nm, cl["kind"]])
+	if nm.begins_with("ability:"):
+		var aid := nm.substr(8)
+		var ops := {}
+		_ops_of(Content.ABILITIES[aid]["effects"], ops)
+		for op in ops:
+			if op == "status_target" or op == "plant_origin":
+				continue  # riders: drawn by the generic status pop / the sprout they leave
+			var fam = Anim.family_for_op(op)
+			if fam == null:
+				continue  # already failed in coverage
+			var drew := false
+			for k in kinds:
+				if fam.KINDS.has(k):
+					drew = true
+			_check(drew, "%s: op '%s' draws its verb" % [nm, op])
+	if nm.begins_with("intent:"):
+		var moved_any: bool = reel["tracks"].size() > 0
+		var enemy_clip := false
+		for k in kinds:
+			if FxEnemy.KINDS.has(k):
+				enemy_clip = true
+		_check(moved_any or enemy_clip, "%s: the intent is drawn" % nm)
+	for key in reel["tracks"]:
+		for s in reel["tracks"][key]:
+			_check(SEG_KINDS.has(String(s["kind"])), "%s: segment kind '%s' is known" % [nm, s["kind"]])
+	# paint every clip at five points of its life through a recording canvas
+	var V := {"ts": 40.0, "ox": 10.0, "oy": 20.0, "font": ThemeDB.fallback_font, "now": 12345.0}
+	for cl in reel["clips"]:
+		var cv := RecCanvas.new()
+		for k in [0.0, 0.25, 0.5, 0.75, 1.0]:
+			Paint.paint_clip(cv, cl, k, V)
+		_check(cv.bad == 0, "%s: clip '%s' paints finite geometry" % [nm, cl["kind"]])
+		var mid := RecCanvas.new()
+		Paint.paint_clip(mid, cl, 0.4, V)
+		_check(mid.calls > 0, "%s: clip '%s' draws something mid-life" % [nm, cl["kind"]])
+	# poses stay sane through the whole reel
+	for key in reel["tracks"]:
+		for i in 25:
+			var t := float(ln) * float(i) / 24.0
+			var ps := Anim.pose(reel, key, t, Vector2(4, 4))
+			var ok: bool = is_finite(ps["pos"].x) and is_finite(ps["off"].x) and float(ps["sx"]) > 0.0 \
+				and float(ps["sy"]) > 0.0 and float(ps["alpha"]) >= 0.0 and float(ps["alpha"]) <= 1.0
+			_check(ok, "%s: pose of %s at %dms is sane" % [nm, str(key), int(t)])
+	# speeds: quick keeps the order of things and shortens them; off keeps
+	# only the numbers
+	var quick := Anim.plan(pre, sc["action"], evs, post, Anim.SPEEDS["quick"])
+	# speed invariance: a painter reads time as k * span, so the same clip at
+	# the same point of its life draws the same thing at every speed - a
+	# painter that read k * dur would draw its impact late at quick
+	if quick["clips"].size() == reel["clips"].size():
+		for ci in reel["clips"].size():
+			var a := RecCanvas.new()
+			var b := RecCanvas.new()
+			for kk in [0.2, 0.5, 0.8]:
+				Paint.paint_clip(a, reel["clips"][ci], kk, V)
+				Paint.paint_clip(b, quick["clips"][ci], kk, V)
+			_check(a.sig == b.sig, "%s: clip '%s' paints the same at quick speed" % [nm, reel["clips"][ci]["kind"]])
+	else:
+		_check(false, "%s: quick plans the same clips as full" % nm)
+	_check(int(quick["len"]) <= int(float(ln) * 0.6) + L.T_FLOAT + 20, "%s: quick is quicker (%d vs %d)" % [nm, quick["len"], ln])
+	var off := Anim.plan(pre, sc["action"], evs, post, Anim.SPEEDS["off"])
+	var only_reading: bool = off["tracks"].is_empty() and off["ghosts"].is_empty()
+	for cl in off["clips"]:
+		if not (String(cl["kind"]) == "float" or bool(cl.get("read", false))) or int(cl["t0"]) != 0:
+			only_reading = false
+	_check(only_reading, "%s: 'off' keeps only what is read (numbers and words), at once" % nm)
+	# ... and keeps ALL of it: every number and word of the full reel
+	var said_full := 0
+	for cl in reel["clips"]:
+		if String(cl["kind"]) == "float" or bool(cl.get("read", false)):
+			said_full += 1
+	_check(off["clips"].size() == said_full, "%s: 'off' drops no number or word (%d of %d)" % [nm, off["clips"].size(), said_full])
+	# numbers on one tile that are on screen together never share a row
+	var fl: Array = []
+	for cl in reel["clips"]:
+		if String(cl["kind"]) == "float":
+			fl.append(cl)
+	for i in fl.size():
+		for j in range(i + 1, fl.size()):
+			var a0: Dictionary = fl[i]
+			var b0: Dictionary = fl[j]
+			if Vector2i(Vector2(a0["at"]).round()) != Vector2i(Vector2(b0["at"]).round()):
+				continue
+			var both := mini(int(a0["t0"]) + int(a0["dur"]), int(b0["t0"]) + int(b0["dur"])) - maxi(int(a0["t0"]), int(b0["t0"]))
+			if both > 300 and absi(int(a0["t0"]) - int(b0["t0"])) < int(L.T_FLOAT * 0.5):
+				_check(int(a0.get("n", 0)) != int(b0.get("n", 0)),
+					"%s: '%s' and '%s' on one tile take different rows" % [nm, a0["text"], b0["text"]])
+	# where the raked fall: a body the lash or the fire killed frees its
+	# tile at once, so the one behind is dragged INTO it and dies there
+	if nm == "x:rake_fire" or nm == "x:rake_kill":
+		for gh in reel["ghosts"]:
+			_check(Vector2i(Vector2(gh["pos"]).round()) == Vector2i(5, 4),
+				"%s: raked body %d dies on (5, 4), not %s" % [nm, gh["id"], str(gh["pos"])])
+	# HP: a bar holds its pre-step value until the blow lands
+	for e in pre["enemies"]:
+		var pe = L.enemy_by_id(post, e["id"])
+		if pe != null and int(pe["hp"]) < int(e["hp"]):
+			_check(Anim.hp_shown(reel, e["id"], -1.0, int(pe["hp"])) == int(e["hp"]), "%s: enemy %d shows its old HP before the hit" % [nm, e["id"]])
+			_check(Anim.hp_shown(reel, e["id"], end_t, int(pe["hp"])) == int(pe["hp"]), "%s: enemy %d shows its new HP after" % [nm, e["id"]])
+
+
+func _check_idle() -> void:
+	var styles := {}
+	for kind in Content.ENEMIES:
+		styles[L.idle_style(kind)] = true
+	styles["player"] = true
+	for st in styles:
+		for i in 12:
+			var d := Anim.idle(st, 0.37 * float(i), 1000.0 + 97.0 * float(i))
+			_check(is_finite(float(d["lift"])) and float(d["sx"]) > 0.8 and float(d["sy"]) > 0.8, "idle '%s' stays in bounds" % st)
+
+
+## --- 4. the shell plays reels -----------------------------------------------------
+## A shell on the scratch paths (SCRATCH), with SHELL_SEED cleared so its
+## _ready starts no run of its own.
+func _scratch_shell():
+	var sh = Shell.new()
+	sh.profile_path = SCRATCH + "profile.json"
+	sh.run_save_path = SCRATCH + "run.save"
+	sh.cfg_path = SCRATCH + "settings.cfg"
+	sh.runs_dir = SCRATCH + "runs"
+	OS.set_environment("SHELL_SEED", "")
+	return sh
+
+
+func _clean_scratch() -> void:
+	for f in ["profile.json", "profile.json.tmp", "run.save", "settings.cfg"]:
+		if FileAccess.file_exists(SCRATCH + f):
+			DirAccess.remove_absolute(SCRATCH + f)
+	var d := DirAccess.open(SCRATCH + "runs")
+	if d != null:
+		for f in d.get_files():
+			DirAccess.remove_absolute(SCRATCH + "runs/" + f)
+		DirAccess.remove_absolute(SCRATCH + "runs")
+
+
+func _check_shell() -> void:
+	var sh = _scratch_shell()
+	sh._ready()
+	if sh._run_save != null:
+		sh._run_save.close()
+		sh._run_save = null
+	sh._game_is_run = false
+	var keep_mode: String = sh.anim_mode
+	var sc: Dictionary = Scenes.basic_scene("strike")
+	sh.game = sc["game"]
+	sh.screen = "game"
+	sh.mode = "normal"
+	sh.anim_mode = "full"
+	sh.clock_override = 50000
+	sh._act(sc["action"])
+	_check(not sh._reel.is_empty() and Anim.playing(sh._reel, sh._reel_t()), "a step starts a reel in the shell")
+	sh.clock_override = 50000 + int(sh._reel["len"]) + 100
+	_check(not Anim.playing(sh._reel, sh._reel_t()), "the reel ends")
+	# a second step while numbers are in the air carries them over
+	var sc2: Dictionary = Scenes.basic_scene("strike")
+	sh.game = sc2["game"]
+	sh.clock_override = 60000
+	sh._act(sc2["action"])
+	sh.clock_override = 60100
+	sh._act({"type": "end_turn"})
+	var floats := 0
+	for cl in sh._reel["clips"]:
+		if String(cl["kind"]) == "float" and int(cl["t0"]) < 0:
+			floats += 1
+	_check(floats >= 1, "numbers still in the air survive the next step (%d carried)" % floats)
+	# the setting cycles full -> quick -> off -> full and is read by plan()
+	sh.anim_mode = "full"
+	sh._tap("set:anim")
+	_check(sh.anim_mode == "quick", "animations: full -> quick")
+	sh._tap("set:anim")
+	_check(sh.anim_mode == "off", "animations: quick -> off")
+	var sc3: Dictionary = Scenes.basic_scene("move")
+	sh.game = sc3["game"]
+	sh._act(sc3["action"])
+	_check(sh._reel.get("tracks", {}).is_empty(), "animations off: the tender does not slide")
+	sh._tap("set:anim")
+	_check(sh.anim_mode == "full", "animations: off -> full")
+	# the setting persists: a fresh shell reads it back
+	sh.anim_mode = "quick"
+	sh._save_settings()
+	var sh2 = Shell.new()
+	sh2.cfg_path = sh.cfg_path
+	sh2._load_settings()
+	_check(sh2.anim_mode == "quick", "the animation setting is saved and read back")
+	sh2.free()
+	sh.anim_mode = "full"
+	# an out-of-charge tap ends the turn and then moves: ONE input, so the
+	# enemy turn's reel plays first and the move is chained after it
+	var mv: Dictionary = Scenes.intent_scene("move")
+	sh.game = mv["game"]
+	sh.game.player["charge"] = 0
+	sh.clock_override = 70000
+	sh._move_or_strike(Vector2i(0, -1))
+	var tr: Dictionary = sh._reel.get("tracks", {})
+	var moved_enemy := false
+	for key in tr:
+		if not (key is String):
+			moved_enemy = true
+	_check(moved_enemy and tr.has("player"), "an out-of-charge move chains the enemy turn's reel and the move (%s)" % str(tr.keys()))
+	_check(Anim.pos_at(sh._reel, "player", float(sh._reel["len"]) + 1.0, Vector2(sh.game.player["pos"])) == Vector2(sh.game.player["pos"]),
+		"the chained reel lands the tender")
+	_check_chain_tracks()
+	_check_carry(sh)
+	# the killing blow: the sheet waits for it, a tap during it only finishes
+	# it, and the next game never inherits it
+	var dth: Dictionary = Scenes.basic_scene("death")
+	sh.game = dth["game"]
+	sh._game_is_run = false
+	sh.clock_override = 80000
+	sh._act(dth["action"])
+	_check(sh.game.over and Anim.playing(sh._reel, sh._reel_t()), "the death reel plays")
+	var dead_game = sh.game
+	sh._click(Vector2(5, 5))
+	_check(sh.game == dead_game and not Anim.playing(sh._reel, sh._reel_t()),
+		"a tap during the death reel finishes it and does not start a new run")
+	sh._new_game()
+	_check(sh._reel.is_empty(), "a new game starts with no reel")
+	_check(Anim.pose(sh._reel, "player", sh._reel_t(), Vector2(sh.game.player["pos"]))["visible"], "the new run's tender is visible")
+	# a descent has no reel: the floor fade is the animation
+	var ff: Dictionary = Tutorial.room_config("#######\n#.@>..#\n#.....#\n#######", Scenes.FDEF)
+	var dg = Game.new(7, {"kit": ["solar_lance"], "fixed_floor": ff})
+	dg.greened = maxi(dg.green_need, 0)
+	dg.player["pos"] = dg.map["stairs"]
+	sh.game = dg
+	sh.clock_override = 90000
+	sh._act({"type": "descend"})
+	_check(int(sh._reel.get("len", 0)) == 0, "descending onto the draft plays no reel")
+	if dg.phase == "draft":
+		sh._act({"type": "draft", "pick": -1})  # the floor changes on the draft
+	_check(dg.floor_num == 2 and sh._reel.is_empty() and sh._floor_fade_ms == 90000,
+		"a descent plays the floor fade, not a reel (floor %d)" % dg.floor_num)
+	sh.anim_mode = keep_mode
+	sh._save_settings()
+	sh.clock_override = -1
+	sh.free()
+
+
+## --- 5. soak: real runs ----------------------------------------------------------
+func _check_soak() -> void:
+	var seeds := 4
+	if OS.get_environment("ANIM_SOAK_SEEDS") != "":
+		seeds = int(OS.get_environment("ANIM_SOAK_SEEDS"))
+	var steps := 0
+	var worst := 0
+	var worst_at := ""
+	var V := {"ts": 40.0, "ox": 0.0, "oy": 0.0, "font": ThemeDB.fallback_font, "now": 0.0}
+	var before := fails
+	var carried := 0
+	for persona in ["optimizer", "wanderer"]:
+		for sd in range(1, seeds + 1):
+			var g = Game.new(sd)
+			var bot = Roster.make(persona, sd)
+			if bot.has_method("set_sim"):
+				bot.set_sim(g)
+			var prev: Dictionary = {}
+			for n in 400:
+				if g.over:
+					break
+				var pre: Dictionary = g.snapshot()
+				var a: Dictionary = bot.choose_action(pre, g.legal_actions())
+				var evs: Array = g.step(a)
+				var post: Dictionary = g.snapshot()
+				var reel := Anim.plan(pre, a, evs, post)
+				steps += 1
+				var tag := "%s s%d step %d (%s)" % [persona, sd, n, String(a.get("type", ""))]
+				var ln := int(reel["len"])
+				if ln > worst:
+					worst = ln
+					worst_at = tag
+				_soak_one(tag, reel, pre, post, V)
+				# the same step taken a quarter, half or three quarters of the
+				# way into the last one's reel: what it carries still lands
+				# everyone on the post board, and every machine it leaves alone
+				# picks up where it was
+				if not prev.is_empty() and int(pre.get("floor", 0)) == int(post.get("floor", 0)):
+					var ort := float(prev["len"]) * float(n % 3 + 1) / 4.0
+					var cr := Anim.carry(prev, ort, reel)
+					carried += 1
+					_soak_one(tag + " carried", cr, pre, post, V)
+					for e in pre["enemies"]:
+						var id = e["id"]
+						if reel["tracks"].has(id) or not prev["tracks"].has(id):
+							continue
+						var was := Anim.pos_at(prev, id, ort, Vector2(e["pos"]))
+						if Anim.pos_at(cr, id, 0.0, Vector2(e["pos"])).distance_to(was) > 0.01:
+							var near := false
+							for sg in cr["tracks"].get(id, []):
+								near = near or String(sg["kind"]) == "path"
+							# a machine crossing the tender's path may glide or snap
+							if near:
+								_check(false, "soak %s: machine %s picks up where it was" % [tag, str(id)])
+				prev = reel if int(pre.get("floor", 0)) == int(post.get("floor", 0)) else {}
+				if fails - before > 20:
+					print("soak: stopping early after 20 failures")
+					return
+	print("soak: %d real steps (%d also cut into the step before), longest reel %d ms (%s)" % [steps, carried, worst, worst_at])
+	_check(worst <= MAX_LEN_FULL, "soak: every real reel fits the budget (worst %d ms at %s)" % [worst, worst_at])
+
+
+func _soak_one(tag: String, reel: Dictionary, pre: Dictionary, post: Dictionary, V: Dictionary) -> void:
+	if reel["clips"].is_empty() and reel["tracks"].is_empty():
+		return
+	var end_t := float(reel["len"]) + 1.0
+	for e in post["enemies"]:
+		var cur := Vector2(e["pos"])
+		if Anim.pos_at(reel, e["id"], end_t, cur) != cur or not Anim.pose(reel, e["id"], end_t, cur)["visible"]:
+			_check(false, "soak %s: enemy %d ends on its post tile, visible" % [tag, e["id"]])
+	var pp := Vector2(post["player"]["pos"])
+	if Anim.pos_at(reel, "player", end_t, pp) != pp:
+		_check(false, "soak %s: the tender ends on its post tile" % tag)
+	var alive := {}
+	for e in post["enemies"]:
+		alive[e["id"]] = true
+	for gh in reel["ghosts"]:
+		if alive.has(gh["id"]) or Anim.pose(reel, gh["id"], end_t, Vector2(gh["pos"]))["visible"]:
+			_check(false, "soak %s: ghost %d is really gone and vanishes" % [tag, gh["id"]])
+	for p in reel["tswap"]:
+		if String(Anim.terrain_at(reel, p, end_t)) != L.tkind(post, p):
+			_check(false, "soak %s: tile %s ends as the post kind" % [tag, str(p)])
+	for cl in reel["clips"]:
+		var cv := RecCanvas.new()
+		Paint.paint_clip(cv, cl, 0.5, V)
+		if cv.bad > 0 or not Paint.known(String(cl["kind"])):
+			_check(false, "soak %s: clip '%s' paints finite geometry" % [tag, cl["kind"]])
+
+
+## The enemy phase credits each machine ONE blow: in a pack of one kind the
+## first bite must not swallow the others', and a blow the shield soaked
+## belongs to the machine that swung it. (fx_enemy re-claims blows in stream
+## order too, which would hide a director regression in the reel itself.)
+func _check_attribution() -> void:
+	# a haul over goo: the goo bite between the two drags stays with the crane
+	var hs: Dictionary = Scenes.extra_scene("x:haul_goo")
+	var hg = hs["game"]
+	var hpre: Dictionary = hg.snapshot()
+	var hevs: Array = hg.step(hs["action"])
+	var hc := Anim.ctx(hpre, hs["action"], hevs, hg.snapshot(), Anim.empty_reel())
+	var hown: Dictionary = Anim._attribute(hc, hpre["enemies"])
+	var drags := 0
+	for i in hown.get(0, []):
+		if String(hevs[i].get("t", "")) == "drag":
+			drags += 1
+	_check(drags == 2, "x:haul_goo: both drags belong to the crane, the goo between them too (%d)" % drags)
+	for nm in ["x:pack", "x:shielded"]:
+		var sc: Dictionary = Scenes.extra_scene(nm)
+		var g = sc["game"]
+		var pre: Dictionary = g.snapshot()
+		var evs: Array = g.step(sc["action"])
+		var post: Dictionary = g.snapshot()
+		var c := Anim.ctx(pre, sc["action"], evs, post, Anim.empty_reel())
+		var owners: Dictionary = Anim._attribute(c, pre["enemies"])
+		var swung := 0
+		for k in pre["enemies"].size():
+			if String(pre["enemies"][k]["intent"].get("type", "")) != "attack":
+				continue
+			swung += 1
+			var blows := 0
+			for i in owners.get(k, []):
+				var tt := String(evs[i].get("t", ""))
+				if tt == "shield_absorb" or (tt == "damage" and String(evs[i].get("who", "")) == "player"):
+					if tt == "shield_absorb" or i == 0 or String(evs[i - 1].get("t", "")) != "shield_absorb":
+						blows += 1
+			_check(blows == 1, "%s: machine %d is credited exactly its own blow (%d)" % [nm, k, blows])
+		_check(swung >= 2, "%s: stages at least two attackers (%d)" % [nm, swung])
+
+
+## Nothing the step changed may show before the beat that changes it: the
+## telegraph an attacker carries stays until its stagger lands, the HUD chips
+## (shield, max HP, bloom) wait for their floats, a room dresses when its
+## room_bloom lands, and the cleanse float says what the cleanse PAID (the
+## sim's event carries the balance, not the gain).
+func _check_holds() -> void:
+	var sh = _scratch_shell()
+	sh._ready()
+	if sh._run_save != null:
+		sh._run_save.close()
+		sh._run_save = null
+	sh._game_is_run = false
+	sh.screen = "game"
+	sh.mode = "normal"
+	sh.anim_mode = "full"
+	# tide: the sludgeling beside the tender telegraphs an attack on (4,4);
+	# the wave staggers it, and only then does the red tile go
+	var td: Dictionary = Scenes.ability_scene("tide")
+	sh.game = td["game"]
+	sh.clock_override = 10000
+	sh._act(td["action"])
+	var at0: bool = sh._threat_tiles(sh._threat_snap(sh.game.snapshot())).has(Vector2i(4, 4))
+	sh.clock_override = 10000 + int(sh._reel["len"]) + 100
+	var at1: bool = sh._threat_tiles(sh._threat_snap(sh.game.snapshot())).has(Vector2i(4, 4))
+	_check(at0 and not at1, "tide: the attacker's telegraph holds until its stagger lands (%s -> %s)" % [at0, at1])
+	# Ironheart: shield 0 -> 3 and max HP 30 -> 31 wait for their floats
+	var ih: Dictionary = Scenes.extra_scene("x:ironheart")
+	var ipre: Dictionary = ih["game"].snapshot()
+	var ievs: Array = ih["game"].step(ih["action"])
+	var ipost: Dictionary = ih["game"].snapshot()
+	var ir := Anim.plan(ipre, ih["action"], ievs, ipost)
+	_check(Anim.hud_shown(ir, "shield", 0.0, int(ipost["player"]["shield"])) == int(ipre["player"]["shield"])
+		and Anim.hud_shown(ir, "max_hp", 0.0, int(ipost["player"]["max_hp"])) == int(ipre["player"]["max_hp"]),
+		"x:ironheart: the shield and max-HP chips hold until their beat")
+	var iend := float(ir["len"]) + 1.0
+	_check(Anim.hud_shown(ir, "shield", iend, int(ipost["player"]["shield"])) == int(ipost["player"]["shield"])
+		and Anim.hud_shown(ir, "max_hp", iend, int(ipost["player"]["max_hp"])) == int(ipost["player"]["max_hp"]),
+		"x:ironheart: the chips land on the post values")
+	# a cleanse with bloom already in the purse
+	var cl: Dictionary = Scenes.basic_scene("cleanse")
+	var cg = cl["game"]
+	cg.bloom = 5
+	var cpre: Dictionary = cg.snapshot()
+	var cevs: Array = cg.step(cl["action"])
+	var cpost: Dictionary = cg.snapshot()
+	var cr := Anim.plan(cpre, cl["action"], cevs, cpost)
+	var said := []
+	for c2 in cr["clips"]:
+		if String(c2["kind"]) == "float":
+			said.append(String(c2["text"]))
+	var bal := int(cpre["bloom"])
+	for ev in cevs:
+		if String(ev.get("t", "")) == "cleanse":
+			bal = int(ev.get("bloom", bal))
+	var paid := bal - int(cpre["bloom"])
+	_check(said.has("+%d" % paid) and (paid == bal or not said.has("+%d" % bal)),
+		"cleanse: the float says the gain (+%d), never the balance (%d): %s" % [paid, bal, str(said)])
+	_check(Anim.hud_shown(cr, "bloom", 0.0, int(cpost["bloom"])) == 5
+		and Anim.hud_shown(cr, "bloom", float(cr["len"]) + 1.0, int(cpost["bloom"])) == int(cpost["bloom"]),
+		"cleanse: the bloom chip holds 5 until the bloom lands")
+	var bl_post: Array = cpost["map"].get("bloomed", [])
+	if not bl_post.is_empty():
+		_check(Anim.bloomed_shown(cr, 0.0, bl_post) == cpre["map"].get("bloomed", []),
+			"cleanse: the room dresses only when its bloom lands")
+	sh.clock_override = -1
+	sh.free()

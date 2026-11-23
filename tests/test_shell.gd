@@ -20,6 +20,7 @@ const Roster := preload("res://bots/roster.gd")
 const Names := preload("res://shell/names.gd")
 const Feedback := preload("res://shell/feedback.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const AnimLib := preload("res://shell/anim_lib.gd")
 
 ## A kit that fills every slot with slot 0 held by a mobility ability - the one
 ## the forge may never scrap (sim/game.gd _is_mobility).
@@ -197,10 +198,22 @@ func _run_body() -> void:
 	_check(shell.screen == "game", "RESUME returns to the live run")
 	shell._tap("set:hold")
 	_check(shell.hold_ms in [300, 420, 650], "settings cycle hold delay")
+	# the camera row walks the four presets and wraps, starting from wherever
+	# a pinch left the zoom
+	var keep_cols: float = shell.cam_cols
+	shell.cam_cols = 10.5
+	var seen: Array = []
+	for i in 4:
+		shell._tap("set:camera")
+		seen.append(shell._cam_zoom_name())
+	_check(seen == ["normal", "far", "whole floor", "near"], "the camera row cycles near/normal/far/whole floor (%s)" % str(seen))
+	shell.cam_cols = keep_cols
+	shell._save_settings()
 	shell._tap("zoom")
-	_check(shell.zoom_room, "camera button toggles room zoom")
+	_check(shell.cam_overview, "the camera button peeks at the whole floor")
 	_check(not shell.game.map.get("rooms", []).is_empty(), "generated floors expose rooms")
 	shell._tap("zoom")
+	_check(not shell.cam_overview, "...and a second tap ends the peek")
 	shell._tap("inspect")
 	_check(shell.inspect_live, "magnifier button toggles live inspect")
 	shell._tap("inspect")
@@ -271,7 +284,7 @@ func _run_body() -> void:
 	shell3._ability_press(2)  # mycelium_dash: the mobility slot is never scrap
 	_check(shell3.game.player["kit"].size() == ksz and shell3.mode == "up_scrap",
 		"the forge refuses to scrap the mobility ability")
-	_check(shell3.flash == "can't scrap your mobility ability", "...and says why")
+	_check(shell3.flash == "your mobility ability can't be recycled", "...and says why")
 	shell3._ability_press(1)
 	# Block D6: solar_lance is a FORKED base, so the sim lists one forge action
 	# per (keep, scrap, variant) triple and the scrap tap opens the fork sheet
@@ -459,7 +472,7 @@ func _run_body() -> void:
 	shop3._tap("shop")
 	shop3._tap("buy:ability")
 	_check(shop3.mode == "shop", "a full kit leaves the sheet open on the ability card")
-	_check(shop3.flash == "can't buy that", "...and says the card is not for sale")
+	_check(shop3.flash == "your kit is full", "...and says why the card is not for sale (%s)" % shop3.flash)
 	_check(shop3.game.player["kit"] == kit_before, "the full kit is untouched")
 	_check(shop3.game.bloom == bloom_before, "no bloom is spent")
 	_check(shop3.game.shop.has("ability"), "the ability card stays stocked")
@@ -493,26 +506,31 @@ func _run_body() -> void:
 	shop5.free()
 
 	# 8c. the log speaks the new event shapes
+	const RunEnd8c := preload("res://shell/run_end.gd")
 	var evsh = _bare_shell()
 	evsh.game = Game.new(1, {})
 	_check(evsh._ev_text({"t": "damage", "who": "player", "amt": 2, "src": "fire:solar_lance"})
-		== "You take 2 dmg (fire)", "a qualified damage source reads as the bare source")
+		== "You take 2 (fire)", "a qualified damage source reads as the bare source")
 	_check(evsh._ev_text({"t": "damage", "who": "player", "amt": 1, "src": "goo"})
-		== "You take 1 dmg (goo)", "an unqualified source is untouched")
+		== "You take 1 (goo)", "an unqualified source is untouched")
+	_check(evsh._ev_text({"t": "damage", "who": "player", "amt": 2, "src": "drill_bot"})
+		== "You take 2 (Drill Bot)", "a machine source reads as its name, never its id")
+	_check(evsh._ev_text({"t": "draft_upgrade", "id": "solar_lance+noon"}) == "Grew into Noon Lance",
+		"an upgrade names the variant, never its id")
+	# main's _cause_words moved into RunEnd.cause_text (one names module, main's voice)
+	_check(RunEnd8c.cause_text("drill_bot") == "felled by a Drill Bot" and RunEnd8c.cause_text("oil_sludge") == "felled by an Oil Sludge"
+			and RunEnd8c.cause_text("overseer") == "felled by the Overseer" and RunEnd8c.cause_text("smog") == "lost in the smog",
+		"the over sheet names what ended the run in words (%s / %s)" % [RunEnd8c.cause_text("drill_bot"), RunEnd8c.cause_text("overseer")])
 	_check(evsh._ev_text({"t": "damage", "who": "drill_bot", "amt": 3}) == "Drill Bot takes 3",
 		"an enemy damage line with no src names no source")
-	_check(evsh._ev_text({"t": "damage", "who": "player", "amt": 2, "src": "drill_bot"})
-		== "You take 2 dmg (Drill Bot)", "an enemy source reads as its name")
 	_check(evsh._ev_text({"t": "damage", "who": "drill_bot", "amt": 3, "src": "solar_lance"})
 		== "Drill Bot takes 3 (Solar Lance)", "an ability hit names the ability")
 	_check(evsh._ev_text({"t": "damage", "who": "drill_bot", "amt": 3, "src": "strike"})
 		== "Drill Bot takes 3", "a plain strike names no source")
 	_check(evsh._ev_text({"t": "damage", "who": "drill_bot", "amt": 3, "src": "collision:water_jet"})
 		== "Drill Bot takes 3 (collision)", "a collision reads as a collision")
-	_check(evsh._ev_text({"t": "player_death", "cause": "drill_bot"}) == "You die (Drill Bot)",
-		"the death line names the killer")
-	_check(evsh._ev_text({"t": "draft_upgrade", "id": "solar_lance+noon"}) == "Upgraded to Noon Lance",
-		"an upgrade names the variant, not its id")
+	_check(evsh._ev_text({"t": "player_death", "cause": "drill_bot"}) == "You wilt (Drill Bot)",
+		"the death line names the killer: %s" % evsh._ev_text({"t": "player_death", "cause": "drill_bot"}))
 	var rp: Vector2i = evsh.game.player["pos"] + _open_dir(evsh.game)
 	var rbot: Dictionary = _park_enemy(evsh.game, rp)
 	rbot["kind"] = "drill_bot"
@@ -520,21 +538,21 @@ func _run_body() -> void:
 		"a rooted line names the enemy: %s" % evsh._ev_text({"t": "rooted", "id": rbot["id"]}))
 	rbot["pos"] = Vector2i(-9, -9)
 	evsh.game._spawn("coal_golem", rp)
-	_check(evsh._ev_text({"t": "reinforcement", "tile": rp}) == "A vent releases a Coal Golem",
+	_check(evsh._ev_text({"t": "reinforcement", "tile": rp}) == "A Coal Golem climbs out of a vent",
 		"a reinforcement names what came out of the vent: %s" % evsh._ev_text({"t": "reinforcement", "tile": rp}))
 	# Block E2 (stage 9): the event's own kind wins; without one, a NEW enemy
 	# on the tile (above); with neither, "a machine"
-	_check(evsh._ev_text({"t": "reinforcement", "tile": rp, "kind": "rust_hound"}) == "A vent releases a Rust Hound",
+	_check(evsh._ev_text({"t": "reinforcement", "tile": rp, "kind": "rust_hound"}) == "A Rust Hound climbs out of a vent",
 		"a reinforcement's kind names it, whatever stands on the tile: %s"
 		% evsh._ev_text({"t": "reinforcement", "tile": rp, "kind": "rust_hound"}))
-	_check(evsh._ev_text({"t": "reinforcement", "tile": Vector2i(-40, -40)}) == "A vent releases a machine",
+	_check(evsh._ev_text({"t": "reinforcement", "tile": Vector2i(-40, -40)}) == "A machine climbs out of a vent",
 		"no kind and nothing on the tile: a machine (%s)" % evsh._ev_text({"t": "reinforcement", "tile": Vector2i(-40, -40)}))
 	# one step can release different kinds at different vents: one line per
 	# kind, counted (mutation: aggregate by the step instead of by the kind)
 	var rmix: Array = Feedback.log_entries([{"t": "reinforcement", "tile": Vector2i(-40, -40), "kind": "rust_hound"},
 		{"t": "reinforcement", "tile": Vector2i(-41, -40), "kind": "drill_bot"},
 		{"t": "reinforcement", "tile": Vector2i(-42, -40), "kind": "rust_hound"}], {}, evsh.game, {}).map(func(l): return l["text"])
-	_check(rmix == ["Vents release 2 Rust Hounds", "A vent releases a Drill Bot"],
+	_check(rmix == ["2 Rust Hounds climb out of the vents", "A Drill Bot climbs out of a vent"],
 		"a mixed wave reads one line per kind: %s" % str(rmix))
 	# Block E1 (stage 9): the floor line names the crew the floor drew
 	_check(evsh._ev_text({"t": "floor", "floor": 1, "name": "Strip Mine I", "encounter": "hound_and_handler"})
@@ -1007,6 +1025,8 @@ func _run_body() -> void:
 	_check_back()
 	_check_aim_cancel()
 	_check_modal_dpad()
+	_check_aim_preview()
+	_check_haptics()
 	_check_cleanse_hint()
 	_check_card_text()
 	_check_tier_clamp()
@@ -1030,6 +1050,20 @@ func _run_body() -> void:
 	_check_career_pings()
 	_check_objective_line()
 	_check_encounters()
+	_check_tutorial_text()
+	_check_intro_text()
+	_check_legend_text()
+	_check_camera()
+	_check_camera_gestures()
+	_check_tele_hold()
+	_check_over_reel()
+	_check_banner_beats()
+	_check_reel_words()
+	_check_toast()
+	_check_one_clock()
+	_check_settings_rows()
+	_check_haptics_paths()
+	_check_idle_rate()
 
 	shell.free()
 	shell2.free()
@@ -1112,7 +1146,7 @@ func _check_cleanse_hint() -> void:
 			g.terrain.erase(t)
 	# a) nothing anywhere near: the plain answer, unchanged
 	sh._tap("cleanse")
-	_check(sh.mode != "cleanse" and sh.flash == "no corruption beside you",
+	_check(sh.mode != "cleanse" and sh.flash == "nothing to cleanse beside you",
 		"CLEANSE with nothing beside you says so (got %s)" % sh.flash)
 	# b) standing ON it - the case that reads as a dead end
 	g.terrain[p] = {"kind": "oil"}
@@ -1330,6 +1364,337 @@ func _check_card_text() -> void:
 	sh.free()
 
 
+## --- no walls of text ------------------------------------------------------------
+## The owner's ask was "make sure we're not overloading screens with walls of
+## text". The intro card was 18 rules at whatever size each one could be
+## squeezed to, and tutorial steps ran to four lines that shrank one by one.
+## These hold the line where it was redrawn: a guide step is at most
+## Shell.TUT_LINES lines that fit the banner nearly unshrunk on every phone
+## shape, the intro is two lines of story and six rules, and a legend blurb is
+## one line at its own size.
+func _check_tutorial_text() -> void:
+	var sh = _bare_shell()
+	var worst := 1.0
+	var worst_at := ""
+	for st in Tutorial.STEPS:
+		_check(st["say"].size() <= Shell.TUT_LINES,
+			"a guide step says at most %d lines (%s)" % [Shell.TUT_LINES, str(st["say"])])
+	_check(Tutorial.DONE.size() <= 4, "the tutorial's last card is at most four lines")
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		var nominal: int = sh._tut_font(vh)
+		for st in Tutorial.STEPS:
+			for line in st["say"]:
+				var f: int = sh._fit_size(String(line), nominal, vw * 0.9)
+				if float(f) / nominal < worst:
+					worst = float(f) / nominal
+					worst_at = "'%s' at %dx%d" % [line, int(vw), int(vh)]
+	# measured on the tree first: every step is 100% on 9:16 and 9:20 and the
+	# longest line drops to 93% on a 9:22 phone
+	_check(worst >= 0.9, "a guide line shrinks to %.0f%% of the banner size (%s)" % [worst * 100.0, worst_at])
+	print("tutorial text: %d steps, worst line at %.0f%% of the banner size (%s)" % [
+		Tutorial.STEPS.size(), worst * 100.0, worst_at])
+	sh.free()
+
+
+func _check_intro_text() -> void:
+	var sh = _bare_shell()
+	_check(Shell.INTRO_STORY.size() <= 2 and Shell.INTRO_RULES.size() <= 6,
+		"the intro card is two lines of story and at most six rules (%d + %d)" % [
+			Shell.INTRO_STORY.size(), Shell.INTRO_RULES.size()])
+	for rule in Shell.INTRO_RULES:
+		_check(String(rule[0]) == "red" or Art.ART.has(String(rule[0])), "intro rule icon %s has art" % rule[0])
+	var worst := 1.0
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		# _draw_intro's own arithmetic: one size, the one its widest line fits at
+		var fsz := int(vh * 0.024)
+		var text_x := vw * 0.08 + vh * 0.042 + vw * 0.04
+		for line in Shell.INTRO_STORY:
+			fsz = mini(fsz, sh._fit_size(String(line), fsz, vw * 0.86))
+		for rule in Shell.INTRO_RULES:
+			fsz = mini(fsz, sh._fit_size(String(rule[1]), fsz, vw * 0.94 - text_x))
+		worst = minf(worst, float(fsz) / vh)
+	# the card shares one size; it must still read at a glance. Measured on
+	# the tree first: 1.63% on a 9:22 phone, 1.79% at 1080x2400 - the card
+	# description gate's floor is 1.15%, and this one is well above it
+	_check(worst >= 0.015, "the intro card's text drops to %.2f%% of viewport height" % (worst * 100.0))
+	sh.free()
+
+
+func _check_legend_text() -> void:
+	var sh = _bare_shell()
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		# _draw_help's row arithmetic
+		var row_h := (vh * 0.93 - vh * 0.16) / Shell.HELP_PAGE_SIZE
+		var isz := int(minf(row_h * 0.72, vh * 0.038))
+		var text_x := vw * 0.05 + isz * 1.35
+		var bsz := int(minf(vh * 0.0165, row_h * 0.27))
+		for row in Shell.LEGEND:
+			_check(sh._fit_size(String(row[2]), bsz, vw * 0.95 - text_x) == bsz,
+				"legend blurb for %s fits its row unshrunk at %dx%d ('%s')" % [row[0], int(vw), int(vh), row[2]])
+	sh.free()
+
+
+## --- the camera -------------------------------------------------------------------
+## One view that follows the tender (shell/main.gd "the camera"). Its rules,
+## asked of _cam_target / _layout_map directly: the tender is always on screen,
+## the view never shows past the floor's edge, a room that fits is framed
+## whole, the whole floor is one pinch (or one peek) away, a tile aim frames
+## every target, and a peek or a drag ends on the next action.
+const CAM_VP := Vector2(1080, 2400)
+
+func _cam_shell(seed_v: int, cfg: Dictionary = {}):
+	var sh = _bare_shell()
+	sh.game = Game.new(seed_v, cfg)
+	sh.cam_cols = Shell.CAM_COLS_DEFAULT
+	sh.anim_mode = "off"  # the camera snaps: these ask where it IS, not how it glides
+	sh._status_end = sh._status_height(sh.game.snapshot(), CAM_VP.y)
+	return sh
+
+
+## [view rect in tiles, zone] for the camera's current target.
+func _cam_view(sh) -> Array:
+	var zone: Rect2 = sh._map_zone(CAM_VP.x, CAM_VP.y)
+	var t: Dictionary = sh._cam_target(sh.game.snapshot(), zone)
+	var ts := float(t["ts"])
+	var vwt := zone.size.x / ts
+	var vht := zone.size.y / ts
+	return [Rect2(float(t["cx"]) - vwt / 2.0, float(t["cy"]) - vht / 2.0, vwt, vht), zone, ts]
+
+
+func _check_camera() -> void:
+	var bad_in := 0
+	var bad_edge := 0
+	var steps := 0
+	var framed := 0
+	var in_room := 0
+	var R := preload("res://bots/roster.gd")
+	for seed_v in [3, 11, 42, 4242]:
+		var sh = _cam_shell(seed_v)
+		var bot = R.make("optimizer", seed_v)
+		for i in 160:
+			var g = sh.game
+			if g.over:
+				break
+			if g.phase == "play":
+				var cv := _cam_view(sh)
+				var view: Rect2 = cv[0]
+				var pp: Vector2i = g.player["pos"]
+				steps += 1
+				if not view.grow(0.001).encloses(Rect2(Vector2(pp), Vector2.ONE)):
+					bad_in += 1
+				var w := float(g.map["w"])
+				var h := float(g.map["h"])
+				# never past the floor on an axis the floor is bigger than the view
+				if (w > view.size.x and (view.position.x < -0.001 or view.end.x > w + 0.001)) \
+						or (h > view.size.y and (view.position.y < -0.001 or view.end.y > h + 0.001)):
+					bad_edge += 1
+				for r in g.map.get("rooms", []):
+					var rr: Rect2i = (r as Rect2i).grow(1)
+					if rr.has_point(pp) and rr.size.x <= view.size.x and rr.size.y <= view.size.y:
+						in_room += 1
+						if view.grow(0.001).encloses(Rect2(Vector2(rr.position), Vector2(rr.size))):
+							framed += 1
+						break
+			sh._act(bot.choose_action(g.snapshot(), g.legal_actions()))
+		sh.free()
+	_check(steps > 300, "the camera sweep saw real play (%d steps)" % steps)
+	_check(bad_in == 0, "the tender is on screen at every step (%d of %d off)" % [bad_in, steps])
+	_check(bad_edge == 0, "the view never shows past the floor's edge (%d of %d)" % [bad_edge, steps])
+	_check(framed == in_room and in_room > 50, "a room that fits is framed whole (%d of %d)" % [framed, in_room])
+	print("camera: %d steps, tender always on screen, %d room frames all whole" % [steps, in_room])
+	# the default zoom is a real zoom: bigger tiles than the whole floor gave
+	var sz = _cam_shell(4242)
+	var zone: Rect2 = sz._map_zone(CAM_VP.x, CAM_VP.y)
+	var fit: float = Shell._cam_fit_ts(int(sz.game.map["w"]), int(sz.game.map["h"]), zone)
+	var t0: Dictionary = sz._cam_target(sz.game.snapshot(), zone)
+	_check(float(t0["ts"]) > fit * 1.4, "the default view is closer than the whole floor (%.0f vs %.0f px)" % [
+		float(t0["ts"]), fit])
+	# the peek is the whole floor; a pinch all the way out is too, and stays
+	sz.cam_overview = true
+	var t1: Dictionary = sz._cam_target(sz.game.snapshot(), zone)
+	_check(is_equal_approx(float(t1["ts"]), fit), "the peek shows the whole floor")
+	sz._act({"type": "end_turn"})
+	_check(not sz.cam_overview, "the next action ends the peek")
+	sz._set_zoom(Shell.CAM_COLS_MAX)
+	sz._act({"type": "end_turn"})
+	var t2: Dictionary = sz._cam_target(sz.game.snapshot(), zone)
+	_check(is_equal_approx(float(t2["ts"]), fit), "zoomed all the way out IS the whole floor, and it stays")
+	sz._set_zoom(1.0)
+	var t3: Dictionary = sz._cam_target(sz.game.snapshot(), zone)
+	_check(float(t3["ts"]) <= minf(zone.size.x, zone.size.y) / 6.0 + 0.01 and sz.cam_cols == Shell.CAM_COLS_MIN,
+		"zooming in stops at the closest view (%.0f px)" % float(t3["ts"]))
+	# a tile aim frames every tile it can land on, as far out as it must
+	sz._set_zoom(Shell.CAM_COLS_MIN)
+	sz.mode = "target_tile"
+	var m: Dictionary = sz.game.map
+	sz.mode_targets = [Vector2i(1, 1), Vector2i(int(m["w"]) - 2, int(m["h"]) - 2)]
+	var av: Array = _cam_view(sz)
+	var aim_ok := true
+	for tt in sz.mode_targets:
+		if not (av[0] as Rect2).grow(0.001).encloses(Rect2(Vector2(tt), Vector2.ONE)):
+			aim_ok = false
+	_check(aim_ok, "a tile aim frames every target, corner to corner")
+	sz.mode = "normal"
+	sz.mode_targets = []
+	# the tutorial shows its whole room, above the guide banner
+	sz.screen = "tutorial"
+	sz.tut_step = 0
+	sz.tut_done = false
+	sz.game = Game.new(1, Tutorial.game_config())
+	sz._status_end = sz._status_height(sz.game.snapshot(), CAM_VP.y)
+	var tz: Rect2 = sz._map_zone(CAM_VP.x, CAM_VP.y)
+	var tt0: Dictionary = sz._cam_target(sz.game.snapshot(), tz)
+	_check(float(tt0["ts"]) * float(sz.game.map["h"]) <= tz.size.y + 0.01
+			and tz.end.y <= CAM_VP.y * Shell.Z_MAP_END - sz._tut_banner_h(CAM_VP.y),
+		"the tutorial room fits whole above the guide banner")
+	# off-screen markers: the stairs get one when they are out of view, and a
+	# peek (which shows them) takes them all away
+	sz.screen = "game"
+	sz.game = Game.new(4242, {})
+	sz._cam_reset()
+	sz._status_end = sz._status_height(sz.game.snapshot(), CAM_VP.y)
+	sz.cam_cols = Shell.CAM_COLS_MIN
+	var mz: Rect2 = sz._map_zone(CAM_VP.x, CAM_VP.y)
+	sz._layout_map(sz.game.snapshot(), mz)
+	var pois: Array = sz._edge_pois(sz.game.snapshot(), mz)
+	var st: Vector2i = sz.game.map["stairs"]
+	var stairs_seen: bool = Rect2((mz.position.x - sz._mox) / sz._ts, (mz.position.y - sz._moy) / sz._ts,
+		mz.size.x / sz._ts, mz.size.y / sz._ts).grow(-0.2).has_point(Vector2(st) + Vector2(0.5, 0.5))
+	var stairs_marked := false
+	for poi in pois:
+		if String(poi["icon"]) == "stairs":
+			stairs_marked = true
+	_check(stairs_seen != stairs_marked, "the stairs are on screen or marked at the edge, never both or neither")
+	sz.cam_overview = true
+	sz._layout_map(sz.game.snapshot(), mz)
+	_check(sz._edge_pois(sz.game.snapshot(), mz).is_empty(), "a peek needs no edge markers")
+	# at rest the sprites are rasterised at the exact tile size
+	_check(sz._raster == int(round(sz._ts)), "a still camera rasterises at the exact tile size (%d vs %.1f)" % [
+		sz._raster, sz._ts])
+	sz.free()
+
+
+## Pinch, wheel and drag go through the real input handler, the way Android
+## delivers them: touch 0 arrives as an emulated mouse press too, so the
+## checks below assert the release of a pinch or a drag is NOT a tap - no move,
+## no strike, no turn.
+func _check_camera_gestures() -> void:
+	# a pinch and a wheel notch save the zoom - to the scratch cfg _bare_shell
+	# set, never the player's (the end check holds the real one untouched)
+	var sh = _cam_shell(4242)
+	sh.anim_mode = "full"
+	sh.clock_override = 1000
+	var zone: Rect2 = sh._map_zone(CAM_VP.x, CAM_VP.y)
+	sh._layout_map(sh.game.snapshot(), zone)
+	var g = sh.game
+	var pos0: Vector2i = g.player["pos"]
+	var turn0: int = g.total_turns
+	# a finger lands beside the tender (so a tap there WOULD move it)...
+	var d := _open_dir(g)
+	var p0: Vector2 = sh._tile_rect(pos0 + d).get_center()
+	var mb := InputEventMouseButton.new()
+	mb.button_index = MOUSE_BUTTON_LEFT
+	mb.pressed = true
+	mb.position = p0
+	sh._unhandled_input(mb)
+	var t0 := InputEventScreenTouch.new()
+	t0.index = 0
+	t0.pressed = true
+	t0.position = p0
+	sh._unhandled_input(t0)
+	# ...a second finger joins, and the two spread to twice the distance
+	var t1 := InputEventScreenTouch.new()
+	t1.index = 1
+	t1.pressed = true
+	t1.position = p0 + Vector2(200, 0)
+	sh._unhandled_input(t1)
+	var cols0: float = sh.cam_cols
+	var dr := InputEventScreenDrag.new()
+	dr.index = 1
+	dr.position = p0 + Vector2(400, 0)
+	sh._unhandled_input(dr)
+	_check(sh.cam_cols < cols0 * 0.6, "spreading two fingers zooms in (%.1f -> %.1f cols)" % [cols0, sh.cam_cols])
+	t1.pressed = false
+	sh._unhandled_input(t1)
+	t0.pressed = false
+	sh._unhandled_input(t0)
+	mb.pressed = false
+	sh._unhandled_input(mb)
+	_check(g.player["pos"] == pos0 and g.total_turns == turn0, "a pinch's release is not a tap: nothing moved")
+	var saved := ConfigFile.new()
+	saved.load(sh.cfg_path)
+	_check(is_equal_approx(float(saved.get_value("ui", "cam_cols", -1.0)), sh.cam_cols),
+		"the zoom a pinch settles on is saved")
+	# a one-finger drag looks around, and its release is not a tap either
+	sh._layout_map(g.snapshot(), zone)
+	mb.pressed = true
+	mb.position = p0
+	sh._unhandled_input(mb)
+	var mm := InputEventMouseMotion.new()
+	mm.position = p0 + Vector2(-260, 0)
+	mm.relative = Vector2(-260, 0)
+	sh._unhandled_input(mm)
+	_check(sh._panning and sh.cam_pan != Vector2.ZERO, "a drag on the map looks around (%s)" % str(sh.cam_pan))
+	mb.pressed = false
+	mb.position = mm.position
+	sh._unhandled_input(mb)
+	_check(g.player["pos"] == pos0 and g.total_turns == turn0, "a drag's release is not a tap: nothing moved")
+	# a drag far past the floor's edge stops at the edge: the travel is not banked
+	for i in 30:
+		sh._pan_by(Vector2(-400, 0))
+	var far: Vector2 = sh.cam_pan
+	sh._pan_by(Vector2(80, 0))
+	_check(sh.cam_pan.x < far.x, "dragging back from the edge moves at once (%s -> %s)" % [str(far), str(sh.cam_pan)])
+	sh._act({"type": "end_turn"})
+	_check(sh.cam_pan == Vector2.ZERO, "the next action brings the camera back to the tender")
+	# the wheel zooms both ways, and a plain tap still moves
+	sh._set_zoom(Shell.CAM_COLS_DEFAULT)
+	sh._layout_map(g.snapshot(), zone)
+	var c1: float = sh.cam_cols
+	var wh := InputEventMouseButton.new()
+	wh.button_index = MOUSE_BUTTON_WHEEL_UP
+	wh.pressed = true
+	wh.position = p0
+	sh._unhandled_input(wh)
+	_check(sh.cam_cols < c1, "the mouse wheel zooms in (%.2f -> %.2f)" % [c1, sh.cam_cols])
+	sh._layout_map(g.snapshot(), zone)
+	var c2: float = sh.cam_cols
+	wh.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	sh._unhandled_input(wh)
+	_check(sh.cam_cols > c2, "...and out (%.2f -> %.2f)" % [c2, sh.cam_cols])
+	sh._layout_map(g.snapshot(), zone)
+	var pos1: Vector2i = g.player["pos"]
+	var tap_at: Vector2 = sh._tile_rect(pos1 + _open_dir(g)).get_center()
+	mb.pressed = true
+	mb.position = tap_at
+	sh._unhandled_input(mb)
+	mb.pressed = false
+	sh._unhandled_input(mb)
+	_check(g.player["pos"] != pos1 or g.total_turns != turn0, "a plain tap beside the tender still acts")
+	# only the map ZONE is the map: the camera crops the floor, so a tap in the
+	# empty space between the buttons below it must not read as the tile that
+	# lies, unseen, under that spot
+	sh._layout_map(g.snapshot(), zone)
+	var pos2: Vector2i = g.player["pos"]
+	var turn2: int = g.total_turns
+	var below: Vector2 = sh._tile_rect(pos2 + _open_dir(g)).get_center()
+	sh._cam_zone = Rect2(below + Vector2(0, -9000), Vector2(1, 1))  # the zone sits elsewhere
+	mb.pressed = true
+	mb.position = below
+	sh._unhandled_input(mb)
+	mb.pressed = false
+	sh._unhandled_input(mb)
+	_check(g.player["pos"] == pos2 and g.total_turns == turn2, "a tap outside the map zone never reaches the map")
+	sh.clock_override = -1
+	sh.free()
+
+
 ## --- the Back button ---------------------------------------------------------
 ## Android's Back button (and gesture) used to KILL the app from any screen:
 ## application/config/quit_on_go_back defaults to true and nothing in the
@@ -1370,17 +1735,21 @@ func _check_back() -> void:
 	bk._show_tooltip(bk._press_pos)
 	_check(not bk.tooltip.is_empty(), "a hold on the tender really raises a tooltip")
 	bk._held = true
-	bk._press_ms = Time.get_ticks_msec() - 5000  # the hold fired long ago
+	bk._press_ms = bk._now() - 5000  # the hold fired long ago
 	_check(bk._back(true) == "tooltip", "Back drops the held tooltip")
 	bk._process(0.1)
 	_check(bk.tooltip.is_empty() and not bk._held,
 		"...and the next frame does not put it straight back (%s)" % str(bk.tooltip))
 	_check(bk._back(true) != "tooltip", "...so the next Back is not eaten by it too")
 	bk.screen = "game"
-	# the room camera is a view state, so Back zooms out before it leaves
-	bk.zoom_room = true
-	_check(bk._back(true) == "zoom" and not bk.zoom_room and bk.screen == "game",
-		"Back leaves the room camera before it leaves the run")
+	# a peek or a look-around is a view state, so Back returns the camera to
+	# the tender before it leaves the run
+	bk.cam_overview = true
+	_check(bk._back(true) == "camera" and not bk.cam_overview and bk.screen == "game",
+		"Back ends a whole-floor peek before it leaves the run")
+	bk.cam_pan = Vector2(3, 1)
+	_check(bk._back(true) == "camera" and bk.cam_pan == Vector2.ZERO and bk.screen == "game",
+		"Back ends a look-around before it leaves the run")
 	# the draft's drop sheet returns to the offer cards, having picked nothing
 	bk.mode = "draft_drop"
 	bk.mode_pick = 1
@@ -1529,6 +1898,163 @@ func _check_aim_cancel() -> void:
 	sw.free()
 
 
+## --- the aim preview tells the truth ------------------------------------------
+## Arming an aim reads each legal cast off a clone() of the sim and labels what
+## it would do. Two things are worth a gate: the label has to MATCH the cast
+## (a preview that is off by one is worse than none), and computing it must
+## never touch the live game - an aim costs nothing, so neither does looking.
+func _check_aim_preview() -> void:
+	var sh = _bare_shell()
+	sh.game = Game.new(4242, {})
+	var g = sh.game
+	g.player["charge"] = 5
+	var d := _open_dir(g)
+	var en: Dictionary = _park_enemy(g, g.player["pos"] + d)
+	en["hp"] = 5
+	var h0: String = g.state_hash()
+	sh._ability_press(0)  # solar_lance: 2 dmg down a line
+	_check(sh.mode == "target_dir", "preview: the lance arms a direction aim (%s)" % sh.mode)
+	_check(g.state_hash() == h0, "preview: arming an aim leaves the live game byte-identical")
+	var labels: Array = sh._preview_labels()
+	var mine: Array = labels.filter(func(l): return l["tile"] == en["pos"])
+	_check(mine.size() == 1 and String(mine[0]["text"]) == "-2" and not mine[0]["kill"],
+		"preview: the lance labels the body it would hit with its damage (%s)" % str(labels))
+	sh._dir_input(d)
+	_check(int(en["hp"]) == 3, "preview: and the cast then deals exactly that (hp %d)" % int(en["hp"]))
+	# a lethal cast reads KILL, not a number
+	en["hp"] = 2
+	g.player["charge"] = 5
+	sh._ability_press(0)
+	var kl: Array = sh._preview_labels().filter(func(l): return l["tile"] == en["pos"])
+	_check(kl.size() == 1 and String(kl[0]["text"]) == "KILL" and kl[0]["kill"],
+		"preview: a lethal lance reads KILL (%s)" % str(kl))
+	sh._cancel_aim()
+	_check(sh.mode == "normal", "preview: cancel leaves the aim")
+	_check(sh._aim_preview.is_empty() and sh._preview_labels().is_empty(),
+		"preview: a cancelled aim keeps no labels")
+	# an aim with nothing in reach promises nothing
+	en["pos"] = Vector2i(-9, -9)
+	sh._ability_press(0)
+	_check(sh.mode == "target_dir", "preview: the lance still arms with nobody in reach (%s)" % sh.mode)
+	_check(sh._preview_labels().is_empty(), "preview: an aim that reaches nobody labels nobody")
+	sh.free()
+	# the two other LINE shapes. Both were uncastable from the shell before
+	# this pass - the whip ("enemy_line") lists enemy positions and was handed
+	# a unit vector, the rake ("dir_enemy") fell through to a tile aim whose
+	# "tiles" were unit vectors - so the preview would have promised damage
+	# the next input could not deal.
+	for aid in ["vine_whip", "vine_whip+rake"]:
+		var sw = _bare_shell()
+		sw.game = Game.new(4242, {"kit": [aid, "seed_bomb", "mycelium_dash"]})
+		var gw = sw.game
+		gw.player["charge"] = 5
+		var pw: Vector2i = gw.player["pos"]
+		var dw := _open_run(gw, 2)
+		for e in gw.enemies:
+			e["pos"] = Vector2i(-9, -9)
+		var e1: Dictionary = gw.enemies[0]
+		e1["pos"] = pw + dw * 2
+		e1["hp"] = 9
+		# a second legal direction, so the press arms an aim instead of casting
+		var e2: Dictionary = gw.enemies[1]
+		var d2 := _open_run(gw, 2, dw)
+		e2["pos"] = pw + d2 * 2
+		e2["hp"] = 9
+		sw._ability_press(0)
+		_check(sw.mode == "target_dir", "preview: %s arms a direction aim (%s)" % [aid, sw.mode])
+		var wl: Array = sw._preview_labels().filter(func(l): return l["tile"] == e1["pos"])
+		_check(wl.size() == 1 and String(wl[0]["text"]) == "-2",
+			"preview: %s labels the body on its line (%s)" % [aid, str(sw._preview_labels())])
+		sw._dir_input(dw)
+		_check(int(e1["hp"]) == 7 and int(e2["hp"]) == 9,
+			"preview: a D-pad press casts %s down that line and deals what was shown (hp %d / %d, flash '%s')" % [
+				aid, int(e1["hp"]), int(e2["hp"]), sw.flash])
+		sw.free()
+	# the direction resolver is for the whip's POSITION targets only. The
+	# rake's targets are unit vectors, and read as positions they line up with
+	# a tender standing in column 1 or row 1: an illegal direction then cast
+	# the rake down a different, legal one.
+	var sr = _bare_shell()
+	sr.game = Game.new(4242, {"kit": ["vine_whip+rake", "seed_bomb", "mycelium_dash"]})
+	var gr = sr.game
+	var edge := Vector2i(-1, -1)
+	for yy in range(2, int(gr.map["h"]) - 2):
+		if int(gr.map["tiles"][yy * int(gr.map["w"]) + 1]) == 1 \
+				and int(gr.map["tiles"][yy * int(gr.map["w"]) + 2]) == 1 \
+				and int(gr.map["tiles"][yy * int(gr.map["w"]) + 3]) == 1:
+			edge = Vector2i(1, yy)
+			break
+	if edge.x < 0:
+		# no floor in column 1 on this map: force one, the resolver only reads positions
+		edge = Vector2i(1, 3)
+		for xx in [1, 2, 3]:
+			gr.map["tiles"][3 * int(gr.map["w"]) + xx] = 1
+			gr.terrain.erase(Vector2i(xx, 3))
+	gr.player["pos"] = edge
+	gr.player["charge"] = 5
+	for e in gr.enemies:
+		e["pos"] = Vector2i(-9, -9)
+	gr.enemies[0]["pos"] = edge + Vector2i(2, 0)
+	gr.enemies[0]["hp"] = 9
+	sr.mode = "target_dir"
+	sr.mode_slot = 0
+	# from (1, y) the legal target (1, 0) minus the tender's position is
+	# (0, -y): "up", an illegal direction with nobody on it
+	sr._try_ability_target(0, Vector2i(0, -1))
+	_check(int(gr.enemies[0]["hp"]) == 9 and int(gr.player["charge"]) == 5,
+		"preview: an illegal rake direction casts nothing, even from column 1 (hp %d, charge %d)" % [
+			int(gr.enemies[0]["hp"]), int(gr.player["charge"])])
+	sr.free()
+	# a TILE aim labels the target tile: two snare targets, each reads rooted
+	var st = _bare_shell()
+	st.game = Game.new(4242, {"kit": ["sap_snare", "seed_bomb", "mycelium_dash"]})
+	var gt = st.game
+	gt.player["charge"] = 5
+	var pt: Vector2i = gt.player["pos"]
+	var dt := _open_run(gt, 2)
+	for e in gt.enemies:
+		e["pos"] = Vector2i(-9, -9)
+	gt.enemies[0]["pos"] = pt + dt
+	gt.enemies[1]["pos"] = pt + dt * 2
+	var ht: String = gt.state_hash()
+	st._ability_press(0)
+	_check(st.mode == "target_tile", "preview: two snare targets arm a tile aim (%s)" % st.mode)
+	_check(gt.state_hash() == ht, "preview: a tile aim leaves the live game byte-identical")
+	var tl: Array = st._preview_labels()
+	var tiles: Array = tl.map(func(l): return l["tile"])
+	_check(tl.size() == 2 and tiles.has(pt + dt) and tiles.has(pt + dt * 2)
+			and tl.all(func(l): return String(l["text"]) == "rooted" and st.mode_targets.has(l["tile"])),
+		"preview: each snare target tile reads 'rooted' (%s)" % str(tl))
+	st._try_ability_target(0, pt + dt)
+	_check(str(gt.enemies[0]).contains("root"),
+		"preview: and the snare then roots that body (%s)" % str(gt.enemies[0]))
+	st.free()
+
+
+## --- haptics ----------------------------------------------------------------
+## One vibration per step, the strongest any of its events asks for, and none
+## for a quiet step. (What a payoff LOOKS like is shell/anim.gd's job.)
+func _check_haptics() -> void:
+	var sh = _bare_shell()
+	sh.game = Game.new(4242, {})
+	var en: Dictionary = sh.game.enemies[0]
+	sh._buzz_events([
+		{"t": "damage", "who": en["kind"], "id": en["id"], "amt": 3, "src": "collision:water_jet"},
+		{"t": "rider", "id": "grow_spike", "kind": "per", "amt": 2},
+		{"t": "staggered", "id": en["id"]},
+	])
+	_check(sh._buzz_ms == 30, "haptics: one buzz a step, the strongest asked for (%d)" % sh._buzz_ms)
+	sh._buzz_events([{"t": "damage", "who": "player", "amt": 2, "src": "drill_bot"}])
+	_check(sh._buzz_ms == 70, "haptics: a hit on the tender scales with the damage (%d)" % sh._buzz_ms)
+	sh._buzz_events([{"t": "move", "who": "player"}])
+	_check(sh._buzz_ms == 0, "haptics: a quiet step asks for no buzz")
+	sh.haptics_on = true
+	sh._tap("set:haptics")
+	_check(not sh.haptics_on, "haptics: the vibration setting toggles")
+	sh._tap("set:haptics")  # and back on: the tap persists to the scratch cfg (sh.cfg_path)
+	sh.free()
+
+
 ## --- a direction in a modal state ---------------------------------------------
 ## The forge is a three-tap modal choice, and its two SELECTION steps draw no
 ## sheet - so the D-pad and the arrow keys are still live right beside the
@@ -1622,6 +2148,26 @@ func _open_dir(g) -> Vector2i:
 	return Vector2i(1, 0)
 
 
+## A direction with `n` open floor tiles in a row from the tender, skipping
+## `avoid` - room to park a body at range.
+func _open_run(g, n: int, avoid := Vector2i.ZERO) -> Vector2i:
+	var m: Dictionary = g.map
+	var pp: Vector2i = g.player["pos"]
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if d == avoid:
+			continue
+		var ok := true
+		for k in range(1, n + 1):
+			var t: Vector2i = pp + d * k
+			if t.x < 0 or t.y < 0 or t.x >= int(m["w"]) or t.y >= int(m["h"]) \
+					or int(m["tiles"][t.y * int(m["w"]) + t.x]) != 1 or g.terrain.has(t):
+				ok = false
+				break
+		if ok:
+			return d
+	return Vector2i(1, 0)
+
+
 ## Move one enemy onto `p` and every other one off the board, so the only
 ## thing a stray strike could hit is the one whose HP is being watched.
 func _park_enemy(g, p: Vector2i) -> Dictionary:
@@ -1674,8 +2220,9 @@ func _dir_files(path: String) -> Array:
 	return out
 
 
-## Pick the action that makes progress on the tutorial's current step.
-func _solve(shell) -> Dictionary:
+## Pick the action that makes progress on the tutorial's current step. Static,
+## so tests/capture_screens.gd walks the tutorial with the same solver.
+static func _solve(shell) -> Dictionary:
 	var g = shell.game
 	var st: Dictionary = Tutorial.STEPS[shell.tut_step]
 	var expect: Dictionary = st.get("expect", {})
@@ -1743,7 +2290,7 @@ func _solve(shell) -> Dictionary:
 	return {"type": "end_turn"}
 
 
-func _approach(g, goal: Vector2i) -> Dictionary:
+static func _approach(g, goal: Vector2i) -> Dictionary:
 	if goal == Vector2i(-1, -1):
 		return {"type": "end_turn"}
 	var best := {}
@@ -1762,14 +2309,14 @@ func _approach(g, goal: Vector2i) -> Dictionary:
 	return best
 
 
-func _enemy_pos_at(g, p: Vector2i) -> bool:
+static func _enemy_pos_at(g, p: Vector2i) -> bool:
 	for e in g.enemies:
 		if e["pos"] == p:
 			return true
 	return false
 
 
-func _nearest_enemy(g) -> Vector2i:
+static func _nearest_enemy(g) -> Vector2i:
 	var pp: Vector2i = g.player["pos"]
 	var best := Vector2i(-1, -1)
 	var bd := 9999
@@ -1781,7 +2328,7 @@ func _nearest_enemy(g) -> Vector2i:
 	return best
 
 
-func _nearest_corruption(g) -> Vector2i:
+static func _nearest_corruption(g) -> Vector2i:
 	var pp: Vector2i = g.player["pos"]
 	var best := Vector2i(-1, -1)
 	var bd := 9999
@@ -1914,15 +2461,32 @@ func _any_has(lines: Array, needle: String) -> bool:
 	return false
 
 
-func _fx_of(fxs: Array, kind: String) -> Array:
-	return fxs.filter(func(f): return String(f["kind"]) == kind)
+## The texts of every float clip in the shell's current reel (the reel draws
+## every number and word on the map; the shell's three ctx words are floats too).
+func _reel_floats(sh) -> Array:
+	var out: Array = []
+	for cl in sh._reel.get("clips", []):
+		if String(cl.get("kind", "")) == "float":
+			out.append(String(cl.get("text", "")))
+	return out
+
+
+## The reel's ctx-word clips (`word == true`, appended by _reel_word): [text, t0].
+func _reel_words(sh) -> Array:
+	var out: Array = []
+	for cl in sh._reel.get("clips", []):
+		if String(cl.get("kind", "")) == "float" and bool(cl.get("word", false)):
+			out.append([String(cl.get("text", "")), int(cl.get("t0", 0))])
+	return out
 
 
 ## --- the feedback layer (shell/feedback.gd) ----------------------------------
-## Every payoff the sim resolves is named where it happens, the cleanse float
-## tells the truth, kills land with weight, the boss explains itself, the log
-## reads like a story and the sound cap really is worst-first. All asserted as
-## data: render_frame.gd draws no fx, and there is no display here.
+## Every payoff the sim resolves is named (callouts as DATA: they feed the
+## combo chime and the log's claims), the reel's cleanse number is the gain,
+## a kill lands in the reel, the boss explains itself, the log reads like a
+## story in main's words and the sound cap really is worst-first. On the map
+## the reel speaks (shell/anim.gd); the shell adds only the three ctx words.
+## All asserted as data: there is no display here.
 func _check_feedback() -> void:
 	var sh = _bare_shell()
 
@@ -1935,11 +2499,12 @@ func _check_feedback() -> void:
 	g1.bloom = 10
 	g1.player["charge"] = 3
 	sh.game = g1
-	sh._fx = []
 	sh._act({"type": "cleanse", "target": ct})
-	var floats: Array = _fx_of(sh._fx, "float").map(func(f): return [String(f["text"]), f["col"]])
-	_check(floats.has(["+1", Feedback.GOLD]) and not _any_has(floats.map(func(f): return f[0]), "+11"),
-		"the cleanse float is the real gain +1 in gold, not the balance: %s" % str(floats))
+	# the reel draws the number (shell/anim.gd follows the balance through the
+	# stream): the GAIN, never the running total the cleanse event carries
+	var floats: Array = _reel_floats(sh)
+	_check(floats.has("+1") and not floats.has("+11"),
+		"the reel's cleanse float is the real gain +1, not the balance 11: %s" % str(floats))
 	var cl_line := ""
 	for l in sh.log_lines:
 		if String(l).begins_with("Cleansed"):
@@ -1947,10 +2512,11 @@ func _check_feedback() -> void:
 	_check(cl_line.begins_with("Cleansed +1 bloom · green 1/"), "the cleanse line says what it paid: %s" % cl_line)
 	g1.terrain[ct] = {"kind": "oil", "bloom": 0}
 	g1.player["charge"] = 3
-	sh._fx = []
+	sh._reset_reel()  # the first cleanse's +1 would otherwise be carried into this reel
 	sh._act({"type": "cleanse", "target": ct})
-	var floats2: Array = _fx_of(sh._fx, "float").map(func(f): return [String(f["text"]), f["col"]])
-	_check(floats2.has(["+0", Feedback.DIM]), "enemy-made oil floats a grey +0: %s" % str(floats2))
+	var floats2: Array = _reel_floats(sh)
+	_check(not floats2.has("+11") and not floats2.has("+1"),
+		"enemy-made oil pays nothing, and the reel floats no running total: %s" % str(floats2))
 	_check(_any_has(sh.log_lines, "enemy-made oil pays no bloom"), "...and the log says why: %s" % str(sh.log_lines))
 
 	# 2. a landed hook is named where it lands
@@ -2016,9 +2582,10 @@ func _check_feedback() -> void:
 	_check(_texts(r8b["callouts"]).has("BLOCKED 1") and _log_texts(r8b).has("Your shield blocks 1"), "a block reads BLOCKED 1")
 	var r8c: Dictionary = Feedback.step([{"t": "ignite", "tile": t2}, {"t": "ignite", "tile": t2 + Vector2i(1, 0)},
 		{"t": "ignite", "tile": t2 + Vector2i(2, 0)}], pre2, g2, {}, 1000)
-	var bursts: Array = _fx_of(r8c["fx"], "burst").filter(func(f): return f["col"] == Color("ff8a2a"))
-	_check(_texts(r8c["callouts"]).count("IGNITE") == 1 and bursts.size() == 3 and _log_texts(r8c).has("Oil ignites (3 tiles)"),
-		"three ignites: one IGNITE, three bursts, one folded line: %s / %d / %s" % [str(_texts(r8c["callouts"])), bursts.size(), str(_log_texts(r8c))])
+	# (the fx burst per ignite is retired: the reel flares every ignite itself,
+	# and tests/test_anim.gd covers its painter)
+	_check(_texts(r8c["callouts"]).count("IGNITE") == 1 and _log_texts(r8c).has("Oil ignites (3 tiles)"),
+		"three ignites: one IGNITE, one folded line: %s / %s" % [str(_texts(r8c["callouts"])), str(_log_texts(r8c))])
 	g2.player["grafts"] = ["oil_tithe"]
 	var r8d: Dictionary = Feedback.step([{"t": "tithe", "id": "solar_lance"}], pre2, g2, {}, 1000)
 	_check(_texts(r8d["callouts"]).has("TITHE -1") and _log_texts(r8d).has("Oil Tithe: Solar Lance costs 1 less"),
@@ -2075,7 +2642,10 @@ func _check_feedback() -> void:
 	g2.won = false
 	_check(ids12c == ["win"], "a win plays the fanfare alone: %s" % str(ids12c))
 
-	# 13. kill weight through _act: gold blow, ghost, hit-stop, lunge, shake
+	# 13. kill weight through _act: the REEL lands it (the fun pass's hit-stop,
+	# lunge, shake and gold killing number are retired with the fx clock - plan
+	# A4): the victim's track tips it over (a `die` segment), it is drawn as a
+	# ghost until that segment ends, and the kill sound is in the step's picks
 	var b13 := _fb_board()
 	var g13 = b13[0]
 	var e13: Dictionary = b13[1]
@@ -2083,32 +2653,87 @@ func _check_feedback() -> void:
 	g13.player["charge"] = 3
 	var d13: Vector2i = Vector2i(b13[2]) - Vector2i(g13.player["pos"])
 	var sh13 = _bare_shell()
+	sh13.anim_mode = "full"
 	sh13.game = g13
+	var pre13: Dictionary = sh13._pre_step()
 	sh13._act({"type": "strike", "dir": d13})
-	var blow: Array = _fx_of(sh13._fx, "float").filter(func(f): return String(f["text"]) == "-1")
-	_check(blow.size() == 1 and blow[0]["col"] == Feedback.GOLD and float(blow[0]["scale"]) == 1.5 and bool(blow[0]["bold"]),
-		"the killing blow is gold, bold and 1.5x: %s" % str(blow))
-	var ghosts: Array = _fx_of(sh13._fx, "ghost")
-	_check(ghosts.size() == 1 and Vector2(ghosts[0]["pos"]) == Vector2(b13[2]), "the dead machine leaves a ghost on its tile")
-	_check(sh13._freeze_end - sh13._freeze_start == Feedback.HITSTOP_MS, "a kill freezes the fx clock for %d ms" % Feedback.HITSTOP_MS)
-	_check(sh13._lunge_dir == Vector2(d13), "the tender lunges toward the strike: %s" % str(sh13._lunge_dir))
-	_check(sh13._shake_mag >= 2.5, "a kill shakes the screen (%.2f)" % sh13._shake_mag)
+	_check(not g13.enemies.any(func(e): return e["id"] == e13["id"]), "the strike kills the 1-HP drill bot")
+	var die13: Array = (sh13._reel.get("tracks", {}).get(e13["id"], []) as Array).filter(
+		func(sg): return String(sg.get("kind", "")) == "die")
+	_check(die13.size() == 1, "the reel tips the dead machine over (one die segment): %s"
+		% str(sh13._reel.get("tracks", {}).get(e13["id"], [])))
+	var gh13: Array = (sh13._reel.get("ghosts", []) as Array).filter(func(gg): return gg["id"] == e13["id"])
+	_check(gh13.size() == 1 and String(gh13[0]["kind"]) == "drill_bot",
+		"...and draws it as a ghost until then: %s" % str(sh13._reel.get("ghosts", [])))
+	var snd13: Array = Feedback.step(sh13._reel_evs, pre13, g13, {}, 0)["sounds"].map(func(p): return String(p["id"]))
+	_check(snd13.has("kill"), "the kill sound is picked: %s" % str(snd13))
 	sh13.free()
-	var r13: Dictionary = Feedback.step([{"t": "damage", "who": "drill_bot", "id": e2["id"], "amt": 2, "src": "strike"}], pre2, g2, {}, 1000)
-	var nf: Array = _fx_of(r13["fx"], "float")
-	_check(not bool(r13["hitstop"]) and nf.size() == 1 and absf(float(nf[0]["scale"]) - 1.1) < 0.001 and not bool(nf[0]["bold"]),
-		"a non-lethal 2 is no hit-stop, scale 1.1, not bold: %s" % str(nf))
 
 	# 14. multi-kill, room clear and streak come from the fold's ctx
 	_check(_texts(Feedback.callouts([], pre2, g2, {"step_kills": 1, "turn_kills": 2})).has("DOUBLE KILL"), "two in a turn: DOUBLE KILL")
-	var dk: Array = Feedback.step([], pre2, g2, {"step_kills": 1, "turn_kills": 2}, 1000)["fx"].filter(
-		func(f): return String(f["kind"]) == "callout" and String(f["text"]) == "DOUBLE KILL")
-	_check(dk.size() == 1 and float(dk[0]["scale"]) == 1.35, "DOUBLE KILL is a big callout")
+	_check(Feedback.callouts([], pre2, g2, {"step_kills": 1, "turn_kills": 2}).any(
+			func(c): return String(c["text"]) == "DOUBLE KILL" and bool(c["big"])), "DOUBLE KILL is a big callout")
 	_check(_texts(Feedback.callouts([], pre2, g2, {"step_kills": 1, "turn_kills": 3})).has("TRIPLE KILL"), "three: TRIPLE KILL")
 	_check(Feedback.callouts([], pre2, g2, {"step_kills": 0, "turn_kills": 2}).is_empty(), "no kill this step: no callout")
 	_check(_texts(Feedback.callouts([], pre2, g2, {"room_cleared": true})).has("ROOM CLEAR"), "room_cleared: ROOM CLEAR")
 	_check(_texts(Feedback.callouts([], pre2, g2, {"step_kills": 1, "turn_kills": 1, "kill_streak": 3})).has("STREAK 3"),
 		"the first kill of a third turn running: STREAK 3")
+	# ctx_words: exactly callouts()' three ctx arms, each pinned to the step's
+	# LAST death (its beat) with the delay it lands after it
+	var pre14: Dictionary = pre2.duplicate(true)
+	pre14["pos"][881] = Vector2(3, 4)
+	pre14["kinds"][881] = "drill_bot"
+	pre14["pos"][882] = Vector2(5, 6)
+	pre14["kinds"][882] = "drill_bot"
+	var evs14: Array = [{"t": "death", "who": "drill_bot", "id": 881}, {"t": "move", "who": "player", "to": pp},
+		{"t": "death", "who": "drill_bot", "id": 882}, {"t": "bounty", "bloom": 9}]
+	var cw14: Array = Feedback.ctx_words(evs14, pre14, g2, {"step_kills": 2, "turn_kills": 2, "room_cleared": true, "kill_streak": 3})
+	var cwt: Array = cw14.map(func(w): return String(w["text"]))
+	_check(cwt == ["DOUBLE KILL", "ROOM CLEAR", "STREAK 3"], "ctx_words: the multi-kill, the room clear, the streak: %s" % str(cwt))
+	_check(cw14.size() == 3 and cw14.all(func(w): return int(w["ev"]) == 2)
+			and Vector2(cw14[0]["pos"]) == Vector2(5, 6) and int(cw14[0]["delay"]) == 160
+			and int(cw14[1]["delay"]) == 320 and int(cw14[2]["delay"]) == 160
+			and Vector2(cw14[1]["pos"]) == Vector2(g2.player["pos"]),
+		"ctx_words: the word sits on the last kill's tile, keyed to the last death (2), 160 / 320 / 160 ms after it: %s" % str(cw14))
+	var cw14b: Array = Feedback.ctx_words([], pre2, g2, {"room_cleared": true})
+	_check(cw14b.size() == 1 and int(cw14b[0]["ev"]) == -1, "ctx_words: no death in the step keys the word to -1: %s" % str(cw14b))
+	_check(Feedback.ctx_words(evs14, pre14, g2, {}).is_empty(), "ctx_words: no ctx, no word (deaths alone are the reel's)")
+	# ...and through _act they reach the REEL as ordinary float clips: the
+	# second of two kills in one turn says DOUBLE KILL 160 ms after its death beat
+	for am in ["full", "off"]:
+		var b14 := _fb_board()
+		var g14 = b14[0]
+		var ds14: Array = _open_dirs(g14)
+		_check(ds14.size() >= 2 and g14.enemies.size() >= 2, "the two-kill board has two open sides and two machines")
+		if ds14.size() < 2 or g14.enemies.size() < 2:
+			continue
+		var p14: Vector2i = g14.player["pos"]
+		var ea: Dictionary = b14[1]
+		ea["pos"] = p14 + Vector2i(ds14[0])
+		ea["hp"] = 1
+		var eb: Dictionary = g14.enemies[1]
+		eb["pos"] = p14 + Vector2i(ds14[1])
+		eb["kind"] = "drill_bot"
+		eb["hp"] = 1
+		g14.player["charge"] = 3
+		var sh14 = _bare_shell()
+		sh14.anim_mode = am
+		sh14.clock_override = 50000
+		sh14.game = g14
+		sh14._act({"type": "strike", "dir": ds14[0]})
+		_check(_reel_words(sh14).is_empty(), "%s: one kill is no multi-kill word: %s" % [am, str(_reel_words(sh14))])
+		sh14.clock_override = 50040  # the second strike, inside the same turn
+		sh14._act({"type": "strike", "dir": ds14[1]})
+		var last_d := -1
+		for i in sh14._reel_evs.size():
+			if String(sh14._reel_evs[i].get("t", "")) == "death":
+				last_d = i
+		var want := int(sh14._reel_t()) + (int(sh14._reel["ev_t"][last_d]) + 160 if am != "off" else 0)
+		var dkw: Array = _reel_words(sh14).filter(func(w): return w[0] == "DOUBLE KILL")
+		_check(last_d >= 0 and dkw.size() == 1 and int(dkw[0][1]) == want,
+			"%s: the second kill of the turn floats DOUBLE KILL as a reel word at t0 %d: %s" % [am, want, str(_reel_words(sh14))])
+		sh14.clock_override = -1
+		sh14.free()
 
 	# 15. a resonance lighting for the first time gets its banner
 	g2.player["kit"] = ["solar_lance", "sun_flare", "seed_bomb"]
@@ -2140,9 +2765,11 @@ func _check_feedback() -> void:
 	_check(ev16.any(func(ev): return String(ev.get("t", "")) == "core_shielded"), "striking it emits core_shielded")
 	var r16: Dictionary = Feedback.step(ev16, pre16, g16, {}, 1000)
 	var shc: Array = r16["callouts"].filter(func(c): return String(c["text"]) == "SHIELDED")
-	_check(shc.size() == 1 and shc[0]["col"] == Feedback.CYAN and not _fx_of(r16["fx"], "ring").is_empty(),
-		"a wasted hit floats a cyan SHIELDED and a ring: %s" % str(_texts(r16["callouts"])))
-	_check(_log_texts(r16).has("The Overseer is shielded: cleanse or grow beside it"), "...and says how to break it: %s" % str(_log_texts(r16)))
+	# (the fx ring is retired: the persistent cyan ring is _draw_map's, and
+	# tests/test_draw.gd draws it up and down)
+	_check(shc.size() == 1 and shc[0]["col"] == Feedback.CYAN,
+		"a wasted hit is a cyan SHIELDED callout: %s" % str(_texts(r16["callouts"])))
+	_check(_log_texts(r16).has("Core shielded - cleanse or grow beside it"), "...and says how to break it: %s" % str(_log_texts(r16)))
 	for dd2 in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 		var nb2: Vector2i = bp + dd2
 		if nb2 != goo_t and nb2 != Vector2i(g16.player["pos"]) and g16._tile(nb2) == 1:
@@ -2167,7 +2794,7 @@ func _check_feedback() -> void:
 	var v1: Vector2i = b17[2]
 	g17._spawn("coal_golem", v1)
 	_check(Feedback.log_entries([{"t": "reinforcement", "tile": v1}], pre17, g17, {}).map(func(l): return l["text"])
-		== ["A vent releases a Coal Golem"], "the furnace's golem is named as it arrives")
+		== ["A Coal Golem climbs out of a vent"], "the furnace's golem is named as it arrives")
 	var g17b = _fb_board()[0]
 	for e in g17b.enemies:
 		e["pos"] = Vector2i(-9, -9)
@@ -2178,13 +2805,13 @@ func _check_feedback() -> void:
 	g17b._spawn("drill_bot", pp17 + Vector2i(31, 30))
 	var lines17: Array = Feedback.log_entries([{"t": "reinforcement", "tile": pp17 + Vector2i(30, 30)},
 		{"t": "reinforcement", "tile": pp17 + Vector2i(31, 30)}], pre17b, g17b, {}).map(func(l): return l["text"])
-	_check(lines17 == ["Vents release 2 Drill Bots"], "two of a kind fold into one line: %s" % str(lines17))
+	_check(lines17 == ["2 Drill Bots climb out of the vents"], "two of a kind fold into one line: %s" % str(lines17))
 	# a summoned child destroyed in the same step is named from its own death event
 	var eng: Dictionary = g17b._spawn("extractor_engine", pp17 + Vector2i(30, 31))
 	var pre17c: Dictionary = sh._pre_step()
 	var sum17: Array = Feedback.log_entries([{"t": "summon", "id": eng["id"], "child": 9999},
 		{"t": "death", "who": "sludgeling", "id": 9999}], pre17c, g17b, {}).map(func(l): return l["text"])
-	_check(sum17.size() >= 1 and String(sum17[0]) == "Extractor Engine summons a Sludgeling",
+	_check(sum17.size() >= 1 and String(sum17[0]) == "Extractor Engine makes a Sludgeling",
 		"a child spawned and killed in one step is still named: %s" % str(sum17))
 
 	# 18. repeats count up instead of vanishing
@@ -2268,8 +2895,8 @@ func _check_feedback() -> void:
 			_check(bl.length() <= Feedback.LOG_LINE_MAX and bl.begins_with(Names.boss_name(bk) + " - ")
 				and bl.count(":") <= 1,
 				"boss phase line fits %d chars with one separator: '%s' (%d)" % [Feedback.LOG_LINE_MAX, bl, bl.length()])
-			var shl: String = "%s is shielded: cleanse or grow beside it" % Names.subj(bk)
-			_check(shl.length() <= Feedback.LOG_LINE_MAX, "the core-shield line fits for %s: %s" % [bk, shl])
+			var shl: String = Feedback.ev_text({"t": "core_shielded", "id": 4242}, g16, {"kinds": {4242: bk}, "pos": {}})
+			_check(shl != "" and shl.length() <= Feedback.LOG_LINE_MAX, "the core-shield line fits for %s: %s" % [bk, shl])
 	# ...and every BOSS_PHASE_JOINS alternative (the phase said without the
 	# machine that did not come) composes the same way
 	for bk in Feedback.BOSS_PHASE_JOINS:
@@ -2281,8 +2908,10 @@ func _check_feedback() -> void:
 				"the no-reinforcement phase line fits and differs: '%s' (%d)" % [jl, jl.length()])
 
 	# 20. bot-driven: real games through _act
-	var any_callout := false
-	var fx_ok := true
+	var any_combo := false
+	var words_ok := true
+	var bad_word := ""
+	var bad_toast := ""
 	var raw := ""
 	var long_line := ""
 	var cats_ok := true
@@ -2297,9 +2926,20 @@ func _check_feedback() -> void:
 			sh20.mode = "normal"
 			sh20._act(bot.choose_action(sh20.game.snapshot(), sh20.game.legal_actions()))
 			n += 1
-			fx_ok = fx_ok and sh20._fx.size() <= 40
-			for f in sh20._fx:
-				any_callout = any_callout or String(f["kind"]) == "callout"
+			# the shell adds only the three ctx words to the reel: every `word`
+			# clip is a multi-kill, a room clear or a streak (the reel draws
+			# every other number and word itself)
+			for w in _reel_words(sh20):
+				var wt := String(w[0])
+				if not (wt in ["DOUBLE KILL", "TRIPLE KILL", "ROOM CLEAR"] or wt.ends_with(" KILLS")
+						or wt.begins_with("STREAK ")):
+					words_ok = false
+					bad_word = wt
+			# the context line's toast speaks like the log: no raw id, one short line
+			if sh20._toast != "" and (sh20._toast.contains("_") or sh20._toast.length() > Feedback.LOG_LINE_MAX) \
+					and bad_toast == "":
+				bad_toast = sh20._toast
+			any_combo = any_combo or sh20.log_cats.has("combo")
 			# after EVERY step, not once at the end: the log keeps only the
 			# newest LOG_KEEP lines, and every line a step writes (or bumps to
 			# "xN") is in it right after that step (mutation: append a raw pack
@@ -2312,8 +2952,9 @@ func _check_feedback() -> void:
 					long_line = String(l)
 			cats_ok = cats_ok and sh20.log_lines.size() == sh20.log_cats.size()
 		sh20.free()
-	_check(any_callout, "real games produce callouts")
-	_check(fx_ok, "the fx list never grows past 40")
+	_check(any_combo, "real games produce combo lines (the callouts' claims reach the log)")
+	_check(words_ok, "only the three ctx words reach the reel as shell words: %s" % bad_word)
+	_check(bad_toast == "", "no toast carries a raw id or runs past 60 chars: %s" % bad_toast)
 	_check(raw == "", "no raw id reaches the log: %s" % raw)
 	_check(long_line == "", "no log line runs past 60 chars: %s" % long_line)
 	_check(cats_ok, "the log keeps one category per line")
@@ -2446,22 +3087,27 @@ func _check_danger_readouts() -> void:
 	# the context line, word for word
 	var d := {"ok": true, "fc": {"dmg": 3, "absorbed": 0, "by_src": {"drill_bot": 2, "smog": 1}, "dies": true}, "sky": {}}
 	var cl: Dictionary = Danger.context_line(d, false)
-	_check(cl["text"] == "! INCOMING 3 - LETHAL  ·  Drill Bot, smog" and cl["col"] == Danger.COL_RED and cl["pulse"],
+	_check(cl["text"] == "Incoming 3 - LETHAL  ·  Drill Bot, smog" and cl["col"] == Danger.COL_RED and cl["pulse"]
+		and String(cl.get("kind", "")) == "incoming",
 		"lethal line names its sources, red and pulsing (%s)" % cl["text"])
 	d["fc"] = {"dmg": 2, "absorbed": 0, "by_src": {"drill_bot": 2}, "dies": false}
-	_check(Danger.context_line(d, false)["text"] == "! INCOMING 2  ·  Drill Bot", "incoming, not lethal")
+	_check(Danger.context_line(d, false)["text"] == "Incoming 2  ·  Drill Bot" and not Danger.context_line(d, false)["pulse"]
+		and String(Danger.context_line(d, false).get("kind", "")) == "incoming", "incoming, not lethal")
 	d["fc"] = {"dmg": 4, "absorbed": 0, "by_src": {"drill_bot": 1, "rust_hound": 1, "smog": 1, "fire:solar_lance": 1}, "dies": false}
-	_check(Danger.context_line(d, false)["text"] == "! INCOMING 4  ·  Drill Bot, fire +2",
+	_check(Danger.context_line(d, false)["text"] == "Incoming 4  ·  Drill Bot, fire +2",
 		"four sources: two named (ties by id, the short form), then +2 (%s)" % Danger.context_line(d, false)["text"])
 	d["fc"] = {"dmg": 2, "absorbed": 2, "by_src": {}, "dies": false}
-	_check(Danger.context_line(d, false)["text"] == "! INCOMING 2 - shield holds", "shield holds")
+	_check(Danger.context_line(d, false)["text"] == "Incoming 2 - your shield holds", "shield holds")
 	d["fc"] = {"dmg": 0, "absorbed": 0, "by_src": {}, "dies": false}
 	d["sky"] = {"choke_in": 3, "choking": false, "spawn_in": 9, "spawn_open": 1}
-	_check(Danger.context_line(d, false)["text"] == "Smog chokes in 3 - cleansing thins it", "choke soon, stairs asleep")
-	_check(Danger.context_line(d, true)["text"] == "Smog chokes in 3 - descend to escape it", "choke soon, stairs awake")
+	_check(Danger.context_line(d, false)["text"] == "Smog stings in 3 - cleansing thins it"
+		and String(Danger.context_line(d, false).get("kind", "")) == "choke" and not Danger.context_line(d, false)["pulse"],
+		"choke soon, stairs asleep")
+	_check(Danger.context_line(d, true)["text"] == "Smog stings in 3 - descend to escape it", "choke soon, stairs awake")
 	d["sky"]["choke_in"] = 1
-	_check(Danger.context_line(d, true)["text"] == "Smog chokes NEXT TURN - descend to escape it"
-		and Danger.context_line(d, false)["text"] == "Smog chokes NEXT TURN - cleansing thins it", "choke next turn")
+	_check(Danger.context_line(d, true)["text"] == "Smog stings NEXT TURN - descend to escape it"
+		and Danger.context_line(d, false)["text"] == "Smog stings NEXT TURN - cleansing thins it"
+		and Danger.context_line(d, false)["pulse"], "choke next turn (red, pulsing)")
 	# the boss floor has no stairs (green 0/0): never "descend to escape it"
 	d["sky"]["choke_in"] = 3
 	var g7 := Game.new(3)
@@ -2472,7 +3118,7 @@ func _check_danger_readouts() -> void:
 			d7 += 1
 	_check(int(g7.snapshot()["green_need"]) == 0 and d7 == 0, "fixture: floor 7 needs no green and has no descent")
 	_check(not Danger.stairs_awake(g7.snapshot()), "boss floor: green 0/0, but no stairs tile, so no stairs awake")
-	_check(Danger.context_line(d, Danger.stairs_awake(g7.snapshot()))["text"] == "Smog chokes in 3 - cleansing thins it",
+	_check(Danger.context_line(d, Danger.stairs_awake(g7.snapshot()))["text"] == "Smog stings in 3 - cleansing thins it",
 		"boss floor: no descent offered (%s)" % Danger.context_line(d, Danger.stairs_awake(g7.snapshot()))["text"])
 	# ...and from its fifth cleanse on a boss-floor cleanse pays no relief
 	# (Game._act_cleanse: green_need 0 + 4), so the remedy stops pointing at
@@ -2480,8 +3126,8 @@ func _check_danger_readouts() -> void:
 	# "no longer" once it has happened - read off the live compute (mutation:
 	# return true from cleanse_thins, or word every remedy "cleansing thins
 	# it", and the dry arena still promises a cleanse that does nothing)
-	var rem_want := {3: ["Smog chokes in 3 - cleansing thins it", "Smog chokes in 3 - cleansing thins it"],
-		4: ["Smog chokes in 3 - cleanse it all to thin it", "Smog chokes in 3 - cleanses no longer thin it"]}
+	var rem_want := {3: ["Smog stings in 3 - cleansing thins it", "Smog stings in 3 - cleansing thins it"],
+		4: ["Smog stings in 3 - cleanse it all to thin it", "Smog stings in 3 - cleanses no longer thin it"]}
 	for have in rem_want:
 		for ri in 2:
 			var gr := Game.new(3)
@@ -2530,10 +3176,11 @@ func _check_danger_readouts() -> void:
 	gq.player["pos"] = gq.map["stairs"]
 	_check(gq.legal_actions().any(func(a): return String(a.get("type", "")) == "descend"),
 		"fixture: the reclamped floor's stairs really take a descent")
-	_check(Danger.stairs_awake(sq) and Danger.context_line(d, Danger.stairs_awake(sq))["text"] == "Smog chokes in 3 - descend to escape it",
+	_check(Danger.stairs_awake(sq) and Danger.context_line(d, Danger.stairs_awake(sq))["text"] == "Smog stings in 3 - descend to escape it",
 		"reclamped green 0/0 on an ordinary floor: descend to escape it")
 	d["sky"] = {"choke_in": 20, "choking": false, "spawn_in": 1, "spawn_open": 1}
-	_check(Danger.context_line(d, true)["text"] == "The vents release next turn", "vents next turn")
+	_check(Danger.context_line(d, true)["text"] == "Machines climb out next turn"
+		and String(Danger.context_line(d, true).get("kind", "")) == "vents", "vents next turn")
 	d["sky"]["spawn_open"] = 0
 	_check(Danger.context_line(d, true).is_empty(), "every vent sealed or taken: nothing to say")
 	_check(Danger.context_line({"ok": false}, false).is_empty(), "over or drafting: nothing to say")
@@ -2582,7 +3229,7 @@ func _check_danger_readouts() -> void:
 	_check(Danger.cues(p0, p1)["sounds"] == ["warn"] and Danger.cues(p0, p1)["banner"].is_empty(), "entering the amber window ticks")
 	_check(Danger.cues(p1, {"ok": true, "floor": 1, "lethal": false, "sky": {"choke_in": 4}})["sounds"].is_empty(), "staying in it does not")
 	var c1: Dictionary = Danger.cues({"ok": true, "floor": 1, "sky": {"choke_in": 2}}, {"ok": true, "floor": 1, "sky": {"choke_in": 1}})
-	_check(c1["banner"] == ["THE SMOG THICKENS", "it chokes from next turn"] and c1["sounds"] == ["warn"], "choke next turn: banner + one tick")
+	_check(c1["banner"] == ["THE SMOG THICKENS", "it stings from next turn"] and c1["sounds"] == ["warn"], "choke next turn: banner + one tick")
 	_check(Danger.cues({"ok": true, "floor": 1, "lethal": false, "sky": {}}, {"ok": true, "floor": 1, "lethal": true, "sky": {}})["sounds"] == ["warn"],
 		"lethal switching on ticks")
 	_check(Danger.cues({"ok": true, "floor": 1, "lethal": true, "sky": {}}, {"ok": true, "floor": 1, "lethal": true, "sky": {}})["sounds"].is_empty(),
@@ -2596,7 +3243,7 @@ func _check_danger_readouts() -> void:
 	# this floor, so a cleanse relief and the end turn after it stay quiet
 	var sk := func(n): return {"ok": true, "floor": 1, "lethal": false, "sky": {"choke_in": n, "choking": false}}
 	var hc: Dictionary = Danger.cues(sk.call(2), sk.call(1), Danger.NO_CUE)
-	_check(hc["banner"] == ["THE SMOG THICKENS", "it chokes from next turn"] and int(hc["announced"]) == 1,
+	_check(hc["banner"] == ["THE SMOG THICKENS", "it stings from next turn"] and int(hc["announced"]) == 1,
 		"hysteresis: reaching 1 banners and remembers 1")
 	var relief: Dictionary = Danger.cues(sk.call(1), sk.call(3), int(hc["announced"]))
 	_check(relief["sounds"].is_empty() and relief["banner"].is_empty() and int(relief["announced"]) == 1,
@@ -2671,9 +3318,9 @@ func _check_danger_readouts() -> void:
 	for k in Content.ENEMIES:
 		names.append(String(Content.ENEMIES[k]["name"]))
 	names.sort_custom(func(a, b): return a.length() > b.length())
-	var worst_ctx := "! INCOMING 99 - LETHAL  ·  %s, %s +9" % [names[0], names[1]]
-	var fit_lines: Array = [worst_ctx, "Smog chokes NEXT TURN - descend to escape it",
-		"Smog chokes NEXT TURN - cleanse it all to thin it", "Smog chokes NEXT TURN - cleanses no longer thin it"]
+	var worst_ctx := "Incoming 99 - LETHAL  ·  %s, %s +9" % [names[0], names[1]]
+	var fit_lines: Array = [worst_ctx, "Smog stings NEXT TURN - descend to escape it",
+		"Smog stings NEXT TURN - cleanse it all to thin it", "Smog stings NEXT TURN - cleanses no longer thin it"]
 	var esc_rows: Array = [{"move": true}, {"strike": true}, {"item": [0]}, {"descend": true}, {},
 			{"win": "strike"}, {"win": "strike", "strike_dirs": 2}, {"win": "item"}]
 	# the named-target flash, once per boss row (the longest name is the worst)
@@ -2691,7 +3338,9 @@ func _check_danger_readouts() -> void:
 		var vw: float = vp.x
 		var vh: float = vp.y
 		for s in fit_lines:
-			var f := float(sh._fit_size(String(s), int(vh * 0.022), vw * 0.95)) / vh
+			# the context line's own box: 0.88vw, the list mark (the log's
+			# button) sits in the rest
+			var f := float(sh._fit_size(String(s), int(vh * 0.022), vw * 0.88)) / vh
 			if f < worst_fit:
 				worst_fit = f
 				worst_what = "%s at %dx%d" % [s, vw, vh]
@@ -2699,8 +3348,12 @@ func _check_danger_readouts() -> void:
 		var y2: float = sh._safe_top(vh) + vh * 0.036 * 1.35
 		var mh := vh * 0.024
 		var lay: Dictionary = sh._sky_row_layout(vw, vh, y2 + mh + vh * 0.0155, three)
+		# the first chip starts the status strip's measured label gap (main's
+		# lgap, 0.018vw) after "SKIES" at the label's own size
+		var lab_end: float = vw * 0.025 + sh.font.get_string_size("SKIES", HORIZONTAL_ALIGNMENT_LEFT, -1, int(vh * 0.0125)).x
 		var ok: bool = lay["chips"].size() == 3 and float(lay["end_x"]) <= vw * 0.55 \
-			and float(lay["cfg_x0"]) + 1.0 <= vw * 0.975 - vw * 0.2
+			and float(lay["cfg_x0"]) + 1.0 <= vw * 0.975 - vw * 0.2 \
+			and absf(Rect2(lay["chips"][0]["icon_rect"]).position.x - (lab_end + vw * 0.018)) < 0.5
 		for c in lay["chips"]:
 			ok = ok and float(c["nsz"]) / vh >= CARD_MIN_VH and Rect2(c["icon_rect"]).position.y >= y2 + mh
 		if not ok and lay_bad == "":
@@ -2709,6 +3362,271 @@ func _check_danger_readouts() -> void:
 	_check(worst_fit >= CARD_MIN_VH, "danger lines draw at >= %.2f%% of vh (worst %.3f%%: %s)" % [
 		CARD_MIN_VH * 100.0, worst_fit * 100.0, worst_what])
 	_check(lay_ok, "the SKIES chips fit their row at every viewport: %s" % lay_bad)
+
+	# the context line's ONE chain with main's toast slot in it: a live toast
+	# loses to an incoming blow and to a pulsing NEXT-TURN choke, and beats
+	# the choke countdown, the vents and the objective
+	var lf := _lethal_fixture(3, 3)
+	var cg = lf[0]
+	var csh = _danger_shell(cg)
+	csh.clock_override = 70000
+	csh._toast = "The room blooms! +3 bloom, a supply pod"
+	csh._toast_ms = 70000
+	var csnap: Dictionary = cg.snapshot()
+	var cm0: Dictionary = csh._context_msg(csnap, 1080, 2400)
+	_check(String(cm0["text"]).begins_with("Incoming 3") and cm0["col"] == Danger.COL_AMBER,
+		"an incoming blow outranks a live toast (%s)" % cm0["text"])
+	(cg.enemies[0] as Dictionary)["intent"] = {"type": "idle"}
+	# a real choke 1 already forecasts the sting as incoming damage, so the
+	# pulsing arm is driven through the cached danger state with no blow in it
+	cg.smog = int(cg.floor_def(1)["smog_choke"]) - 3
+	csh._danger_rev += 1
+	var dz1: Dictionary = csh._danger_state()
+	dz1["fc"] = {"dmg": 0, "absorbed": 0, "by_src": {}, "dies": false}
+	dz1["sky"] = (dz1["sky"] as Dictionary).duplicate()
+	dz1["sky"]["choke_in"] = 1
+	dz1["sky"]["choking"] = false
+	var cm1: Dictionary = csh._context_msg(csnap, 1080, 2400)
+	_check(String(cm1["text"]).begins_with("Smog stings NEXT TURN") and bool(cm1["pulse"]),
+		"a pulsing next-turn choke outranks a live toast (%s)" % cm1["text"])
+	cg.smog = int(cg.floor_def(1)["smog_choke"]) - 3
+	csh._danger_rev += 1
+	var cm2: Dictionary = csh._context_msg(csnap, 1080, 2400)
+	_check(String(cm2["text"]) == csh._toast and cm2["col"] == Shell.COL_CREAM,
+		"a live toast beats the choke countdown (%s)" % cm2["text"])
+	csh.clock_override = 70000 + Shell.TOAST_MS + 1
+	var cm3: Dictionary = csh._context_msg(csnap, 1080, 2400)
+	_check(String(cm3["text"]).begins_with("Smog stings in 3") and not bool(cm3["pulse"]),
+		"once the toast has gone the countdown is back (%s)" % cm3["text"])
+	cg.smog = 0
+	csh._danger_rev += 1
+	csh.clock_override = 70000
+	var cm4: Dictionary = csh._context_msg(csnap, 1080, 2400)
+	_check(String(cm4["text"]) == csh._toast, "a live toast beats the objective (%s)" % cm4["text"])
+	csh.clock_override = 70000 + Shell.TOAST_MS + 1
+	var cm5: Dictionary = csh._context_msg(csnap, 1080, 2400)
+	_check(String(cm5["text"]) == String(csh._objective_line(csnap, 1080, 2400)["text"]),
+		"...and the objective is the chain's last arm (%s)" % cm5["text"])
+	csh.clock_override = 70000
+	csh.flash = "not a legal target"
+	_check(String(csh._context_msg(csnap, 1080, 2400)["text"]) == "not a legal target", "a flash outranks the toast")
+	csh.flash = ""
+	csh.screen = "tutorial"
+	cg.smog = int(cg.floor_def(1)["smog_choke"]) - 1
+	csh._danger_rev += 1
+	_check(String(csh._context_msg(csnap, 1080, 2400)["text"]) == csh._toast,
+		"the tutorial shows no danger line, only the toast")
+	csh.clock_override = 70000 + Shell.TOAST_MS + 1
+	_check(String(csh._context_msg(csnap, 1080, 2400)["text"]) == "", "...and nothing once it has gone")
+	csh.clock_override = -1
+	csh.free()
+
+	# ONE HP rule on the HELD hp (plan D8): the HP chip, the vignette and the
+	# pulse all read _hp_state_shown(), which keeps the pre-step HP until the
+	# reel lands the blow - so the warning never shows before the number does
+	var hf := _lethal_fixture(2, 0)
+	var hg = hf[0]
+	hg.player["hp"] = 5
+	var hsh = _danger_shell(hg)
+	hsh.anim_mode = "full"
+	hsh.clock_override = 80000
+	var hs0: String = hsh._hp_state_shown()
+	hsh._act({"type": "end_turn"})
+	var hit_t := -1
+	for h in hsh._reel.get("hp", {}).get("player", []):
+		hit_t = int(h[0])
+	hsh.clock_override = 80000 + maxi(hit_t - 1, 0)
+	var hs1: String = hsh._hp_state_shown()
+	hsh.clock_override = 80000 + int(hsh._reel.get("len", 0)) + 10
+	var hs2: String = hsh._hp_state_shown()
+	_check(int(hg.player["hp"]) == 3 and not bool(hsh._danger_state()["lethal"]) and hit_t > 0
+		and hs0 == "ok" and hs1 == "ok" and hs2 == "low",
+		"the HP verdict follows the HELD hp: ok before, ok while the blow is still coming (%d ms), low once it lands (%s / %s / %s)"
+		% [hit_t, hs0, hs1, hs2])
+	hsh.clock_override = -1
+	hsh.free()
+
+	# ...and its lethal half is the forecast from BEFORE the step while the
+	# reel plays (_reel_lethal): at 4 HP a strike for 2 that will strike for 2
+	# again is not lethal before the step, lethal after it - the chip must not
+	# go lethal-red while it still shows 4, only once the reel has ended
+	var lf2 := _lethal_fixture(2, 0)
+	var lg2 = lf2[0]
+	lg2.player["hp"] = 4
+	var lsh = _danger_shell(lg2)
+	lsh.anim_mode = "full"
+	lsh.clock_override = 85000
+	var ls0: String = lsh._hp_state_shown()
+	lsh._act({"type": "end_turn"})
+	var lhit := -1
+	for h in lsh._reel.get("hp", {}).get("player", []):
+		lhit = int(h[0])
+	var llen := int(lsh._reel.get("len", 0))
+	lsh.clock_override = 85000 + maxi(lhit - 1, 0)
+	var ls1: String = lsh._hp_state_shown()
+	var lv1: bool = bool(lsh._verdict_danger().get("lethal", false))
+	lsh.clock_override = 85000 + mini(lhit + 1, llen - 1)
+	var ls2: String = lsh._hp_state_shown()
+	var lv2: bool = bool(lsh._verdict_danger().get("lethal", false))
+	lsh.clock_override = 85000 + llen + 50
+	var ls3: String = lsh._hp_state_shown()
+	var lv3: bool = bool(lsh._verdict_danger().get("lethal", false))
+	# ...and that is the ONE verdict the outline, END's border and the escape
+	# glow draw (_verdict_danger; tests/test_draw.gd's "enemy turn survived"
+	# phase holds the draw sites to it): not lethal while the reel plays,
+	# lethal once it ends - never an outline red beside a calm chip
+	_check(not lv1 and not lv2 and lv3,
+		"mid-reel the outline/END verdict is the held one too: %s / %s, then %s after the reel" % [lv1, lv2, lv3])
+	_check(int(lg2.player["hp"]) == 2 and bool(lsh._danger_state()["lethal"]) and lhit > 0 and lhit + 1 < llen
+		and ls0 == "ok" and ls1 == "ok" and ls2 == "low" and ls3 == "lethal",
+		"mid-reel the lethal verdict is the pre-step one: ok while 4 shows, low once the blow lands, lethal after the reel (%s / %s / %s / %s)"
+		% [ls0, ls1, ls2, ls3])
+	lsh.clock_override = -1
+	lsh.free()
+
+	# ...but ONLY on a reel that plays out the enemy turn: a player action has
+	# resolved, so a step off a lethal tile reads safe on the frame it is
+	# taken - the chip and the vignette agree with the outline and the
+	# context line, which read the live forecast (_reel_holds_lethal)
+	var sf := _lethal_fixture(5, 3)
+	var sg = sf[0]
+	sg.player["hp"] = 5
+	var ssh = _danger_shell(sg)
+	ssh.anim_mode = "full"
+	ssh.clock_override = 87000
+	var ss0: String = ssh._hp_state_shown()
+	ssh._act({"type": "move", "dir": sf[1]})
+	var slen := int(ssh._reel.get("len", 0))
+	var splaying: bool = ssh._reel_t() < float(slen) and not ssh._reel_pre.is_empty()
+	var sstates: Array = []
+	for t in [0, slen / 2, slen + 50]:
+		ssh.clock_override = 87000 + t
+		sstates.append(ssh._hp_state_shown())
+	_check(not sg.over and int(sg.player["hp"]) == 5 and ss0 == "lethal" and slen > 0 and splaying
+		and bool(ssh._reel_lethal) and not bool(ssh._danger_state()["lethal"])
+		and sstates == ["ok", "ok", "ok"],
+		"a step off a lethal tile reads ok at once, mid-reel and after (%s, then %s; reel %d ms)"
+		% [ss0, str(sstates), slen])
+	ssh.clock_override = -1
+	ssh.free()
+
+	# a death through _act keeps the low-HP red on the HELD hp through the
+	# killing blow and the wilt (main's chip stayed red at 0 HP): a finished
+	# game reads the low-HP verdict without the forecast, never "ok"
+	var df := _lethal_fixture(2, 0)
+	var dg = df[0]
+	dg.player["hp"] = 2
+	var dsh = _danger_shell(dg)
+	dsh.anim_mode = "full"
+	dsh.clock_override = 90000
+	var ds0: String = dsh._hp_state_shown()
+	dsh._act({"type": "end_turn"})
+	var dlen := int(dsh._reel.get("len", 0))
+	var dstates: Array = []
+	for t in [0, dlen / 2, dlen + 50, dlen + Shell.OVER_BEAT_MS]:
+		dsh.clock_override = 90000 + t
+		dstates.append(dsh._hp_state_shown())
+	_check(dg.over and not dg.won and ds0 == "lethal" and dlen > 0 and not dstates.has("ok"),
+		"a killing blow keeps the HP chip red through the reel and the beat (%s, then %s)" % [ds0, str(dstates)])
+	dsh.clock_override = -1
+	dsh.free()
+
+	# ...and between the tap and that blow EVERY danger readout keeps the
+	# board the turn was ended on (_death_held, _danger_shown): 5/10 HP and
+	# one blow for 5 - lethal by the forecast, never by low HP, so a calm
+	# frame cannot hide behind the low-HP red. The finished game's own
+	# forecast is empty (Danger.compute {ok: false}), so the held one is what
+	# keeps the chip, the edges, the outline, END, the SKIES chips and the
+	# Incoming line up until the blow lands
+	var kf := _lethal_fixture(5, 0)
+	var kg = kf[0]
+	kg.player["hp"] = 5
+	var ksh = _danger_shell(kg)
+	ksh.anim_mode = "full"
+	ksh.clock_override = 92000
+	var k_hp0: String = ksh._hp_state_shown()
+	var k_ctx0: String = String(ksh._context_msg(kg.snapshot(), 1080, 2400)["text"])
+	ksh._act({"type": "end_turn"})
+	var kblow := -1
+	for h in ksh._reel.get("hp", {}).get("player", []):
+		if kblow < 0:
+			kblow = int(h[0])
+	var kpost: Dictionary = kg.snapshot()
+	var kheld: Array = []
+	for t in [1, kblow / 2, kblow - 1]:
+		ksh.clock_override = 92000 + t
+		kheld.append([ksh._death_held(), ksh._hp_state_shown(), bool(ksh._danger_shown().get("lethal", false)),
+			String(ksh._context_msg(kpost, 1080, 2400)["text"])])
+	ksh.clock_override = 92000 + kblow + 1
+	var kafter: Array = [ksh._death_held(), ksh._hp_state_shown(), bool(ksh._danger_shown().get("lethal", false)),
+		String(ksh._context_msg(kpost, 1080, 2400)["text"])]
+	var k_ok: bool = kblow > 2 and kg.over and not kg.won and k_hp0 == "lethal" and k_ctx0.contains("LETHAL") \
+		and not bool(ksh._danger_state().get("lethal", false))
+	for kh in kheld:
+		if kh != [true, "lethal", true, k_ctx0]:
+			k_ok = false
+	_check(k_ok, "a death in the enemy turn: until the blow (+%d) every readout keeps '%s' / %s (%s)"
+		% [kblow, k_ctx0, k_hp0, str(kheld)])
+	_check(not bool(kafter[0]) and String(kafter[1]) == "low" and not bool(kafter[2]) and String(kafter[3]) != k_ctx0,
+		"...and the blow lands it: low-HP red on the 0 it shows, the held forecast let go (%s)" % str(kafter))
+	ksh.clock_override = 92000 + 1
+	ksh._skip_death_reel()
+	_check(not ksh._death_held(), "...as does a tap that finishes the reel")
+	ksh.clock_override = -1
+	ksh.free()
+
+	# a CHAINED step (out of charge: the turn ends, then the move goes) has
+	# resolved on its own: mid-reel the HP verdict is the LIVE forecast, not
+	# the end turn's held one - onto a tile a machine will hit for 6 at 6/10
+	# HP, the chip reads lethal while the reel still plays (_reel_holds_lethal
+	# is cleared by the chain)
+	var xg = Game.new(4242, {})
+	xg.terrain.clear()
+	xg.enemies.clear()
+	xg.smog = 0
+	var xpp: Vector2i = xg.player["pos"]
+	var xdirs := _open_dirs(xg)
+	var xwalk := Vector2i(-1, -1)
+	for xd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if xd != xdirs[0] and xg._open(xpp + xd * 3) and xg._open(xpp + xd * 2):
+			xwalk = xpp + xd * 3
+			break
+	if xwalk.x >= 0:
+		xg._spawn("drill_bot", xwalk)
+	xg.player["hp"] = 6
+	xg.player["charge"] = 0
+	var xsh = _danger_shell(xg)
+	xsh.anim_mode = "full"
+	xsh.clock_override = 94000
+	xsh._act({"type": "end_turn"})
+	var xdest: Vector2i = xg.player["pos"] + xdirs[0]
+	var xzap := Vector2i(-1, -1)
+	for xd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var zt: Vector2i = xdest + xd
+		if xzap.x < 0 and zt != xg.player["pos"] and xg._open(zt):
+			xzap = zt
+	if xzap.x >= 0:
+		var zb: Dictionary = xg._spawn("drill_bot", xzap)
+		zb["intent"] = {"type": "attack", "tile": xdest, "dmg": 6}
+	xsh._danger_rev += 1
+	xsh.clock_override = 94030
+	var x_playing: bool = xsh._reel_left() > 0
+	var xmove: Dictionary = {}
+	for a in xg.legal_actions():
+		if String(a.get("type", "")) == "move" and a.get("dir") == xdirs[0]:
+			xmove = a
+	_check(xwalk.x >= 0 and xzap.x >= 0 and x_playing and not xmove.is_empty() and not xg.over,
+		"fixture: the end turn's reel still plays and the move onto the zapped tile is legal")
+	if not xmove.is_empty():
+		xsh._act_chained(xmove)
+	var x_live: bool = bool(xsh._danger_state().get("lethal", false))
+	var x_shown: String = xsh._hp_state_shown()
+	_check(xg.player["pos"] == xdest and xsh._reel_left() > 0 and not xsh._reel_holds_lethal and not xsh._reel_lethal
+		and x_live and x_shown == "lethal",
+		"a chained move onto a lethal tile reads lethal mid-reel, as the live forecast says (%s; held %s, live %s)"
+		% [x_shown, xsh._reel_lethal, x_live])
+	xsh.clock_override = -1
+	xsh.free()
 
 	# the danger cue reaches the banner queue at danger priority, and its tick
 	# rides the step's sound cap: boss > warn > hurt
@@ -2720,12 +3638,12 @@ func _check_danger_readouts() -> void:
 	sh._danger_rev += 1
 	_check(int(sh._danger_state()["sky"]["choke_in"]) == 2, "fixture: the choke is two end turns off")
 	sh._banner = ["something else"]
-	sh._banner_ms = Time.get_ticks_msec()
+	sh._banner_ms = sh._now()
 	sh._banner_q = []
 	sh._act({"type": "end_turn"})
 	var queued := false
 	for qb in sh._banner_q:
-		queued = queued or (qb["lines"] == ["THE SMOG THICKENS", "it chokes from next turn"]
+		queued = queued or (qb["lines"] == ["THE SMOG THICKENS", "it stings from next turn"]
 			and int(qb["prio"]) == int(Feedback.BANNER_PRIO["danger"]) and qb["col"] == Danger.COL_AMBER)
 	_check(queued, "choke 1: THE SMOG THICKENS waits in the banner queue at danger priority (%s)" % str(sh._banner_q))
 	_check(sh._choke_cued == 1, "the shell remembers the choke countdown it announced (%d)" % sh._choke_cued)
@@ -2755,8 +3673,8 @@ func _check_danger_readouts() -> void:
 	_check(int(sh._danger_state()["sky"]["choke_in"]) == 1, "fixture: the end turns bring the choke back to 1")
 	var refired := false
 	for qb in sh._banner_q:
-		refired = refired or qb["lines"] == ["THE SMOG THICKENS", "it chokes from next turn"]
-	refired = refired or sh._banner == ["THE SMOG THICKENS", "it chokes from next turn"]
+		refired = refired or qb["lines"] == ["THE SMOG THICKENS", "it stings from next turn"]
+	refired = refired or sh._banner == ["THE SMOG THICKENS", "it stings from next turn"]
 	_check(not refired and not spy.played.has("warn"),
 		"a cleanse relief and the end turn after it re-fire neither the banner nor the tick (%s / %s)" % [str(sh._banner_q), str(spy.played)])
 	sh.audio = real_audio
@@ -2887,7 +3805,7 @@ func _check_lethal_guard() -> void:
 	fx = _lethal_fixture(99, 0)
 	g = fx[0]
 	sh = _danger_shell(g)
-	_check(String(sh._context_msg(g.snapshot())["text"]).begins_with("! INCOMING 99 - LETHAL"),
+	_check(String(sh._context_msg(g.snapshot())["text"]).begins_with("Incoming 99 - LETHAL"),
 		"the context line leads with the lethal forecast: %s" % sh._context_msg(g.snapshot())["text"])
 	sh.screen = "tutorial"
 	_check(sh._guard_lets_end(), "the tutorial never guards")
@@ -3010,7 +3928,7 @@ func _check_intent_badges() -> void:
 	sh.free()
 	g.enemies[0]["status"] = {}
 	_check(Danger.tile_numbers(g.telegraph(), pp).is_empty() and g.telegraph()["tiles"].get(pp, 0) == 2,
-		"the tender's own tile carries no number (the INCOMING line speaks for it)")
+		"the tender's own tile carries no number (the incoming line speaks for it)")
 
 	# a grapple: tether to the landing tile, ringless when anchored
 	g = Game.new(4242)
@@ -3454,6 +4372,7 @@ func _clear_runend_runs() -> void:
 func _check_run_end() -> void:
 	const RunEnd := preload("res://shell/run_end.gd")
 	var sh = _bare_shell()
+	sh.anim_mode = "off"  # the sheet, not the reel: the death reel inside the beat is _check_over_reel's
 	sh.runs_dir = RUNEND_RUNS
 	sh.profile = Profile.new()
 	sh.seed_v = 4242
@@ -3467,15 +4386,13 @@ func _check_run_end() -> void:
 	_check(sh.game.over and not sh.game.won and sh.game.death_cause == "smog", "the smog recipe kills the tender")
 	_check(sh._over_ms >= 0 and sh._over_phase() == "beat" and sh._over_locked(),
 		"a death through _act starts the beat, locked (%s)" % sh._over_phase())
-	_check(String(sh._over_info.get("banner", [""])[0]) == "THE SMOG TAKES YOU",
-		"the beat's banner names the smog (%s)" % str(sh._over_info.get("banner", [])))
+	var bn0: Array = sh._over_info.get("banner", ["", ""])
+	_check(bn0.size() == 2 and String(bn0[0]) == "YOU WILTED" and String(bn0[1]) == "lost in the smog",
+		"the beat's banner wilts and names the smog (%s)" % str(bn0))
+	# (the fun pass's three red death bursts are retired: the reel's wilt and
+	# petals are the death's animation; the end beat owns the screen alone)
 	_check(sh._banner.is_empty() and sh._banner_q.is_empty(), "the end beat clears every other banner")
 	_check(sh.profile.runs == 1 and sh._run_recorded, "the run was recorded at the end, beat or no beat")
-	var bursts := 0
-	for f in sh._fx:
-		if String(f["kind"]) == "burst" and Color(f["col"]) == Shell.COL_RED:
-			bursts += 1
-	_check(bursts == 3, "three red bursts on a death (%d)" % bursts)
 	var at: int = sh._over_ms
 	_check(sh._over_phase(at + Shell.OVER_BEAT_MS) == "fade" and sh._over_phase(at + Shell.OVER_BEAT_MS
 		+ Shell.OVER_FADE_MS) == "sheet" and sh._over_locked(at + Shell.OVER_LOCK_MS - 1)
@@ -3504,7 +4421,7 @@ func _check_run_end() -> void:
 	sh._key(KEY_ESCAPE)
 	_check(sh.screen == "menu", "ESC during the beat goes straight to the menu (the run is recorded)")
 	sh.screen = "game"
-	sh._over_ms -= Shell.OVER_LOCK_MS + 10
+	sh._over_ms = sh._now() - Shell.OVER_LOCK_MS - 10
 	_check(sh._over_phase() == "sheet" and not sh._over_locked(), "after the lock the sheet is up and live")
 	sh.hotspots.clear()
 	sh._click(Vector2(5, 5))
@@ -3517,7 +4434,7 @@ func _check_run_end() -> void:
 	_smog_doom(sh.game)
 	sh._act({"type": "end_turn"})
 	_check(sh.game.over and sh._over_locked(), "a second death starts a second beat")
-	sh._over_ms -= Shell.OVER_LOCK_MS + 10
+	sh._over_ms = sh._now() - Shell.OVER_LOCK_MS - 10
 	var g1 = sh.game
 	sh._tap("new_run")
 	_check(sh.game != g1 and not sh.game.over and sh.run_kind == "career", "NEW RUN starts a fresh career run")
@@ -3537,7 +4454,8 @@ func _check_run_end() -> void:
 	var info: Dictionary = sh._over_info
 	_check(g.over and String(info.get("cause", "")).contains("Drill Bot") and not String(info.get("cause", "")).contains("drill_bot"),
 		"the cause names the Drill Bot in words (%s)" % info.get("cause", ""))
-	_check(String(info["banner"][0]) == "THE DRILL BOT TAKES YOU", "...and so does the banner (%s)" % str(info["banner"]))
+	_check(String(info["banner"][0]) == "YOU WILTED" and String(info["banner"][1]) == "felled by a Drill Bot",
+		"...and so does the banner's second line (%s)" % str(info["banner"]))
 	_check(not String(info.get("cause", "")).contains("cause:"), "no raw 'cause:' line is left")
 	# "1 more HP would have saved you" only when it would have: the sim stops a
 	# step at the first lethal blow, so a death at exactly 0 HP can hide a
@@ -3577,13 +4495,18 @@ func _check_run_end() -> void:
 	# RunStats always carries killer.cause, "" without a player_death) falls
 	# back to death_cause (mutation: restore killer.get("cause", fallback))
 	var bare_s := {"won": false, "floor": 2, "killer": {"cause": "", "kind": ""}, "death_cause": "drill_bot"}
-	_check(String(RunEnd.end_banner(bare_s, {})[0]) == "THE DRILL BOT TAKES YOU"
-		and RunEnd.cause_line(bare_s, {}).begins_with("struck down by a Drill Bot"),
+	_check(String(RunEnd.end_banner(bare_s, {})[0]) == "YOU WILTED" and String(RunEnd.end_banner(bare_s, {})[1]) == "felled by a Drill Bot"
+		and RunEnd.cause_line(bare_s, {}).begins_with("felled by a Drill Bot"),
 		"an empty folded killer falls back to death_cause (%s / %s)" % [
 			str(RunEnd.end_banner(bare_s, {})), RunEnd.cause_line(bare_s, {})])
-	_check(RunEnd.cause_text("spikes", "welded_hulk") == "cut on a Welded Hulk's spikes"
-		and RunEnd.cause_text("smog") == "choked by the smog" and RunEnd.cause_text("fire") == "burned in the flames",
-		"cause words (%s)" % RunEnd.cause_text("spikes", "welded_hulk"))
+	_check(RunEnd.cause_text("spikes", "welded_hulk") == "worn down by a Welded Hulk's spikes"
+		and RunEnd.cause_text("spikes") == "worn down by spikes"
+		and RunEnd.cause_text("smog") == "lost in the smog" and RunEnd.cause_text("fire") == "caught in the fire"
+		and RunEnd.cause_text("goo") == "stuck in the goo" and RunEnd.cause_text("rich_goo") == "stuck in the goo"
+		and RunEnd.cause_text("") == "the light went out" and RunEnd.cause_text("overseer") == "felled by the Overseer",
+		"cause words (%s / %s)" % [RunEnd.cause_text("spikes", "welded_hulk"), RunEnd.cause_text("")])
+	_check(RunEnd.end_banner({"won": true}, {}) == ["THE FURNACE IS COLD", "the valley breathes again"],
+		"the win's banner (%s)" % str(RunEnd.end_banner({"won": true}, {})))
 	_check(RunEnd.near_miss_text({"kind": "stairs", "steps": 1}) == "the stairs were 1 step away"
 		and RunEnd.near_miss_text({"kind": "quota", "short": 2}) == "2 cleanses short of waking the stairs"
 		and RunEnd.near_miss_text({"kind": "exact"}) == "1 more HP would have saved you"
@@ -3613,6 +4536,7 @@ func _check_run_end() -> void:
 func _check_over_facts() -> void:
 	const RunEnd := preload("res://shell/run_end.gd")
 	var sh = _bare_shell()
+	sh.anim_mode = "off"  # the sheet's facts, not the reel
 	sh.runs_dir = RUNEND_RUNS
 	sh.profile = Profile.new()
 	var g = Game.new(4242, {})
@@ -3627,6 +4551,9 @@ func _check_over_facts() -> void:
 		and String(info["best"][0]) == "", "an unrecorded game shows no best, unlocks or goal")
 	_check(info["buttons"] == [["NEW RUN", "new_run"], ["RETRY SEED", "retry_seed"], ["MENU", "menu"]],
 		"a career sheet's buttons (%s)" % str(info["buttons"]))
+	_check(String(info["title"]) == "YOU WILTED" and String(info["spring"]) == "Every sprout gets another spring."
+		and sh._over_row_col(info, "title") == Shell.COL_ROSE and sh._over_row_col(info, "spring") == Shell.COL_CREAM,
+		"a lost run wilts: a rose title and the spring line in cream (%s / %s)" % [info["title"], info.get("spring", "")])
 	# NEW BEST and DEEPEST YET, while the profile has already moved
 	var p = Profile.new()
 	p.runs = 5
@@ -3670,7 +4597,8 @@ func _check_over_facts() -> void:
 	_check(not info["unlocks"].is_empty() and String(info["unlocks"][0]) == "NEW DIFFICULTY  ·  " + String(Content.TIERS[0]["name"]),
 		"its unlocks, the difficulty first (%s)" % str(info["unlocks"]))
 	_check(String(info["next"]).begins_with("NEXT  ·  "), "...and the next goal (%s)" % info["next"])
-	_check(String(info["banner"][0]) == "THE FURNACE FALLS", "the win's beat banner")
+	_check(String(info["banner"][0]) == "THE FURNACE IS COLD" and String(info.get("spring", "x")) == "",
+		"the win's beat banner, and no spring line on a win (%s)" % str(info["banner"]))
 	# the feats the run earned ride behind the unlocks: counted in the overflow
 	# (mutation: drop the feat loop in _build_over_info and the count shrinks)
 	var n_ann: int = sh._run_unlocks.size() + (sh._run_report.get("feats", []) as Array).size()
@@ -3730,7 +4658,8 @@ func _check_over_facts() -> void:
 	_check(tg.over and not tg.won and sh._over_phase() == "beat" and sh._over_locked(),
 		"a tutorial death through _act starts the beat (%s)" % sh._over_phase())
 	_check(sh._over_info.get("buttons", []) == [["TUTORIAL AGAIN", "tutorial"], ["MENU", "menu"]]
-		and String(sh._over_info["banner"][0]) == "THE DRILL BOT TAKES YOU" and sh.profile.runs == runs_t,
+		and String(sh._over_info["banner"][0]) == "YOU WILTED" and String(sh._over_info["banner"][1]) == "felled by a Drill Bot"
+		and String(sh._over_info.get("spring", "")) == "Every sprout gets another spring." and sh.profile.runs == runs_t,
 		"...its sheet offers TUTORIAL AGAIN, names the killer and records nothing (%s)" % str(sh._over_info.get("buttons", [])))
 	# a tutorial death set from outside: TUTORIAL AGAIN, and nothing scored
 	sh._start_tutorial()
@@ -3796,7 +4725,8 @@ func _check_over_text() -> void:
 	for row in Content.RUN_SCORE:
 		parts.append([String(row["id"]), 9999])
 	var worst := {
-		"won": false, "title": "YOU DIED", "cause": RunEnd.cause_line(worst_s, {}),
+		"won": false, "title": "YOU WILTED", "cause": RunEnd.cause_line(worst_s, {}),
+		"spring": "Every sprout gets another spring.",
 		"near": RunEnd.near_miss_text({"kind": "best_short", "best": 7}),
 		"stats": RunEnd.stats_line(worst_s),
 		"kit": [{"icon": "ab_default", "count": 999, "up": true}, {"icon": "ab_default", "count": 999, "up": true},
@@ -3815,7 +4745,8 @@ func _check_over_text() -> void:
 		"buttons": [["NEW RUN", "new_run"], ["RETRY DAILY", "retry_seed"], ["MENU", "menu"]],
 	}
 	var typical := {
-		"won": false, "title": "YOU DIED", "cause": "struck down by a Drill Bot  ·  Pipeworks",
+		"won": false, "title": "YOU WILTED", "cause": "felled by a Drill Bot  ·  Pipeworks",
+		"spring": "Every sprout gets another spring.",
 		"near": "2 cleanses short of waking the stairs",
 		"stats": "floor 5 of 7  ·  63 turns  ·  24 kills  ·  41 bloom earned",
 		"kit": [{"icon": "ab_solar_lance", "count": 12, "up": true}, {"icon": "ab_seed_bomb", "count": 9, "up": false},
@@ -3831,9 +4762,10 @@ func _check_over_text() -> void:
 	# the priority drop takes an unlock row, and the last kept one is rebuilt
 	# with the new count (mutation: skip _over_fix_overflow in _over_layout and
 	# the sheet shows a label, or a stale "+2 more", with three hidden)
-	var long_line := "struck down by a Welded Hulk's spikes on the longest floor name there is  ·  Pipeworks deep"
+	var long_line := "worn down by a Welded Hulk's spikes on the longest floor name there is  ·  Pipeworks deep"
 	var u_ids := ["tier:1", "skyrunner", "double_oil", "mycology", "overtime"]
-	var crowded := {"won": false, "title": "YOU DIED", "cause": long_line, "near": long_line, "stats": long_line,
+	var crowded := {"won": false, "title": "YOU WILTED", "cause": long_line, "spring": "Every sprout gets another spring.",
+		"near": long_line, "stats": long_line,
 		"grafts": long_line, "kit": [{"icon": "ab_default", "count": 999, "up": true}],
 		"chips": ["a chip that is long", "another chip", "third"], "score": "SCORE 99999", "score_parts": long_line,
 		"best": ["best 1449  ·  this run 85%", false], "floor_best": "DEEPEST YET  ·  floor 6 (was 5)",
@@ -3941,8 +4873,35 @@ func _check_over_text() -> void:
 				if f < CARD_MIN_VH:
 					beat_small += 1
 	_check(beat_small == 0, "%d end-beat line(s) below %.2f%% of vh (worst %s)" % [beat_small, CARD_MIN_VH * 100.0, beat_at])
-	print("over sheet: %d viewports, worst row %.3f%% of vh (%s), beat %.3f%% (%s)" % [
-		CARD_VIEWPORTS.size(), worst_frac * 100.0, worst_at, beat_worst * 100.0, beat_at])
+	# the beat's banner steps off the tender's tile (the wilt plays under it):
+	# at every viewport and for a tile anywhere down the map band, the block's
+	# ink never covers the tile when there is room beside it, and with no tile
+	# to avoid the banner stays centred exactly as before
+	var beat_cover := 0
+	var beat_cases := 0
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		var top := vh * 0.06
+		var bot := vh * Shell.Z_MAP_END
+		var ban: Array = RunEnd.end_banner({"won": false, "floor": 6, "killer": {"cause": "drill_bot", "kind": "drill_bot"}}, {})
+		var plain: Array = sh._over_beat_layout({"banner": ban, "won": false}, vw, vh, top, bot)
+		_check(is_equal_approx(float(plain[0]["y"]), (top + bot) / 2.0), "no tile to avoid: the beat stays centred (%dx%d)" % [vw, vh])
+		var ts := vw / 9.0
+		var y := top
+		while y + ts <= bot:
+			var tile := Rect2(vw / 2.0 - ts / 2.0, y, ts, ts)
+			var bl: Array = sh._over_beat_layout({"banner": ban, "won": false}, vw, vh, top, bot, tile)
+			var ink0 := float(bl[0]["y"]) - float(bl[0]["size"]) * 0.8
+			var ink1 := float(bl[1]["y"]) + float(bl[1]["size"]) * 0.3
+			beat_cases += 1
+			if ink0 < tile.end.y and ink1 > tile.position.y:
+				beat_cover += 1
+			_check(ink0 >= top - 0.5 and ink1 <= bot + 0.5, "the beat banner stays inside the map band (%dx%d, tile at %.0f)" % [vw, vh, y])
+			y += ts / 3.0
+	_check(beat_cover == 0, "the beat banner covers the tender's tile in %d of %d placements" % [beat_cover, beat_cases])
+	print("over sheet: %d viewports, worst row %.3f%% of vh (%s), beat %.3f%% (%s), beat clear of the tender in %d placements" % [
+		CARD_VIEWPORTS.size(), worst_frac * 100.0, worst_at, beat_worst * 100.0, beat_at, beat_cases])
 	sh.free()
 
 
@@ -4189,6 +5148,7 @@ func _check_career_layout() -> void:
 ## Back returns to the over sheet before the next Back leaves for the menu.
 func _check_unlock_pager() -> void:
 	var sh = _bare_shell()
+	sh.anim_mode = "off"  # the pager, not the reel
 	sh.runs_dir = RUNEND_RUNS
 	sh.profile = Profile.new()
 	sh.run_kind = "career"
@@ -4380,8 +5340,10 @@ func _check_career_pings() -> void:
 		p.milestone_rows = [{"id": "spiker", "kind": "loadout", "requires": {"casts": {base: 3}}, "desc": "x"}]
 		p.casts_by_base = {base: 2}
 		return p
-	# live: through _act, banner by banner
+	# live: through _act, banner by banner (animations off: every banner's
+	# beat is "now", so what a step queued is in the queue right after it)
 	var sh = _bare_shell()
+	sh.anim_mode = "off"
 	sh.profile = mk_profile.call()
 	sh.seed_v = seed_v
 	sh.run_kind = "career"
@@ -4436,17 +5398,17 @@ func _check_career_pings() -> void:
 	sh._banner = []
 	sh._banner_q = []
 	sh._banner_ms = -99999
-	sh._floor_fade_ms = Time.get_ticks_msec()
+	sh._floor_fade_ms = sh._now()
 	sh._push_banner(["DEEPEST YET", "floor 2"], Shell.COL_GOLD, int(Feedback.BANNER_PRIO["career"]))
 	var held_q: bool = sh._banner.is_empty() and sh._banner_q.size() == 1
 	sh._tick_banner()
 	held_q = held_q and sh._banner.is_empty()
-	sh._floor_fade_ms = Time.get_ticks_msec() - sh.FLOOR_CARD_MS - 1
+	sh._floor_fade_ms = sh._now() - sh.FLOOR_CARD_MS - 1
 	sh._tick_banner()
 	_check(held_q and sh._banner == ["DEEPEST YET", "floor 2"] and sh._banner_q.is_empty(),
 		"a career ping waits out the floor title card, then shows (%s / %s)" % [str(sh._banner), str(sh._banner_q)])
 	sh._banner = []
-	sh._floor_fade_ms = Time.get_ticks_msec()
+	sh._floor_fade_ms = sh._now()
 	sh._push_banner(["THE STAIRS AWAKEN"], Shell.COL_GOLD, int(Feedback.BANNER_PRIO["stairs"]))
 	_check(sh._banner == ["THE STAIRS AWAKEN"], "only career priority waits for the card")
 	if sh._run_save != null:
@@ -4455,6 +5417,7 @@ func _check_career_pings() -> void:
 	sh.free()
 	# resume: the same log, replayed - nothing it already earned re-fires
 	var rs = _bare_shell(true)
+	rs.anim_mode = "off"
 	rs.profile = mk_profile.call()
 	rs._load_run()
 	_check(rs.game != null and not rs.game.over and rs.run_kind == "career", "the logged run resumes")
@@ -4494,9 +5457,11 @@ func _check_career_pings() -> void:
 	print("career pings: %s 3/3 and DEEPEST YET once each, none after a resume, none in the tutorial or a daily" % base)
 
 
-## The objective line: the floor's goal first, the career hint beside it on a
-## career run ("floor 5 unlocks Mycology"), "tap for log" only alone - and
-## every combination draws at >= OBJECTIVE_MIN_VH at every phone shape.
+## The objective line: the floor's goal first (main's words), the career hint
+## beside it on a career run ("floor 5 unlocks Mycology"), the goal shortened
+## beside a hint - and every combination draws at >= OBJECTIVE_MIN_VH in the
+## context line's 0.88vw box at every phone shape. (The fun pass's "tap for
+## log" part is retired: the list mark at the line's end is the log's button.)
 func _check_objective_line() -> void:
 	var sh = _bare_shell()
 	sh.profile = Profile.new()
@@ -4508,25 +5473,26 @@ func _check_objective_line() -> void:
 	var snap: Dictionary = sh.game.snapshot()
 	snap["greened"] = int(snap["green_need"])
 	var ob: Dictionary = sh._objective_line(snap)
-	_check(String(ob["text"]) == "Reach the gold-ringed stairs  ·  floor 5 unlocks Mycology",
+	_check(String(ob["text"]) == "The stairs are awake  ·  floor 5 unlocks Mycology",
 		"floor 4, stairs awake: the career hint rides with the goal (%s)" % ob["text"])
 	var dsnap: Dictionary = snap.duplicate()
 	dsnap["greened"] = 1
 	dsnap["green_need"] = 5
 	ob = sh._objective_line(dsnap)
-	_check(String(ob["text"]) == "cleanse 1/5 to wake the stairs  ·  floor 5 unlocks Mycology",
+	_check(String(ob["text"]) == "Cleanse 4 more  ·  floor 5 unlocks Mycology",
 		"the quota shortens beside the hint (%s)" % ob["text"])
-	# no ref (a daily, the tutorial, a game set from outside): the old lines exactly
+	# no ref (a daily, the tutorial, a game set from outside): main's lines exactly
 	var keep_ref: Dictionary = sh._career_ref
 	sh._career_ref = {}
-	_check(String(sh._objective_line(snap)["text"]) == "Reach the gold-ringed stairs  ·  tap for log"
-		and String(sh._objective_line(dsnap)["text"]) == "Stairs dormant - cleanse 1/5 to green the floor",
-		"without a career hint the line is what it always was")
+	_check(String(sh._objective_line(snap)["text"]) == "The stairs are awake - head down when ready"
+		and String(sh._objective_line(dsnap)["text"]) == "Cleanse 4 more to wake the stairs",
+		"without a career hint the line is main's goal sentence (%s / %s)" % [
+			sh._objective_line(snap)["text"], sh._objective_line(dsnap)["text"]])
 	var bsnap: Dictionary = snap.duplicate()
 	bsnap["floor"] = Content.FLOORS.size()
-	_check(String(sh._objective_line(bsnap)["text"]) == "DESTROY THE BOSS  ·  tap for log", "the boss floor's line")
+	_check(String(sh._objective_line(bsnap)["text"]) == "Defeat the boss to cool the Furnace", "the boss floor's line")
 	sh._career_ref = keep_ref
-	_check(String(sh._objective_line(bsnap)["text"]) == "DESTROY THE BOSS  ·  tap for log",
+	_check(String(sh._objective_line(bsnap)["text"]) == "Defeat the boss to cool the Furnace",
 		"no milestone past the boss floor: no hint there")
 	# the context line's last arm IS the objective line (no danger on an empty floor)
 	sh.game.enemies.clear()
@@ -4553,7 +5519,7 @@ func _check_objective_line() -> void:
 		crowd.append(String(Content.LOADOUTS[lid]["name"]))
 	var drop_bad := 0
 	var hint_dropped := 0
-	var log_bad := 0
+	var full_bad := 0
 	var bad := 0
 	var worst := 9.9
 	var worst_at := ""
@@ -4569,7 +5535,7 @@ func _check_objective_line() -> void:
 					big["greened"] = max_need - 1
 					big["green_need"] = max_need
 				var o: Dictionary = sh._objective_line(big, vw, vh)
-				var f := float(sh._fit_size(String(o["text"]), int(vh * 0.022), vw * 0.95)) / vh
+				var f := float(sh._fit_size(String(o["text"]), int(vh * 0.022), vw * 0.88)) / vh
 				if f < worst:
 					worst = f
 					worst_at = "'%s' at %dx%d" % [o["text"], int(vw), int(vh)]
@@ -4584,21 +5550,21 @@ func _check_objective_line() -> void:
 			big2["greened"] = 99
 			big2["green_need"] = 100
 			var oc: Dictionary = sh._objective_line(big2, vw, vh)
-			if float(sh._fit_size(String(oc["text"]), int(vh * 0.022), vw * 0.95)) / vh < Shell.OBJECTIVE_MIN_VH:
+			if float(sh._fit_size(String(oc["text"]), int(vh * 0.022), vw * 0.88)) / vh < Shell.OBJECTIVE_MIN_VH:
 				drop_bad += 1
 			# on a stairs-awake floor a dropped hint gives the goal back its
-			# "tap for log" (mutation: delete the had_hint restore in _objective_line)
+			# whole sentence (the short form is only for beside a hint)
 			var aw: Dictionary = snap.duplicate()
 			aw["floor"] = 4
 			var oa: Dictionary = sh._objective_line(aw, vw, vh)
 			if not String(oa["text"]).contains("unlocks"):
 				hint_dropped += 1
-				if String(oa["text"]) != "Reach the gold-ringed stairs  ·  tap for log":
-					log_bad += 1
-					print("a dropped hint left the stairs line bare at %dx%d: %s" % [vw, vh, oa["text"]])
+				if String(oa["text"]) != "The stairs are awake - head down when ready":
+					full_bad += 1
+					print("a dropped hint left the stairs goal short at %dx%d: %s" % [vw, vh, oa["text"]])
 	_check(drop_bad == 0, "a hint too long to fit is dropped, never drawn under the floor (%d)" % drop_bad)
-	_check(hint_dropped > 0 and log_bad == 0,
-		"a dropped hint restores 'tap for log' beside the stairs goal (%d dropped, %d bare)" % [hint_dropped, log_bad])
+	_check(hint_dropped > 0 and full_bad == 0,
+		"a dropped hint gives the stairs goal its whole sentence back (%d dropped, %d short)" % [hint_dropped, full_bad])
 	_check(bad == 0, "%d objective line(s) under %.1f%% of vh or without the career hint (worst %s)" % [
 		bad, Shell.OBJECTIVE_MIN_VH * 100.0, worst_at])
 	sh.free()
@@ -4652,8 +5618,8 @@ func _check_encounters() -> void:
 	fs.free()
 	# floor 1's crew through the REAL start path: Game.new emits floor 1's
 	# `floor` event before any _act ever runs, so _new_game logs it and raises
-	# the title card itself - and with the intro tips up the card waits for
-	# them to close (mutation: drop the log loop, the card arming or the
+	# the title card itself - and with the intro card up the title card waits for
+	# it to close (mutation: drop the log loop, the card arming or the
 	# _process release, and floor 1's crew is named nowhere)
 	for intro in ["never", "always"]:
 		var f1 = _bare_shell()
@@ -4663,7 +5629,7 @@ func _check_encounters() -> void:
 		f1._start_run("career", 88)
 		var crew1 := String(f1.game.encounter(1).get("name", ""))
 		var card_up := func() -> bool:
-			var age: int = Time.get_ticks_msec() - int(f1._floor_fade_ms)
+			var age: int = f1._now() - int(f1._floor_fade_ms)
 			return age >= 0 and age < Shell.FLOOR_CARD_MS
 		_check(crew1 == "Hound and Handler" and _any_has(f1.log_lines, "— Strip Mine I · " + crew1 + " —"),
 			"intro %s: a fresh run's log names floor 1's crew (%s): %s" % [intro, crew1, str(f1.log_lines)])
@@ -4671,7 +5637,7 @@ func _check_encounters() -> void:
 			_check(card_up.call() and String(f1._floor_card_lines(f1.game.snapshot())[1]).ends_with(crew1),
 				"a fresh run raises floor 1's title card, naming its crew")
 		else:
-			_check(f1.mode == "intro" and not card_up.call(), "under the intro tips floor 1's card waits (mode %s)" % f1.mode)
+			_check(f1.mode == "intro" and not card_up.call(), "under the intro card floor 1's card waits (mode %s)" % f1.mode)
 			f1._back(false)
 			f1._process(0.016)
 			_check(f1.mode == "normal" and card_up.call(), "...and rises the moment they close")
@@ -4699,7 +5665,7 @@ func _check_encounters() -> void:
 		_check(rev.size() == 1 and String(rev[0].get("kind", "")) == "coal_golem",
 			"the furnace's phase-2 reinforcement event carries its kind (%s)" % str(rev))
 		var gl: Array = Feedback.log_entries(rev, {}, gb, {}).map(func(l): return l["text"])
-		_check(gl == ["A vent releases a Coal Golem"], "...and the log names the golem from it: %s" % str(gl))
+		_check(gl == ["A Coal Golem climbs out of a vent"], "...and the log names the golem from it: %s" % str(gl))
 		# the phase words announce the golem only when it came: the sim spawns
 		# it on the first _open vent, so with every vent covered there is none
 		# (mutation: drop the BOSS_PHASE_JOINS read and the covered arena still
@@ -4907,6 +5873,31 @@ func _check_encounters() -> void:
 			if ln.length() > Feedback.LOG_LINE_MAX or not ln.contains(String(pk["name"])):
 				log_bad += 1
 	_check(log_bad == 0, "every crew's floor log line fits %d chars (%d bad, longest '%s')" % [Feedback.LOG_LINE_MAX, log_bad, log_worst])
+	# (1b) every reinforcement line the vents can write - one machine of a
+	# kind any floor releases, a whole wave of it, and the boss arena's golem -
+	# fits the log in main's words, with no raw id
+	var rl_bad := 0
+	var rl_worst := ""
+	var rkinds := {"coal_golem": true}
+	for row3 in Content.FLOORS:
+		for k3 in row3.get("reinforce", []):
+			rkinds[String(k3)] = true
+	for k4 in rkinds:
+		var one: Array = Feedback.log_entries([{"t": "reinforcement", "tile": Vector2i(-40, -40), "kind": k4}],
+			{}, tsh.game, {}).map(func(l): return String(l["text"]))
+		var wave: Array = []
+		for vi in 9:
+			wave.append({"t": "reinforcement", "tile": Vector2i(-40 - vi, -40), "kind": k4})
+		var many: Array = Feedback.log_entries(wave, {}, tsh.game, {}).map(func(l): return String(l["text"]))
+		for rl in one + many:
+			if rl.length() > rl_worst.length():
+				rl_worst = rl
+			if rl.length() > Feedback.LOG_LINE_MAX or rl.contains("_") or not rl.contains("climb"):
+				rl_bad += 1
+		if one.size() != 1 or many.size() != 1 or not String(many[0]).begins_with("9 "):
+			rl_bad += 1
+	_check(rl_bad == 0, "every reinforcement line fits %d chars in main's words (%d bad, longest '%s')"
+		% [Feedback.LOG_LINE_MAX, rl_bad, rl_worst])
 	# (2) every title-card line 2, with the longest pack name on its floor (by
 	# drawn width), draws at >= CARD_MIN_VH inside 0.9vw at every viewport
 	var card_worst := 1.0
@@ -4951,3 +5942,1260 @@ func _check_encounters() -> void:
 	tsh.free()
 	print("encounters: %d crew cards, crew line worst %.3f%% of vh (%s), longest log line %d chars, %d vent kinds, %d vent states mirrored"
 		% [named, card_worst * 100.0, card_what, log_worst.length(), kinds.size(), vs_n])
+
+
+# --- the merge's own gates (plan H4) -------------------------------------------
+## main's reel shell with the fun pass on it: what each side used to pin alone
+## now meets in one step path, so these hold the seams - the held telegraph,
+## the death reel inside the end beat, banners on their beats, the reel words,
+## the toast, the one clock, the settings sheet and the one buzz a step.
+
+## The d5_cinder_grip board (tests/regressions/d5_cinder_grip.json): fire 3
+## from two kit cards plus oil_tithe; the lance lights the oil under a coal
+## golem and the Cinder Grip hook roots it. A bare shell at anim "full" with
+## its clock pinned to `at`, the lance cast through _act.
+func _cinder_shell(at: int):
+	var cfg := {"fixed_floor": {"fdef": {"green_need": 0, "smog_choke": 999, "smog_dim": [900, 950],
+		"smog_spawn": [999], "smog_spawn_every": 0},
+		"room": ["##########", "#.......>#", "#@..G....#", "#........#", "##########"],
+		"terrain": [{"kind": "oil", "pos": [4, 2]}]},
+		"grafts": ["oil_tithe"], "kit": ["solar_lance", "sun_flare", "mycelium_dash"],
+		"pool": ["solar_lance", "sun_flare", "mycelium_dash"]}
+	var sh = _bare_shell()
+	sh.anim_mode = "full"
+	sh.game = Game.new(1, Regress.config_from_json(cfg))
+	sh.clock_override = at
+	sh._act({"type": "ability", "slot": 0, "target": Vector2i(1, 0)})
+	return sh
+
+
+## The index of the first event of type `t` in `evs`, -1 for none.
+func _ev_index(evs: Array, t: String, last := false) -> int:
+	var out := -1
+	for i in evs.size():
+		if String(evs[i].get("t", "")) == t:
+			out = i
+			if not last:
+				return out
+	return out
+
+
+## Game 4242 with its first two enemies turned into drill bots on two open
+## sides of the tender, both striking it (`dmg_a`, `dmg_b`), no terrain, no
+## smog, every other enemy gone, the tender at 40 HP. [game, a, b, dirs], or
+## [] when the board has no two open sides.
+func _two_attackers(hp_a: int, dmg_a: int, dmg_b: int) -> Array:
+	var g = Game.new(4242, {})
+	g.terrain.clear()
+	g.smog = 0
+	var od := _open_dirs(g)
+	if od.size() < 2 or g.enemies.size() < 2:
+		return []
+	while g.enemies.size() > 2:
+		g.enemies.pop_back()
+	var pp: Vector2i = g.player["pos"]
+	for k in 2:
+		var e: Dictionary = g.enemies[k]
+		e["kind"] = "drill_bot"
+		e["pos"] = pp + Vector2i(od[k])
+		e["hp"] = 9
+		e["status"] = {}
+		e["intent"] = {"type": "attack", "tile": pp, "dmg": dmg_a if k == 0 else dmg_b}
+	g.enemies[0]["hp"] = hp_a
+	g.player["hp"] = 40
+	g.player["max_hp"] = 40
+	g.player["charge"] = 3
+	return [g, g.enemies[0], g.enemies[1], od]
+
+
+## The held telegraph (plan D4): while a reel plays, the red tiles, their
+## numbers, the badges and the tethers are the PRE-step telegraph the reel is
+## carrying out, cut to the machines still drawn (Danger.tele_subset of
+## _reel_tele); once it ends they are the sim's live Game.telegraph(). A
+## stunned attacker paints no tile in either phase, and a machine killed or
+## staggered mid-reel takes its tile with it on its own beat.
+func _check_tele_hold() -> void:
+	const Danger := preload("res://shell/danger.gd")
+	# pure: the subset of every id is the telegraph, a blocked entry adds nothing
+	var hand := {"enemies": [
+		{"id": 1, "dmg": 2, "tiles": [Vector2i(3, 3)], "blocked": ""},
+		{"id": 2, "dmg": 5, "tiles": [Vector2i(3, 3), Vector2i(4, 3)], "blocked": "stun"},
+		{"id": 3, "dmg": 1, "tiles": [Vector2i(3, 3)], "blocked": ""}], "tiles": {Vector2i(3, 3): 3}}
+	_check(Danger.tele_subset(hand, {1: true, 2: true, 3: true})["tiles"] == hand["tiles"],
+		"tele_subset of every id is the telegraph; the blocked entry adds no tile (%s)"
+		% str(Danger.tele_subset(hand, {1: true, 2: true, 3: true})["tiles"]))
+	var sub: Dictionary = Danger.tele_subset(hand, {2: true, 3: true})
+	_check(sub["tiles"] == {Vector2i(3, 3): 1} and sub["enemies"].size() == 2,
+		"tele_subset keeps only the kept machines and their unblocked sum (%s)" % str(sub))
+	_check(Danger.tele_subset(hand, {})["tiles"].is_empty() and Danger.tele_subset(hand, {})["enemies"].is_empty(),
+		"tele_subset of nothing paints nothing")
+
+	# (b) a stunned attacker beside a live one, through the enemy turn
+	var fx := _two_attackers(9, 2, 5)
+	_check(not fx.is_empty(), "fixture: two open sides and two machines")
+	if fx.is_empty():
+		return
+	var g = fx[0]
+	var stun_e: Dictionary = fx[2]
+	stun_e["status"] = {"stun": 3}
+	var pp: Vector2i = g.player["pos"]
+	var sh = _danger_shell(g)
+	sh.anim_mode = "full"
+	sh.clock_override = 500000
+	var pre_tele: Dictionary = (sh._danger_state()["tele"] as Dictionary).duplicate(true)
+	_check(Danger.tele_subset(pre_tele, {fx[1]["id"]: true, stun_e["id"]: true})["tiles"] == pre_tele["tiles"],
+		"tele_subset of every id is the sim's own telegraph")
+	_check(pre_tele["tiles"] == {pp: 2}, "fixture: before the step only the live attacker paints (%s)" % str(pre_tele["tiles"]))
+	sh._act({"type": "end_turn"})
+	_check(int(g.player["hp"]) == 38 and sh._reel_left() > 0, "fixture: the live strike lands, the reel plays")
+	sh.clock_override = 500010
+	var ts: Dictionary = sh._threat_snap(g.snapshot())
+	var ids := {}
+	for e in ts.get("enemies", []):
+		ids[e["id"]] = true
+	var want: Dictionary = Danger.tele_subset(pre_tele, ids)
+	var tv: Dictionary = sh._tele_view(ts)
+	_check(bool(ts.get("held", false)) and sh._threat_tiles(ts) == want["tiles"] and want["tiles"] == {pp: 2},
+		"during the reel the red tiles are the pre-step telegraph's, the stunned attacker's 5 nowhere (%s)"
+		% str(sh._threat_tiles(ts)))
+	_check(Danger.tile_numbers(tv, pp) == Danger.tile_numbers(want, pp) and Danger.tethers(tv, pp) == Danger.tethers(want, pp)
+		and str(Danger.badges(ts, tv)) == str(Danger.badges(ts, want)),
+		"...and the numbers, tethers and badges are drawn from that same view")
+	sh.clock_override = 500000 + int(sh._reel.get("len", 0)) + 100
+	var ts2: Dictionary = sh._threat_snap(g.snapshot())
+	var live: Dictionary = g.telegraph()
+	_check(not bool(ts2.get("held", false)) and sh._threat_tiles(ts2) == live["tiles"],
+		"after the reel the red tiles are the live Game.telegraph() (%s vs %s)" % [str(sh._threat_tiles(ts2)), str(live["tiles"])])
+	var stun_live := {}
+	for ent in live["enemies"]:
+		if ent["id"] == stun_e["id"]:
+			stun_live = ent
+	var others := {}
+	for ent in live["enemies"]:
+		if ent["id"] != stun_e["id"] and String(ent["blocked"]) == "":
+			for t in ent["tiles"]:
+				others[t] = int(others.get(t, 0)) + int(ent["dmg"])
+	_check(String(stun_live.get("blocked", "")) == "stun" and sh._threat_tiles(ts2) == others,
+		"...where the still-stunned attacker paints nothing either (%s)" % str(stun_live))
+	sh.clock_override = -1
+	sh.free()
+
+	# (a) a machine killed mid-reel takes its tile with it at its death beat,
+	# and one staggered mid-reel at its stagger beat
+	var fa := _two_attackers(1, 2, 3)
+	if fa.is_empty():
+		return
+	var ga = fa[0]
+	var va: Dictionary = fa[1]
+	var vb: Dictionary = fa[2]
+	var pa: Vector2i = ga.player["pos"]
+	var sa = _danger_shell(ga)
+	sa.anim_mode = "full"
+	sa.clock_override = 600000
+	var pre_a: Dictionary = (sa._danger_state()["tele"] as Dictionary).duplicate(true)
+	_check(pre_a["tiles"] == {pa: 5}, "fixture: both attackers paint the tender's tile, 2 + 3 (%s)" % str(pre_a["tiles"]))
+	sa._act({"type": "strike", "dir": fa[3][0]})
+	_check(not ga.enemies.has(va), "fixture: the strike kills the 1-HP attacker")
+	var t_die := -1
+	for gh in sa._reel.get("ghosts", []):
+		if gh["id"] == va["id"]:
+			t_die = int(gh["t_die"])
+	_check(t_die > 0, "fixture: the dead machine is drawn as a ghost until its death beat (%d)" % t_die)
+	sa.clock_override = 600000 + t_die - 1
+	_check(sa._threat_tiles(sa._threat_snap(ga.snapshot())) == {pa: 5},
+		"before its death beat the dead machine's tile is still red (%s)" % str(sa._threat_tiles(sa._threat_snap(ga.snapshot()))))
+	sa.clock_override = 600000 + t_die
+	_check(sa._threat_tiles(sa._threat_snap(ga.snapshot())) == {pa: 3},
+		"at its death beat it takes its share with it (%s)" % str(sa._threat_tiles(sa._threat_snap(ga.snapshot()))))
+	# a stagger landing later in the same reel takes the other one's (the rule
+	# _threat_snap reads off the reel's own events and beats)
+	var t_st := mini(t_die + 20, int(sa._reel.get("len", 0)) - 5)
+	sa._reel_evs = sa._reel_evs + [{"t": "staggered", "id": vb["id"]}]
+	sa._reel["ev_t"].append(t_st)
+	sa.clock_override = 600000 + t_st - 1
+	var before_st: Dictionary = sa._threat_tiles(sa._threat_snap(ga.snapshot()))
+	sa.clock_override = 600000 + t_st
+	var after_st: Dictionary = sa._threat_tiles(sa._threat_snap(ga.snapshot()))
+	_check(t_st > t_die and before_st == {pa: 3} and after_st.is_empty(),
+		"a stagger mid-reel takes its machine's tile at its beat (%s -> %s)" % [str(before_st), str(after_st)])
+	sa.clock_override = 600000 + int(sa._reel.get("len", 0)) + 100
+	_check(sa._threat_tiles(sa._threat_snap(ga.snapshot())) == ga.telegraph()["tiles"],
+		"after the reel: the live telegraph again")
+	sa.clock_override = -1
+	sa.free()
+
+	# (c) Animations off: the reel keeps no ghost (every beat is 0), only the
+	# floats - so the dead machine's share leaves on its `death` beat, at
+	# once, never lingering for the float reel's ~750 ms while the live
+	# telegraph already says the rest
+	var fo := _two_attackers(1, 2, 3)
+	if fo.is_empty():
+		return
+	var go = fo[0]
+	var vo: Dictionary = fo[1]
+	var po: Vector2i = go.player["pos"]
+	var so = _danger_shell(go)
+	so.anim_mode = "off"
+	so.clock_override = 700000
+	_check((so._danger_state()["tele"]["tiles"] as Dictionary) == {po: 5}, "fixture (off): both attackers paint 2 + 3")
+	so._act({"type": "strike", "dir": fo[3][0]})
+	_check(not go.enemies.has(vo), "fixture (off): the strike kills the 1-HP attacker")
+	var off_len := int(so._reel.get("len", 0))
+	_check((so._reel.get("ghosts", []) as Array).is_empty() and off_len > 0,
+		"fixture (off): the reel keeps no ghost and still plays its floats (%d ms) - the arm has teeth" % off_len)
+	var off_seen: Array = []
+	for dt in [1, 100, 300, off_len - 1]:
+		so.clock_override = 700000 + dt
+		var tso: Dictionary = so._threat_snap(go.snapshot())
+		off_seen.append([dt, bool(tso.get("held", false)), so._threat_tiles(tso)])
+	var off_ok := true
+	for row in off_seen:
+		if not bool(row[1]) or row[2] != {po: 3}:
+			off_ok = false
+	_check(off_ok and go.telegraph()["tiles"] == {po: 3},
+		"Animations off: the held board drops the dead machine at once - {tile: 3} from +1 to the reel's end (%s)" % str(off_seen))
+	so.clock_override = -1
+	so.free()
+	print("tele hold: stunned attacker paints nothing held or live; a kill leaves at %d ms (off: at once), a stagger at %d ms" % [t_die, t_st])
+
+
+## The idle redraw rule (main's): between moves only slow things move, so
+## _process redraws at ~20 fps (IDLE_FRAME_MS) - and a choke within
+## SKY_AMBER, whose amber bar pulse is a slow sine, is one of those slow
+## things, never a reason to redraw every frame. Observed through
+## `_idle_draw_ms`, which only the idle branch stamps: a full-rate frame
+## leaves it alone.
+func _check_idle_rate() -> void:
+	const Danger := preload("res://shell/danger.gd")
+	var g = Game.new(4242, {})
+	g.terrain.clear()
+	g.enemies.clear()
+	g.smog = int(g.floor_def(1)["smog_choke"]) - 2
+	var sh = _danger_shell(g)
+	sh.screen = "game"
+	sh.mode = "normal"
+	sh.anim_mode = "off"  # no idle loops: the sky alert is the only slow thing besides the smog
+	sh._banner = []
+	sh._banner_q = []
+	sh._sfx_q = []
+	sh._banner_ms = -99999
+	sh._floor_fade_ms = -99999
+	sh._toast = ""
+	sh._cam_settled = true
+	sh._reel = {}
+	sh.clock_override = 520000
+	var alert: String = Danger.sky_alert(sh._danger_state().get("sky", {}))
+	_check(alert != "" and sh._hp_state_shown() == "ok" and not g.over,
+		"fixture: the choke is two end turns off (sky alert '%s'), the tender safe" % alert)
+	sh._idle_draw_ms = -99999
+	sh._process(0.0)
+	var t1: int = sh._idle_draw_ms
+	sh.clock_override = 520000 + 10
+	sh._process(0.0)
+	var t2: int = sh._idle_draw_ms
+	sh.clock_override = 520000 + Shell.IDLE_FRAME_MS
+	sh._process(0.0)
+	var t3: int = sh._idle_draw_ms
+	_check(t1 == 520000 and t2 == 520000 and t3 == 520000 + Shell.IDLE_FRAME_MS,
+		"a sky alert redraws at the idle rate, never every frame (stamps %d / %d / %d)" % [t1, t2, t3])
+	# ...while a low-HP vignette still pulses at the full rate
+	g.player["hp"] = 1
+	sh._danger_rev += 1
+	sh._idle_draw_ms = -99999
+	sh.clock_override = 521000
+	sh._process(0.0)
+	_check(sh._hp_state_shown() != "ok" and sh._idle_draw_ms == -99999,
+		"a low-HP vignette pulses at the full rate (idle stamp %d)" % sh._idle_draw_ms)
+	sh.clock_override = -1
+	sh.free()
+
+
+## Does the map draw the tender at the shell's clock now? (_draw_map's own
+## pose rule, _tender_pose over _live_reel.)
+func _tender_shown(sh) -> bool:
+	var rt: float = sh._reel_t()
+	return bool(sh._tender_pose(sh.game.snapshot(), sh._live_reel(rt), rt)["visible"])
+
+
+## The death reel inside the end beat (plan D5): the beat is shifted to end no
+## earlier than the wilt; a tap (or a key) during the reel finishes it - a beat
+## not yet begun then starts AT the tap, one already under way runs on - and
+## the beat stays locked; the wilted tender stays gone once its reel has ended
+## (full, quick, and after a skip); animations off leave the beat exactly
+## where it was; and a win lands three gold bursts on the boss's death beat.
+func _check_over_reel() -> void:
+	var sh = _bare_shell()
+	sh.anim_mode = "full"
+	sh.profile = Profile.new()
+	var g = Game.new(4242, {})
+	_smog_doom(g)
+	sh.game = g
+	sh.clock_override = 900000
+	sh._act({"type": "end_turn"})
+	var left: int = sh._reel_left()
+	var shift: int = sh._over_ms - sh._now()
+	_check(g.over and not g.won, "fixture: the smog kills")
+	_check(left > Shell.OVER_BEAT_MS and shift == maxi(0, left - Shell.OVER_BEAT_MS),
+		"the beat ends no earlier than the wilt: shift %d for a reel of %d" % [shift, left])
+	_check(shift >= 2, "fixture: the full smog wilt shifts the beat (%d ms), so a tap can land before it" % shift)
+	_check(sh._over_phase() == "beat" and sh._over_locked(), "...and is locked through it")
+	# the dead tender stays gone once its reel has ended (_tender_pose): the
+	# map is still drawn under the beat and the fading sheet, and the default
+	# pose would stand it back up - drawn as the wilt begins, gone after
+	sh.clock_override = 900001
+	var t_early := _tender_shown(sh)
+	sh.clock_override = 900000 + left + 60
+	var t_after := _tender_shown(sh)
+	var ph_after: String = sh._over_phase()
+	sh.clock_override = sh._over_ms + Shell.OVER_BEAT_MS + 100
+	var t_fade := _tender_shown(sh)
+	var ph_fade: String = sh._over_phase()
+	_check(t_early and not t_after and ["beat", "fade"].has(ph_after) and not t_fade and ph_fade == "fade",
+		"full: the tender is drawn as the wilt begins (%s) and not after it - %s %s, fade %s"
+		% [t_early, ph_after, t_after, t_fade])
+	# a tap once the beat is UNDER WAY (its shift elapsed, the wilt still
+	# playing) finishes the reel and the beat runs on: _over_ms unchanged
+	var over0: int = sh._over_ms
+	sh.clock_override = 900000 + shift + 60
+	_check(sh._reel_left() > 0 and sh._over_phase() == "beat", "fixture: the beat is under way and the wilt still plays")
+	sh.hotspots = [{"rect": Rect2(0, 0, 9999, 9999), "tag": "new_run"}]
+	sh._click(Vector2(5, 5))
+	_check(sh.game == g and sh._reel_left() == 0 and sh._over_locked() and sh._over_ms == over0
+		and sh._over_phase() == "beat",
+		"a tap during the wilt finishes it, keeps the game and leaves a beat under way running on (over_ms %d, was %d)"
+		% [sh._over_ms - 900000, over0 - 900000])
+	var t_skip := _tender_shown(sh)
+	sh.clock_override = sh._over_ms + Shell.OVER_BEAT_MS + 100
+	var t_skip_fade := _tender_shown(sh)
+	_check(not t_skip and not t_skip_fade, "...and the tender it finished stays gone through the beat and the fade (%s %s)"
+		% [t_skip, t_skip_fade])
+	sh.clock_override = 900000 + shift + 70
+	sh._click(Vector2(5, 5))
+	_check(sh.game == g and sh.screen == "game", "the next tap is the locked beat's: it starts nothing")
+	sh.clock_override = -1
+	sh.free()
+	# a tap BEFORE the beat has begun (inside the shift) pulls the beat up to
+	# the tap: a skip never leaves the map waiting on a beat
+	var sp = _bare_shell()
+	sp.anim_mode = "full"
+	sp.profile = Profile.new()
+	var gp = Game.new(4242, {})
+	_smog_doom(gp)
+	sp.game = gp
+	sp.clock_override = 900000
+	sp._act({"type": "end_turn"})
+	var t_pre := 900000 + shift / 2
+	sp.clock_override = t_pre
+	_check(sp._over_ms > t_pre and sp._reel_left() > 0, "fixture: the tap lands before the beat (+%d, beat +%d)"
+		% [t_pre - 900000, sp._over_ms - 900000])
+	sp.hotspots = [{"rect": Rect2(0, 0, 9999, 9999), "tag": "new_run"}]
+	sp._click(Vector2(5, 5))
+	_check(sp.game == gp and sp._reel_left() == 0 and sp._over_locked() and sp._over_ms == t_pre
+		and sp._over_phase() == "beat" and not _tender_shown(sp),
+		"a tap before the beat finishes the wilt and starts the beat at the tap (over_ms +%d, tap +%d)"
+		% [sp._over_ms - 900000, t_pre - 900000])
+	sp.clock_override = -1
+	sp.free()
+	# a key finishes the wilt the same way (_key's own hoist above the lock),
+	# and pulls a beat not yet begun up to the key the same way
+	var sk = _bare_shell()
+	sk.anim_mode = "full"
+	sk.profile = Profile.new()
+	var gk = Game.new(4242, {})
+	_smog_doom(gk)
+	sk.game = gk
+	sk.clock_override = 905000
+	sk._act({"type": "end_turn"})
+	var k_pre := 905000 + shift / 2
+	sk.clock_override = k_pre
+	_check(sk._reel_left() > 0 and sk._over_ms > k_pre, "fixture: the wilt is still playing and the beat not begun")
+	sk._key(KEY_SPACE)
+	_check(sk.game == gk and sk._reel_left() == 0 and sk._over_locked() and sk._over_ms == k_pre,
+		"a key during the wilt finishes it too and starts the beat at the key (+%d), still locked" % (sk._over_ms - 905000))
+	sk.clock_override = -1
+	sk.free()
+	# animations off: the reel is at most a float long, the beat unshifted
+	var so = _bare_shell()
+	so.anim_mode = "off"
+	so.profile = Profile.new()
+	var go = Game.new(4242, {})
+	_smog_doom(go)
+	so.game = go
+	so.clock_override = 910000
+	so._act({"type": "end_turn"})
+	_check(go.over and so._over_ms == 910000, "animations off: the beat starts on the step (%d)" % (so._over_ms - 910000))
+	so.clock_override = -1
+	so.free()
+	# Animations "quick": the wilt is shorter than the beat, so the end-of-reel
+	# bound alone would start YOU WILTED before the blow lands - the beat
+	# never starts before the run's own `player_death` beat (plan R5), for a
+	# machine's blow (the second of three drill bots) and for the smog
+	var quick_lines: Array = []
+	for qcase in ["drill", "smog"]:
+		var sq = _bare_shell()
+		sq.anim_mode = "quick"
+		sq.profile = Profile.new()
+		var gq
+		if qcase == "drill":
+			gq = _exact_fixture(3)
+			gq.player["hp"] = 4
+		else:
+			gq = Game.new(4242, {})
+			_smog_doom(gq)
+		sq.game = gq
+		sq.clock_override = 912000
+		sq._act({"type": "end_turn"})
+		var qdi := -1
+		for i in sq._reel_evs.size():
+			if String(sq._reel_evs[i].get("t", "")) == "player_death":
+				qdi = i
+		var qbt: int = int(sq._reel["ev_t"][qdi]) if qdi >= 0 else -1
+		var qshift: int = sq._over_ms - 912000
+		# what the beat draws one ms before the blow: _draw_over_beat's alphas
+		var qage: float = float(912000 + qbt - 1 - sq._over_ms)
+		var qalpha := clampf(qage / 150.0, 0.0, 1.0)
+		var qtint := clampf(qage / Shell.OVER_BEAT_MS, 0.0, 1.0)
+		_check(gq.over and not gq.won and qdi >= 0 and qbt > 0 and qshift >= qbt and qalpha == 0.0 and qtint == 0.0,
+			"quick %s death: the beat (+%d) never starts before the blow (+%d): banner alpha %.2f, tint %.2f a ms before it"
+			% [qcase, qshift, qbt, qalpha, qtint])
+		# the quick wilt ends inside the beat: from there to the end of the
+		# fade the tender stays gone (it used to stand back up for ~0.8 s)
+		var qlen: int = sq._reel_left()
+		var qgone := true
+		var qphases := {}
+		for qt in range(912000 + qlen + 10, sq._over_ms + Shell.OVER_BEAT_MS + Shell.OVER_FADE_MS, 50):
+			sq.clock_override = qt
+			qphases[sq._over_phase()] = true
+			if _tender_shown(sq):
+				qgone = false
+		sq.clock_override = 912000
+		_check(qgone and qphases.has("beat") and qphases.has("fade"),
+			"quick %s death: after the wilt (%d ms) the tender stays gone through the beat and the fade (%s)"
+			% [qcase, qlen, str(qphases.keys())])
+		# a tap during the quick wilt still finishes it and starts nothing
+		sq.clock_override = 912000 + qbt + 10
+		var qplaying: bool = sq._reel_left() > 0
+		sq.hotspots = [{"rect": Rect2(0, 0, 9999, 9999), "tag": "new_run"}]
+		sq._click(Vector2(5, 5))
+		_check(not qplaying or (sq.game == gq and sq._reel_left() == 0 and sq._over_locked()),
+			"quick %s death: a tap during the wilt finishes it and leaves the beat locked" % qcase)
+		quick_lines.append("%s +%d/+%d" % [qcase, qbt, qshift])
+		_check(not _tender_shown(sq) and ["beat", "fade"].has(sq._over_phase()),
+			"quick %s death: once the tap has finished the wilt the tender stays gone (%s)" % [qcase, sq._over_phase()])
+		sq.clock_override = -1
+		sq.free()
+	# a win: three gold bursts on the boss's death beat, the beat covering them
+	var bm := _boss_minion_fixture()
+	var gw = bm[0]
+	var sw = _bare_shell()
+	sw.anim_mode = "full"
+	sw.profile = Profile.new()
+	sw.game = gw
+	sw.clock_override = 920000
+	sw._act({"type": "strike", "dir": bm[3][0]})
+	_check(gw.over and gw.won, "fixture: the strike on the 1-HP boss wins")
+	var bi := -1
+	for i in sw._reel_evs.size():
+		var ev: Dictionary = sw._reel_evs[i]
+		if String(ev.get("t", "")) == "death" and Content.ENEMIES.get(String(ev.get("who", "")), {}).get("traits", []).has("boss"):
+			bi = i
+	var bursts: Array = []
+	for cl in sw._reel.get("clips", []):
+		if String(cl.get("kind", "")) == "burst" and Color(cl.get("col", Color.BLACK)) == Shell.COL_GOLD:
+			bursts.append(int(cl["t0"]))
+	var t0 := int(sw._reel["ev_t"][bi]) if bi >= 0 else -1
+	_check(bi >= 0 and bursts.size() == 3 and bursts.has(t0) and bursts.has(t0 + 260) and bursts.has(t0 + 520),
+		"a win lands three gold bursts on the boss's death beat %d: %s" % [t0, str(bursts)])
+	_check(sw._over_ms - sw._now() == maxi(0, sw._reel_left() - Shell.OVER_BEAT_MS), "...and the beat covers them")
+	# the WINNER stays on the map once its reel is over: only a LOST run's
+	# tender is hidden after its reel (_tender_pose), so the beat and the
+	# fading sheet still draw the tender who won
+	var wlen := int(sw._reel.get("len", 0))
+	var w_seen: Array = []
+	for wt in [wlen + 60, sw._over_ms - 920000 + Shell.OVER_BEAT_MS + Shell.OVER_FADE_MS / 2]:
+		sw.clock_override = 920000 + wt
+		w_seen.append([wt, sw._reel_left(), sw._over_phase(), _tender_shown(sw)])
+	var w_ok: bool = wlen > 0
+	for ws in w_seen:
+		if int(ws[1]) > 0 or not ["beat", "fade"].has(String(ws[2])) or not bool(ws[3]):
+			w_ok = false
+	_check(w_ok and String(w_seen[1][2]) == "fade",
+		"a win's tender is still drawn after its reel, in the beat and in the fade (%s)" % str(w_seen))
+	sw.clock_override = -1
+	sw.free()
+	# the same win with animations off: no bursts
+	var bm2 := _boss_minion_fixture()
+	var swo = _bare_shell()
+	swo.anim_mode = "off"
+	swo.profile = Profile.new()
+	swo.game = bm2[0]
+	swo.clock_override = 930000
+	swo._act({"type": "strike", "dir": bm2[3][0]})
+	var nb := 0
+	for cl in swo._reel.get("clips", []):
+		if String(cl.get("kind", "")) == "burst":
+			nb += 1
+	_check(bm2[0].won and nb == 0 and swo._over_ms == 930000, "animations off: a win has no bursts and no shift (%d)" % nb)
+	swo.clock_override = -1
+	swo.free()
+	print("over reel: a %d ms wilt shifts the beat %d ms, a tap inside the shift starts it at the tap, one after it runs on; the wilted tender stays gone; win bursts at %s; quick blow/beat %s" % [
+		left, maxi(0, left - Shell.OVER_BEAT_MS), str(bursts), ", ".join(quick_lines)])
+
+
+## Banners on their beats (plan R5, D3): a banner a step causes waits in the
+## queue until the reel reaches its event, once; the highest priority due
+## shows first; a career ping waits out the floor title card; the toast never
+## writes a banner.
+func _check_banner_beats() -> void:
+	var sh = _bare_shell()
+	sh.anim_mode = "full"
+	var g = Game.new(4242, {})
+	g.terrain.clear()
+	g.enemies.clear()
+	g.smog = 0
+	var pp: Vector2i = g.player["pos"]
+	var d0: Vector2i = _open_dirs(g)[0]
+	g.terrain[pp + d0] = {"kind": "oil"}
+	g.green_need = 0  # the stairs are already awake: the restore's banner alone
+	g.player["charge"] = 5
+	sh.game = g
+	sh.clock_override = 300000
+	sh._act({"type": "cleanse", "target": pp + d0})
+	var ri := _ev_index(sh._reel_evs, "floor_restored")
+	_check(ri >= 0, "fixture: cleansing the floor's last corruption restores it (%s)" % str(sh._reel_evs.map(func(e): return e["t"])))
+	if ri < 0:
+		sh.free()
+		return
+	var beat := int(sh._reel["ev_t"][ri])
+	var n_q := 0
+	var at := -1
+	for b in sh._banner_q:
+		if String(b["lines"][0]) == "FLOOR RESTORED":
+			n_q += 1
+			at = int(b["at"])
+	_check(beat > 0 and n_q == 1 and sh._banner.is_empty() and at == 300000 + beat,
+		"FLOOR RESTORED is queued once, for its beat %d (at %d, queued %d, live %s)" % [beat, at - 300000, n_q, str(sh._banner)])
+	sh.clock_override = 300000 + beat - 1
+	sh._tick_banner()
+	_check(sh._banner.is_empty(), "...not shown a millisecond before its beat")
+	sh.clock_override = 300000 + beat
+	sh._tick_banner()
+	_check(not sh._banner.is_empty() and String(sh._banner[0]) == "FLOOR RESTORED", "...shown on it (%s)" % str(sh._banner))
+	# a career ping on a step with its own beat-timed banner is due on the
+	# step's LAST beat: the step's banner rises first and the ping after it,
+	# never before the reel reaches the step's end (plan R5)
+	var cs = _bare_shell()
+	cs.anim_mode = "full"
+	var cg = Game.new(4242, {})
+	cg.terrain.clear()
+	cg.enemies.clear()
+	cg.smog = 0
+	var cpp: Vector2i = cg.player["pos"]
+	var cd0: Vector2i = _open_dirs(cg)[0]
+	cg.terrain[cpp + cd0] = {"kind": "oil"}
+	cg.green_need = 0
+	cg.player["charge"] = 5
+	cs.game = cg
+	cs._game_is_run = true  # _bare_shell closed the run save: nothing is written
+	cs._career_ref = {"runs": 1, "best_floor": 9, "floors": {},
+		"casts": [{"base": "solar_lance", "need": 3, "had": 3, "names": ["Spiker"]}]}
+	cs._pings_fired = {}
+	cs._floor_fade_ms = -99999
+	cs.clock_override = 600000
+	cs._act({"type": "cleanse", "target": cpp + cd0})
+	var cev_t: Array = cs._reel.get("ev_t", [])
+	var c_last := int(cev_t.back()) if not cev_t.is_empty() else -1
+	var ping_at := -1
+	var fr_at := -1
+	for b in cs._banner_q:
+		if String(b["lines"][0]) == "SOLAR LANCE 3/3":
+			ping_at = int(b["at"])
+		elif String(b["lines"][0]) == "FLOOR RESTORED":
+			fr_at = int(b["at"])
+	_check(cs._banner.is_empty() and c_last > 0 and ping_at == 600000 + c_last and fr_at > 600000 and fr_at <= ping_at,
+		"a career ping is due on the step's last beat (at +%d, last beat %d, FLOOR RESTORED at +%d, live %s)"
+		% [ping_at - 600000, c_last, fr_at - 600000, str(cs._banner)])
+	var c_order: Array = []
+	for t in range(600000, 600000 + c_last + 3 * Shell.BANNER_MS + 100, 50):
+		cs.clock_override = t
+		cs._tick_banner()
+		if not cs._banner.is_empty() and (c_order.is_empty() or c_order.back() != String(cs._banner[0])):
+			c_order.append(String(cs._banner[0]))
+	_check(c_order == ["FLOOR RESTORED", "SOLAR LANCE 3/3"],
+		"...so the step's FLOOR RESTORED shows first and the ping after it (%s)" % str(c_order))
+	cs.clock_override = -1
+	cs.free()
+	# a CHAINED reel (an out-of-charge input: end turn, then the act) returns
+	# the second step's beats on the combined reel: its words land at that
+	# step's own events, never early during the enemy turn still playing
+	var ks = _bare_shell()
+	ks.anim_mode = "full"
+	var kg = Game.new(4242, {})
+	kg.terrain.clear()
+	kg.enemies.clear()
+	kg.smog = 0
+	var kpp: Vector2i = kg.player["pos"]
+	var kdirs := _open_dirs(kg)
+	var kwalk := Vector2i(-1, -1)
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if d != kdirs[0] and kg._open(kpp + d * 3) and kg._open(kpp + d * 2):
+			kwalk = kpp + d * 3
+			break
+	var kv: Dictionary = kg._spawn("drill_bot", kpp + kdirs[0])
+	kv["hp"] = 1
+	kv["intent"] = {"type": "idle"}
+	if kwalk.x >= 0:
+		kg._spawn("drill_bot", kwalk)
+	kg.player["charge"] = 0
+	ks.game = kg
+	ks._ensure_stats()
+	ks.stats.streak_closed = 2  # this turn's kill closes a third: the next kill reads STREAK 4
+	ks.stats.open_turn_kills = 1
+	ks.clock_override = 700000
+	ks._act({"type": "end_turn"})
+	var k_first: int = ks._reel_evs.size()
+	ks.clock_override = 700050  # the second step lands 50 ms into the first one's reel
+	var k_playing: bool = ks._reel_left() > 0
+	var kstrike: Dictionary = {}
+	for a in kg.legal_actions():
+		if String(a.get("type", "")) == "strike" and a.get("dir") == kdirs[0]:
+			kstrike = a
+	_check(kwalk.x >= 0 and k_playing and not kstrike.is_empty(), "fixture: a walker's reel still plays and the 1-HP bot is strikable")
+	if not kstrike.is_empty():
+		ks._act_chained(kstrike)
+	var kevs: Array = ks._reel_evs
+	var kdi := -1
+	for i in range(k_first, kevs.size()):
+		if String(kevs[i].get("t", "")) == "death":
+			kdi = i
+	var kword := {}
+	for cl in ks._reel.get("clips", []):
+		if bool(cl.get("word", false)) and String(cl.get("text", "")).begins_with("STREAK"):
+			kword = cl
+	var k_ev_t: Array = ks._reel.get("ev_t", [])
+	var k_want := int(k_ev_t[kdi]) + 160 if kdi >= 0 and kdi < k_ev_t.size() else -1
+	_check(kevs.size() > k_first and kdi >= k_first and not kword.is_empty() and int(kword["t0"]) == k_want,
+		"a chained step's word lands on its own death beat on the combined reel (t0 %s, want %d = ev_t[%d] + 160)"
+		% [str(kword.get("t0", "none")), k_want, kdi])
+	ks.clock_override = -1
+	ks.free()
+	# priority among the due; and a due banner beats one still waiting for its beat
+	sh._banner = []
+	sh._banner_q = []
+	sh._banner_ms = -99999
+	sh.clock_override = 400000
+	sh._push_banner(["LOW"], Shell.COL_GOLD, 50, 400100)
+	sh._push_banner(["HIGH"], Shell.COL_GOLD, 60, 400100)
+	_check(sh._banner.is_empty() and sh._banner_q.size() == 2, "two banners for a later beat wait")
+	sh.clock_override = 400100
+	sh._tick_banner()
+	_check(sh._banner == ["HIGH"], "when both are due the higher priority shows first (%s)" % str(sh._banner))
+	sh.clock_override = 400100 + Shell.BANNER_MS
+	sh._tick_banner()
+	_check(sh._banner == ["LOW"], "...then the other (%s)" % str(sh._banner))
+	sh._banner = []
+	sh._banner_q = []
+	sh._banner_ms = -99999
+	sh.clock_override = 401000
+	sh._push_banner(["EARLY"], Shell.COL_GOLD, 50, 401050)
+	sh._push_banner(["LATER"], Shell.COL_GOLD, 90, 401200)
+	sh.clock_override = 401060
+	sh._tick_banner()
+	_check(sh._banner == ["EARLY"], "a due banner is not held behind a higher one still waiting (%s)" % str(sh._banner))
+	# a career ping waits out the floor title card
+	sh._banner = []
+	sh._banner_q = []
+	sh._banner_ms = -99999
+	sh.clock_override = 500000
+	sh._floor_fade_ms = 500000
+	sh._push_banner(["DEEPEST YET", "floor 2"], Shell.COL_GOLD, int(Feedback.BANNER_PRIO["career"]))
+	_check(sh._banner.is_empty() and sh._banner_q.size() == 1 and sh._career_held(int(Feedback.BANNER_PRIO["career"])),
+		"a career ping is held while the floor card hangs")
+	sh.clock_override = 500000 + Shell.FLOOR_CARD_MS - 1
+	sh._tick_banner()
+	_check(sh._banner.is_empty(), "...to the last millisecond")
+	sh.clock_override = 500000 + Shell.FLOOR_CARD_MS
+	sh._tick_banner()
+	_check(sh._banner == ["DEEPEST YET", "floor 2"], "...then shows (%s)" % str(sh._banner))
+	# a banner still queued when the player opens the menu does not replay on
+	# RESUME a minute later (the queue ticks only in _process, which the menu
+	# skips): an entry whose beat is older than a banner's life is dropped on
+	# the way back, one inside it (a quick peek) still shows
+	var was_run: bool = sh._game_is_run
+	sh._game_is_run = true
+	for trip in [[Shell.BANNER_MS + 400, false], [500, true]]:
+		sh._banner = []
+		sh._banner_q = []
+		sh._banner_ms = -99999
+		sh._floor_fade_ms = -99999
+		sh.screen = "game"
+		sh.clock_override = 510000
+		sh._push_banner(["THE STAIRS AWAKEN"], Shell.COL_GOLD, 50, 510300)
+		sh._tap("menu")
+		var on_menu: bool = sh.screen == "menu" and sh._banner_q.size() == 1
+		sh.clock_override = 510300 + int(trip[0])
+		sh._process(0.0)  # the menu frame: returns before the queue ticks
+		var still_q: bool = sh._banner.is_empty()
+		sh._tap("resume")
+		sh._process(0.0)
+		var shown: bool = sh._banner == ["THE STAIRS AWAKEN"]
+		_check(on_menu and still_q and sh.screen == "game" and shown == bool(trip[1]) and sh._banner_q.is_empty(),
+			"a banner queued before a %d ms menu trip %s on resume (%s / %s)"
+			% [int(trip[0]), "shows" if trip[1] else "is dropped, never shown stale", str(sh._banner), str(sh._banner_q)])
+	sh._game_is_run = was_run
+	sh._banner = []
+	sh._banner_q = []
+	# the toast is the context line's, never a banner's
+	sh._banner = []
+	sh._banner_q = []
+	sh._toast = ""
+	sh._spawn_toast([{"t": "stairs_awaken"}, {"t": "floor_restored", "bonus": 5}, {"t": "room_bloom", "bonus": 3},
+		{"t": "boss_phase", "phase": 2}], [10, 20, 30, 40], sh._pre_step())
+	_check(sh._banner.is_empty() and sh._banner_q.is_empty() and sh._toast.begins_with("The room blooms"),
+		"_spawn_toast writes the toast and no banner (%s / %s)" % [sh._toast, str(sh._banner_q)])
+	sh.clock_override = -1
+	sh.free()
+	# THE STAIRS AWAKEN rides its own event's beat too: a cleanse that meets
+	# the quota (green_need one above greened) with corruption still standing
+	# elsewhere, so the stairs banner is the step's only one
+	var ss = _bare_shell()
+	ss.anim_mode = "full"
+	var sg = Game.new(4242, {})
+	sg.terrain.clear()
+	sg.enemies.clear()
+	sg.smog = 0
+	var spp: Vector2i = sg.player["pos"]
+	var sd0: Vector2i = _open_dirs(sg)[0]
+	sg.terrain[spp + sd0] = {"kind": "oil"}
+	var s_more := 0
+	for y in int(sg.map["h"]):
+		for x in int(sg.map["w"]):
+			var sp := Vector2i(x, y)
+			if s_more < 2 and absi(sp.x - spp.x) + absi(sp.y - spp.y) >= 4 and sg._open(sp):
+				sg.terrain[sp] = {"kind": "oil"}
+				s_more += 1
+	sg.green_need = int(sg.greened) + 1
+	sg.player["charge"] = 5
+	ss.game = sg
+	ss.clock_override = 310000
+	ss._act({"type": "cleanse", "target": spp + sd0})
+	var si := _ev_index(ss._reel_evs, "stairs_awaken")
+	var s_beat := int(ss._reel["ev_t"][si]) if si >= 0 else -1
+	var s_at := -1
+	for b in ss._banner_q:
+		if String(b["lines"][0]) == "THE STAIRS AWAKEN":
+			s_at = int(b["at"])
+	_check(si >= 0 and s_beat > 0 and s_at == 310000 + s_beat and ss._banner.is_empty(),
+		"THE STAIRS AWAKEN is queued for its own beat %d (at +%d, events %s)"
+		% [s_beat, s_at - 310000, str(ss._reel_evs.map(func(e): return e["t"]))])
+	ss.clock_override = -1
+	ss.free()
+	# the smog's choke-1 cue (Danger.cues) is due on the step's LAST beat:
+	# an end turn into choke 1 while a machine walks, the live banner empty
+	var ms = _bare_shell()
+	ms.anim_mode = "full"
+	var mg = Game.new(4242, {})
+	mg.terrain.clear()
+	mg.enemies.clear()
+	mg.smog = int(mg.floor_def(1)["smog_choke"]) - 2
+	var mpp: Vector2i = mg.player["pos"]
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if mg._open(mpp + d * 3) and mg._open(mpp + d * 2):
+			mg._spawn("drill_bot", mpp + d * 3)
+			break
+	ms.game = mg
+	ms._danger_rev += 1
+	ms._banner = []
+	ms._banner_q = []
+	ms.clock_override = 320000
+	ms._act({"type": "end_turn"})
+	var m_ev_t: Array = ms._reel.get("ev_t", [])
+	var m_last := int(m_ev_t.back()) if not m_ev_t.is_empty() else -1
+	var m_at := -1
+	var m_lines: Array = []
+	for b in ms._banner_q:
+		if int(b["prio"]) == int(Feedback.BANNER_PRIO["danger"]):
+			m_at = int(b["at"])
+			m_lines = b["lines"]
+	_check(not mg.over and int(ms._danger_state()["sky"]["choke_in"]) == 1 and m_last > 0
+		and m_at == 320000 + m_last and ms._banner.is_empty(),
+		"the choke-1 cue %s is due on the step's last beat %d (at +%d)" % [str(m_lines), m_last, m_at - 320000])
+	ms.clock_override = -1
+	ms.free()
+	# Feedback.banners names the event each banner waits for: the stairs its
+	# own index, the boss banner the LAST boss_phase of the step
+	var bg := Game.new(3)
+	bg._enter_floor(7)
+	var bevs: Array = [{"t": "smog_dim"}, {"t": "boss_phase", "phase": 2}, {"t": "smog_dim"},
+		{"t": "boss_phase", "phase": 3}, {"t": "stairs_awaken"}]
+	var bb: Array = Feedback.banners(bevs, {}, bg, {})
+	var b_ev := {}
+	for b in bb:
+		b_ev[int(b["prio"])] = int(b["ev"])
+	_check(int(b_ev.get(int(Feedback.BANNER_PRIO["boss"]), -1)) == 3 and int(b_ev.get(int(Feedback.BANNER_PRIO["stairs"]), -1)) == 4,
+		"banners wait for their own event: the boss for the last boss_phase (3), the stairs for theirs (4): %s" % str(b_ev))
+	print("banner beats: FLOOR RESTORED waits %d ms for its beat, THE STAIRS AWAKEN %d, the choke cue %d; priority among the due; career held by the card"
+		% [beat, s_beat, m_last])
+
+
+## The reel words (plan A3): the shell adds to the reel only what the reel
+## cannot know - the multi-kill, the room clear and the streak - as ordinary
+## float clips on the step's last death beat; a hook, a rider or a surge adds
+## none (the reel draws those itself); animations off keep them, at the reel's
+## start; and nothing in the shell builds a float clip but _reel_word.
+func _check_reel_words() -> void:
+	var sh = _cinder_shell(100000)
+	_check(_ev_index(sh._reel_evs, "hook") >= 0, "fixture: the lance's ignite runs the Cinder Grip hook")
+	_check(_reel_words(sh).is_empty(), "a Cinder Grip step adds no word clip: %s" % str(_reel_words(sh)))
+	var facts: Dictionary = sh._pre_step()
+	var gp: Vector2i = sh.game.player["pos"]
+	var en: Dictionary = sh.game.enemies[0]
+	sh._feedback([{"t": "ability", "id": "grow_spike", "target": en["pos"]},
+		{"t": "rider", "id": "grow_spike", "kind": "per", "amt": 1},
+		{"t": "damage", "who": String(en["kind"]), "id": en["id"], "amt": 4, "src": "grow_spike"}], facts, {}, [], [])
+	sh._feedback([{"t": "verdant", "tile": gp}, {"t": "ability", "id": "grow_spike", "target": en["pos"]},
+		{"t": "surge", "id": "grow_spike", "keys": ["dmg"]}], facts, {}, [], [])
+	_check(_reel_words(sh).is_empty(), "a rider or a surge adds no word clip either: %s" % str(_reel_words(sh)))
+	sh.clock_override = -1
+	sh.free()
+	# the two kills of one turn, through _act: every ctx word is a reel float on
+	# the last death's beat plus its delay, and only those (at anim off: t0 0).
+	# The second machine is an ELITE: its spikes answer the killing strike
+	# AFTER its death (a later beat), so the death's beat and the step's last
+	# beat differ and a word keyed to the wrong one lands off its kill
+	for am in ["full", "off"]:
+		var fx := _two_attackers(1, 1, 1)
+		if fx.is_empty():
+			return
+		var g = fx[0]
+		fx[2]["hp"] = 1
+		fx[2]["elite"] = true
+		var sk = _bare_shell()
+		sk.anim_mode = am
+		sk.game = g
+		sk.clock_override = 200000
+		sk._act({"type": "strike", "dir": fx[3][0]})
+		sk.clock_override = 200030
+		var facts2: Dictionary = sk._pre_step()
+		sk._act({"type": "strike", "dir": fx[3][1]})
+		var want: Array = []
+		for w in Feedback.ctx_words(sk._reel_evs, facts2, g, sk.stats.ctx):
+			var t0 := int(sk._reel_t())
+			if am != "off":
+				t0 += int(sk._reel["ev_t"][int(w["ev"])]) + int(w["delay"])
+			want.append([String(w["text"]), t0])
+		var got: Array = _reel_words(sk)
+		_check(want.size() >= 1 and got.size() == want.size() and want.all(func(w): return got.has(w)),
+			"%s: the step's ctx words are its reel words, on the last death's beat: want %s, got %s" % [am, str(want), str(got)])
+		_check(want.any(func(w): return w[0] == "DOUBLE KILL"), "%s: the second kill of the turn says DOUBLE KILL (%s)" % [am, str(want)])
+		if am == "full":
+			# independently of Feedback's `ev`: the word sits on the LAST
+			# DEATH's beat, which is not the step's last beat here
+			var wdi := -1
+			for i in sk._reel_evs.size():
+				if String(sk._reel_evs[i].get("t", "")) == "death":
+					wdi = i
+			var wev_t: Array = sk._reel.get("ev_t", [])
+			var wrt := int(sk._reel_t())
+			var wdk := -1
+			for wc in sk._reel["clips"]:
+				if bool(wc.get("word", false)) and String(wc.get("text", "")) == "DOUBLE KILL":
+					wdk = int(wc["t0"])
+			var w_death := wrt + int(wev_t[wdi]) + 160 if wdi >= 0 else -1
+			var w_last := wrt + int(wev_t.back()) + 160 if not wev_t.is_empty() else -1
+			_check(wdi >= 0 and wdi < wev_t.size() - 1 and w_death != w_last and wdk == w_death,
+				"DOUBLE KILL lands on the death's beat (t0 %d, death %d, the step's last beat %d; events %s)"
+				% [wdk, w_death, w_last, str(sk._reel_evs.map(func(e): return e["t"]))])
+		# a word clears every float still rising in its row within one tile
+		# (the kill number on the struck machine's tile beside the tender): two
+		# rows over the highest of them, never level with a number in the air
+		if am == "full":
+			var clash: Array = []
+			for wc in sk._reel["clips"]:
+				if String(wc.get("kind", "")) != "float" or not bool(wc.get("word", false)):
+					continue
+				for oc in sk._reel["clips"]:
+					if oc == wc or String(oc.get("kind", "")) != "float":
+						continue
+					var dv := Vector2i(Vector2(oc["at"]).round()) - Vector2i(Vector2(wc["at"]).round())
+					if dv.y == 0 and absi(dv.x) <= 1 and int(oc["t0"]) <= int(wc["t0"]) \
+							and int(wc["t0"]) - int(oc["t0"]) < int(AnimLib.T_FLOAT * 0.5) \
+							and int(wc["n"]) < int(oc.get("n", 0)) + 2:
+						clash.append([String(wc["text"]), String(oc["text"])])
+			_check(clash.is_empty(), "a ctx word lands two rows over every float rising beside it: %s" % str(clash))
+		sk.clock_override = -1
+		sk.free()
+	# the streak flame moves when the reel gets there (_streak_shown): the
+	# pre-step streak until the kill's death beat, the live fold from it; an
+	# end turn that breaks the streak keeps it until the enemy turn has played
+	var ff := _two_attackers(1, 1, 1)
+	var fs = _bare_shell()
+	fs.anim_mode = "full"
+	fs.game = ff[0]
+	fs._ensure_stats()
+	fs.stats.streak_closed = 2
+	fs.stats.open_turn_kills = 0
+	fs.clock_override = 210000
+	fs._act({"type": "strike", "dir": ff[3][0]})
+	var fdi := -1
+	for i in fs._reel_evs.size():
+		if String(fs._reel_evs[i].get("t", "")) == "death":
+			fdi = i
+	var fdt := int(fs._reel["ev_t"][fdi]) if fdi >= 0 else -1
+	fs.clock_override = 210000 + fdt - 1
+	var f_pre: Array = fs._streak_shown()
+	fs.clock_override = 210000 + fdt
+	var f_at: Array = fs._streak_shown()
+	_check(fdt > 0 and f_pre == [2, 0] and f_at == [2, 1],
+		"the streak flame reads 2 (owed) until the kill's death beat %d and 3 from it (%s, %s)" % [fdt, str(f_pre), str(f_at)])
+	fs.clock_override = 211000
+	fs._act({"type": "end_turn"})  # closes the turn WITH its kill: 3
+	fs.clock_override = 212000 + int(fs._reel.get("len", 0))
+	fs._act({"type": "end_turn"})  # closes one WITHOUT: the streak breaks
+	var f_len := int(fs._reel.get("len", 0))
+	var f_live: Array = [int(fs.stats.streak_closed), int(fs.stats.open_turn_kills)]
+	fs.clock_override = fs._reel_ms + 1  # one ms into the break's reel
+	var f_brk: Array = fs._streak_shown()
+	fs.clock_override = fs._reel_ms + f_len + 41  # Anim.playing keeps a reel 40 ms past its len
+	var f_end: Array = fs._streak_shown()
+	_check(f_len > 0 and f_live == [0, 0] and f_brk == [3, 0] and f_end == [0, 0],
+		"an end turn that breaks the streak keeps the flame at 3 until its reel (%d ms) has played (%s, then %s)"
+		% [f_len, str(f_brk), str(f_end)])
+	fs.clock_override = -1
+	fs.free()
+	# the source: only _reel_word builds a float clip in the shell
+	var src := FileAccess.get_file_as_string("res://shell/main.gd")
+	var n := 0
+	var bad: Array = []
+	var from := 0
+	while true:
+		var i := src.find("\"kind\": \"float\"", from)
+		if i < 0:
+			break
+		n += 1
+		var fi := src.rfind("\nfunc ", i)
+		var fname := src.substr(fi + 6, src.find("(", fi) - fi - 6) if fi >= 0 else "?"
+		if fname != "_reel_word":
+			bad.append(fname)
+		from = i + 1
+	_check(n >= 1 and bad.is_empty(), "shell/main.gd builds a float clip only in _reel_word (%d, elsewhere: %s)" % [n, str(bad)])
+	print("reel words: none from a hook, a rider or a surge; ctx words on the last death's beat at full and off")
+
+
+## The context line's toast (plan A2, A26): every toast event speaks in the
+## log's words, short and with no raw id; the boss phase is a banner, never a
+## toast; a landed hook names itself on its beat (COMBO_TOAST); a hook that
+## lands nothing says nothing; the latest beat wins.
+func _check_toast() -> void:
+	var g = Game.new(4242, {})
+	var t: Vector2i = g.player["pos"] + _open_dir(g)
+	var e: Dictionary = _park_enemy(g, t)
+	e["kind"] = "drill_bot"
+	var child: Dictionary = g._spawn("sludgeling", t + Vector2i(30, 30))
+	var eid = e["id"]
+	var item_id := String(Content.ITEMS.keys()[0])
+	var built := {
+		"room_bloom": {"t": "room_bloom", "bonus": 3}, "item_pickup": {"t": "item_pickup", "id": item_id},
+		"satchel_full": {"t": "satchel_full"}, "stairs_dormant": {"t": "stairs_dormant", "have": 1, "need": 5},
+		"quota_reclamp": {"t": "quota_reclamp", "need": 3, "was": 5}, "seal_burst": {"t": "seal_burst", "tile": t},
+		"assimilate": {"t": "assimilate", "id": eid}, "smog_dim": {"t": "smog_dim"}, "undim": {"t": "undim"},
+		"reinforcement": {"t": "reinforcement", "tile": t, "kind": "rust_hound"},
+		"gummed": {"t": "gummed", "id": "solar_lance", "slot": 0},
+		"screened": {"t": "screened", "id": eid, "intent": "gum"}, "drain": {"t": "drain", "id": eid, "amt": 2},
+		"drag": {"t": "drag", "id": eid}, "choke": {"t": "choke"}, "vents_clogged": {"t": "vents_clogged"},
+		"core_shielded": {"t": "core_shielded", "id": eid}, "dredge": {"t": "dredge", "tiles": 3},
+		"summon": {"t": "summon", "id": eid, "child": child["id"]}, "ignite_all": {"t": "ignite_all"},
+		"flood": {"t": "flood", "row": 3}, "resisted": {"t": "resisted", "id": eid, "status": "root"},
+	}
+	var pre: Dictionary = {"pos": {eid: Vector2(t)}, "kinds": {eid: "drill_bot"}}
+	var bad: Array = []
+	for tt in Shell.TOAST_EVENTS:
+		if not built.has(tt):
+			bad.append("%s (no built event in this check)" % tt)
+			continue
+		var words := Feedback.ev_text(built[tt], g, pre)
+		if words == "" or words.contains("_") or words.length() > Feedback.LOG_LINE_MAX:
+			bad.append("%s: '%s'" % [tt, words])
+	_check(bad.is_empty(), "every toast event speaks short, in words: %s" % str(bad))
+	_check(not Shell.TOAST_EVENTS.has("boss_phase"), "the boss phase is not a toast event (its banner says it)")
+	var sh = _bare_shell()
+	var g7 := Game.new(3)
+	g7._enter_floor(7)
+	sh.game = g7
+	sh._toast = ""
+	sh._spawn_toast([{"t": "boss_phase", "phase": 2}], [], sh._pre_step())
+	var bb: Array = Feedback.banners([{"t": "boss_phase", "phase": 2}], {}, g7, {})
+	_check(sh._toast == "" and not bb.is_empty() and int(bb[0]["prio"]) == int(Feedback.BANNER_PRIO["boss"]),
+		"a boss phase makes a banner and no toast (%s / %s)" % [sh._toast, str(bb)])
+	# the latest beat wins, whichever event came first
+	sh.game = g
+	sh.clock_override = 70000
+	sh._toast = ""
+	sh._toast_ms = -99999
+	sh._spawn_toast([built["room_bloom"], built["satchel_full"]], [100, 300], pre)
+	_check(sh._toast == Feedback.ev_text(built["satchel_full"], g, pre) and sh._toast_ms == 70300,
+		"two toast events: the later beat wins (%s)" % sh._toast)
+	sh._toast = ""
+	sh._toast_ms = -99999
+	sh._spawn_toast([built["room_bloom"], built["satchel_full"]], [300, 100], pre)
+	_check(sh._toast == Feedback.ev_text(built["room_bloom"], g, pre) and sh._toast_ms == 70300,
+		"...the beat, not the event order (%s)" % sh._toast)
+	# a hook that lands nothing toasts nothing - even when the event after it
+	# is one the hook words COULD say (a root on a machine): Ember Sap's row
+	# is damage_at only, so the root is not its landing (Feedback.claims), and
+	# a combo line that took evs[i+1] unclaimed would toast "Ember Sap roots"
+	var unlanded: Array = [{"t": "ignite", "tile": t}, {"t": "hook", "id": "ember_sap", "on": "ignite", "tile": t},
+		{"t": "status", "id": eid, "status": "root", "turns": 1}]
+	sh._toast = ""
+	sh._toast_ms = -99999
+	sh._spawn_toast(unlanded, [], sh._pre_step())
+	_check(Feedback.combo_line(unlanded, sh._pre_step(), g).is_empty() and sh._toast == "",
+		"an unlanded hook toasts nothing, even beside a status it could word (%s)" % sh._toast)
+	# ...and the positive twin: the same hook followed by its own damage
+	# (src ember_sap) landed, and names the graft
+	var landed: Array = [{"t": "ignite", "tile": t}, {"t": "hook", "id": "ember_sap", "on": "ignite", "tile": t},
+		{"t": "damage", "who": "drill_bot", "id": eid, "amt": 1, "src": "ember_sap"}]
+	sh._toast = ""
+	sh._toast_ms = -99999
+	sh._spawn_toast(landed, [], sh._pre_step())
+	var lcl: Dictionary = Feedback.combo_line(landed, sh._pre_step(), g)
+	_check(int(lcl.get("ev", -1)) == 1 and sh._toast == String(lcl.get("text", "")) and sh._toast.contains("Ember Sap"),
+		"a landed Ember Sap toasts its name (%s)" % sh._toast)
+	sh.clock_override = -1
+	sh.free()
+	# a landed Cinder Grip step names the resonance on its hook's beat
+	var sc = _cinder_shell(100000)
+	var hi := _ev_index(sc._reel_evs, "hook")
+	_check(hi >= 0 and sc._toast.begins_with("Cinder Grip roots") and sc._toast_ms == 100000 + int(sc._reel["ev_t"][hi]),
+		"a landed Cinder Grip toasts its name on the hook's beat (%s at %d)" % [sc._toast, sc._toast_ms - 100000])
+	# a ms before its beat the toast is not live and the context line does
+	# not say it yet (the reel has not reached the hook)
+	sc.clock_override = 100000 + int(sc._reel["ev_t"][hi]) - 1
+	_check(hi >= 0 and int(sc._reel["ev_t"][hi]) > 0 and not sc._toast_live()
+		and String(sc._context_msg(sc.game.snapshot(), 1080, 2400)["text"]) != sc._toast,
+		"...not a ms before the hook's beat (%s)" % String(sc._context_msg(sc.game.snapshot(), 1080, 2400)["text"]))
+	sc.clock_override = 100000 + int(sc._reel["ev_t"][hi])
+	_check(sc._toast_live() and String(sc._context_msg(sc.game.snapshot(), 1080, 2400)["text"]) == sc._toast,
+		"...and the context line says it then")
+	sc.clock_override = -1
+	sc.free()
+	# COMBO_TOAST is the owner's one switch: on, and the combo branch sits
+	# under it (a const cannot be flipped from a test, so the source is read)
+	_check(Shell.COMBO_TOAST == true, "COMBO_TOAST ships on")
+	var src := FileAccess.get_file_as_string("res://shell/main.gd")
+	var f0 := src.find("func _spawn_toast(")
+	var f1 := src.find("\nfunc ", f0 + 1)
+	var body := src.substr(f0, f1 - f0)
+	var gi := body.find("if COMBO_TOAST:")
+	var ci := body.find("Feedback.combo_line(")
+	var g_ind := gi - body.rfind("\n", gi) - 1
+	var c_ind := ci - body.rfind("\n", ci) - 1
+	_check(gi >= 0 and ci > gi and c_ind > g_ind and body.count("Feedback.combo_line(") == 1,
+		"_spawn_toast reads Feedback.combo_line only under `if COMBO_TOAST:` (false turns the combo toast off)")
+	print("toast: %d toast event types in words; boss phase a banner; Cinder Grip on its hook's beat" % Shell.TOAST_EVENTS.size())
+
+
+## One clock (plan R1): shell/main.gd reads the wall clock in exactly one
+## place, _now(), so a pinned clock_override moves every timer the shell has.
+func _check_one_clock() -> void:
+	var src := FileAccess.get_file_as_string("res://shell/main.gd")
+	var i := src.find("Time.get_ticks_msec")
+	var fi := src.rfind("\nfunc ", i)
+	_check(src.count("Time.get_ticks_msec") == 1 and fi >= 0 and src.substr(fi + 1, 11) == "func _now()",
+		"shell/main.gd reads Time.get_ticks_msec once, inside _now() (%d reads)" % src.count("Time.get_ticks_msec"))
+	var sh = _bare_shell()
+	var g = Game.new(4242, {})
+	g.over = true
+	sh.game = g
+	sh._over_for = g
+	sh._over_ms = 10000
+	sh.clock_override = 10000
+	var ph0: String = sh._over_phase()
+	var lk0: bool = sh._over_locked()
+	sh.clock_override = 10000 + Shell.OVER_BEAT_MS
+	var ph1: String = sh._over_phase()
+	sh.clock_override = 10000 + Shell.OVER_BEAT_MS + Shell.OVER_FADE_MS
+	var ph2: String = sh._over_phase()
+	sh.clock_override = 10000 + Shell.OVER_LOCK_MS
+	_check(ph0 == "beat" and lk0 and ph1 == "fade" and ph2 == "sheet" and not sh._over_locked(),
+		"the end beat follows the pinned clock (%s, %s, %s)" % [ph0, ph1, ph2])
+	sh.game = Game.new(4242, {})
+	sh._banner = []
+	sh._banner_q = []
+	sh._banner_ms = -99999
+	sh.clock_override = 20000
+	sh._push_banner(["A"], Shell.COL_GOLD, 50, 20500)
+	sh.clock_override = 20499
+	sh._tick_banner()
+	var early: Array = sh._banner.duplicate()
+	sh.clock_override = 20500
+	sh._tick_banner()
+	_check(early.is_empty() and sh._banner == ["A"], "the banner queue follows the pinned clock")
+	sh._floor_fade_ms = 30000
+	sh.clock_override = 30000
+	var held: bool = sh._career_held(int(Feedback.BANNER_PRIO["career"]))
+	sh.clock_override = 30000 + Shell.FLOOR_CARD_MS
+	_check(held and not sh._career_held(int(Feedback.BANNER_PRIO["career"])), "_career_held follows the pinned clock")
+	# the floor-1 card held behind the intro is raised on the clock's now
+	sh._floor_card_pending = true
+	sh.mode = "normal"
+	sh.screen = "game"
+	sh.clock_override = 40000
+	sh._process(0.0)
+	_check(not sh._floor_card_pending and sh._floor_fade_ms == 40000,
+		"the floor card's age starts on the pinned clock (%d)" % sh._floor_fade_ms)
+	sh.clock_override = -1
+	sh.free()
+	# a new board never inherits the last game's floor title card: a trip into
+	# the tutorial, or a resume, within FLOOR_CARD_MS of a run's start shows
+	# none and holds no career banner behind it (_reset_reel clears the clock,
+	# _new_game stamps it again)
+	var fc = _bare_shell()
+	fc.profile = Profile.new()
+	fc.intro_mode = "never"
+	fc.clock_override = 50000
+	fc._start_run("career", 88)
+	var stamped: int = fc._floor_fade_ms
+	fc.clock_override = 50400
+	fc._start_tutorial()
+	var tut_age: int = fc._now() - int(fc._floor_fade_ms)
+	var tut_held: bool = fc._career_held(int(Feedback.BANNER_PRIO["career"]))
+	fc.clock_override = 51000
+	fc._start_run("career", 88)
+	if fc._run_save != null:
+		fc._run_save.close()
+		fc._run_save = null
+	fc.clock_override = 51500
+	fc._load_run()
+	var res_age: int = fc._now() - int(fc._floor_fade_ms)
+	_check(stamped == 50000 and tut_age >= Shell.FLOOR_CARD_MS and not tut_held and fc.game != null
+		and res_age >= Shell.FLOOR_CARD_MS,
+		"a run's floor-1 card stays with its run: none in the tutorial 400 ms later (age %d) or on a resume 500 ms later (age %d)"
+		% [tut_age, res_age])
+	fc.clock_override = -1
+	fc.free()
+	print("one clock: Time.get_ticks_msec only in _now(); the beat, the banners, the card follow clock_override")
+
+
+## The settings sheet (plan A19): main's rows minus the run seed, as data, and
+## the rows, the runs-folder line and BACK inside the panel at every phone
+## shape, every label legible - the geometry is _draw_settings' own constants.
+func _check_settings_rows() -> void:
+	var sh = _bare_shell()
+	var tags: Array = sh._settings_rows().map(func(r): return String(r[1]))
+	_check(tags == ["set:hold", "set:intro", "set:sfx", "set:music", "set:haptics", "set:anim", "set:camera"],
+		"the settings rows: %s" % str(tags))
+	# every label each row can show (each toggle walked through its values)
+	var labels := {}
+	for k in 6:
+		for r in sh._settings_rows():
+			labels[String(r[0])] = true
+		for tg in tags:
+			sh._tap(tg)
+	_check(labels.size() >= 14, "the toggles walk through their values (%d labels)" % labels.size())
+	var bad: Array = []
+	for vp in CARD_VIEWPORTS:
+		var vw: float = vp.x
+		var vh: float = vp.y
+		# the shell's own layout (_settings_layout, which _draw_settings draws)
+		var lay: Dictionary = sh._settings_layout(vw, vh)
+		var panel: Rect2 = lay["frame"]
+		var rects: Array = lay["rows"]
+		if rects.size() != tags.size():
+			bad.append("%d row rects for %d rows at %dx%d" % [rects.size(), tags.size(), vw, vh])
+			continue
+		var prev_end: float = sh._sheet_top(vh) - 0.5  # Rect2 holds 32-bit floats: half a pixel of slack
+		for i in rects.size():
+			var rr: Rect2 = rects[i]
+			if not panel.encloses(rr) or rr.position.y < prev_end:
+				bad.append("row %s at %dx%d" % [tags[i], vw, vh])
+			prev_end = rr.end.y
+		for lb in labels:
+			if float(sh._fit_size(String(lb), int(lay["label_size"]), (rects[0] as Rect2).size.x * 0.92)) / vh < CARD_MIN_VH:
+				bad.append("label '%s' at %dx%d" % [lb, vw, vh])
+		var pp: Vector2 = lay["path_pos"]
+		var path_top: float = pp.y - sh.font.get_ascent(int(lay["path_size"]))
+		var path_bottom: float = pp.y + sh.font.get_descent(int(lay["path_size"]))
+		if path_top < prev_end:
+			bad.append("runs-folder line at %dx%d (top %.1f under the last row's %.1f)" % [vw, vh, path_top, prev_end])
+		var back: Rect2 = lay["back"]
+		if not panel.encloses(back) or back.position.y < path_bottom or back.position.y < prev_end \
+				or back.end.y > vh * 0.955:
+			bad.append("BACK at %dx%d (%s)" % [vw, vh, str(back)])
+		if float(sh._fit_size("BACK", int(lay["back_size"]), back.size.x * 0.92)) / vh < CARD_MIN_VH:
+			bad.append("BACK label at %dx%d" % [vw, vh])
+	_check(bad.is_empty(), "the settings sheet fits its panel at every viewport: %s" % str(bad))
+	sh.free()
+	print("settings: %d rows, %d labels x %d viewports inside the panel" % [tags.size(), labels.size(), CARD_VIEWPORTS.size()])
+
+
+## One buzz a step on BOTH of _act's branches (plan A13, C6): the run branch
+## lost its haptics in the trial merge, and the tutorial branch is the other
+## path a hit can take. Counted as vibrations (_vibrate), not only as the
+## `_buzz_ms` a step asked for, so a second buzz on one step path fails; a
+## chained input (a dry D-pad press) buzzes once, keeping the stronger.
+func _check_haptics_paths() -> void:
+	# the source: every vibration goes through the one counted _vibrate, and
+	# _buzz_events has exactly its two callers (_feedback, the _play_events
+	# wrapper) - a second buzz added to a step path shows up here or below
+	var src := FileAccess.get_file_as_string("res://shell/main.gd")
+	_check(src.count("Input.vibrate_handheld(") == 1 and src.count("_buzz_events(") == 3,
+		"haptics: one Input.vibrate_handheld call site (%d) and _buzz_events defined + called twice (%d)"
+		% [src.count("Input.vibrate_handheld("), src.count("_buzz_events(")])
+	var lf := _lethal_fixture(2, 0)
+	var g = lf[0]
+	var sh = _bare_shell()
+	sh.game = g
+	sh.haptics_on = true
+	var hp0 := int(g.player["hp"])
+	sh._buzz_ms = 0
+	var v0: int = sh._vibrations
+	sh._act({"type": "end_turn"})
+	_check(int(g.player["hp"]) == hp0 - 2 and sh._buzz_ms == 70 and sh._vibrations - v0 == 1,
+		"the run branch: a hit for 2 buzzes 70 ms, once (%d, %d vibration(s), hp %d -> %d)"
+		% [sh._buzz_ms, sh._vibrations - v0, hp0, int(g.player["hp"])])
+	sh.free()
+	# a chained input (out of charge: the turn ends, then the move goes) is ONE
+	# input: a quieter second step keeps the first step's stronger buzz and
+	# does not vibrate again
+	var cf := _lethal_fixture(2, 0)
+	var cg = cf[0]
+	var csh = _bare_shell()
+	csh.game = cg
+	csh.haptics_on = true
+	csh.anim_mode = "full"
+	csh.clock_override = 96000
+	var cv0: int = csh._vibrations
+	var cpos0: Vector2i = cg.player["pos"]
+	var cturn0 := int(cg.total_turns)
+	var chp0 := int(cg.player["hp"])
+	csh._move_or_strike(cf[1])
+	_check(not cg.over and int(cg.total_turns) == cturn0 + 1 and cg.player["pos"] == cpos0 + Vector2i(cf[1])
+		and int(cg.player["hp"]) == chp0 - 2 and csh._buzz_ms == 70 and csh._vibrations - cv0 == 1,
+		"a dry D-pad press (end turn, hit for 2, then the move): one 70 ms buzz for the input (%d ms, %d vibration(s), turn %d -> %d)"
+		% [csh._buzz_ms, csh._vibrations - cv0, cturn0, int(cg.total_turns)])
+	csh.clock_override = -1
+	csh.free()
+	var st = _bare_shell()
+	st.profile = Profile.new()
+	st._start_tutorial()
+	st._act({"type": "move", "dir": Vector2i(1, 0)})
+	st._act({"type": "move", "dir": Vector2i(1, 0)})
+	_check(st.tut_step == 2, "fixture: the tutorial's end-turn step (%d)" % st.tut_step)
+	var tg = st.game
+	tg.enemies.clear()
+	var tb: Dictionary = tg._spawn("drill_bot", tg.player["pos"] + _open_dirs(tg)[0])
+	tb["intent"] = {"type": "attack", "tile": tg.player["pos"], "dmg": 2}
+	var thp := int(tg.player["hp"])
+	st._buzz_ms = 0
+	st.haptics_on = true
+	var tv0: int = st._vibrations
+	st._act({"type": "end_turn"})
+	_check(int(tg.player["hp"]) == thp - 2 and st._buzz_ms == 70 and st._vibrations - tv0 == 1,
+		"the tutorial branch: a hit for 2 buzzes 70 ms too, once (%d, %d vibration(s), hp %d -> %d)"
+		% [st._buzz_ms, st._vibrations - tv0, thp, int(tg.player["hp"])])
+	if st._run_save != null:
+		st._run_save.close()
+		st._run_save = null
+	st.free()
+	print("haptics paths: one 70 ms buzz (one vibration) for a hit of 2 on the run branch, the tutorial branch and a chained input")

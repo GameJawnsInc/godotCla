@@ -5,7 +5,7 @@ extends RefCounted
 ## spell the same thing two ways. Static only; reads Content and nothing else.
 ##
 ## Two source namers on purpose: `src_name` is the SHORT form the log and the
-## danger layer print in brackets ("You take 2 dmg (fire)", pinned by
+## danger layer print in brackets ("You take 2 (fire)", pinned by
 ## tests/test_shell.gd 8c), `src_long` the attribution form a recap names a
 ## hit by ("Solar Lance fire", "Water Jet slam").
 

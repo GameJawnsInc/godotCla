@@ -162,24 +162,42 @@ const MapGen := preload("res://sim/mapgen.gd")
 ## or mod row, no replay can observe either passive loop, and that rule is
 ## held by the injected _ResProbe rows in tests/test_grammar.gd and
 ## tests/test_economy.gd alone.
-## SIM_VERSION 15 (Block E, encounter packs and biome reinforcements): every
+## SIM_VERSION 15 (tending by any means): the room bloom (bonus + supply pod)
+## and the floor restore follow the corruption, not the CLEANSE action. step()
+## records _corrupt_rooms() before any non-end_turn play action and
+## _settle_tending() pays every room that action emptied, so a convert or a
+## wash now blooms the room and can restore the floor. See CLAUDE.md and
+## BALANCE.md (2026-09-27).
+## SIM_VERSION 16 (floor-2 clock): one Content.FLOORS row moved. Strip Mine II
+## carried the tightest smog spawn and dim clock of floors 1-4 (spawn [9, 17]
+## every 10, dim [12, 20] - tighter than floor 3's AND floor 4's; its choke 36
+## tied floor 3 and was looser than floor 4's 34) on the floor that also
+## introduces the first drain/gum roster, and the noob persona's deaths piled
+## there. It now sits between its neighbours (spawn [10, 19] every 11, dim
+## [14, 22], choke 37). A stored log can diverge at floor 2's first moved smog
+## threshold and at nothing earlier; a log that ends on floor 1, or leaves
+## floor 2 before the smog gets there, replays byte for byte. No rule, op or
+## key changed. Numbers in BALANCE.md (2026-11-09).
+## SIM_VERSION 17 (Block E, encounter packs and biome reinforcements): every
 ## non-boss Content.FLOORS row carries 4-5 named encounter packs instead of
 ## one fixed roster, and floor_def(n) draws ONE by weight from the side stream
 ## _side_rng_at(n, "roster") (never the main rng) before the tier and
 ## overtime modifiers, which therefore apply to the drawn crew. Every pack on
 ## a floor has the same headcount, so mapgen's main-rng draws, every position
-## and the elite index are byte-identical to bump 14 and only the kind on
+## and the elite index are byte-identical to bump 16 and only the kind on
 ## each placed tile changes; floor 1 fields no gums kind, so rng.state after
-## Game.new is bump 14's for every seed. Later floors shift only through play
+## Game.new is bump 16's for every seed. Later floors shift only through play
 ## (a different crew plays a different floor, and gum intents draw from the
 ## main rng). Vents release reinforce[(wave + vent) % size] of the floor's
 ## Content row (reinforce_wave / reinforce_kind, no rng, no stored state).
 ## Hash-visible event keys: the floor event gains "encounter" (the pack id,
 ## only when one was drawn) and both reinforcement sites gain "kind". No
 ## snapshot() key changed. The fixed_shift mutator (encounter_packs and
-## biome_reinforce false) replays bump 14 action for action - the proof the
-## change is reversible by one _mut default.
-const SIM_VERSION := 15
+## biome_reinforce false) replays bump 16 action for action - the proof the
+## change is reversible by one _mut default. (Block E was written as 15 on a
+## branch cut before bump 15 "tending by any means" and bump 16 "the floor-2
+## clock"; it was ported on top of both and renumbered 17.)
+const SIM_VERSION := 17
 
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -501,7 +519,15 @@ func step(action: Dictionary) -> Array:
 		else:
 			_emit({"t": "illegal", "action": "draft phase"})
 		return _step_events
-	match String(action.get("type", "")):
+	# tending by any means: the rooms that hold corruption before the
+	# player's action, so a removal other than CLEANSE (a convert, a wash)
+	# still blooms the room and restores the floor. end_turn is excluded -
+	# corruption that vanishes on the enemies' turn (a dredge) is not tending
+	var atype := String(action.get("type", ""))
+	var tend_floor := floor_num
+	var tend := atype != "end_turn" and phase == "play" and _count_corruption() > 0
+	var tend_rooms: Array = _corrupt_rooms() if tend else []
+	match atype:
 		"move":
 			_act_move(action)
 		"strike":
@@ -526,6 +552,8 @@ func step(action: Dictionary) -> Array:
 			_resolve_turn()
 		_:
 			_emit({"t": "error", "msg": "unknown action"})
+	if tend and not over and phase == "play" and floor_num == tend_floor:
+		_settle_tending(tend_rooms)
 	# one place covers every bloomless corruption removal (wash, convert,
 	# dredge, enemy-made changes): the gate can never demand more than what
 	# is still standing. Ignition is not one of them - a fire counts as the
@@ -1877,13 +1905,40 @@ func _act_cleanse(action: Dictionary) -> void:
 	if green_need > 0 and greened == green_need:
 		_emit({"t": "stairs_awaken", "tile": map["stairs"]})
 	_check_room_bloom(target)
-	# the whole floor scrubbed clean: it is RESTORED - skies clear for good
+	_check_restored()
+
+
+## The whole floor scrubbed clean: it is RESTORED - skies clear for good.
+func _check_restored() -> void:
 	if not map.get("restored", false) and _count_corruption() == 0:
 		map["restored"] = true
 		dim = 0
 		smog = maxi(smog - 8, 0)
 		bloom += 5
 		_emit({"t": "floor_restored", "bonus": 5})
+
+
+## Rooms (ascending index) that still hold corruption, counted the way the
+## room bloom counts it.
+func _corrupt_rooms() -> Array:
+	var out: Array = []
+	for t in terrain.keys():
+		if Content.counts_as_corruption(String(terrain[t]["kind"])):
+			var ri := _room_of(t)
+			if ri >= 0 and not out.has(ri):
+				out.append(ri)
+	out.sort()
+	return out
+
+
+## After a player action: every room that held corruption before it and holds
+## none now blooms, and a floor that had some and has none is restored - the
+## same payoffs CLEANSE gives, whatever tool did the tending (a convert, a
+## wash). A cleanse has already paid both inline, so this finds nothing then.
+func _settle_tending(rooms_before: Array) -> void:
+	for ri in rooms_before:
+		_bloom_room(int(ri))
+	_check_restored()
 
 
 func _act_descend() -> void:
@@ -2234,7 +2289,10 @@ func _room_has_corruption(ri: int) -> bool:
 
 ## A fully tended room blooms once: bonus bloom and a supply drop.
 func _check_room_bloom(p: Vector2i) -> void:
-	var ri := _room_of(p)
+	_bloom_room(_room_of(p))
+
+
+func _bloom_room(ri: int) -> void:
 	if ri < 0 or map.get("bloomed", []).has(ri) or _room_has_corruption(ri):
 		return
 	map["bloomed"].append(ri)

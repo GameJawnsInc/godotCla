@@ -4,6 +4,6 @@
 "actions": [{"dir":[1,0],"type":"move"},{"type":"descend"},{"pick":-1,"type":"draft"}],
 "expect": {"events":[{"t":"descend","to_floor":2},{"encounter":"leech_swarm","floor":2,"t":"floor"}],"floor":2,"timeout":true,"won":false},
 "note": "E1 encounter packs: a pack is drawn per FLOOR from that floor's own side stream - entering floor 2 on seed 3 names leech_swarm in the floor event (hash([3, 2, 'roster'])), where the classic roster is survey_shift.",
-"sim_version": 15,
+"sim_version": 17,
 "hash": "ba2ff576887c3674852e3fb55a77248df184f378a96e27d43cd571413d0da0b4"
 }
